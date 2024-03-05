@@ -4,15 +4,26 @@
 
 The goal of this benchmark is for developers working on features in SurrealDB to assess their impact on CRUD performance.
 
-Eg.:
+E.g.:
 - Testing a new operator
 - Work on indexes
 - Work on query planner and execution plan
 
+## How does it work?
+
+In one table, the benchmark will operate 4 main tasks:
+
+- Create: inserting N unique records.
+- Read: read N unique records.
+- Update: update N unique records.
+- Delete: delete N unique records.
+
+The number of records (samples) and the number of threads are parameters.
+
 ## Requirements
 
 - Docker
-- RustC / Cargo
+- Rust and Cargo
 
 ## Usage
 
@@ -39,15 +50,15 @@ Run the benchmark without interaction with any database:
 cargo run -r -- -d dry -s 100000 -t 3
 ```
 
-Run the benchmark against Postgres:
+## PostgreSQL benchmark
 
-## Postgresql benchmark
+Run the benchmark against PostgreSQL:
 
 ```bash
 cargo run -r -- -d postgresql -s 100000 -t 3
 ```
 
-## SurrealDB memory benchmark
+## SurrealDB/Memory benchmark
 
 Run the benchmark against SurrealDB in memory:
 
@@ -55,7 +66,7 @@ Run the benchmark against SurrealDB in memory:
 cargo run -r -- -d surrealdb-memory -s 100000 -t 3
 ```
 
-## SurrealDB RocksDB benchmark
+## SurrealDB/RocksDB benchmark
 
 Run the benchmark against SurreadDB with RocksDB:
 
