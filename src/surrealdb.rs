@@ -9,19 +9,25 @@ use crate::benchmark::{BenchmarkClient, BenchmarkClientProvider, Record};
 use crate::docker::DockerParams;
 
 pub(crate) const SURREAL_SPEEDB_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "surrealdb/surrealdb:v1.2.1",
+	image: "surrealdb/surrealdb:nightly",
 	pre_args: "-p 127.0.0.1:8000:8000",
 	post_args: "start --auth --user root --pass root speedb://tmp/crud-bench.db",
 };
 
 pub(crate) const SURREAL_ROCKSDB_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "surrealdb/surrealdb:v1.2.1",
+	image: "surrealdb/surrealdb:nightly",
 	pre_args: "-p 127.0.0.1:8000:8000",
 	post_args: "start --auth --user root --pass root rocksdb://tmp/crud-bench.db",
 };
 
+pub(crate) const SURREAL_KV_DOCKER_PARAMS: DockerParams = DockerParams {
+	image: "surrealdb/surrealdb:nightly",
+	pre_args: "-p 127.0.0.1:8000:8000",
+	post_args: "start --auth --user root --pass root surrealkv://tmp/crud-bench.db",
+};
+
 pub(crate) const SURREAL_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "surrealdb/surrealdb:v1.2.1",
+	image: "surrealdb/surrealdb:nightly",
 	pre_args: "-p 127.0.0.1:8000:8000",
 	post_args: "start --auth --user root --pass root memory",
 };

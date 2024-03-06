@@ -82,6 +82,14 @@ Run the benchmark against SurreadDB with RocksDB:
 cargo run -r -- -d surrealdb-rocksdb -s 100000 -t 3
 ```
 
+## SurrealDB/SurrealKV benchmark
+
+Run the benchmark against SurreadDB with SurrealKV:
+
+```bash
+cargo run -r -- -d surrealdb-kv -s 100000 -t 3
+```
+
 ## SurrealDB local benchmark
 
 Run the benchmark against an already running SurrealDB instance:
