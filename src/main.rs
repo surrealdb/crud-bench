@@ -6,6 +6,7 @@ use crate::benchmark::{Benchmark, BenchmarkResult, DryClientProvider};
 use crate::docker::DockerContainer;
 use crate::mongodb::{MongoDBClientProvider, MONGODB_DOCKER_PARAMS};
 use crate::postgres::{PostgresClientProvider, POSTGRES_DOCKER_PARAMS};
+use crate::redis::{RedisClientProvider, REDIS_DOCKER_PARAMS};
 use crate::surrealdb::{
 	SurrealDBClientProvider, SURREAL_KV_DOCKER_PARAMS, SURREAL_MEMORY_DOCKER_PARAMS,
 	SURREAL_ROCKSDB_DOCKER_PARAMS, SURREAL_SPEEDB_DOCKER_PARAMS,
@@ -15,6 +16,7 @@ mod benchmark;
 mod docker;
 mod mongodb;
 mod postgres;
+mod redis;
 mod surrealdb;
 
 #[derive(Parser, Debug)]
@@ -47,6 +49,7 @@ pub(crate) enum Database {
 	SurrealdbKv,
 	Mongodb,
 	Postgresql,
+	Redis,
 }
 
 impl Database {
@@ -60,6 +63,7 @@ impl Database {
 			Database::SurrealdbKv => SURREAL_KV_DOCKER_PARAMS,
 			Database::Mongodb => MONGODB_DOCKER_PARAMS,
 			Database::Postgresql => POSTGRES_DOCKER_PARAMS,
+			Database::Redis => REDIS_DOCKER_PARAMS,
 		};
 		let image = image.unwrap_or(params.image.to_string());
 		let container = DockerContainer::start(image, params.pre_args, params.post_args);
@@ -76,6 +80,7 @@ impl Database {
 			| Database::SurrealdbKv => benchmark.run(SurrealDBClientProvider::default()),
 			Database::Mongodb => benchmark.run(MongoDBClientProvider::default()),
 			Database::Postgresql => benchmark.run(PostgresClientProvider::default()),
+			Database::Redis => benchmark.run(RedisClientProvider::default()),
 		}
 	}
 }

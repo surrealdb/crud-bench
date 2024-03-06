@@ -13,7 +13,9 @@ log = "0.4.21"
 mongodb = "2.8.1"
 rand = { version = "0.8.5", features = ["small_rng"] }
 rayon = "1.9.0"
+redis = { version = "0.24.0", features = ["tokio-comp"] }
 serde = { version = "1.0.197", features = ["derive"] }
 surrealdb = "1.2.0"
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread"] }
 tokio-postgres = "0.7.10"
+serde_json = "1.0.114"

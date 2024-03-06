@@ -66,6 +66,14 @@ Run the benchmark against MongoDB:
 cargo run -r -- -d mongodb -s 100000 -t 3
 ```
 
+## Redis benchmark
+
+Run the benchmark against Redis:
+
+```bash
+cargo run -r -- -d redis -s 100000 -t 3
+```
+
 ## SurrealDB/Memory benchmark
 
 Run the benchmark against SurrealDB in memory:
