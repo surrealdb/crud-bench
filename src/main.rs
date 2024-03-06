@@ -4,6 +4,7 @@ use log::info;
 
 use crate::benchmark::{Benchmark, BenchmarkResult, DryClientProvider};
 use crate::docker::DockerContainer;
+use crate::mongodb::{MongoDBClientProvider, MONGODB_DOCKER_PARAMS};
 use crate::postgres::{PostgresClientProvider, POSTGRES_DOCKER_PARAMS};
 use crate::surrealdb::{
 	SurrealDBClientProvider, SURREAL_MEMORY_DOCKER_PARAMS, SURREAL_ROCKSDB_DOCKER_PARAMS,
@@ -12,6 +13,7 @@ use crate::surrealdb::{
 
 mod benchmark;
 mod docker;
+mod mongodb;
 mod postgres;
 mod surrealdb;
 
@@ -54,7 +56,7 @@ impl Database {
 			Database::SurrealdbMemory => SURREAL_MEMORY_DOCKER_PARAMS,
 			Database::SurrealdbRocksdb => SURREAL_ROCKSDB_DOCKER_PARAMS,
 			Database::SurrealdbSpeedb => SURREAL_SPEEDB_DOCKER_PARAMS,
-			Database::Mongodb => todo!(),
+			Database::Mongodb => MONGODB_DOCKER_PARAMS,
 			Database::Postgresql => POSTGRES_DOCKER_PARAMS,
 		};
 		let image = image.unwrap_or(params.image.to_string());
@@ -69,7 +71,7 @@ impl Database {
 			| Database::SurrealdbMemory
 			| Database::SurrealdbRocksdb
 			| Database::SurrealdbSpeedb => benchmark.run(SurrealDBClientProvider::default()),
-			Database::Mongodb => todo!(),
+			Database::Mongodb => benchmark.run(MongoDBClientProvider::default()),
 			Database::Postgresql => benchmark.run(PostgresClientProvider::default()),
 		}
 	}

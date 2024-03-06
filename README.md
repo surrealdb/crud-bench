@@ -58,6 +58,14 @@ Run the benchmark against PostgreSQL:
 cargo run -r -- -d postgresql -s 100000 -t 3
 ```
 
+## MongoDB benchmark
+
+Run the benchmark against MongoDB:
+
+```bash
+cargo run -r -- -d mongodb -s 100000 -t 3
+```
+
 ## SurrealDB/Memory benchmark
 
 Run the benchmark against SurrealDB in memory:
