@@ -105,7 +105,7 @@ Run the benchmark against an already running SurrealDB instance:
 Eg.: Start a Speedb based Surreal instance:
 
 ```bash
- cargo run --features=storage-speedb -r -- start --auth --user root --pass root speedb:/tmp/sur-bench.db
+cargo run --features=storage-speedb -r -- start --auth --user root --pass root speedb:/tmp/sur-bench.db
 ```
 
 Then run the bench:
