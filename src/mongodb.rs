@@ -58,16 +58,16 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
-	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
-		let doc = MongoDBRecord::new(key, record);
-		self.collection.insert_one(doc, None).await?;
-		Ok(())
-	}
-
 	async fn read(&mut self, key: i32) -> Result<()> {
 		let filter = doc! { "id": key };
 		let doc = self.collection.find_one(Some(filter), None).await?;
 		assert_eq!(doc.unwrap().id, key);
+		Ok(())
+	}
+
+	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
+		let doc = MongoDBRecord::new(key, record);
+		self.collection.insert_one(doc, None).await?;
 		Ok(())
 	}
 

@@ -38,13 +38,21 @@ impl BenchmarkClient for PostgresClient {
 		self.client
 			.batch_execute(
 				"
-    CREATE TABLE record (
-        id      SERIAL PRIMARY KEY,
-        text    TEXT NOT NULL,
-        integer    INTEGER NOT NULL
-    )",
+					CREATE TABLE record (
+						id      SERIAL PRIMARY KEY,
+						text    TEXT NOT NULL,
+						integer    INTEGER NOT NULL
+					)
+				",
 			)
 			.await?;
+		Ok(())
+	}
+
+	async fn read(&mut self, key: i32) -> Result<()> {
+		let res =
+			self.client.query("SELECT id, text, integer FROM record WHERE id=$1", &[&key]).await?;
+		assert_eq!(res.len(), 1);
 		Ok(())
 	}
 
@@ -57,13 +65,6 @@ impl BenchmarkClient for PostgresClient {
 			)
 			.await?;
 		assert_eq!(res, 1);
-		Ok(())
-	}
-
-	async fn read(&mut self, key: i32) -> Result<()> {
-		let res =
-			self.client.query("SELECT id, text, integer FROM record WHERE id=$1", &[&key]).await?;
-		assert_eq!(res.len(), 1);
 		Ok(())
 	}
 

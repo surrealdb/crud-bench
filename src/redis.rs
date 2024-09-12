@@ -34,22 +34,27 @@ impl BenchmarkClient for RedisClient {
 		Ok(())
 	}
 
+	async fn read(&mut self, key: i32) -> Result<()> {
+		let json: String = self.conn.get(key).await?;
+		assert!(json.starts_with(r#"{"text":""#), "{}", json);
+		Ok(())
+	}
+
+	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
 		let json = serde_json::to_string(record)?;
 		self.conn.set(key, json).await?;
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
-		let json: String = self.conn.get(key).await?;
-		assert!(json.starts_with("{\"text\":\""), "{}", json);
+	#[allow(dependency_on_unit_never_type_fallback)]
+	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
+		let json = serde_json::to_string(record)?;
+		self.conn.set(key, json).await?;
 		Ok(())
 	}
 
-	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
-		self.create(key, record).await
-	}
-
+	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete(&mut self, key: i32) -> Result<()> {
 		self.conn.del(key).await?;
 		Ok(())

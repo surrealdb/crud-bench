@@ -8,8 +8,8 @@ use crate::mongodb::{MongoDBClientProvider, MONGODB_DOCKER_PARAMS};
 use crate::postgres::{PostgresClientProvider, POSTGRES_DOCKER_PARAMS};
 use crate::redis::{RedisClientProvider, REDIS_DOCKER_PARAMS};
 use crate::surrealdb::{
-	SurrealDBClientProvider, SURREAL_KV_DOCKER_PARAMS, SURREAL_MEMORY_DOCKER_PARAMS,
-	SURREAL_ROCKSDB_DOCKER_PARAMS, SURREAL_SPEEDB_DOCKER_PARAMS,
+	SurrealDBClientProvider, SURREALDB_MEMORY_DOCKER_PARAMS, SURREALDB_ROCKSDB_DOCKER_PARAMS,
+	SURREALDB_SURREALKV_DOCKER_PARAMS,
 };
 
 mod benchmark;
@@ -45,8 +45,7 @@ pub(crate) enum Database {
 	Surrealdb,
 	SurrealdbMemory,
 	SurrealdbRocksdb,
-	SurrealdbSpeedb,
-	SurrealdbKv,
+	SurrealdbSurrealkv,
 	Mongodb,
 	Postgresql,
 	Redis,
@@ -57,10 +56,9 @@ impl Database {
 		let params = match self {
 			Database::Dry => return None,
 			Database::Surrealdb => return None,
-			Database::SurrealdbMemory => SURREAL_MEMORY_DOCKER_PARAMS,
-			Database::SurrealdbRocksdb => SURREAL_ROCKSDB_DOCKER_PARAMS,
-			Database::SurrealdbSpeedb => SURREAL_SPEEDB_DOCKER_PARAMS,
-			Database::SurrealdbKv => SURREAL_KV_DOCKER_PARAMS,
+			Database::SurrealdbMemory => SURREALDB_MEMORY_DOCKER_PARAMS,
+			Database::SurrealdbRocksdb => SURREALDB_ROCKSDB_DOCKER_PARAMS,
+			Database::SurrealdbSurrealkv => SURREALDB_SURREALKV_DOCKER_PARAMS,
 			Database::Mongodb => MONGODB_DOCKER_PARAMS,
 			Database::Postgresql => POSTGRES_DOCKER_PARAMS,
 			Database::Redis => REDIS_DOCKER_PARAMS,
@@ -76,8 +74,7 @@ impl Database {
 			Database::Surrealdb
 			| Database::SurrealdbMemory
 			| Database::SurrealdbRocksdb
-			| Database::SurrealdbSpeedb
-			| Database::SurrealdbKv => benchmark.run(SurrealDBClientProvider::default()),
+			| Database::SurrealdbSurrealkv => benchmark.run(SurrealDBClientProvider::default()),
 			Database::Mongodb => benchmark.run(MongoDBClientProvider::default()),
 			Database::Postgresql => benchmark.run(PostgresClientProvider::default()),
 			Database::Redis => benchmark.run(RedisClientProvider::default()),

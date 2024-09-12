@@ -1,21 +1,21 @@
 [package]
 name = "crud-bench"
 edition = "2021"
-version = "0.0.1"
+version = "0.1.0"
 license = "Apache-2.0"
 readme = "README.md"
 
 [dependencies]
-anyhow = "1.0.80"
-clap = { version = "4.5.1", features = ["derive"] }
-env_logger = "0.11.2"
-log = "0.4.21"
-mongodb = "2.8.1"
+anyhow = "1.0.88"
+clap = { version = "4.5.17", features = ["derive"] }
+env_logger = "0.11.5"
+log = "0.4.22"
+mongodb = "2.8.2"
 rand = { version = "0.8.5", features = ["small_rng"] }
-rayon = "1.9.0"
+rayon = "1.10.0"
 redis = { version = "0.24.0", features = ["tokio-comp"] }
-serde = { version = "1.0.197", features = ["derive"] }
-surrealdb = "1.2.0"
-tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread"] }
-tokio-postgres = "0.7.10"
-serde_json = "1.0.114"
+serde = { version = "1.0.210", features = ["derive"] }
+surrealdb = { version = "2.0.2", package = "surrealdb-beta" }
+tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread"] }
+tokio-postgres = "0.7.11"
+serde_json = "1.0.128"

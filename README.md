@@ -36,7 +36,7 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES> --threads 
 
 Options:
   -i, --image <IMAGE>        Docker image
-  -d, --database <DATABASE>  Database [possible values: dry, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-speedb, mongodb, postgresql]
+  -d, --database <DATABASE>  Database [possible values: dry, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, mongodb, postgresql]
   -s, --samples <SAMPLES>    Number of samples
   -t, --threads <THREADS>    Number of concurrent threads
   -h, --help                 Print help
@@ -74,7 +74,7 @@ Run the benchmark against Redis:
 cargo run -r -- -d redis -s 100000 -t 3
 ```
 
-## SurrealDB/Memory benchmark
+## SurrealDB+Memory benchmark
 
 Run the benchmark against SurrealDB in memory:
 
@@ -82,7 +82,7 @@ Run the benchmark against SurrealDB in memory:
 cargo run -r -- -d surrealdb-memory -s 100000 -t 3
 ```
 
-## SurrealDB/RocksDB benchmark
+## SurrealDB+RocksDB benchmark
 
 Run the benchmark against SurreadDB with RocksDB:
 
@@ -90,22 +90,22 @@ Run the benchmark against SurreadDB with RocksDB:
 cargo run -r -- -d surrealdb-rocksdb -s 100000 -t 3
 ```
 
-## SurrealDB/SurrealKV benchmark
+## SurrealDB+SurrealKV benchmark
 
 Run the benchmark against SurreadDB with SurrealKV:
 
 ```bash
-cargo run -r -- -d surrealdb-kv -s 100000 -t 3
+cargo run -r -- -d surrealdb-surrealkv -s 100000 -t 3
 ```
 
 ## SurrealDB local benchmark
 
 Run the benchmark against an already running SurrealDB instance:
 
-Eg.: Start a Speedb based Surreal instance:
+Eg.: Start a SurrealKV based SurrealDB instance:
 
 ```bash
-cargo run --features=storage-speedb -r -- start --auth --user root --pass root speedb:/tmp/sur-bench.db
+cargo run --features=storage-surrealkv -r -- start --auth --user root --pass root surrealkv:/tmp/sur-bench.db
 ```
 
 Then run the bench:

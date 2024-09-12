@@ -8,28 +8,22 @@ use surrealdb::Surreal;
 use crate::benchmark::{BenchmarkClient, BenchmarkClientProvider, Record};
 use crate::docker::DockerParams;
 
-pub(crate) const SURREAL_SPEEDB_DOCKER_PARAMS: DockerParams = DockerParams {
+pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
 	pre_args: "-p 127.0.0.1:8000:8000",
-	post_args: "start --auth --user root --pass root speedb://tmp/crud-bench.db",
+	post_args: "start --user root --pass root memory",
 };
 
-pub(crate) const SURREAL_ROCKSDB_DOCKER_PARAMS: DockerParams = DockerParams {
+pub(crate) const SURREALDB_ROCKSDB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
 	pre_args: "-p 127.0.0.1:8000:8000",
-	post_args: "start --auth --user root --pass root rocksdb://tmp/crud-bench.db",
+	post_args: "start --user root --pass root rocksdb://tmp/crud-bench.db",
 };
 
-pub(crate) const SURREAL_KV_DOCKER_PARAMS: DockerParams = DockerParams {
+pub(crate) const SURREALDB_SURREALKV_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
 	pre_args: "-p 127.0.0.1:8000:8000",
-	post_args: "start --auth --user root --pass root surrealkv://tmp/crud-bench.db",
-};
-
-pub(crate) const SURREAL_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 127.0.0.1:8000:8000",
-	post_args: "start --auth --user root --pass root memory",
+	post_args: "start --user root --pass root surrealkv://tmp/crud-bench.db",
 };
 
 #[derive(Default)]
@@ -79,28 +73,28 @@ impl BenchmarkClient for SurrealDBClient {
 		Ok(())
 	}
 
-	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
-		let created: Option<SurrealRecord> =
-			self.db.create(("record", key)).content(record.clone()).await?;
-		assert!(created.is_some());
+	async fn read(&mut self, key: i32) -> Result<()> {
+		let read: Option<Record> = self.db.select(("record", key as i64)).await?;
+		assert!(read.is_some());
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
-		let read: Option<Record> = self.db.select(("record", key)).await?;
-		assert!(read.is_some());
+	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
+		let created: Option<SurrealRecord> =
+			self.db.create(("record", key as i64)).content(record.clone()).await?;
+		assert!(created.is_some());
 		Ok(())
 	}
 
 	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
 		let updated: Option<SurrealRecord> =
-			self.db.update(("record", key)).content(record.clone()).await?;
+			self.db.update(("record", key as i64)).content(record.clone()).await?;
 		assert!(updated.is_some());
 		Ok(())
 	}
 
 	async fn delete(&mut self, key: i32) -> Result<()> {
-		let deleted: Option<Record> = self.db.delete(("record", key)).await?;
+		let deleted: Option<Record> = self.db.delete(("record", key as i64)).await?;
 		assert!(deleted.is_some());
 		Ok(())
 	}
