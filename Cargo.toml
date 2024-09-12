@@ -5,6 +5,13 @@ version = "0.1.0"
 license = "Apache-2.0"
 readme = "README.md"
 
+[profile.release]
+lto = true
+strip = true
+opt-level = 3
+panic = 'abort'
+codegen-units = 1
+
 [dependencies]
 anyhow = "1.0.88"
 clap = { version = "4.5.17", features = ["derive"] }
