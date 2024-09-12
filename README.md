@@ -36,7 +36,7 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES> --threads 
 
 Options:
   -i, --image <IMAGE>        Docker image
-  -d, --database <DATABASE>  Database [possible values: dry, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, mongodb, postgresql]
+  -d, --database <DATABASE>  Database [possible values: dry, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, mongodb, postgresql]
   -s, --samples <SAMPLES>    Number of samples
   -t, --threads <THREADS>    Number of concurrent threads
   -h, --help                 Print help
@@ -105,7 +105,7 @@ Run the benchmark against an already running SurrealDB instance:
 Eg.: Start a SurrealKV based SurrealDB instance:
 
 ```bash
-cargo run --features=storage-surrealkv -r -- start --auth --user root --pass root surrealkv:/tmp/sur-bench.db
+cargo run --features=storage-surrealkv -r -- start --user root --pass root surrealkv:/tmp/sur-bench.db
 ```
 
 Then run the bench:
