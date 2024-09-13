@@ -82,6 +82,14 @@ Run the benchmark against RocksDB:
 cargo run -r -- -d rocksdb -s 100000 -t 3
 ```
 
+## SurrealKV benchmark
+
+Run the benchmark against SurrealKV:
+
+```bash
+cargo run -r -- -d surrealkv -s 100000 -t 3
+```
+
 ## SurrealDB+Memory benchmark
 
 Run the benchmark against SurrealDB in memory:

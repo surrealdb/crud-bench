@@ -23,6 +23,7 @@ mod postgres;
 mod redis;
 mod rocksdb;
 mod surrealdb;
+mod surrealkv;
 
 #[derive(Parser, Debug)]
 #[command(term_width = 0)]
@@ -48,6 +49,7 @@ pub(crate) struct Args {
 pub(crate) enum Database {
 	Dry,
 	Rocksdb,
+	Surrealkv,
 	Surrealdb,
 	SurrealdbMemory,
 	SurrealdbRocksdb,
@@ -62,6 +64,7 @@ impl Database {
 		let params = match self {
 			Database::Dry => return None,
 			Database::Rocksdb => return None,
+			Database::Surrealkv => return None,
 			Database::Surrealdb => return None,
 			Database::SurrealdbMemory => SURREALDB_MEMORY_DOCKER_PARAMS,
 			Database::SurrealdbRocksdb => SURREALDB_ROCKSDB_DOCKER_PARAMS,
@@ -79,6 +82,7 @@ impl Database {
 		match self {
 			Database::Dry => benchmark.run(DryClientProvider::default()),
 			Database::Rocksdb => benchmark.run(RocksDBClientProvider::default()),
+			Database::Surrealkv => benchmark.run(SurrealKVClientProvider::default()),
 			Database::Surrealdb => benchmark.run(SurrealDBClientProvider::default()),
 			Database::SurrealdbMemory => benchmark.run(SurrealDBClientProvider::default()),
 			Database::SurrealdbRocksdb => benchmark.run(SurrealDBClientProvider::default()),
