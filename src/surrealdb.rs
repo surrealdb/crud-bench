@@ -60,7 +60,7 @@ struct SurrealRecord {
 }
 
 impl BenchmarkClient for SurrealDBClient {
-	async fn prepare(&mut self) -> Result<()> {
+	async fn startup(&mut self) -> Result<()> {
 		// Ensure the table exists. This wouldn't
 		// normally be an issue, as SurrealDB is
 		// schemaless, but because we are testing

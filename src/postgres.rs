@@ -34,7 +34,7 @@ pub(crate) struct PostgresClient {
 }
 
 impl BenchmarkClient for PostgresClient {
-	async fn prepare(&mut self) -> Result<()> {
+	async fn startup(&mut self) -> Result<()> {
 		self.client
 			.batch_execute(
 				"

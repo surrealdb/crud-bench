@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::io::Write;
@@ -13,7 +12,6 @@ use rand::{Rng, SeedableRng};
 use rayon::scope;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::{Builder, Runtime};
-use tokio::sync::RwLock;
 use tokio::time::sleep;
 
 use crate::Args;
@@ -76,7 +74,7 @@ impl Benchmark {
 			runtime.block_on(async {
 				let mut client =
 					Self::wait_for_client(&client_provider, Duration::from_secs(60)).await?;
-				client.prepare().await?;
+				client.startup().await?;
 				Ok::<(), anyhow::Error>(())
 			})?;
 		}
@@ -170,6 +168,7 @@ impl Benchmark {
 								BenchmarkOperation::Delete => client.delete(sample).await?,
 							}
 						}
+						client.shutdown().await?;
 						info!("Thread #{thread_number}/{operation:?} ends");
 						Ok::<(), anyhow::Error>(())
 					}) {
@@ -238,53 +237,20 @@ where
 }
 
 pub(crate) trait BenchmarkClient {
-	async fn prepare(&mut self) -> Result<()>;
+	/// Initialise the store at startup
+	async fn startup(&mut self) -> Result<()> {
+		Ok(())
+	}
+	/// Cleanup the store at shutdown
+	async fn shutdown(&mut self) -> Result<()> {
+		Ok(())
+	}
+	/// Create a record at a key
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()>;
+	/// Read a record at a key
 	async fn read(&mut self, key: i32) -> Result<()>;
+	/// Update a record at a key
 	async fn update(&mut self, key: i32, record: &Record) -> Result<()>;
+	/// Delete a record at a key
 	async fn delete(&mut self, key: i32) -> Result<()>;
-}
-
-pub(crate) type DryDatabase = Arc<RwLock<HashMap<i32, Record>>>;
-
-#[derive(Default)]
-pub(crate) struct DryClientProvider {
-	database: DryDatabase,
-}
-
-impl BenchmarkClientProvider<DryClient> for DryClientProvider {
-	async fn create_client(&self) -> Result<DryClient> {
-		Ok(DryClient {
-			database: self.database.clone(),
-		})
-	}
-}
-
-pub(crate) struct DryClient {
-	database: DryDatabase,
-}
-
-impl BenchmarkClient for DryClient {
-	async fn prepare(&mut self) -> Result<()> {
-		Ok(())
-	}
-
-	async fn create(&mut self, sample: i32, record: &Record) -> Result<()> {
-		assert!(self.database.write().await.insert(sample, record.clone()).is_none());
-		Ok(())
-	}
-
-	async fn read(&mut self, sample: i32) -> Result<()> {
-		assert!(self.database.read().await.get(&sample).is_some());
-		Ok(())
-	}
-
-	async fn update(&mut self, sample: i32, record: &Record) -> Result<()> {
-		assert!(self.database.write().await.insert(sample, record.clone()).is_some());
-		Ok(())
-	}
-	async fn delete(&mut self, sample: i32) -> Result<()> {
-		assert!(self.database.write().await.remove(&sample).is_some());
-		Ok(())
-	}
 }

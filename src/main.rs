@@ -2,18 +2,22 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use log::info;
 
-use crate::benchmark::{Benchmark, BenchmarkResult, DryClientProvider};
+use crate::benchmark::{Benchmark, BenchmarkResult};
 use crate::docker::DockerContainer;
+use crate::dry::DryClientProvider;
 use crate::mongodb::{MongoDBClientProvider, MONGODB_DOCKER_PARAMS};
 use crate::postgres::{PostgresClientProvider, POSTGRES_DOCKER_PARAMS};
 use crate::redis::{RedisClientProvider, REDIS_DOCKER_PARAMS};
+use crate::rocksdb::RocksDBClientProvider;
 use crate::surrealdb::{
 	SurrealDBClientProvider, SURREALDB_MEMORY_DOCKER_PARAMS, SURREALDB_ROCKSDB_DOCKER_PARAMS,
 	SURREALDB_SURREALKV_DOCKER_PARAMS,
 };
+use crate::surrealkv::SurrealKVClientProvider;
 
 mod benchmark;
 mod docker;
+mod dry;
 mod mongodb;
 mod postgres;
 mod redis;
@@ -71,10 +75,10 @@ impl Database {
 	fn run(&self, benchmark: &Benchmark) -> Result<BenchmarkResult> {
 		match self {
 			Database::Dry => benchmark.run(DryClientProvider::default()),
-			Database::Surrealdb
-			| Database::SurrealdbMemory
-			| Database::SurrealdbRocksdb
-			| Database::SurrealdbSurrealkv => benchmark.run(SurrealDBClientProvider::default()),
+			Database::Surrealdb => benchmark.run(SurrealDBClientProvider::default()),
+			Database::SurrealdbMemory => benchmark.run(SurrealDBClientProvider::default()),
+			Database::SurrealdbRocksdb => benchmark.run(SurrealDBClientProvider::default()),
+			Database::SurrealdbSurrealkv => benchmark.run(SurrealDBClientProvider::default()),
 			Database::Mongodb => benchmark.run(MongoDBClientProvider::default()),
 			Database::Postgresql => benchmark.run(PostgresClientProvider::default()),
 			Database::Redis => benchmark.run(RedisClientProvider::default()),

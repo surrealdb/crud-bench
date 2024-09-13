@@ -30,27 +30,27 @@ pub(crate) struct RedisClient {
 }
 
 impl BenchmarkClient for RedisClient {
-	async fn prepare(&mut self) -> Result<()> {
+	async fn startup(&mut self) -> Result<()> {
 		Ok(())
 	}
 
 	async fn read(&mut self, key: i32) -> Result<()> {
-		let json: String = self.conn.get(key).await?;
-		assert!(json.starts_with(r#"{"text":""#), "{}", json);
+		let val: Vec<u8> = self.conn.get(key).await?;
+		assert!(!val.is_empty());
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
-		let json = serde_json::to_string(record)?;
-		self.conn.set(key, json).await?;
+		let val = serde_json::to_vec(record)?;
+		self.conn.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
-		let json = serde_json::to_string(record)?;
-		self.conn.set(key, json).await?;
+		let val = serde_json::to_vec(record)?;
+		self.conn.set(key, val).await?;
 		Ok(())
 	}
 

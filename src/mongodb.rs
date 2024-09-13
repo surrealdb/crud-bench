@@ -50,7 +50,7 @@ pub(crate) struct MongoDBClient {
 }
 
 impl BenchmarkClient for MongoDBClient {
-	async fn prepare(&mut self) -> Result<()> {
+	async fn startup(&mut self) -> Result<()> {
 		let index_options = IndexOptions::builder().unique(true).build();
 		let index_model =
 			IndexModel::builder().keys(doc! { "id": 1 }).options(index_options).build();
