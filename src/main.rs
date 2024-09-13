@@ -21,6 +21,7 @@ mod dry;
 mod mongodb;
 mod postgres;
 mod redis;
+mod rocksdb;
 mod surrealdb;
 
 #[derive(Parser, Debug)]
@@ -46,6 +47,7 @@ pub(crate) struct Args {
 #[derive(ValueEnum, Debug, Clone)]
 pub(crate) enum Database {
 	Dry,
+	Rocksdb,
 	Surrealdb,
 	SurrealdbMemory,
 	SurrealdbRocksdb,
@@ -59,6 +61,7 @@ impl Database {
 	fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
 		let params = match self {
 			Database::Dry => return None,
+			Database::Rocksdb => return None,
 			Database::Surrealdb => return None,
 			Database::SurrealdbMemory => SURREALDB_MEMORY_DOCKER_PARAMS,
 			Database::SurrealdbRocksdb => SURREALDB_ROCKSDB_DOCKER_PARAMS,
@@ -75,6 +78,7 @@ impl Database {
 	fn run(&self, benchmark: &Benchmark) -> Result<BenchmarkResult> {
 		match self {
 			Database::Dry => benchmark.run(DryClientProvider::default()),
+			Database::Rocksdb => benchmark.run(RocksDBClientProvider::default()),
 			Database::Surrealdb => benchmark.run(SurrealDBClientProvider::default()),
 			Database::SurrealdbMemory => benchmark.run(SurrealDBClientProvider::default()),
 			Database::SurrealdbRocksdb => benchmark.run(SurrealDBClientProvider::default()),

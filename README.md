@@ -74,6 +74,14 @@ Run the benchmark against Redis:
 cargo run -r -- -d redis -s 100000 -t 3
 ```
 
+## RocksDB benchmark
+
+Run the benchmark against RocksDB:
+
+```bash
+cargo run -r -- -d rocksdb -s 100000 -t 3
+```
+
 ## SurrealDB+Memory benchmark
 
 Run the benchmark against SurrealDB in memory:
