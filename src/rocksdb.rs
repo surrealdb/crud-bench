@@ -15,33 +15,33 @@ impl BenchmarkClientProvider<RocksDBClient> for RocksDBClientProvider {
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
 		opts.set_use_fsync(false);
-		// // Only use warning log level
+		// Only use warning log level
 		opts.set_log_level(LogLevel::Error);
-		// // Set the number of log files to keep
+		// Set the number of log files to keep
 		opts.set_keep_log_file_num(20);
-		// // Create database if missing
+		// Create database if missing
 		opts.create_if_missing(true);
-		// // Create column families if missing
+		// Create column families if missing
 		opts.create_missing_column_families(true);
-		// // Set the datastore compaction style
+		// Set the datastore compaction style
 		opts.set_compaction_style(DBCompactionStyle::Level);
-		// // Increase the background thread count
+		// Increase the background thread count
 		opts.increase_parallelism(8);
-		// // Set the maximum number of write buffers
+		// Set the maximum number of write buffers
 		opts.set_max_write_buffer_number(32);
-		// // Set the amount of data to build up in memory
+		// Set the amount of data to build up in memory
 		opts.set_write_buffer_size(256 * 1024 * 1024);
-		// // Set the target file size for compaction
+		// Set the target file size for compaction
 		opts.set_target_file_size_base(512 * 1024 * 1024);
-		// // Set minimum number of write buffers to merge
+		// Set minimum number of write buffers to merge
 		opts.set_min_write_buffer_number_to_merge(4);
-		// // Use separate write thread queues
+		// Use separate write thread queues
 		opts.set_enable_pipelined_write(true);
-		// // Enable separation of keys and values
+		// Enable separation of keys and values
 		opts.set_enable_blob_files(true);
-		// // Store 4KB values separate from keys
+		// Store 4KB values separate from keys
 		opts.set_min_blob_size(4 * 1024);
-		// // Set specific compression levels
+		// Set specific compression levels
 		opts.set_compression_per_level(&[
 			DBCompressionType::None,
 			DBCompressionType::None,
@@ -85,8 +85,11 @@ impl BenchmarkClient for RocksDBClient {
 		// Set the write options
 		let mut wo = WriteOptions::default();
 		wo.set_sync(false);
+		// Get the database snapshot
+		let ss = self.db.snapshot();
 		// Configure read options
 		let mut ro = ReadOptions::default();
+		ro.set_snapshot(&ss);
 		ro.set_async_io(true);
 		ro.fill_cache(true);
 		// Create a new transaction
