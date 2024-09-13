@@ -24,10 +24,6 @@ pub(crate) struct SurrealKVClient {
 }
 
 impl BenchmarkClient for SurrealKVClient {
-	async fn startup(&mut self) -> Result<()> {
-		Ok(())
-	}
-
 	async fn read(&mut self, key: i32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let txn = self.db.begin_with_mode(Mode::ReadOnly)?;

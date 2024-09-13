@@ -30,10 +30,6 @@ pub(crate) struct RedisClient {
 }
 
 impl BenchmarkClient for RedisClient {
-	async fn startup(&mut self) -> Result<()> {
-		Ok(())
-	}
-
 	async fn read(&mut self, key: i32) -> Result<()> {
 		let val: Vec<u8> = self.conn.get(key).await?;
 		assert!(!val.is_empty());

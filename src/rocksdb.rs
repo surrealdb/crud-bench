@@ -73,9 +73,6 @@ impl BenchmarkClient for RocksDBClient {
 		// Ok
 		Ok(())
 	}
-	async fn startup(&mut self) -> Result<()> {
-		Ok(())
-	}
 
 	async fn read(&mut self, key: i32) -> Result<()> {
 		let key = &key.to_ne_bytes();
