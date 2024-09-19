@@ -1,8 +1,10 @@
+#![cfg(feature = "redis")]
+
 use anyhow::Result;
 use redis::aio::Connection;
 use redis::{AsyncCommands, Client};
 
-use crate::benchmark::{BenchmarkClient, BenchmarkClientProvider, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 use crate::docker::DockerParams;
 
 pub(crate) const REDIS_DOCKER_PARAMS: DockerParams = DockerParams {
@@ -14,9 +16,9 @@ pub(crate) const REDIS_DOCKER_PARAMS: DockerParams = DockerParams {
 #[derive(Default)]
 pub(crate) struct RedisClientProvider {}
 
-impl BenchmarkClientProvider<RedisClient> for RedisClientProvider {
-	async fn create_client(&self) -> Result<RedisClient> {
-		let url = "redis://:root@127.0.0.1:6379/";
+impl BenchmarkEngine<RedisClient> for RedisClientProvider {
+	async fn create_client(&self, endpoint: Option<String>) -> Result<RedisClient> {
+		let url = endpoint.unwrap_or("redis://:root@127.0.0.1:6379/".to_owned());
 		let client = Client::open(url)?;
 		let conn = client.get_async_connection().await?;
 		Ok(RedisClient {

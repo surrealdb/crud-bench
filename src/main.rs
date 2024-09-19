@@ -5,14 +5,17 @@ use log::info;
 use crate::benchmark::{Benchmark, BenchmarkResult};
 use crate::docker::DockerContainer;
 use crate::dry::DryClientProvider;
-use crate::mongodb::{MongoDBClientProvider, MONGODB_DOCKER_PARAMS};
-use crate::postgres::{PostgresClientProvider, POSTGRES_DOCKER_PARAMS};
-use crate::redis::{RedisClientProvider, REDIS_DOCKER_PARAMS};
+#[cfg(feature = "mongodb")]
+use crate::mongodb::MongoDBClientProvider;
+#[cfg(feature = "postgres")]
+use crate::postgres::PostgresClientProvider;
+#[cfg(feature = "redis")]
+use crate::redis::RedisClientProvider;
+#[cfg(feature = "rocksdb")]
 use crate::rocksdb::RocksDBClientProvider;
-use crate::surrealdb::{
-	SurrealDBClientProvider, SURREALDB_MEMORY_DOCKER_PARAMS, SURREALDB_ROCKSDB_DOCKER_PARAMS,
-	SURREALDB_SURREALKV_DOCKER_PARAMS,
-};
+#[cfg(feature = "surrealdb")]
+use crate::surrealdb::SurrealDBClientProvider;
+#[cfg(feature = "surrealkv")]
 use crate::surrealkv::SurrealKVClientProvider;
 
 mod benchmark;
@@ -36,7 +39,7 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) database: Database,
 
-	/// Connection
+	/// Database
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
 
@@ -52,14 +55,23 @@ pub(crate) struct Args {
 #[derive(ValueEnum, Debug, Clone)]
 pub(crate) enum Database {
 	Dry,
+	#[cfg(feature = "rocksdb")]
 	Rocksdb,
+	#[cfg(feature = "surrealkv")]
 	Surrealkv,
+	#[cfg(feature = "surrealdb")]
 	Surrealdb,
+	#[cfg(feature = "surrealdb")]
 	SurrealdbMemory,
+	#[cfg(feature = "surrealdb")]
 	SurrealdbRocksdb,
+	#[cfg(feature = "surrealdb")]
 	SurrealdbSurrealkv,
+	#[cfg(feature = "mongodb")]
 	Mongodb,
-	Postgresql,
+	#[cfg(feature = "postgres")]
+	Postgres,
+	#[cfg(feature = "redis")]
 	Redis,
 }
 
@@ -67,15 +79,24 @@ impl Database {
 	fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
 		let params = match self {
 			Database::Dry => return None,
+			#[cfg(feature = "rocksdb")]
 			Database::Rocksdb => return None,
+			#[cfg(feature = "surrealkv")]
 			Database::Surrealkv => return None,
+			#[cfg(feature = "surrealdb")]
 			Database::Surrealdb => return None,
-			Database::SurrealdbMemory => SURREALDB_MEMORY_DOCKER_PARAMS,
-			Database::SurrealdbRocksdb => SURREALDB_ROCKSDB_DOCKER_PARAMS,
-			Database::SurrealdbSurrealkv => SURREALDB_SURREALKV_DOCKER_PARAMS,
-			Database::Mongodb => MONGODB_DOCKER_PARAMS,
-			Database::Postgresql => POSTGRES_DOCKER_PARAMS,
-			Database::Redis => REDIS_DOCKER_PARAMS,
+			#[cfg(feature = "surrealdb")]
+			Database::SurrealdbMemory => surrealdb::SURREALDB_MEMORY_DOCKER_PARAMS,
+			#[cfg(feature = "surrealdb")]
+			Database::SurrealdbRocksdb => surrealdb::SURREALDB_ROCKSDB_DOCKER_PARAMS,
+			#[cfg(feature = "surrealdb")]
+			Database::SurrealdbSurrealkv => surrealdb::SURREALDB_SURREALKV_DOCKER_PARAMS,
+			#[cfg(feature = "mongodb")]
+			Database::Mongodb => mongodb::MONGODB_DOCKER_PARAMS,
+			#[cfg(feature = "postgres")]
+			Database::Postgres => postgres::POSTGRES_DOCKER_PARAMS,
+			#[cfg(feature = "redis")]
+			Database::Redis => redis::REDIS_DOCKER_PARAMS,
 		};
 		let image = image.unwrap_or(params.image.to_string());
 		let container = DockerContainer::start(image, params.pre_args, params.post_args);
@@ -85,14 +106,23 @@ impl Database {
 	fn run(&self, benchmark: &Benchmark) -> Result<BenchmarkResult> {
 		match self {
 			Database::Dry => benchmark.run(DryClientProvider::default()),
+			#[cfg(feature = "rocksdb")]
 			Database::Rocksdb => benchmark.run(RocksDBClientProvider::default()),
+			#[cfg(feature = "surrealkv")]
 			Database::Surrealkv => benchmark.run(SurrealKVClientProvider::default()),
+			#[cfg(feature = "surrealdb")]
 			Database::Surrealdb => benchmark.run(SurrealDBClientProvider::default()),
+			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbMemory => benchmark.run(SurrealDBClientProvider::default()),
+			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbRocksdb => benchmark.run(SurrealDBClientProvider::default()),
+			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbSurrealkv => benchmark.run(SurrealDBClientProvider::default()),
+			#[cfg(feature = "mongodb")]
 			Database::Mongodb => benchmark.run(MongoDBClientProvider::default()),
-			Database::Postgresql => benchmark.run(PostgresClientProvider::default()),
+			#[cfg(feature = "postgres")]
+			Database::Postgres => benchmark.run(PostgresClientProvider::default()),
+			#[cfg(feature = "redis")]
 			Database::Redis => benchmark.run(RedisClientProvider::default()),
 		}
 	}

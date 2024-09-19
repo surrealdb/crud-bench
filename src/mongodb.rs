@@ -1,10 +1,12 @@
+#![cfg(feature = "mongodb")]
+
 use anyhow::Result;
 use mongodb::bson::doc;
 use mongodb::options::IndexOptions;
 use mongodb::{options::ClientOptions, Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 
-use crate::benchmark::{BenchmarkClient, BenchmarkClientProvider, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 use crate::docker::DockerParams;
 
 pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
@@ -16,10 +18,11 @@ pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 #[derive(Default)]
 pub(crate) struct MongoDBClientProvider {}
 
-impl BenchmarkClientProvider<MongoDBClient> for MongoDBClientProvider {
-	async fn create_client(&self) -> Result<MongoDBClient> {
-		let client_options = ClientOptions::parse("mongodb://root:root@localhost:27017").await?;
-		let client = Client::with_options(client_options)?;
+impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
+	async fn create_client(&self, endpoint: Option<String>) -> Result<MongoDBClient> {
+		let url = endpoint.unwrap_or("mongodb://root:root@localhost:27017".to_owned());
+		let opts = ClientOptions::parse(&url).await?;
+		let client = Client::with_options(opts)?;
 		let db = client.database("crud-bench");
 		let collection = db.collection::<MongoDBRecord>("record");
 		Ok(MongoDBClient {

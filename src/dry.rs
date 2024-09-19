@@ -1,4 +1,4 @@
-use crate::benchmark::{BenchmarkClient, BenchmarkClientProvider, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,8 +11,8 @@ pub(crate) struct DryClientProvider {
 	database: DryDatabase,
 }
 
-impl BenchmarkClientProvider<DryClient> for DryClientProvider {
-	async fn create_client(&self) -> Result<DryClient> {
+impl BenchmarkEngine<DryClient> for DryClientProvider {
+	async fn create_client(&self, _: Option<String>) -> Result<DryClient> {
 		Ok(DryClient {
 			database: self.database.clone(),
 		})

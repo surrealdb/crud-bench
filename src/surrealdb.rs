@@ -1,11 +1,11 @@
 use anyhow::Result;
 use serde::Deserialize;
-use surrealdb::engine::remote::ws::{Client, Ws};
+use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
 use surrealdb::sql::Thing;
 use surrealdb::Surreal;
 
-use crate::benchmark::{BenchmarkClient, BenchmarkClientProvider, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 use crate::docker::DockerParams;
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
@@ -29,20 +29,21 @@ pub(crate) const SURREALDB_SURREALKV_DOCKER_PARAMS: DockerParams = DockerParams 
 #[derive(Default)]
 pub(crate) struct SurrealDBClientProvider {}
 
-impl BenchmarkClientProvider<SurrealDBClient> for SurrealDBClientProvider {
-	async fn create_client(&self) -> Result<SurrealDBClient> {
-		let db = Surreal::new::<Ws>("127.0.0.1:8000").await?;
-
+impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
+	async fn create_client(&self, endpoint: Option<String>) -> Result<SurrealDBClient> {
+		// Get the endpoint if specified
+		let ep = endpoint.unwrap_or("ws://127.0.0.1:8000".to_owned());
+		// Connect to the database
+		let db = connect(ep).await?;
 		// Signin as a namespace, database, or root user
 		db.signin(Root {
 			username: "root",
 			password: "root",
 		})
 		.await?;
-
 		// Select a specific namespace / database
 		db.use_ns("test").use_db("test").await?;
-
+		// Return the client
 		Ok(SurrealDBClient {
 			db,
 		})
@@ -50,7 +51,7 @@ impl BenchmarkClientProvider<SurrealDBClient> for SurrealDBClientProvider {
 }
 
 pub(crate) struct SurrealDBClient {
-	db: Surreal<Client>,
+	db: Surreal<Any>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -1,7 +1,9 @@
+#![cfg(feature = "postgres")]
+
 use anyhow::Result;
 use tokio_postgres::{Client, NoTls};
 
-use crate::benchmark::{BenchmarkClient, BenchmarkClientProvider, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 use crate::docker::DockerParams;
 
 pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
@@ -13,11 +15,10 @@ pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 #[derive(Default)]
 pub(crate) struct PostgresClientProvider {}
 
-impl BenchmarkClientProvider<PostgresClient> for PostgresClientProvider {
-	async fn create_client(&self) -> Result<PostgresClient> {
-		let (client, connection) =
-			tokio_postgres::connect("host=localhost user=postgres password=postgres", NoTls)
-				.await?;
+impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
+	async fn create_client(&self, endpoint: Option<String>) -> Result<PostgresClient> {
+		let url = endpoint.unwrap_or("host=localhost user=postgres password=postgres".to_owned());
+		let (client, connection) = tokio_postgres::connect(&url, NoTls).await?;
 		tokio::spawn(async move {
 			if let Err(e) = connection.await {
 				eprintln!("connection error: {}", e);

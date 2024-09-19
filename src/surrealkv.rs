@@ -1,16 +1,18 @@
+#![cfg(feature = "surrealkv")]
+
 use anyhow::Result;
 use std::path::PathBuf;
 use surrealkv::Mode;
 use surrealkv::Options;
 use surrealkv::Store;
 
-use crate::benchmark::{BenchmarkClient, BenchmarkClientProvider, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 
 #[derive(Default)]
 pub(crate) struct SurrealKVClientProvider {}
 
-impl BenchmarkClientProvider<SurrealKVClient> for SurrealKVClientProvider {
-	async fn create_client(&self) -> Result<SurrealKVClient> {
+impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
+	async fn create_client(&self, _: Option<String>) -> Result<SurrealKVClient> {
 		let mut opts = Options::new();
 		opts.dir = PathBuf::from("surrealkv");
 		Ok(SurrealKVClient {

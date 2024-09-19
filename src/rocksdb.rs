@@ -1,16 +1,18 @@
+#![cfg(feature = "rocksdb")]
+
 use anyhow::Result;
 use rocksdb::{
 	DBCompactionStyle, DBCompressionType, FlushOptions, LogLevel, OptimisticTransactionDB,
 	OptimisticTransactionOptions, Options, ReadOptions, WriteOptions,
 };
 
-use crate::benchmark::{BenchmarkClient, BenchmarkClientProvider, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 
 #[derive(Default)]
 pub(crate) struct RocksDBClientProvider {}
 
-impl BenchmarkClientProvider<RocksDBClient> for RocksDBClientProvider {
-	async fn create_client(&self) -> Result<RocksDBClient> {
+impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
+	async fn create_client(&self, _: Option<String>) -> Result<RocksDBClient> {
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync

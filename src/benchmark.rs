@@ -17,9 +17,10 @@ use tokio::time::sleep;
 use crate::Args;
 
 pub(crate) struct Benchmark {
-	endpoint: Option<String>,
 	threads: usize,
 	samples: i32,
+	timeout: Duration,
+	endpoint: Option<String>,
 }
 
 pub(crate) struct BenchmarkResult {
@@ -41,41 +42,46 @@ impl Display for BenchmarkResult {
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
 		Self {
-			endpoint: args.endpoint,
 			threads: args.threads,
 			samples: args.samples,
+			timeout: Duration::from_secs(60),
+			endpoint: args.endpoint.to_owned(),
 		}
 	}
 
-	pub async fn wait_for_client<C, P>(client_provider: &P, time_out: Duration) -> Result<C>
+	pub async fn wait_for_client<C, P>(
+		engine: &P,
+		endpoint: Option<String>,
+		timeout: Duration,
+	) -> Result<C>
 	where
 		C: BenchmarkClient + Send,
-		P: BenchmarkClientProvider<C> + Send + Sync,
+		P: BenchmarkEngine<C> + Send + Sync,
 	{
 		sleep(Duration::from_secs(2)).await;
 		let start = SystemTime::now();
-		while start.elapsed()? < time_out {
-			sleep(Duration::from_secs(5)).await;
+		while start.elapsed()? < timeout {
 			info!("Create client connection");
-			if let Ok(client) = client_provider.create_client().await {
+			if let Ok(client) = engine.create_client(endpoint.to_owned()).await {
 				return Ok(client);
 			}
 			warn!("DB not yet responding");
+			sleep(Duration::from_secs(5)).await;
 		}
 		bail!("Can't create the client")
 	}
 
-	pub(crate) fn run<C, P>(&self, client_provider: P) -> Result<BenchmarkResult>
+	pub(crate) fn run<C, P>(&self, engine: P) -> Result<BenchmarkResult>
 	where
 		C: BenchmarkClient + Send,
-		P: BenchmarkClientProvider<C> + Send + Sync,
+		P: BenchmarkEngine<C> + Send + Sync,
 	{
 		{
 			// Prepare
 			let runtime = Runtime::new().expect("Failed to create a runtime");
 			runtime.block_on(async {
 				let mut client =
-					Self::wait_for_client(&client_provider, Duration::from_secs(60)).await?;
+					Self::wait_for_client(&engine, self.endpoint.to_owned(), self.timeout).await?;
 				client.startup().await?;
 				Ok::<(), anyhow::Error>(())
 			})?;
@@ -83,22 +89,22 @@ impl Benchmark {
 
 		// Run the "creates" benchmark
 		info!("Start creates benchmark");
-		let creates = self.run_operation(&client_provider, BenchmarkOperation::Create)?;
+		let creates = self.run_operation(&engine, BenchmarkOperation::Create)?;
 		info!("Creates benchmark done");
 
 		// Run the "reads" benchmark
 		info!("Start reads benchmark");
-		let reads = self.run_operation(&client_provider, BenchmarkOperation::Read)?;
+		let reads = self.run_operation(&engine, BenchmarkOperation::Read)?;
 		info!("Reads benchmark done");
 
 		// Run the "reads" benchmark
 		info!("Start updates benchmark");
-		let updates = self.run_operation(&client_provider, BenchmarkOperation::Update)?;
+		let updates = self.run_operation(&engine, BenchmarkOperation::Update)?;
 		info!("Reads benchmark done");
 
 		// Run the "deletes" benchmark
 		info!("Start deletes benchmark");
-		let deletes = self.run_operation(&client_provider, BenchmarkOperation::Delete)?;
+		let deletes = self.run_operation(&engine, BenchmarkOperation::Delete)?;
 		info!("Deletes benchmark done");
 
 		Ok(BenchmarkResult {
@@ -109,14 +115,10 @@ impl Benchmark {
 		})
 	}
 
-	fn run_operation<C, P>(
-		&self,
-		client_provider: &P,
-		operation: BenchmarkOperation,
-	) -> Result<Duration>
+	fn run_operation<C, P>(&self, engine: &P, operation: BenchmarkOperation) -> Result<Duration>
 	where
 		C: BenchmarkClient + Send,
-		P: BenchmarkClientProvider<C> + Send + Sync,
+		P: BenchmarkEngine<C> + Send + Sync,
 	{
 		let error = Arc::new(AtomicBool::new(false));
 		let time = Instant::now();
@@ -137,7 +139,7 @@ impl Benchmark {
 						.expect("Failed to create a runtime");
 					if let Err(e) = runtime.block_on(async {
 						info!("Thread #{thread_number}/{operation:?} starts");
-						let mut client = client_provider.create_client().await?;
+						let mut client = engine.create_client(self.endpoint.to_owned()).await?;
 						while !error.load(Ordering::Relaxed) {
 							let sample = current.fetch_add(1, Ordering::Relaxed);
 							if sample >= self.samples {
@@ -231,11 +233,11 @@ impl RecordProvider {
 	}
 }
 
-pub(crate) trait BenchmarkClientProvider<C>
+pub(crate) trait BenchmarkEngine<C>
 where
 	C: BenchmarkClient,
 {
-	async fn create_client(&self) -> Result<C>;
+	async fn create_client(&self, endpoint: Option<String>) -> Result<C>;
 }
 
 pub(crate) trait BenchmarkClient {
