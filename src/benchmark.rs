@@ -17,6 +17,7 @@ use tokio::time::sleep;
 use crate::Args;
 
 pub(crate) struct Benchmark {
+	endpoint: Option<String>,
 	threads: usize,
 	samples: i32,
 }
@@ -40,6 +41,7 @@ impl Display for BenchmarkResult {
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
 		Self {
+			endpoint: args.endpoint,
 			threads: args.threads,
 			samples: args.samples,
 		}
@@ -53,7 +55,7 @@ impl Benchmark {
 		sleep(Duration::from_secs(2)).await;
 		let start = SystemTime::now();
 		while start.elapsed()? < time_out {
-			sleep(Duration::from_secs(2)).await;
+			sleep(Duration::from_secs(5)).await;
 			info!("Create client connection");
 			if let Ok(client) = client_provider.create_client().await {
 				return Ok(client);

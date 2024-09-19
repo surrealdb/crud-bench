@@ -36,6 +36,10 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) database: Database,
 
+	/// Connection
+	#[arg(short, long)]
+	pub(crate) endpoint: Option<String>,
+
 	/// Number of samples
 	#[clap(short, long)]
 	pub(crate) samples: i32,
