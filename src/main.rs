@@ -10,6 +10,8 @@ use crate::dry::DryClientProvider;
 use crate::mongodb::MongoDBClientProvider;
 #[cfg(feature = "postgres")]
 use crate::postgres::PostgresClientProvider;
+#[cfg(feature = "rocksdb")]
+use crate::redb::ReDBClientProvider;
 #[cfg(feature = "redis")]
 use crate::redis::RedisClientProvider;
 #[cfg(feature = "rocksdb")]
@@ -24,6 +26,7 @@ mod docker;
 mod dry;
 mod mongodb;
 mod postgres;
+mod redb;
 mod redis;
 mod rocksdb;
 mod surrealdb;
@@ -56,6 +59,8 @@ pub(crate) struct Args {
 #[derive(ValueEnum, Debug, Clone)]
 pub(crate) enum Database {
 	Dry,
+	#[cfg(feature = "redb")]
+	Redb,
 	#[cfg(feature = "rocksdb")]
 	Rocksdb,
 	#[cfg(feature = "surrealkv")]
@@ -80,6 +85,8 @@ impl Database {
 	fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
 		let params: DockerParams = match self {
 			Database::Dry => return None,
+			#[cfg(feature = "redb")]
+			Database::Redb => return None,
 			#[cfg(feature = "rocksdb")]
 			Database::Rocksdb => return None,
 			#[cfg(feature = "surrealkv")]
@@ -107,6 +114,8 @@ impl Database {
 	async fn run(&self, benchmark: &Benchmark) -> Result<BenchmarkResult> {
 		match self {
 			Database::Dry => benchmark.run(DryClientProvider::default()).await,
+			#[cfg(feature = "redb")]
+			Database::Redb => benchmark.run(ReDBClientProvider::setup().await?).await,
 			#[cfg(feature = "rocksdb")]
 			Database::Rocksdb => benchmark.run(RocksDBClientProvider::setup().await?).await,
 			#[cfg(feature = "surrealkv")]
