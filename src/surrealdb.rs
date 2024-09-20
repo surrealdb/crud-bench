@@ -1,3 +1,5 @@
+#![cfg(feature = "surrealdb")]
+
 use anyhow::Result;
 use serde::Deserialize;
 use surrealdb::engine::any::{connect, Any};

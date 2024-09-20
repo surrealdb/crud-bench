@@ -11,7 +11,7 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use rayon::scope;
 use serde::{Deserialize, Serialize};
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::Builder;
 use tokio::time::sleep;
 
 use crate::Args;
@@ -49,20 +49,16 @@ impl Benchmark {
 		}
 	}
 
-	pub async fn wait_for_client<C, P>(
-		engine: &P,
-		endpoint: Option<String>,
-		timeout: Duration,
-	) -> Result<C>
+	pub(crate) async fn wait_for_client<C, P>(&self, engine: &P) -> Result<C>
 	where
 		C: BenchmarkClient + Send,
 		P: BenchmarkEngine<C> + Send + Sync,
 	{
 		sleep(Duration::from_secs(2)).await;
 		let start = SystemTime::now();
-		while start.elapsed()? < timeout {
+		while start.elapsed()? < self.timeout {
 			info!("Create client connection");
-			if let Ok(client) = engine.create_client(endpoint.to_owned()).await {
+			if let Ok(client) = engine.create_client(self.endpoint.to_owned()).await {
 				return Ok(client);
 			}
 			warn!("DB not yet responding");
@@ -71,21 +67,13 @@ impl Benchmark {
 		bail!("Can't create the client")
 	}
 
-	pub(crate) fn run<C, P>(&self, engine: P) -> Result<BenchmarkResult>
+	pub(crate) async fn run<C, P>(&self, engine: P) -> Result<BenchmarkResult>
 	where
 		C: BenchmarkClient + Send,
 		P: BenchmarkEngine<C> + Send + Sync,
 	{
-		{
-			// Prepare
-			let runtime = Runtime::new().expect("Failed to create a runtime");
-			runtime.block_on(async {
-				let mut client =
-					Self::wait_for_client(&engine, self.endpoint.to_owned(), self.timeout).await?;
-				client.startup().await?;
-				Ok::<(), anyhow::Error>(())
-			})?;
-		}
+		// Start the client
+		self.wait_for_client(&engine).await?.startup().await?;
 
 		// Run the "creates" benchmark
 		info!("Start creates benchmark");

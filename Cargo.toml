@@ -6,7 +6,7 @@ license = "Apache-2.0"
 readme = "README.md"
 
 [features]
-default = ["redis", "postgres", "mongodb", "surrealdb"]
+default = ["redis", "rocksdb", "postgres", "mongodb", "surrealkv", "surrealdb"]
 redis = ["dep:redis"]
 mongodb = ["dep:mongodb"]
 rocksdb = ["dep:rocksdb"]
@@ -34,6 +34,6 @@ rocksdb = { git = "https://github.com/surrealdb/rust-rocksdb", features = ["lz4"
 serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0.128"
 surrealdb = { version = "2.0.1", optional = true }
-surrealkv = { version = "0.3.4", optional = true }
-tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread"] }
+surrealkv = { version = "0.3.6", optional = true }
+tokio = { version = "1.40.0", features = ["macros", "time", "rt-multi-thread"] }
 tokio-postgres = { version = "0.7.11", optional = true }

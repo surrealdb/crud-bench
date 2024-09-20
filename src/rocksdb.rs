@@ -1,18 +1,21 @@
 #![cfg(feature = "rocksdb")]
 
+use anyhow::Error;
 use anyhow::Result;
 use rocksdb::{
 	DBCompactionStyle, DBCompressionType, FlushOptions, LogLevel, OptimisticTransactionDB,
 	OptimisticTransactionOptions, Options, ReadOptions, WriteOptions,
 };
+use std::sync::Arc;
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 
-#[derive(Default)]
-pub(crate) struct RocksDBClientProvider {}
+pub(crate) struct RocksDBClientProvider {
+	db: Arc<OptimisticTransactionDB>,
+}
 
-impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
-	async fn create_client(&self, _: Option<String>) -> Result<RocksDBClient> {
+impl RocksDBClientProvider {
+	pub(crate) async fn setup() -> Result<Self, Error> {
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
@@ -52,14 +55,22 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 			DBCompressionType::Lz4hc,
 		]);
 		// Create the store
+		Ok(Self {
+			db: Arc::new(OptimisticTransactionDB::open(&opts, "rocksdb")?),
+		})
+	}
+}
+
+impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
+	async fn create_client(&self, _: Option<String>) -> Result<RocksDBClient> {
 		Ok(RocksDBClient {
-			db: OptimisticTransactionDB::open(&opts, "rocksdb")?,
+			db: self.db.clone(),
 		})
 	}
 }
 
 pub(crate) struct RocksDBClient {
-	db: OptimisticTransactionDB,
+	db: Arc<OptimisticTransactionDB>,
 }
 
 impl BenchmarkClient for RocksDBClient {

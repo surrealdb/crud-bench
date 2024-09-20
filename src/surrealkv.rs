@@ -1,28 +1,42 @@
 #![cfg(feature = "surrealkv")]
 
+use anyhow::Error;
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::Arc;
 use surrealkv::Mode;
 use surrealkv::Options;
 use surrealkv::Store;
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 
-#[derive(Default)]
-pub(crate) struct SurrealKVClientProvider {}
+pub(crate) struct SurrealKVClientProvider {
+	db: Arc<Store>,
+}
+
+impl SurrealKVClientProvider {
+	pub(crate) async fn setup() -> Result<Self, Error> {
+		// Configure custom options
+		let mut opts = Options::new();
+		// Set the directory location
+		opts.dir = PathBuf::from("surrealkv");
+		// Create the store
+		Ok(SurrealKVClientProvider {
+			db: Arc::new(Store::new(opts)?),
+		})
+	}
+}
 
 impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 	async fn create_client(&self, _: Option<String>) -> Result<SurrealKVClient> {
-		let mut opts = Options::new();
-		opts.dir = PathBuf::from("surrealkv");
 		Ok(SurrealKVClient {
-			db: Store::new(opts)?,
+			db: self.db.clone(),
 		})
 	}
 }
 
 pub(crate) struct SurrealKVClient {
-	db: Store,
+	db: Arc<Store>,
 }
 
 impl BenchmarkClient for SurrealKVClient {

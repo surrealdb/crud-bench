@@ -4,6 +4,7 @@ use log::info;
 
 use crate::benchmark::{Benchmark, BenchmarkResult};
 use crate::docker::DockerContainer;
+use crate::docker::DockerParams;
 use crate::dry::DryClientProvider;
 #[cfg(feature = "mongodb")]
 use crate::mongodb::MongoDBClientProvider;
@@ -77,7 +78,7 @@ pub(crate) enum Database {
 
 impl Database {
 	fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
-		let params = match self {
+		let params: DockerParams = match self {
 			Database::Dry => return None,
 			#[cfg(feature = "rocksdb")]
 			Database::Rocksdb => return None,
@@ -103,32 +104,33 @@ impl Database {
 		Some(container)
 	}
 
-	fn run(&self, benchmark: &Benchmark) -> Result<BenchmarkResult> {
+	async fn run(&self, benchmark: &Benchmark) -> Result<BenchmarkResult> {
 		match self {
-			Database::Dry => benchmark.run(DryClientProvider::default()),
+			Database::Dry => benchmark.run(DryClientProvider::default()).await,
 			#[cfg(feature = "rocksdb")]
-			Database::Rocksdb => benchmark.run(RocksDBClientProvider::default()),
+			Database::Rocksdb => benchmark.run(RocksDBClientProvider::setup().await?).await,
 			#[cfg(feature = "surrealkv")]
-			Database::Surrealkv => benchmark.run(SurrealKVClientProvider::default()),
+			Database::Surrealkv => benchmark.run(SurrealKVClientProvider::setup().await?).await,
 			#[cfg(feature = "surrealdb")]
-			Database::Surrealdb => benchmark.run(SurrealDBClientProvider::default()),
+			Database::Surrealdb => benchmark.run(SurrealDBClientProvider::default()).await,
 			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbMemory => benchmark.run(SurrealDBClientProvider::default()),
+			Database::SurrealdbMemory => benchmark.run(SurrealDBClientProvider::default()).await,
 			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbRocksdb => benchmark.run(SurrealDBClientProvider::default()),
+			Database::SurrealdbRocksdb => benchmark.run(SurrealDBClientProvider::default()).await,
 			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbSurrealkv => benchmark.run(SurrealDBClientProvider::default()),
+			Database::SurrealdbSurrealkv => benchmark.run(SurrealDBClientProvider::default()).await,
 			#[cfg(feature = "mongodb")]
-			Database::Mongodb => benchmark.run(MongoDBClientProvider::default()),
+			Database::Mongodb => benchmark.run(MongoDBClientProvider::default()).await,
 			#[cfg(feature = "postgres")]
-			Database::Postgres => benchmark.run(PostgresClientProvider::default()),
+			Database::Postgres => benchmark.run(PostgresClientProvider::default()).await,
 			#[cfg(feature = "redis")]
-			Database::Redis => benchmark.run(RedisClientProvider::default()),
+			Database::Redis => benchmark.run(RedisClientProvider::default()).await,
 		}
 	}
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
 	// Initialise the logger
 	env_logger::init();
 	info!("Benchmark started!");
@@ -144,7 +146,7 @@ fn main() -> Result<()> {
 	let image = container.as_ref().map(|c| c.image().to_string());
 
 	// Run the benchmark
-	let res = args.database.run(&benchmark);
+	let res = args.database.run(&benchmark).await;
 
 	match res {
 		// print the results
