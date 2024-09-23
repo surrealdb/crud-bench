@@ -16,6 +16,8 @@ use crate::redb::ReDBClientProvider;
 use crate::redis::RedisClientProvider;
 #[cfg(feature = "rocksdb")]
 use crate::rocksdb::RocksDBClientProvider;
+#[cfg(feature = "speedb")]
+use crate::speedb::SpeeDBClientProvider;
 #[cfg(feature = "surrealdb")]
 use crate::surrealdb::SurrealDBClientProvider;
 #[cfg(feature = "surrealkv")]
@@ -29,6 +31,7 @@ mod postgres;
 mod redb;
 mod redis;
 mod rocksdb;
+mod speedb;
 mod surrealdb;
 mod surrealkv;
 
@@ -61,6 +64,8 @@ pub(crate) enum Database {
 	Dry,
 	#[cfg(feature = "redb")]
 	Redb,
+	#[cfg(feature = "speedb")]
+	Speedb,
 	#[cfg(feature = "rocksdb")]
 	Rocksdb,
 	#[cfg(feature = "surrealkv")]
@@ -87,6 +92,8 @@ impl Database {
 			Database::Dry => return None,
 			#[cfg(feature = "redb")]
 			Database::Redb => return None,
+			#[cfg(feature = "speedb")]
+			Database::Speedb => return None,
 			#[cfg(feature = "rocksdb")]
 			Database::Rocksdb => return None,
 			#[cfg(feature = "surrealkv")]
@@ -116,6 +123,8 @@ impl Database {
 			Database::Dry => benchmark.run(DryClientProvider::default()).await,
 			#[cfg(feature = "redb")]
 			Database::Redb => benchmark.run(ReDBClientProvider::setup().await?).await,
+			#[cfg(feature = "speedb")]
+			Database::Speedb => benchmark.run(SpeeDBClientProvider::setup().await?).await,
 			#[cfg(feature = "rocksdb")]
 			Database::Rocksdb => benchmark.run(RocksDBClientProvider::setup().await?).await,
 			#[cfg(feature = "surrealkv")]
