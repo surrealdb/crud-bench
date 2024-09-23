@@ -3,7 +3,7 @@
 use anyhow::Error;
 use anyhow::Result;
 use rocksdb::{
-	DBCompactionStyle, DBCompressionType, FlushOptions, LogLevel, OptimisticTransactionDB,
+	DBCompactionStyle, DBCompressionType, LogLevel, OptimisticTransactionDB,
 	OptimisticTransactionOptions, Options, ReadOptions, WriteOptions,
 };
 use std::sync::Arc;
@@ -16,6 +16,8 @@ pub(crate) struct RocksDBClientProvider {
 
 impl RocksDBClientProvider {
 	pub(crate) async fn setup() -> Result<Self, Error> {
+		// Cleanup the data directory
+		let _ = std::fs::remove_dir_all("rocksdb");
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
@@ -75,14 +77,8 @@ pub(crate) struct RocksDBClient {
 
 impl BenchmarkClient for RocksDBClient {
 	async fn shutdown(&mut self) -> Result<()> {
-		// Flush WAL to storage
-		self.db.flush_wal(true)?;
-		// Flush data to storage
-		let mut opt = FlushOptions::new();
-		opt.set_wait(true);
-		self.db.flush_opt(&opt)?;
-		// Compact the data
-		self.db.compact_range::<Vec<u8>, Vec<u8>>(None, None);
+		// Cleanup the data directory
+		let _ = std::fs::remove_dir_all("rocksdb");
 		// Ok
 		Ok(())
 	}

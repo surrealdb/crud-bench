@@ -15,6 +15,9 @@ pub(crate) struct ReDBClientProvider {
 
 impl ReDBClientProvider {
 	pub(crate) async fn setup() -> Result<Self, Error> {
+		// Cleanup the data directory
+		let _ = std::fs::remove_dir_all("redb");
+		// Create the store
 		Ok(Self {
 			db: Arc::new(Database::create("redb")?),
 		})
@@ -34,6 +37,13 @@ pub(crate) struct ReDBClient {
 }
 
 impl BenchmarkClient for ReDBClient {
+	async fn shutdown(&mut self) -> Result<()> {
+		// Cleanup the data directory
+		let _ = std::fs::remove_dir_all("redb");
+		// Ok
+		Ok(())
+	}
+
 	async fn read(&mut self, key: i32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Create a new transaction

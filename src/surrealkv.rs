@@ -16,6 +16,8 @@ pub(crate) struct SurrealKVClientProvider {
 
 impl SurrealKVClientProvider {
 	pub(crate) async fn setup() -> Result<Self, Error> {
+		// Cleanup the data directory
+		let _ = std::fs::remove_dir_all("surrealkv");
 		// Configure custom options
 		let mut opts = Options::new();
 		// Set the directory location
@@ -40,6 +42,13 @@ pub(crate) struct SurrealKVClient {
 }
 
 impl BenchmarkClient for SurrealKVClient {
+	async fn shutdown(&mut self) -> Result<()> {
+		// Cleanup the data directory
+		let _ = std::fs::remove_dir_all("surrealkv");
+		// Ok
+		Ok(())
+	}
+
 	async fn read(&mut self, key: i32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let txn = self.db.begin_with_mode(Mode::ReadOnly)?;
