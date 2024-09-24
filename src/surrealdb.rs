@@ -72,6 +72,7 @@ impl BenchmarkClient for SurrealDBClient {
 		// insert/create into the table attempts
 		// to setup the NS+DB+TB, and this causes
 		// 'resource busy' key conflict failures.
+		self.db.query("REMOVE TABLE IF EXISTS record").await?;
 		self.db.query("DEFINE TABLE record").await?;
 		Ok(())
 	}
