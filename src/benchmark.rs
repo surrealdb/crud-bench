@@ -121,6 +121,7 @@ impl Benchmark {
 				s.spawn(move |_| {
 					let mut record_provider = RecordProvider::default();
 					let runtime = Builder::new_multi_thread()
+						.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
 						.worker_threads(4) // Set the number of worker threads
 						.enable_all() // Enables all runtime features, including I/O and time
 						.build()
@@ -148,11 +149,11 @@ impl Benchmark {
 								}
 							}
 							match operation {
+								BenchmarkOperation::Read => client.read(sample).await?,
 								BenchmarkOperation::Create => {
 									let record = record_provider.sample();
 									client.create(sample, record).await?;
 								}
-								BenchmarkOperation::Read => client.read(sample).await?,
 								BenchmarkOperation::Update => {
 									let record = record_provider.sample();
 									client.update(sample, record).await?;
