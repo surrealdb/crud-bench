@@ -6,7 +6,7 @@ license = "Apache-2.0"
 readme = "README.md"
 
 [features]
-default = ["redis", "redb", "speedb", "rocksdb", "postgres", "mongodb", "surrealkv", "surrealdb"]
+default = ["redis", "redb", "rocksdb", "postgres", "mongodb", "surrealkv", "surrealdb"]
 mongodb = ["dep:mongodb"]
 postgres = ["dep:tokio-postgres"]
 redb = ["dep:redb"]
