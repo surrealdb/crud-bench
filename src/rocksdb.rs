@@ -83,6 +83,23 @@ impl BenchmarkClient for RocksDBClient {
 		Ok(())
 	}
 
+	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
+		let key = &key.to_ne_bytes();
+		let val = serde_json::to_vec(record)?;
+		// Set the transaction options
+		let mut to = OptimisticTransactionOptions::default();
+		to.set_snapshot(true);
+		// Set the write options
+		let mut wo = WriteOptions::default();
+		wo.set_sync(false);
+		// Create a new transaction
+		let txn = self.db.transaction_opt(&wo, &to);
+		// Process the data
+		txn.put(key, val)?;
+		txn.commit()?;
+		Ok(())
+	}
+
 	async fn read(&mut self, key: i32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Set the transaction options
@@ -103,23 +120,6 @@ impl BenchmarkClient for RocksDBClient {
 		// Process the data
 		let read: Option<Vec<u8>> = txn.get_opt(key, &ro)?;
 		assert!(read.is_some());
-		Ok(())
-	}
-
-	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
-		let key = &key.to_ne_bytes();
-		let val = serde_json::to_vec(record)?;
-		// Set the transaction options
-		let mut to = OptimisticTransactionOptions::default();
-		to.set_snapshot(true);
-		// Set the write options
-		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
-		// Create a new transaction
-		let txn = self.db.transaction_opt(&wo, &to);
-		// Process the data
-		txn.put(key, val)?;
-		txn.commit()?;
 		Ok(())
 	}
 

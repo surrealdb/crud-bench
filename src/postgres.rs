@@ -50,13 +50,6 @@ impl BenchmarkClient for PostgresClient {
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
-		let res =
-			self.client.query("SELECT id, text, integer FROM record WHERE id=$1", &[&key]).await?;
-		assert_eq!(res.len(), 1);
-		Ok(())
-	}
-
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
 		let res = self
 			.client
@@ -66,6 +59,13 @@ impl BenchmarkClient for PostgresClient {
 			)
 			.await?;
 		assert_eq!(res, 1);
+		Ok(())
+	}
+
+	async fn read(&mut self, key: i32) -> Result<()> {
+		let res =
+			self.client.query("SELECT id, text, integer FROM record WHERE id=$1", &[&key]).await?;
+		assert_eq!(res.len(), 1);
 		Ok(())
 	}
 

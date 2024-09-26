@@ -44,18 +44,6 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
-		let key = &key.to_ne_bytes();
-		// Create a new transaction
-		let txn = self.db.begin_read()?;
-		// Open the database table
-		let tab = txn.open_table(TABLE)?;
-		// Process the data
-		let read: Option<_> = tab.get(key.as_ref())?;
-		assert!(read.is_some());
-		Ok(())
-	}
-
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = serde_json::to_vec(record)?;
@@ -67,6 +55,18 @@ impl BenchmarkClient for ReDBClient {
 		tab.insert(key.as_ref(), val)?;
 		drop(tab);
 		txn.commit()?;
+		Ok(())
+	}
+
+	async fn read(&mut self, key: i32) -> Result<()> {
+		let key = &key.to_ne_bytes();
+		// Create a new transaction
+		let txn = self.db.begin_read()?;
+		// Open the database table
+		let tab = txn.open_table(TABLE)?;
+		// Process the data
+		let read: Option<_> = tab.get(key.as_ref())?;
+		assert!(read.is_some());
 		Ok(())
 	}
 

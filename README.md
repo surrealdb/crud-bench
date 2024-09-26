@@ -2,9 +2,11 @@
 
 ## Purpose
 
-The goal of this benchmark is for developers working on features in SurrealDB to assess their impact on CRUD performance.
+The goal of this benchmark is for developers working on features in SurrealDB to assess their impact on CRUD
+performance.
 
 E.g.:
+
 - Testing a new operator
 - Work on indexes
 - Work on query planner and execution plan
@@ -39,6 +41,7 @@ Options:
   -d, --database <DATABASE>  Database [possible values: dry, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, mongodb, postgresql]
   -s, --samples <SAMPLES>    Number of samples
   -t, --threads <THREADS>    Number of concurrent threads
+  -w, --workers <WORKERS>    Number of workers for the client async runtime (tokio). By default the number of logical CPUs.
   -h, --help                 Print help
 ```
 

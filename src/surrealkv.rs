@@ -49,20 +49,20 @@ impl BenchmarkClient for SurrealKVClient {
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
-		let key = &key.to_ne_bytes();
-		let txn = self.db.begin_with_mode(Mode::ReadOnly)?;
-		let read: Option<Vec<u8>> = txn.get(key)?;
-		assert!(read.is_some());
-		Ok(())
-	}
-
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = serde_json::to_vec(record)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(key, &val)?;
 		txn.commit().await?;
+		Ok(())
+	}
+
+	async fn read(&mut self, key: i32) -> Result<()> {
+		let key = &key.to_ne_bytes();
+		let txn = self.db.begin_with_mode(Mode::ReadOnly)?;
+		let read: Option<Vec<u8>> = txn.get(key)?;
+		assert!(read.is_some());
 		Ok(())
 	}
 

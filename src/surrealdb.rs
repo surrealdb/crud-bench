@@ -77,16 +77,16 @@ impl BenchmarkClient for SurrealDBClient {
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
-		let read: Option<Record> = self.db.select(("record", key as i64)).await?;
-		assert!(read.is_some());
-		Ok(())
-	}
-
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
 		let created: Option<SurrealRecord> =
 			self.db.create(("record", key as i64)).content(record.clone()).await?;
 		assert!(created.is_some());
+		Ok(())
+	}
+
+	async fn read(&mut self, key: i32) -> Result<()> {
+		let read: Option<Record> = self.db.select(("record", key as i64)).await?;
+		assert!(read.is_some());
 		Ok(())
 	}
 

@@ -1,10 +1,9 @@
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 use anyhow::Result;
-use std::collections::HashMap;
+use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
-pub(crate) type DryDatabase = Arc<RwLock<HashMap<i32, Record>>>;
+pub(crate) type DryDatabase = Arc<DashMap<i32, Record>>;
 
 #[derive(Default)]
 pub(crate) struct DryClientProvider {
@@ -25,21 +24,21 @@ pub(crate) struct DryClient {
 
 impl BenchmarkClient for DryClient {
 	async fn create(&mut self, sample: i32, record: &Record) -> Result<()> {
-		assert!(self.database.write().await.insert(sample, record.clone()).is_none());
+		assert!(self.database.insert(sample, record.clone()).is_none());
 		Ok(())
 	}
 
 	async fn read(&mut self, sample: i32) -> Result<()> {
-		assert!(self.database.read().await.get(&sample).is_some());
+		assert!(self.database.get(&sample).is_some());
 		Ok(())
 	}
 
 	async fn update(&mut self, sample: i32, record: &Record) -> Result<()> {
-		assert!(self.database.write().await.insert(sample, record.clone()).is_some());
+		assert!(self.database.insert(sample, record.clone()).is_some());
 		Ok(())
 	}
 	async fn delete(&mut self, sample: i32) -> Result<()> {
-		assert!(self.database.write().await.remove(&sample).is_some());
+		assert!(self.database.remove(&sample).is_some());
 		Ok(())
 	}
 }
