@@ -1,0 +1,179 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  merge_group:
+
+concurrency:
+  # Use github.run_id on main branch
+  # Use github.event.pull_request.number on pull requests, so it's unique per pull request
+  # Use github.ref on other branches, so it's unique per branch
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+
+  format:
+    name: Check format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check format
+        run: cargo fmt --all --check
+
+  clippy:
+    name: Check clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check clippy
+        run: cargo clippy --tests -- -D warnings
+
+  test:
+    name: Check tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check tests
+        run: cargo test
+
+  build:
+    name: Build crud-bench
+    runs-on: [ runner-amd64-2xlarge-private ]
+    steps:
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build benchmark
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Store artifacts
+        run: cp target/x86_64-unknown-linux-gnu/release/crud-bench crud-bench
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: crud-bench
+          path: crud-bench
+
+  benchmark:
+    name: Benchmark ${{ matrix.description }}
+    needs: build
+    runs-on: [ runner-amd64-2xlarge-private ]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Dry
+          - database: dry
+            description: Map
+          # Redis
+          - database: redis
+            description: Redis
+          # Postgres
+          - database: postgres
+            description: Postgres
+          # MongoDB
+          - database: mongodb
+            description: MongoDB
+          # ReDB
+          - database: redb
+            description: ReDB
+          # RocksDB
+          - database: rocksdb
+            description: RocksDB
+          # SurrealKV
+          - database: surrealkv
+            description: SurrealKV
+          # SurrealDB + Memory
+          - database: surrealdb-memory
+            description: SurrealDB with in-memory storage
+          # SurrealDB + RocksDB
+          - database: surrealdb-rocksdb
+            description: SurrealDB with RocksDB storage
+          # SurrealDB + SurrealKV
+          - database: surrealdb-surrealkv
+            description: SurrealDB with SurrealKV storage
+    steps:
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ github.workspace }}/artifacts
+          merge-multiple: true
+
+      - name: Set file permissions
+        run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
+
+      - name: Run benchmarks (10,000 samples / 3 threads)
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 10000 -t 3
+
+      - name: Run benchmarks (30,000 samples / 32 threads)
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 30000 -t 32
+
+      - name: Run benchmarks (100,000 samples / 32 threads)
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -t 32
+
+      - name: Run benchmarks (250,000 samples / 128 threads)
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 250000 -t 128
