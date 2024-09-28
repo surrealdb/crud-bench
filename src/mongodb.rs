@@ -2,8 +2,12 @@
 
 use anyhow::Result;
 use mongodb::bson::doc;
+use mongodb::options::ClientOptions;
+use mongodb::options::DatabaseOptions;
 use mongodb::options::IndexOptions;
-use mongodb::{options::ClientOptions, Client, Collection, IndexModel};
+use mongodb::options::ReadConcern;
+use mongodb::options::WriteConcern;
+use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
@@ -23,7 +27,13 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 		let url = endpoint.unwrap_or("mongodb://root:root@localhost:27017".to_owned());
 		let opts = ClientOptions::parse(&url).await?;
 		let client = Client::with_options(opts)?;
-		let db = client.database("crud-bench");
+		let db = client.database_with_options(
+			"crud-bench",
+			DatabaseOptions::builder()
+				.write_concern(WriteConcern::builder().journal(true).build())
+				.read_concern(ReadConcern::majority())
+				.build(),
+		);
 		let collection = db.collection::<MongoDBRecord>("record");
 		Ok(MongoDBClient {
 			collection,
@@ -57,34 +67,34 @@ impl BenchmarkClient for MongoDBClient {
 		let index_options = IndexOptions::builder().unique(true).build();
 		let index_model =
 			IndexModel::builder().keys(doc! { "id": 1 }).options(index_options).build();
-		self.collection.create_index(index_model, None).await?;
+		self.collection.create_index(index_model).await?;
 		Ok(())
 	}
 
 	async fn read(&mut self, key: i32) -> Result<()> {
 		let filter = doc! { "id": key };
-		let doc = self.collection.find_one(Some(filter), None).await?;
+		let doc = self.collection.find_one(filter).await?;
 		assert_eq!(doc.unwrap().id, key);
 		Ok(())
 	}
 
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
 		let doc = MongoDBRecord::new(key, record);
-		self.collection.insert_one(doc, None).await?;
+		self.collection.insert_one(doc).await?;
 		Ok(())
 	}
 
 	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
 		let doc = MongoDBRecord::new(key, record);
 		let filter = doc! { "id": key };
-		let res = self.collection.replace_one(filter, doc, None).await?;
+		let res = self.collection.replace_one(filter, doc).await?;
 		assert_eq!(res.modified_count, 1);
 		Ok(())
 	}
 
 	async fn delete(&mut self, key: i32) -> Result<()> {
 		let filter = doc! { "id": key };
-		let res = self.collection.delete_one(filter, None).await?;
+		let res = self.collection.delete_one(filter).await?;
 		assert_eq!(res.deleted_count, 1);
 		Ok(())
 	}
