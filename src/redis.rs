@@ -9,7 +9,7 @@ use crate::docker::DockerParams;
 
 pub(crate) const REDIS_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "redis",
-	pre_args: "-p 127.0.0.1:6379:6379",
+	pre_args: "",
 	post_args: "redis-server --requirepass root",
 };
 

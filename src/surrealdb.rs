@@ -12,19 +12,19 @@ use crate::docker::DockerParams;
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 127.0.0.1:8000:8000",
+	pre_args: "",
 	post_args: "start --user root --pass root memory",
 };
 
 pub(crate) const SURREALDB_ROCKSDB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 127.0.0.1:8000:8000",
+	pre_args: "",
 	post_args: "start --user root --pass root rocksdb://tmp/crud-bench.db",
 };
 
 pub(crate) const SURREALDB_SURREALKV_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 127.0.0.1:8000:8000",
+	pre_args: "",
 	post_args: "start --user root --pass root surrealkv://tmp/crud-bench.db",
 };
 
