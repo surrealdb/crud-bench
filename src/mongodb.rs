@@ -30,7 +30,7 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 		let db = client.database_with_options(
 			"crud-bench",
 			DatabaseOptions::builder()
-				.write_concern(WriteConcern::builder().journal(true).build())
+				.write_concern(WriteConcern::builder().journal(false).build())
 				.read_concern(ReadConcern::majority())
 				.build(),
 		);
