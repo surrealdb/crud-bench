@@ -46,7 +46,7 @@ impl BenchmarkClient for ReDBClient {
 
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let val = serde_json::to_vec(record)?;
+		let val = bincode::serialize(record)?;
 		// Create a new transaction
 		let txn = self.db.begin_write()?;
 		// Open the database table
@@ -72,7 +72,7 @@ impl BenchmarkClient for ReDBClient {
 
 	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let val = serde_json::to_vec(record)?;
+		let val = bincode::serialize(record)?;
 		// Create a new transaction
 		let txn = self.db.begin_write()?;
 		// Open the database table

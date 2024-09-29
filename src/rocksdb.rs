@@ -85,7 +85,7 @@ impl BenchmarkClient for RocksDBClient {
 
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let val = serde_json::to_vec(record)?;
+		let val = bincode::serialize(record)?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
@@ -125,7 +125,7 @@ impl BenchmarkClient for RocksDBClient {
 
 	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let val = serde_json::to_vec(record)?;
+		let val = bincode::serialize(record)?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);

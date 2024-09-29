@@ -51,7 +51,7 @@ impl BenchmarkClient for SurrealKVClient {
 
 	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let val = serde_json::to_vec(record)?;
+		let val = bincode::serialize(record)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(key, &val)?;
 		txn.commit().await?;
@@ -68,7 +68,7 @@ impl BenchmarkClient for SurrealKVClient {
 
 	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let val = serde_json::to_vec(record)?;
+		let val = bincode::serialize(record)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(key, &val)?;
 		txn.commit().await?;
