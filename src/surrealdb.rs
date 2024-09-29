@@ -18,7 +18,7 @@ pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 
 pub(crate) const SURREALDB_ROCKSDB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
-	pre_args: "",
+	pre_args: "-e SURREAL_WEBSOCKET_MAX_CONCURRENT_REQUESTS=128",
 	post_args: "start --user root --pass root rocksdb://tmp/crud-bench.db",
 };
 
