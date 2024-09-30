@@ -2,6 +2,8 @@ use crate::benchmark::{Benchmark, BenchmarkResult};
 use crate::docker::DockerContainer;
 use crate::docker::DockerParams;
 use crate::dry::DryClientProvider;
+#[cfg(feature = "keydb")]
+use crate::keydb::KeydbClientProvider;
 #[cfg(feature = "mongodb")]
 use crate::mongodb::MongoDBClientProvider;
 #[cfg(feature = "postgres")]
@@ -26,6 +28,7 @@ use tokio::runtime::Builder;
 mod benchmark;
 mod docker;
 mod dry;
+mod keydb;
 mod mongodb;
 mod postgres;
 mod redb;
@@ -88,6 +91,8 @@ pub(crate) enum Database {
 	Postgres,
 	#[cfg(feature = "redis")]
 	Redis,
+	#[cfg(feature = "keydb")]
+	Keydb,
 }
 
 impl Database {
@@ -116,6 +121,8 @@ impl Database {
 			Database::Postgres => postgres::POSTGRES_DOCKER_PARAMS,
 			#[cfg(feature = "redis")]
 			Database::Redis => redis::REDIS_DOCKER_PARAMS,
+			#[cfg(feature = "keydb")]
+			Database::Keydb => keydb::KEYDB_DOCKER_PARAMS,
 		};
 		let image = image.unwrap_or(params.image.to_string());
 		let container = DockerContainer::start(image, params.pre_args, params.post_args);
@@ -147,6 +154,8 @@ impl Database {
 			Database::Postgres => benchmark.run(PostgresClientProvider::default()).await,
 			#[cfg(feature = "redis")]
 			Database::Redis => benchmark.run(RedisClientProvider::default()).await,
+			#[cfg(feature = "keydb")]
+			Database::Keydb => benchmark.run(KeydbClientProvider::default()).await,
 		}
 	}
 }
