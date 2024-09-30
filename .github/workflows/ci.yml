@@ -126,6 +126,9 @@ jobs:
           # Redis
           - database: redis
             description: Redis
+          # KeyDB
+          - database: keydb
+            description: KeyDB
           # Postgres
           - database: postgres
             description: Postgres
