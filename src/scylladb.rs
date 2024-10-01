@@ -8,7 +8,7 @@ use crate::docker::DockerParams;
 
 pub(crate) const SCYLLADB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "scylladb/scylla",
-	pre_args: "-p 9042:9042",
+	pre_args: "",
 	post_args: "",
 };
 
