@@ -135,6 +135,9 @@ jobs:
           # MongoDB
           - database: mongodb
             description: MongoDB
+          # ScyllaDB
+          - database: scylladb
+            description: ScyllaDB
           # ReDB
           - database: redb
             description: ReDB
