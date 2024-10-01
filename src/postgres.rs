@@ -40,9 +40,9 @@ impl BenchmarkClient for PostgresClient {
 			.batch_execute(
 				"
 					CREATE TABLE record (
-						id      SERIAL PRIMARY KEY,
-						text    TEXT NOT NULL,
-						integer    INTEGER NOT NULL
+						id SERIAL PRIMARY KEY,
+						text TEXT NOT NULL,
+						integer INTEGER NOT NULL
 					)
 				",
 			)

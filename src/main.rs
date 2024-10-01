@@ -2,6 +2,7 @@ use crate::benchmark::{Benchmark, BenchmarkResult};
 use crate::docker::DockerContainer;
 use crate::docker::DockerParams;
 use crate::dry::DryClientProvider;
+
 #[cfg(feature = "keydb")]
 use crate::keydb::KeydbClientProvider;
 #[cfg(feature = "mongodb")]
@@ -14,6 +15,8 @@ use crate::redb::ReDBClientProvider;
 use crate::redis::RedisClientProvider;
 #[cfg(feature = "rocksdb")]
 use crate::rocksdb::RocksDBClientProvider;
+#[cfg(feature = "scylladb")]
+use crate::scylladb::ScyllaDBClientProvider;
 #[cfg(feature = "speedb")]
 use crate::speedb::SpeeDBClientProvider;
 #[cfg(feature = "surrealdb")]
@@ -34,6 +37,7 @@ mod postgres;
 mod redb;
 mod redis;
 mod rocksdb;
+mod scylladb;
 mod speedb;
 mod surrealdb;
 mod surrealkv;
@@ -85,6 +89,8 @@ pub(crate) enum Database {
 	SurrealdbRocksdb,
 	#[cfg(feature = "surrealdb")]
 	SurrealdbSurrealkv,
+	#[cfg(feature = "scylladb")]
+	Scylladb,
 	#[cfg(feature = "mongodb")]
 	Mongodb,
 	#[cfg(feature = "postgres")]
@@ -115,6 +121,8 @@ impl Database {
 			Database::SurrealdbRocksdb => surrealdb::SURREALDB_ROCKSDB_DOCKER_PARAMS,
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbSurrealkv => surrealdb::SURREALDB_SURREALKV_DOCKER_PARAMS,
+			#[cfg(feature = "scylladb")]
+			Database::Scylladb => scylladb::SCYLLADB_DOCKER_PARAMS,
 			#[cfg(feature = "mongodb")]
 			Database::Mongodb => mongodb::MONGODB_DOCKER_PARAMS,
 			#[cfg(feature = "postgres")]
@@ -148,6 +156,8 @@ impl Database {
 			Database::SurrealdbRocksdb => benchmark.run(SurrealDBClientProvider::default()).await,
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbSurrealkv => benchmark.run(SurrealDBClientProvider::default()).await,
+			#[cfg(feature = "scylladb")]
+			Database::Scylladb => benchmark.run(ScyllaDBClientProvider::default()).await,
 			#[cfg(feature = "mongodb")]
 			Database::Mongodb => benchmark.run(MongoDBClientProvider::default()).await,
 			#[cfg(feature = "postgres")]
