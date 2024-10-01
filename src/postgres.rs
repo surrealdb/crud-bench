@@ -8,7 +8,7 @@ use crate::docker::DockerParams;
 
 pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "postgres",
-	pre_args: "-e POSTGRES_PASSWORD=postgres",
+	pre_args: "-p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres",
 	post_args: "",
 };
 
@@ -40,9 +40,9 @@ impl BenchmarkClient for PostgresClient {
 			.batch_execute(
 				"
 					CREATE TABLE record (
-						id SERIAL PRIMARY KEY,
-						text TEXT NOT NULL,
-						integer INTEGER NOT NULL
+						id      SERIAL PRIMARY KEY,
+						text    TEXT NOT NULL,
+						integer    INTEGER NOT NULL
 					)
 				",
 			)
