@@ -60,7 +60,7 @@ impl BenchmarkClient for SurrealKVClient {
 
 	async fn read(&mut self, key: i32) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let txn = self.db.begin_with_mode(Mode::ReadOnly)?;
+		let mut txn = self.db.begin_with_mode(Mode::ReadOnly)?;
 		let read: Option<Vec<u8>> = txn.get(key)?;
 		assert!(read.is_some());
 		Ok(())

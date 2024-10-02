@@ -126,12 +126,18 @@ jobs:
           # Redis
           - database: redis
             description: Redis
+          # KeyDB
+          - database: keydb
+            description: KeyDB
           # Postgres
           - database: postgres
             description: Postgres
           # MongoDB
           - database: mongodb
             description: MongoDB
+          # ScyllaDB
+          - database: scylladb
+            description: ScyllaDB
           # ReDB
           - database: redb
             description: ReDB

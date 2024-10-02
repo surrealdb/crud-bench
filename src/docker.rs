@@ -19,7 +19,8 @@ impl DockerContainer {
 		info!("Start Docker image {}", image);
 		let mut arguments = Arguments::new(["run"]);
 		arguments.append(pre);
-		arguments.add(["--net", "host", "-d", &image]);
+		arguments.add(["--net", "host"]);
+		arguments.add(["-d", &image]);
 		arguments.append(post);
 		let id = Self::docker(arguments);
 		Self {
