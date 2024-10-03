@@ -3,7 +3,7 @@
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 use crate::docker::DockerParams;
 use anyhow::Result;
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client};
 use tokio::sync::Mutex;
 
@@ -20,7 +20,7 @@ impl BenchmarkEngine<KeydbClient> for KeydbClientProvider {
 	async fn create_client(&self, endpoint: Option<String>) -> Result<KeydbClient> {
 		let url = endpoint.unwrap_or("redis://:root@127.0.0.1:6379/".to_owned());
 		let client = Client::open(url)?;
-		let conn = Mutex::new(client.get_async_connection().await?);
+		let conn = Mutex::new(client.get_multiplexed_async_connection().await?);
 		Ok(KeydbClient {
 			conn,
 		})
@@ -28,7 +28,7 @@ impl BenchmarkEngine<KeydbClient> for KeydbClientProvider {
 }
 
 pub(crate) struct KeydbClient {
-	conn: Mutex<Connection>,
+	conn: Mutex<MultiplexedConnection>,
 }
 
 impl BenchmarkClient for KeydbClient {
