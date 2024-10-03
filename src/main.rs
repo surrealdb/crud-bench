@@ -204,7 +204,7 @@ fn main() {
 		// print the results
 		Ok(res) => {
 			println!(
-				"Benchmark result for {:?} on docker {image:?} - Samples: {} - Threads: {} - Clients: {} - Pool: {} - Cpus: {}",
+				"Benchmark result for {:?} on docker {image:?} - Samples: {} - Threads: {} - Workers: {} - Clients: {} - Cpus: {}",
 				args.database, args.samples, args.threads, workers, benchmark.clients(), num_cpus::get()
 			);
 			println!("{res}");
