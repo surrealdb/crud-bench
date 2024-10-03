@@ -12,11 +12,13 @@ use log::{error, info, warn};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tokio::task;
 use tokio::time::sleep;
 
 pub(crate) struct Benchmark {
 	threads: usize,
+	pool: usize,
 	samples: i32,
 	timeout: Duration,
 	endpoint: Option<String>,
@@ -45,7 +47,12 @@ impl Benchmark {
 			samples: args.samples,
 			timeout: Duration::from_secs(60),
 			endpoint: args.endpoint.to_owned(),
+			pool: args.pool.unwrap_or(1),
 		}
+	}
+
+	pub(crate) fn pool(&self) -> usize {
+		self.pool
 	}
 
 	pub(crate) async fn wait_for_client<C, P>(&self, engine: &P) -> Result<C>
@@ -122,23 +129,26 @@ impl Benchmark {
 
 		// start the threads
 		for thread_number in 0..self.threads {
-			let current = current.clone();
-			let error = error.clone();
-			let percent = percent.clone();
-			let samples = self.samples;
-			let client = engine.create_client(self.endpoint.clone()).await?;
-			let f = task::spawn(async move {
-				info!("Thread #{thread_number}/{operation:?} starts");
-				if let Err(e) =
-					Self::operation_loop(client, samples, &error, &current, &percent, operation)
-						.await
-				{
-					error!("{e}");
-					error.store(true, Ordering::Relaxed);
-				}
-				info!("Thread #{thread_number}/{operation:?} ends");
-			});
-			futures.push(f);
+			let client =  Arc::new(Mutex::new(engine.create_client(self.endpoint.clone()).await?));
+			for _ in 0..self.pool {
+				let current = current.clone();
+				let error = error.clone();
+				let percent = percent.clone();
+				let samples = self.samples;
+				let client = client.clone();
+				let f = task::spawn(async move {
+					info!("Thread #{thread_number}/{operation:?} starts");
+					if let Err(e) =
+						Self::operation_loop(client, samples, &error, &current, &percent, operation)
+							.await
+					{
+						error!("{e}");
+						error.store(true, Ordering::Relaxed);
+					}
+					info!("Thread #{thread_number}/{operation:?} ends");
+				});
+				futures.push(f);
+			}
 		}
 
 		// Wait for threads to be done
@@ -160,7 +170,7 @@ impl Benchmark {
 	}
 
 	async fn operation_loop<C>(
-		mut client: C,
+		client: Arc<Mutex<C>>,
 		samples: i32,
 		error: &AtomicBool,
 		current: &AtomicI32,
@@ -174,6 +184,7 @@ impl Benchmark {
 		while !error.load(Ordering::Relaxed) {
 			let sample = current.fetch_add(1, Ordering::Relaxed);
 			if sample >= samples {
+				// We are done
 				break;
 			}
 			// Calculate and print out the percents
@@ -191,19 +202,19 @@ impl Benchmark {
 				}
 			}
 			match operation {
-				BenchmarkOperation::Read => client.read(sample).await?,
+				BenchmarkOperation::Read => client.lock().await.read(sample).await?,
 				BenchmarkOperation::Create => {
 					let record = record_provider.sample();
-					client.create(sample, record).await?;
+					client.lock().await.create(sample, record).await?;
 				}
 				BenchmarkOperation::Update => {
 					let record = record_provider.sample();
-					client.update(sample, record).await?;
+					client.lock().await.update(sample, record).await?;
 				}
-				BenchmarkOperation::Delete => client.delete(sample).await?,
+				BenchmarkOperation::Delete => client.lock().await.delete(sample).await?,
 			}
 		}
-		client.shutdown().await?;
+		client.lock().await.shutdown().await?;
 		Ok::<(), anyhow::Error>(())
 	}
 }
