@@ -76,14 +76,14 @@ pub(crate) struct RocksDBClient {
 }
 
 impl BenchmarkClient for RocksDBClient {
-	async fn shutdown(&mut self) -> Result<()> {
+	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("rocksdb");
 		// Ok
 		Ok(())
 	}
 
-	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn create(&self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		// Set the transaction options
@@ -100,7 +100,7 @@ impl BenchmarkClient for RocksDBClient {
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
+	async fn read(&self, key: i32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
@@ -123,7 +123,7 @@ impl BenchmarkClient for RocksDBClient {
 		Ok(())
 	}
 
-	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn update(&self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		// Set the transaction options
@@ -140,7 +140,7 @@ impl BenchmarkClient for RocksDBClient {
 		Ok(())
 	}
 
-	async fn delete(&mut self, key: i32) -> Result<()> {
+	async fn delete(&self, key: i32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();

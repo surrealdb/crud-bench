@@ -37,14 +37,14 @@ pub(crate) struct ReDBClient {
 }
 
 impl BenchmarkClient for ReDBClient {
-	async fn shutdown(&mut self) -> Result<()> {
+	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("redb");
 		// Ok
 		Ok(())
 	}
 
-	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn create(&self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		// Create a new transaction
@@ -58,7 +58,7 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
+	async fn read(&self, key: i32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Create a new transaction
 		let txn = self.db.begin_read()?;
@@ -70,7 +70,7 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn update(&self, key: i32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		// Create a new transaction
@@ -84,7 +84,7 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn delete(&mut self, key: i32) -> Result<()> {
+	async fn delete(&self, key: i32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Create a new transaction
 		let txn = self.db.begin_write()?;

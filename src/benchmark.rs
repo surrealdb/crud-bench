@@ -12,7 +12,6 @@ use log::{error, info, warn};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 use tokio::task;
 use tokio::time::sleep;
 
@@ -115,7 +114,7 @@ impl Benchmark {
 		operation: BenchmarkOperation,
 	) -> Result<Duration>
 	where
-		C: BenchmarkClient,
+		C: BenchmarkClient + Send + Sync,
 		P: BenchmarkEngine<C> + Send + Sync,
 	{
 		let error = Arc::new(AtomicBool::new(false));
@@ -129,7 +128,7 @@ impl Benchmark {
 
 		// start the threads
 		for thread_number in 0..self.threads {
-			let client =  Arc::new(Mutex::new(engine.create_client(self.endpoint.clone()).await?));
+			let client = Arc::new(engine.create_client(self.endpoint.clone()).await?);
 			for _ in 0..self.pool {
 				let current = current.clone();
 				let error = error.clone();
@@ -170,7 +169,7 @@ impl Benchmark {
 	}
 
 	async fn operation_loop<C>(
-		client: Arc<Mutex<C>>,
+		client: Arc<C>,
 		samples: i32,
 		error: &AtomicBool,
 		current: &AtomicI32,
@@ -202,19 +201,19 @@ impl Benchmark {
 				}
 			}
 			match operation {
-				BenchmarkOperation::Read => client.lock().await.read(sample).await?,
+				BenchmarkOperation::Read => client.read(sample).await?,
 				BenchmarkOperation::Create => {
 					let record = record_provider.sample();
-					client.lock().await.create(sample, record).await?;
+					client.create(sample, record).await?;
 				}
 				BenchmarkOperation::Update => {
 					let record = record_provider.sample();
-					client.lock().await.update(sample, record).await?;
+					client.update(sample, record).await?;
 				}
-				BenchmarkOperation::Delete => client.lock().await.delete(sample).await?,
+				BenchmarkOperation::Delete => client.delete(sample).await?,
 			}
 		}
-		client.lock().await.shutdown().await?;
+		client.shutdown().await?;
 		Ok::<(), anyhow::Error>(())
 	}
 }
@@ -268,21 +267,21 @@ where
 	fn create_client(&self, endpoint: Option<String>) -> impl Future<Output = Result<C>> + Send;
 }
 
-pub(crate) trait BenchmarkClient: Send + 'static {
+pub(crate) trait BenchmarkClient: Send + Sync + 'static {
 	/// Initialise the store at startup
-	async fn startup(&mut self) -> Result<()> {
+	async fn startup(&self) -> Result<()> {
 		Ok(())
 	}
 	/// Cleanup the store at shutdown
-	fn shutdown(&mut self) -> impl Future<Output = Result<()>> + Send {
+	fn shutdown(&self) -> impl Future<Output = Result<()>> + Send {
 		async { Ok(()) }
 	}
 	/// Create a record at a key
-	fn create(&mut self, key: i32, record: &Record) -> impl Future<Output = Result<()>> + Send;
+	fn create(&self, key: i32, record: &Record) -> impl Future<Output = Result<()>> + Send;
 	/// Read a record at a key
-	fn read(&mut self, key: i32) -> impl Future<Output = Result<()>> + Send;
+	fn read(&self, key: i32) -> impl Future<Output = Result<()>> + Send;
 	/// Update a record at a key
-	fn update(&mut self, key: i32, record: &Record) -> impl Future<Output = Result<()>> + Send;
+	fn update(&self, key: i32, record: &Record) -> impl Future<Output = Result<()>> + Send;
 	/// Delete a record at a key
-	fn delete(&mut self, key: i32) -> impl Future<Output = Result<()>> + Send;
+	fn delete(&self, key: i32) -> impl Future<Output = Result<()>> + Send;
 }

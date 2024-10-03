@@ -23,21 +23,21 @@ pub(crate) struct DryClient {
 }
 
 impl BenchmarkClient for DryClient {
-	async fn create(&mut self, sample: i32, record: &Record) -> Result<()> {
+	async fn create(&self, sample: i32, record: &Record) -> Result<()> {
 		assert!(self.database.insert(sample, record.clone()).is_none());
 		Ok(())
 	}
 
-	async fn read(&mut self, sample: i32) -> Result<()> {
+	async fn read(&self, sample: i32) -> Result<()> {
 		assert!(self.database.get(&sample).is_some());
 		Ok(())
 	}
 
-	async fn update(&mut self, sample: i32, record: &Record) -> Result<()> {
+	async fn update(&self, sample: i32, record: &Record) -> Result<()> {
 		assert!(self.database.insert(sample, record.clone()).is_some());
 		Ok(())
 	}
-	async fn delete(&mut self, sample: i32) -> Result<()> {
+	async fn delete(&self, sample: i32) -> Result<()> {
 		assert!(self.database.remove(&sample).is_some());
 		Ok(())
 	}

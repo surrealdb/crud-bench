@@ -63,7 +63,7 @@ pub(crate) struct MongoDBClient {
 }
 
 impl BenchmarkClient for MongoDBClient {
-	async fn startup(&mut self) -> Result<()> {
+	async fn startup(&self) -> Result<()> {
 		let index_options = IndexOptions::builder().unique(true).build();
 		let index_model =
 			IndexModel::builder().keys(doc! { "id": 1 }).options(index_options).build();
@@ -71,20 +71,20 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
+	async fn read(&self, key: i32) -> Result<()> {
 		let filter = doc! { "id": key };
 		let doc = self.collection.find_one(filter).await?;
 		assert_eq!(doc.unwrap().id, key);
 		Ok(())
 	}
 
-	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn create(&self, key: i32, record: &Record) -> Result<()> {
 		let doc = MongoDBRecord::new(key, record);
 		self.collection.insert_one(doc).await?;
 		Ok(())
 	}
 
-	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn update(&self, key: i32, record: &Record) -> Result<()> {
 		let doc = MongoDBRecord::new(key, record);
 		let filter = doc! { "id": key };
 		let res = self.collection.replace_one(filter, doc).await?;
@@ -92,7 +92,7 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
-	async fn delete(&mut self, key: i32) -> Result<()> {
+	async fn delete(&self, key: i32) -> Result<()> {
 		let filter = doc! { "id": key };
 		let res = self.collection.delete_one(filter).await?;
 		assert_eq!(res.deleted_count, 1);
