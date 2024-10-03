@@ -61,7 +61,7 @@ pub(crate) struct Args {
 	#[clap(short, long)]
 	pub(crate) samples: i32,
 
-	/// Number of concurrent threads
+	/// Number of concurrent threads (per client)
 	#[clap(short, long)]
 	pub(crate) threads: usize,
 
@@ -69,9 +69,9 @@ pub(crate) struct Args {
 	#[clap(short, long)]
 	pub(crate) workers: Option<usize>,
 
-	/// Number of concurrent operations per client
+	/// Number of concurrent clients (default: 1)
 	#[clap(short, long)]
-	pub(crate) pool: Option<usize>,
+	pub(crate) clients: Option<usize>,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -204,8 +204,8 @@ fn main() {
 		// print the results
 		Ok(res) => {
 			println!(
-				"Benchmark result for {:?} on docker {image:?} - Samples: {} - Threads: {} - Workers: {} - Pool: {} - Cpus: {}",
-				args.database, args.samples, args.threads, workers, benchmark.pool(), num_cpus::get()
+				"Benchmark result for {:?} on docker {image:?} - Samples: {} - Threads: {} - Clients: {} - Pool: {} - Cpus: {}",
+				args.database, args.samples, args.threads, workers, benchmark.clients(), num_cpus::get()
 			);
 			println!("{res}");
 		}

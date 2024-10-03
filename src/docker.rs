@@ -19,6 +19,7 @@ impl DockerContainer {
 		info!("Start Docker image {}", image);
 		let mut arguments = Arguments::new(["run"]);
 		arguments.append(pre);
+		arguments.add(["--net", "host"]);
 		arguments.add(["-d", &image]);
 		arguments.append(post);
 		let id = Self::docker(arguments);
@@ -54,7 +55,6 @@ impl DockerContainer {
 		let std_out = String::from_utf8(output.stdout).unwrap().trim().to_string();
 		if !output.stderr.is_empty() {
 			error!("{}", String::from_utf8(output.stderr).unwrap());
-			error!("{command:?}");
 		}
 		assert_eq!(output.status.code(), Some(0), "Docker command failure: {command:?}");
 		std_out

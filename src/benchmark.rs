@@ -16,8 +16,8 @@ use tokio::task;
 use tokio::time::sleep;
 
 pub(crate) struct Benchmark {
+	clients: usize,
 	threads: usize,
-	pool: usize,
 	samples: i32,
 	timeout: Duration,
 	endpoint: Option<String>,
@@ -46,12 +46,12 @@ impl Benchmark {
 			samples: args.samples,
 			timeout: Duration::from_secs(60),
 			endpoint: args.endpoint.to_owned(),
-			pool: args.pool.unwrap_or(1),
+			clients: args.clients.unwrap_or(1),
 		}
 	}
 
-	pub(crate) fn pool(&self) -> usize {
-		self.pool
+	pub(crate) fn clients(&self) -> usize {
+		self.clients
 	}
 
 	pub(crate) async fn wait_for_client<C, P>(&self, engine: &P) -> Result<C>
@@ -127,9 +127,9 @@ impl Benchmark {
 		let mut futures = Vec::with_capacity(self.threads);
 
 		// start the threads
-		for thread_number in 0..self.threads {
+		for thread_number in 0..self.clients {
 			let client = Arc::new(engine.create_client(self.endpoint.clone()).await?);
-			for _ in 0..self.pool {
+			for _ in 0..self.threads {
 				let current = current.clone();
 				let error = error.clone();
 				let percent = percent.clone();
