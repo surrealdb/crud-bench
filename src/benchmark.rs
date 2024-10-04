@@ -5,7 +5,7 @@ use std::io::IsTerminal;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::Args;
 use anyhow::{bail, Result};
@@ -16,7 +16,7 @@ use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tokio::task;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) struct Benchmark {
 	/// The server endpoint to connect to
@@ -75,31 +75,20 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		P: BenchmarkEngine<C> + Send + Sync,
 	{
-		loop {
+		// Get the current system time
+		let time = SystemTime::now();
+		// Check the elapsed time
+		while time.elapsed()? < self.timeout {
 			// Get the specified endpoint
 			let endpoint = self.endpoint.to_owned();
-			// Wait for the first branch to finish
-			tokio::select! {
-				// Ensure we exit early
-				biased;
-				// Check if the connection has timedout
-				_ = tokio::time::sleep(self.timeout) => {
-					bail!("Couldn't connect to the database");
-				},
-				// Attempt to create a client connection
-				v = engine.create_client(endpoint) => match v {
-					// The client connected successfully
-					Ok(v) => return Ok(v),
-					// Couldn't connect to the server yet
-					Err(_) => {
-						// Wait for a small amount of time
-						tokio::time::sleep(TIMEOUT).await;
-						// Attempt to connect again
-						continue
-					},
-				}
+			// Attempt to create a client connection
+			if let Ok(v) = engine.create_client(endpoint).await {
+				return Ok(v);
 			}
+			// Wait for a small amount of time
+			tokio::time::sleep(TIMEOUT).await;
 		}
+		bail!("Can't create the client")
 	}
 
 	async fn setup_clients<C, P>(&self, engine: &P) -> Result<Vec<Arc<C>>>
