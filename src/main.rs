@@ -2,6 +2,7 @@ use crate::benchmark::{Benchmark, BenchmarkResult};
 use crate::docker::DockerContainer;
 use crate::docker::DockerParams;
 use crate::dry::DryClientProvider;
+use std::io::IsTerminal;
 
 #[cfg(feature = "keydb")]
 use crate::keydb::KeydbClientProvider;
@@ -185,7 +186,9 @@ fn main() {
 		.build()
 		.expect("Failed to create a runtime");
 	// Display formatting
-	println!("--------------------------------------------------");
+	if std::io::stdout().is_terminal() {
+		println!("--------------------------------------------------");
+	}
 	// Run the benchmark
 	let res = runtime.block_on(async { args.database.run(&benchmark).await });
 	// Output the results
