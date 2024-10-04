@@ -121,7 +121,7 @@ impl Benchmark {
 
 	async fn run_operation<C, P>(
 		&self,
-		clients: &Vec<Arc<C>>,
+		clients: &[Arc<C>],
 		operation: BenchmarkOperation,
 	) -> Result<Duration>
 	where
@@ -254,9 +254,9 @@ pub(crate) struct BenchmarkResult {
 
 impl Display for BenchmarkResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		write!(f, "[C]reates: {:?}\n", self.creates)?;
-		write!(f, "[R]eads: {:?}\n", self.reads)?;
-		write!(f, "[U]pdates: {:?}\n", self.updates)?;
+		writeln!(f, "[C]reates: {:?}", self.creates)?;
+		writeln!(f, "[R]eads: {:?}", self.reads)?;
+		writeln!(f, "[U]pdates: {:?}", self.updates)?;
 		write!(f, "[D]eletes: {:?}", self.deletes)
 	}
 }
