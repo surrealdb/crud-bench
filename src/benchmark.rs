@@ -1,6 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::io;
+use std::io::IsTerminal;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
@@ -137,8 +138,10 @@ impl Benchmark {
 		// Store the futures in a vector
 		let mut futures = Vec::with_capacity(total);
 		// Print out the first stage
-		print!("\r{operation} 0%");
-		io::stdout().flush()?;
+		if std::io::stdout().is_terminal() {
+			print!("\r{operation} 0%");
+			io::stdout().flush()?;
+		}
 		// Measure the starting time
 		let time = Instant::now();
 		// Loop over the clients
@@ -169,8 +172,10 @@ impl Benchmark {
 		// Calculate the elapsed time
 		let elapsed = time.elapsed();
 		// Print out the last stage
-		println!("\r{operation} 100%");
-		io::stdout().flush()?;
+		if std::io::stdout().is_terminal() {
+			println!("\r{operation} 100%");
+			io::stdout().flush()?;
+		}
 		// Everything ok
 		Ok(elapsed)
 	}
@@ -193,7 +198,7 @@ impl Benchmark {
 				break;
 			}
 			// Calculate the completion percent
-			{
+			if std::io::stdout().is_terminal() {
 				let percent = if sample == 0 {
 					0u8
 				} else {
