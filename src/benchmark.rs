@@ -16,7 +16,7 @@ use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tokio::task;
 
-const TIMEOUT: Duration = Duration::from_secs(30);
+const TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) struct Benchmark {
 	/// The server endpoint to connect to
@@ -75,6 +75,8 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		P: BenchmarkEngine<C> + Send + Sync,
 	{
+		// Wait for a small amount of time
+		tokio::time::sleep(TIMEOUT).await;
 		// Get the current system time
 		let time = SystemTime::now();
 		// Check the elapsed time
@@ -102,8 +104,10 @@ impl Benchmark {
 		for i in 0..self.clients {
 			// Log some information
 			info!("Creating client {}", i + 1);
+			// Get the specified endpoint
+			let endpoint = self.endpoint.to_owned();
 			// Create a new client connection
-			clients.push(engine.create_client(self.endpoint.clone()));
+			clients.push(engine.create_client(endpoint));
 		}
 		// Wait for all the clients to connect
 		Ok(try_join_all(clients).await?.into_iter().map(Arc::new).collect())
