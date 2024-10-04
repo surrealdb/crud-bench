@@ -2,25 +2,247 @@ use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::io;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use crate::Args;
 use anyhow::{bail, Result};
-use log::{error, info, warn};
+use futures::future::try_join_all;
+use log::{error, info};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tokio::task;
-use tokio::time::sleep;
+
+const TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) struct Benchmark {
-	clients: usize,
-	threads: usize,
-	samples: i32,
-	timeout: Duration,
+	/// The server endpoint to connect to
 	endpoint: Option<String>,
+	/// The timeout for connecting to the server
+	timeout: Duration,
+	/// The number of clients to spawn
+	clients: u32,
+	/// The number of threads to spawn
+	threads: u32,
+	/// The number of samples to run
+	samples: i32,
+}
+
+impl Benchmark {
+	pub(crate) fn new(args: &Args) -> Self {
+		Self {
+			endpoint: args.endpoint.to_owned(),
+			timeout: Duration::from_secs(60),
+			clients: args.clients,
+			threads: args.threads,
+			samples: args.samples,
+		}
+	}
+	/// Run the benchmark for the desired benchmark engine
+	pub(crate) async fn run<C, P>(&self, engine: P) -> Result<BenchmarkResult>
+	where
+		C: BenchmarkClient + Send + Sync,
+		P: BenchmarkEngine<C> + Send + Sync,
+	{
+		// Setup the datastore
+		self.wait_for_client(&engine).await?.startup().await?;
+		// Setup the clients
+		let clients = self.setup_clients(&engine).await?;
+		// Run the "creates" benchmark
+		let creates = self.run_operation::<C, P>(&clients, BenchmarkOperation::Create).await?;
+		// Run the "reads" benchmark
+		let reads = self.run_operation::<C, P>(&clients, BenchmarkOperation::Read).await?;
+		// Run the "reads" benchmark
+		let updates = self.run_operation::<C, P>(&clients, BenchmarkOperation::Update).await?;
+		// Run the "deletes" benchmark
+		let deletes = self.run_operation::<C, P>(&clients, BenchmarkOperation::Delete).await?;
+		// Setup the datastore
+		self.wait_for_client(&engine).await?.shutdown().await?;
+		// Return the benchmark results
+		Ok(BenchmarkResult {
+			creates,
+			reads,
+			updates,
+			deletes,
+		})
+	}
+
+	async fn wait_for_client<C, P>(&self, engine: &P) -> Result<C>
+	where
+		C: BenchmarkClient + Send + Sync,
+		P: BenchmarkEngine<C> + Send + Sync,
+	{
+		loop {
+			// Get the specified endpoint
+			let endpoint = self.endpoint.to_owned();
+			// Wait for the first branch to finish
+			tokio::select! {
+				// Ensure we exit early
+				biased;
+				// Check if the connection has timedout
+				_ = tokio::time::sleep(self.timeout) => {
+					bail!("Couldn't connect to the database");
+				},
+				// Attempt to create a client connection
+				v = engine.create_client(endpoint) => match v {
+					// The client connected successfully
+					Ok(v) => return Ok(v),
+					// Couldn't connect to the server yet
+					Err(_) => {
+						// Wait for a small amount of time
+						tokio::time::sleep(TIMEOUT).await;
+						// Attempt to connect again
+						continue
+					},
+				}
+			}
+		}
+	}
+
+	async fn setup_clients<C, P>(&self, engine: &P) -> Result<Vec<Arc<C>>>
+	where
+		C: BenchmarkClient + Send + Sync,
+		P: BenchmarkEngine<C> + Send + Sync,
+	{
+		// Create a set of client connections
+		let mut clients = Vec::with_capacity(self.clients as usize);
+		// Create the desired number of connections
+		for i in 0..self.clients {
+			// Log some information
+			info!("Creating client {}", i + 1);
+			// Create a new client connection
+			clients.push(engine.create_client(self.endpoint.clone()));
+		}
+		// Wait for all the clients to connect
+		Ok(try_join_all(clients).await?.into_iter().map(Arc::new).collect())
+	}
+
+	async fn run_operation<C, P>(
+		&self,
+		clients: &Vec<Arc<C>>,
+		operation: BenchmarkOperation,
+	) -> Result<Duration>
+	where
+		C: BenchmarkClient + Send + Sync,
+		P: BenchmarkEngine<C> + Send + Sync,
+	{
+		// Get the total concurrent futures
+		let total = (self.clients * self.threads) as usize;
+		// Whether we have experienced an error
+		let error = Arc::new(AtomicBool::new(false));
+		// The total records processed so far
+		let current = Arc::new(AtomicI32::new(0));
+		// Store the futures in a vector
+		let mut futures = Vec::with_capacity(total);
+		// Print out the first stage
+		print!("\r{operation} 0%");
+		io::stdout().flush()?;
+		// Measure the starting time
+		let time = Instant::now();
+		// Loop over the clients
+		for (client, c) in clients.iter().cloned().zip(1..) {
+			// Loop over the threads
+			for t in 0..self.threads {
+				let error = error.clone();
+				let current = current.clone();
+				let client = client.clone();
+				let samples = self.samples;
+				futures.push(task::spawn(async move {
+					info!("Task #{c}/{t}/{operation} starting");
+					if let Err(e) =
+						Self::operation_loop(client, samples, &error, &current, operation).await
+					{
+						error!("{e}");
+						error.store(true, Ordering::Relaxed);
+					}
+					info!("Task #{c}/{t}/{operation} finished");
+				}));
+			}
+		}
+		// Wait for all of the threads to complete
+		if let Err(e) = try_join_all(futures).await {
+			error.store(true, Ordering::Relaxed);
+			error!("{e}");
+		}
+		// Calculate the elapsed time
+		let elapsed = time.elapsed();
+		// Print out the last stage
+		println!("\r{operation} 100%");
+		io::stdout().flush()?;
+		// Everything ok
+		Ok(elapsed)
+	}
+
+	async fn operation_loop<C>(
+		client: Arc<C>,
+		samples: i32,
+		error: &AtomicBool,
+		current: &AtomicI32,
+		operation: BenchmarkOperation,
+	) -> Result<()>
+	where
+		C: BenchmarkClient,
+	{
+		// Check if we have encountered an error
+		while !error.load(Ordering::Relaxed) {
+			let sample = current.fetch_add(1, Ordering::Relaxed);
+			if sample >= samples {
+				// We are done
+				break;
+			}
+			// Calculate the completion percent
+			{
+				let percent = if sample == 0 {
+					0u8
+				} else {
+					(sample * 20 / samples) as u8
+				};
+				print!("\r{operation} {}%", percent * 5);
+				io::stdout().flush()?;
+			}
+			// Perform the benchmark operation
+			match operation {
+				BenchmarkOperation::Read => {
+					client.read(sample).await?;
+				}
+				BenchmarkOperation::Create => {
+					let mut provider = RecordProvider::default();
+					let record = provider.sample();
+					client.create(sample, record).await?;
+				}
+				BenchmarkOperation::Update => {
+					let mut provider = RecordProvider::default();
+					let record = provider.sample();
+					client.update(sample, record).await?;
+				}
+				BenchmarkOperation::Delete => {
+					client.delete(sample).await?;
+				}
+			}
+		}
+		Ok(())
+	}
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum BenchmarkOperation {
+	Create,
+	Read,
+	Update,
+	Delete,
+}
+
+impl Display for BenchmarkOperation {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Create => write!(f, "Create"),
+			Self::Read => write!(f, "Read"),
+			Self::Update => write!(f, "Update"),
+			Self::Delete => write!(f, "Delete"),
+		}
+	}
 }
 
 pub(crate) struct BenchmarkResult {
@@ -32,198 +254,11 @@ pub(crate) struct BenchmarkResult {
 
 impl Display for BenchmarkResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		writeln!(f, "[C]reates: {:?}", self.creates)?;
-		writeln!(f, "[R]eads: {:?}", self.reads)?;
-		writeln!(f, "[U]pdates: {:?}", self.updates)?;
-		writeln!(f, "[D]eletes: {:?}", self.deletes)
+		write!(f, "[C]reates: {:?}\n", self.creates)?;
+		write!(f, "[R]eads: {:?}\n", self.reads)?;
+		write!(f, "[U]pdates: {:?}\n", self.updates)?;
+		write!(f, "[D]eletes: {:?}", self.deletes)
 	}
-}
-
-impl Benchmark {
-	pub(crate) fn new(args: &Args) -> Self {
-		Self {
-			threads: args.threads,
-			samples: args.samples,
-			timeout: Duration::from_secs(60),
-			endpoint: args.endpoint.to_owned(),
-			clients: args.clients.unwrap_or(1),
-		}
-	}
-
-	pub(crate) fn clients(&self) -> usize {
-		self.clients
-	}
-
-	pub(crate) async fn wait_for_client<C, P>(&self, engine: &P) -> Result<C>
-	where
-		C: BenchmarkClient,
-		P: BenchmarkEngine<C>,
-	{
-		sleep(Duration::from_secs(2)).await;
-		let start = SystemTime::now();
-		while start.elapsed()? < self.timeout {
-			info!("Create client connection");
-			if let Ok(client) = engine.create_client(self.endpoint.to_owned()).await {
-				return Ok(client);
-			}
-			warn!("DB not yet responding");
-			sleep(Duration::from_secs(5)).await;
-		}
-		bail!("Can't create the client")
-	}
-
-	pub(crate) async fn run<C, P>(&self, engine: P) -> Result<BenchmarkResult>
-	where
-		C: BenchmarkClient,
-		P: BenchmarkEngine<C>,
-	{
-		// Start the client
-		self.wait_for_client(&engine).await?.startup().await?;
-
-		// Run the "creates" benchmark
-		info!("Start creates benchmark");
-		let creates = self.run_operation(&engine, BenchmarkOperation::Create).await?;
-		info!("Creates benchmark done");
-
-		// Run the "reads" benchmark
-		info!("Start reads benchmark");
-		let reads = self.run_operation(&engine, BenchmarkOperation::Read).await?;
-		info!("Reads benchmark done");
-
-		// Run the "reads" benchmark
-		info!("Start updates benchmark");
-		let updates = self.run_operation(&engine, BenchmarkOperation::Update).await?;
-		info!("Reads benchmark done");
-
-		// Run the "deletes" benchmark
-		info!("Start deletes benchmark");
-		let deletes = self.run_operation(&engine, BenchmarkOperation::Delete).await?;
-		info!("Deletes benchmark done");
-
-		Ok(BenchmarkResult {
-			creates,
-			reads,
-			updates,
-			deletes,
-		})
-	}
-
-	async fn run_operation<C, P>(
-		&self,
-		engine: &P,
-		operation: BenchmarkOperation,
-	) -> Result<Duration>
-	where
-		C: BenchmarkClient + Send + Sync,
-		P: BenchmarkEngine<C> + Send + Sync,
-	{
-		let error = Arc::new(AtomicBool::new(false));
-		let time = Instant::now();
-		let percent = Arc::new(AtomicU8::new(0));
-		print!("\r{operation:?} 0%");
-
-		let current = Arc::new(AtomicI32::new(0));
-
-		let mut futures = Vec::with_capacity(self.threads);
-
-		// start the threads
-		for thread_number in 0..self.clients {
-			let client = Arc::new(engine.create_client(self.endpoint.clone()).await?);
-			for _ in 0..self.threads {
-				let current = current.clone();
-				let error = error.clone();
-				let percent = percent.clone();
-				let samples = self.samples;
-				let client = client.clone();
-				let f = task::spawn(async move {
-					info!("Thread #{thread_number}/{operation:?} starts");
-					if let Err(e) =
-						Self::operation_loop(client, samples, &error, &current, &percent, operation)
-							.await
-					{
-						error!("{e}");
-						error.store(true, Ordering::Relaxed);
-					}
-					info!("Thread #{thread_number}/{operation:?} ends");
-				});
-				futures.push(f);
-			}
-		}
-
-		// Wait for threads to be done
-		for f in futures {
-			if let Err(e) = f.await {
-				{
-					error!("{e}");
-					error.store(true, Ordering::Relaxed);
-				}
-			}
-		}
-
-		if error.load(Ordering::Relaxed) {
-			bail!("Benchmark error");
-		}
-		println!("\r{operation:?} 100%");
-		io::stdout().flush()?;
-		Ok(time.elapsed())
-	}
-
-	async fn operation_loop<C>(
-		client: Arc<C>,
-		samples: i32,
-		error: &AtomicBool,
-		current: &AtomicI32,
-		percent: &AtomicU8,
-		operation: BenchmarkOperation,
-	) -> Result<()>
-	where
-		C: BenchmarkClient,
-	{
-		let mut record_provider = RecordProvider::default();
-		while !error.load(Ordering::Relaxed) {
-			let sample = current.fetch_add(1, Ordering::Relaxed);
-			if sample >= samples {
-				// We are done
-				break;
-			}
-			// Calculate and print out the percents
-			{
-				let new_percent = if sample == 0 {
-					0u8
-				} else {
-					(sample * 20 / samples) as u8
-				};
-				let old_percent = percent.load(Ordering::Relaxed);
-				if new_percent > old_percent {
-					percent.store(new_percent, Ordering::Relaxed);
-					print!("\r{operation:?} {}%", new_percent * 5);
-					io::stdout().flush()?;
-				}
-			}
-			match operation {
-				BenchmarkOperation::Read => client.read(sample).await?,
-				BenchmarkOperation::Create => {
-					let record = record_provider.sample();
-					client.create(sample, record).await?;
-				}
-				BenchmarkOperation::Update => {
-					let record = record_provider.sample();
-					client.update(sample, record).await?;
-				}
-				BenchmarkOperation::Delete => client.delete(sample).await?,
-			}
-		}
-		client.shutdown().await?;
-		Ok::<(), anyhow::Error>(())
-	}
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum BenchmarkOperation {
-	Create,
-	Read,
-	Update,
-	Delete,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
