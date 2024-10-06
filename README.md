@@ -38,10 +38,12 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES> --threads 
 
 Options:
   -i, --image <IMAGE>        Docker image
-  -d, --database <DATABASE>  Database [possible values: dry, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, mongodb, postgresql]
+  -d, --database <DATABASE>  Database [possible values: dry, redb, rocksdb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, scylladb, mongodb, postgres, redis, keydb]
+  -e, --endpoint <ENDPOINT>  Database
   -s, --samples <SAMPLES>    Number of samples
-  -t, --threads <THREADS>    Number of concurrent threads
-  -w, --workers <WORKERS>    Number of workers for the client async runtime (tokio). By default the number of logical CPUs.
+  -t, --threads <THREADS>    Number of concurrent threads (per client)
+  -w, --workers <WORKERS>    Number of workers for the client async runtime (tokio)
+  -c, --clients <CLIENTS>    Number of concurrent clients (default: 1)
   -h, --help                 Print help
 ```
 

@@ -63,7 +63,7 @@ struct SurrealRecord {
 }
 
 impl BenchmarkClient for SurrealDBClient {
-	async fn startup(&mut self) -> Result<()> {
+	async fn startup(&self) -> Result<()> {
 		// Ensure the table exists. This wouldn't
 		// normally be an issue, as SurrealDB is
 		// schemaless, but because we are testing
@@ -77,27 +77,27 @@ impl BenchmarkClient for SurrealDBClient {
 		Ok(())
 	}
 
-	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn create(&self, key: i32, record: &Record) -> Result<()> {
 		let created: Option<SurrealRecord> =
 			self.db.create(("record", key as i64)).content(record.clone()).await?;
 		assert!(created.is_some());
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
+	async fn read(&self, key: i32) -> Result<()> {
 		let read: Option<Record> = self.db.select(("record", key as i64)).await?;
 		assert!(read.is_some());
 		Ok(())
 	}
 
-	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn update(&self, key: i32, record: &Record) -> Result<()> {
 		let updated: Option<SurrealRecord> =
 			self.db.update(("record", key as i64)).content(record.clone()).await?;
 		assert!(updated.is_some());
 		Ok(())
 	}
 
-	async fn delete(&mut self, key: i32) -> Result<()> {
+	async fn delete(&self, key: i32) -> Result<()> {
 		let deleted: Option<Record> = self.db.delete(("record", key as i64)).await?;
 		assert!(deleted.is_some());
 		Ok(())

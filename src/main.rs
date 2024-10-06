@@ -2,6 +2,7 @@ use crate::benchmark::{Benchmark, BenchmarkResult};
 use crate::docker::DockerContainer;
 use crate::docker::DockerParams;
 use crate::dry::DryClientProvider;
+use std::io::IsTerminal;
 
 #[cfg(feature = "keydb")]
 use crate::keydb::KeydbClientProvider;
@@ -25,7 +26,6 @@ use crate::surrealdb::SurrealDBClientProvider;
 use crate::surrealkv::SurrealKVClientProvider;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use log::info;
 use tokio::runtime::Builder;
 
 mod benchmark;
@@ -53,21 +53,25 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) database: Database,
 
-	/// Database
+	/// Endpoint
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
 
-	/// Number of samples
-	#[clap(short, long)]
-	pub(crate) samples: i32,
-
-	/// Number of concurrent threads
-	#[clap(short, long)]
-	pub(crate) threads: usize,
-
-	/// Number of workers for the client async runtime (tokio)
-	#[clap(short, long)]
+	/// Number of async runtime workers (default: cpus)
+	#[clap(short, long, value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) workers: Option<usize>,
+
+	/// Number of concurrent clients (default: 1)
+	#[clap(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) clients: u32,
+
+	/// Number of concurrent threads per client (default: 1)
+	#[clap(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) threads: u32,
+
+	/// Number of samples
+	#[clap(short, long, value_parser=clap::value_parser!(i32).range(1..))]
+	pub(crate) samples: i32,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -102,19 +106,9 @@ pub(crate) enum Database {
 }
 
 impl Database {
+	/// Start the Docker container if necessary
 	fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
 		let params: DockerParams = match self {
-			Database::Dry => return None,
-			#[cfg(feature = "redb")]
-			Database::Redb => return None,
-			#[cfg(feature = "speedb")]
-			Database::Speedb => return None,
-			#[cfg(feature = "rocksdb")]
-			Database::Rocksdb => return None,
-			#[cfg(feature = "surrealkv")]
-			Database::Surrealkv => return None,
-			#[cfg(feature = "surrealdb")]
-			Database::Surrealdb => return None,
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbMemory => surrealdb::SURREALDB_MEMORY_DOCKER_PARAMS,
 			#[cfg(feature = "surrealdb")]
@@ -131,12 +125,14 @@ impl Database {
 			Database::Redis => redis::REDIS_DOCKER_PARAMS,
 			#[cfg(feature = "keydb")]
 			Database::Keydb => keydb::KEYDB_DOCKER_PARAMS,
+			#[allow(unreachable_patterns)]
+			_ => return None,
 		};
 		let image = image.unwrap_or(params.image.to_string());
 		let container = DockerContainer::start(image, params.pre_args, params.post_args);
 		Some(container)
 	}
-
+	/// Run the benchmarks for the chosen database
 	async fn run(&self, benchmark: &Benchmark) -> Result<BenchmarkResult> {
 		match self {
 			Database::Dry => benchmark.run(DryClientProvider::default()).await,
@@ -173,39 +169,49 @@ impl Database {
 fn main() {
 	// Initialise the logger
 	env_logger::init();
-	info!("Benchmark started!");
-
 	// Parse the command line arguments
 	let args = Args::parse();
-
 	// Prepare the benchmark
 	let benchmark = Benchmark::new(&args);
-
-	// Spawn the docker image if any
+	// If a Docker image is specified, spawn the container
 	let container = args.database.start_docker(args.image);
 	let image = container.as_ref().map(|c| c.image().to_string());
-
+	// Calculate the number of worker threads
 	let workers = args.workers.unwrap_or_else(num_cpus::get);
+	// Setup the asynchronous runtime
 	let runtime = Builder::new_multi_thread()
 		.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
 		.worker_threads(workers) // Set the number of worker threads
 		.enable_all() // Enables all runtime features, including I/O and time
 		.build()
 		.expect("Failed to create a runtime");
-
+	// Display formatting
+	if std::io::stdout().is_terminal() {
+		println!("--------------------------------------------------");
+	}
 	// Run the benchmark
 	let res = runtime.block_on(async { args.database.run(&benchmark).await });
-
+	// Output the results
 	match res {
-		// print the results
+		// Output the results
 		Ok(res) => {
+			println!("--------------------------------------------------");
+			match image {
+				Some(v) => println!("Benchmark result for {:?} on docker {v}", args.database),
+				None => println!("Benchmark result for {:?}", args.database),
+			}
 			println!(
-				"Benchmark result for {:?} on docker {image:?} - Samples: {} - Threads: {} - Workers: {} - Cpus: {}",
-				args.database, args.samples, args.threads, workers, num_cpus::get()
+				"CPUs: {} - Workers: {workers} - Clients: {} - Threads: {} - Samples: {}",
+				num_cpus::get(),
+				args.clients,
+				args.threads,
+				args.samples,
 			);
+			println!("--------------------------------------------------");
 			println!("{res}");
+			println!("--------------------------------------------------");
 		}
-		// print the docker logs if any error occurred
+		// Output the errors
 		Err(e) => {
 			if let Some(container) = &container {
 				container.logs();

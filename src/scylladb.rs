@@ -30,7 +30,7 @@ pub(crate) struct ScylladbClient {
 }
 
 impl BenchmarkClient for ScylladbClient {
-	async fn startup(&mut self) -> Result<()> {
+	async fn startup(&self) -> Result<()> {
 		self.session
 			.query_unpaged(
 				"
@@ -56,7 +56,7 @@ impl BenchmarkClient for ScylladbClient {
 		Ok(())
 	}
 
-	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn create(&self, key: i32, record: &Record) -> Result<()> {
 		self.session
 			.query_unpaged(
 				"INSERT INTO bench.record (id, text, integer) VALUES (?, ?, ?)",
@@ -66,7 +66,7 @@ impl BenchmarkClient for ScylladbClient {
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
+	async fn read(&self, key: i32) -> Result<()> {
 		let res = self
 			.session
 			.query_unpaged("SELECT id, text, integer FROM bench.record WHERE id=?", (&key,))
@@ -76,7 +76,7 @@ impl BenchmarkClient for ScylladbClient {
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn update(&self, key: i32, record: &Record) -> Result<()> {
 		self.session
 			.query_unpaged(
 				"UPDATE bench.record SET text=?, integer=? WHERE id=?",
@@ -87,7 +87,7 @@ impl BenchmarkClient for ScylladbClient {
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn delete(&mut self, key: i32) -> Result<()> {
+	async fn delete(&self, key: i32) -> Result<()> {
 		self.session.query_unpaged("DELETE FROM bench.record WHERE id=?", (&key,)).await?;
 		Ok(())
 	}
