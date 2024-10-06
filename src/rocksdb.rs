@@ -76,13 +76,6 @@ pub(crate) struct RocksDBClient {
 }
 
 impl BenchmarkClient for RocksDBClient {
-	async fn startup(&self) -> Result<()> {
-		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("rocksdb");
-		// Ok
-		Ok(())
-	}
-
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("rocksdb");

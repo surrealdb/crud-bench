@@ -42,13 +42,6 @@ pub(crate) struct SurrealKVClient {
 }
 
 impl BenchmarkClient for SurrealKVClient {
-	async fn startup(&self) -> Result<()> {
-		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("surrealkv");
-		// Ok
-		Ok(())
-	}
-
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("surrealkv");
