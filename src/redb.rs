@@ -37,6 +37,13 @@ pub(crate) struct ReDBClient {
 }
 
 impl BenchmarkClient for ReDBClient {
+	async fn startup(&self) -> Result<()> {
+		// Cleanup the data directory
+		let _ = std::fs::remove_dir_all("redb");
+		// Ok
+		Ok(())
+	}
+
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("redb");
