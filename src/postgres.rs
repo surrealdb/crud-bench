@@ -51,6 +51,7 @@ impl BenchmarkClient for PostgresClient {
 	}
 
 	async fn create(&self, key: u32, record: &Record) -> Result<()> {
+		let key = key as i32;
 		let res = self
 			.client
 			.execute(
@@ -63,6 +64,7 @@ impl BenchmarkClient for PostgresClient {
 	}
 
 	async fn read(&self, key: u32) -> Result<()> {
+		let key = key as i32;
 		let res =
 			self.client.query("SELECT id, text, integer FROM record WHERE id=$1", &[&key]).await?;
 		assert_eq!(res.len(), 1);
@@ -70,6 +72,7 @@ impl BenchmarkClient for PostgresClient {
 	}
 
 	async fn update(&self, key: u32, record: &Record) -> Result<()> {
+		let key = key as i32;
 		let res = self
 			.client
 			.execute(

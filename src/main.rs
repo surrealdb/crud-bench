@@ -3,6 +3,7 @@ use std::io::IsTerminal;
 
 use crate::database::Database;
 use crate::keyprovider::{KeyProvider, OrderedInteger, UnorderedInteger};
+use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use tokio::runtime::Builder;
 
@@ -74,7 +75,7 @@ pub(crate) enum KeyType {
 	Uuid,
 }
 
-fn main() {
+fn main() -> Result<()> {
 	// Initialise the logger
 	env_logger::init();
 	// Parse the command line arguments
@@ -148,13 +149,14 @@ fn main() {
 			println!("--------------------------------------------------");
 			println!("{res}");
 			println!("--------------------------------------------------");
+			Ok(())
 		}
 		// Output the errors
 		Err(e) => {
 			if let Some(container) = &container {
 				container.logs();
 			}
-			eprintln!("Failure: {e}");
+			Err(e)
 		}
 	}
 }
