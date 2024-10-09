@@ -227,3 +227,15 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 250000 -c 128 -t 48
+
+      - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads)
+        if: success()
+        timeout-minutes: 5
+        continue-on-error: true
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48
+
+      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads)
+        if: success()
+        timeout-minutes: 5
+        continue-on-error: true
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48
