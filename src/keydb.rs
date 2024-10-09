@@ -33,27 +33,27 @@ pub(crate) struct KeydbClient {
 
 impl BenchmarkClient for KeydbClient {
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn create(&self, key: i32, record: &Record) -> Result<()> {
+	async fn create(&self, key: u32, record: &Record) -> Result<()> {
 		let val = bincode::serialize(record)?;
 		self.conn.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
-	async fn read(&self, key: i32) -> Result<()> {
+	async fn read(&self, key: u32) -> Result<()> {
 		let val: Vec<u8> = self.conn.lock().await.get(key).await?;
 		assert!(!val.is_empty());
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update(&self, key: i32, record: &Record) -> Result<()> {
+	async fn update(&self, key: u32, record: &Record) -> Result<()> {
 		let val = bincode::serialize(record)?;
 		self.conn.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn delete(&self, key: i32) -> Result<()> {
+	async fn delete(&self, key: u32) -> Result<()> {
 		self.conn.lock().await.del(key).await?;
 		Ok(())
 	}

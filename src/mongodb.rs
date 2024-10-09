@@ -43,13 +43,13 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct MongoDBRecord {
-	id: i32,
+	id: u32,
 	text: String,
 	integer: i32,
 }
 
 impl MongoDBRecord {
-	fn new(key: i32, record: &Record) -> Self {
+	fn new(key: u32, record: &Record) -> Self {
 		Self {
 			id: key,
 			text: record.text.clone(),
@@ -71,20 +71,20 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
-	async fn read(&self, key: i32) -> Result<()> {
+	async fn read(&self, key: u32) -> Result<()> {
 		let filter = doc! { "id": key };
 		let doc = self.collection.find_one(filter).await?;
 		assert_eq!(doc.unwrap().id, key);
 		Ok(())
 	}
 
-	async fn create(&self, key: i32, record: &Record) -> Result<()> {
+	async fn create(&self, key: u32, record: &Record) -> Result<()> {
 		let doc = MongoDBRecord::new(key, record);
 		self.collection.insert_one(doc).await?;
 		Ok(())
 	}
 
-	async fn update(&self, key: i32, record: &Record) -> Result<()> {
+	async fn update(&self, key: u32, record: &Record) -> Result<()> {
 		let doc = MongoDBRecord::new(key, record);
 		let filter = doc! { "id": key };
 		let res = self.collection.replace_one(filter, doc).await?;
@@ -92,7 +92,7 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
-	async fn delete(&self, key: i32) -> Result<()> {
+	async fn delete(&self, key: u32) -> Result<()> {
 		let filter = doc! { "id": key };
 		let res = self.collection.delete_one(filter).await?;
 		assert_eq!(res.deleted_count, 1);
