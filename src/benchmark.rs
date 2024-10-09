@@ -148,7 +148,6 @@ impl Benchmark {
 				let current = current.clone();
 				let client = client.clone();
 				let out = out.clone();
-				let key_provider = key_provider.clone();
 				let samples = self.samples;
 				futures.push(task::spawn(async move {
 					info!("Task #{c}/{t}/{operation} starting");
