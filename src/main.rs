@@ -72,6 +72,10 @@ pub(crate) struct Args {
 	/// Number of samples to be created, read, updated, and deleted
 	#[clap(short, long, value_parser=clap::value_parser!(i32).range(1..))]
 	pub(crate) samples: i32,
+
+	/// Number of samples to be created, read, updated, and deleted
+	#[clap(short, long)]
+	pub(crate) random: bool,
 }
 
 #[derive(ValueEnum, Debug, Clone)]

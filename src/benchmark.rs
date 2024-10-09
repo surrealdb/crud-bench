@@ -1,8 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::future::Future;
-use std::io;
-use std::io::IsTerminal;
 use std::io::Write;
+use std::io::{stdout, IsTerminal, Stdout};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -131,10 +130,8 @@ impl Benchmark {
 		// Store the futures in a vector
 		let mut futures = Vec::with_capacity(total);
 		// Print out the first stage
-		if std::io::stdout().is_terminal() {
-			print!("\r{operation} 0%");
-			io::stdout().flush()?;
-		}
+		let mut out = TerminalOut::default();
+		out.map(|| format!("\r{operation} 0%"))?;
 		// Measure the starting time
 		let time = Instant::now();
 		// Loop over the clients
@@ -144,11 +141,13 @@ impl Benchmark {
 				let error = error.clone();
 				let current = current.clone();
 				let client = client.clone();
+				let out = out.clone();
 				let samples = self.samples;
 				futures.push(task::spawn(async move {
 					info!("Task #{c}/{t}/{operation} starting");
 					if let Err(e) =
-						Self::operation_loop(client, samples, &error, &current, operation).await
+						Self::operation_loop(client, samples, &error, &current, operation, out)
+							.await
 					{
 						error!("{e}");
 						error.store(true, Ordering::Relaxed);
@@ -165,10 +164,7 @@ impl Benchmark {
 		// Calculate the elapsed time
 		let elapsed = time.elapsed();
 		// Print out the last stage
-		if std::io::stdout().is_terminal() {
-			println!("\r{operation} 100%");
-			io::stdout().flush()?;
-		}
+		out.map_ln(|| format!("\r{operation} 100%"))?;
 		// Everything ok
 		Ok(elapsed)
 	}
@@ -179,6 +175,7 @@ impl Benchmark {
 		error: &AtomicBool,
 		current: &AtomicI32,
 		operation: BenchmarkOperation,
+		mut out: TerminalOut,
 	) -> Result<()>
 	where
 		C: BenchmarkClient,
@@ -191,15 +188,14 @@ impl Benchmark {
 				break;
 			}
 			// Calculate the completion percent
-			if std::io::stdout().is_terminal() {
+			out.map(|| {
 				let percent = if sample == 0 {
 					0u8
 				} else {
 					(sample * 20 / samples) as u8
 				};
-				print!("\r{operation} {}%", percent * 5);
-				io::stdout().flush()?;
-			}
+				format!("\r{operation} {}%", percent * 5)
+			})?;
 			// Perform the benchmark operation
 			match operation {
 				BenchmarkOperation::Read => {
@@ -317,4 +313,48 @@ pub(crate) trait BenchmarkClient: Send + Sync + 'static {
 	fn update(&self, key: i32, record: &Record) -> impl Future<Output = Result<()>> + Send;
 	/// Delete a record at a key
 	fn delete(&self, key: i32) -> impl Future<Output = Result<()>> + Send;
+}
+
+pub(crate) struct TerminalOut(Option<Stdout>);
+
+impl Default for TerminalOut {
+	fn default() -> Self {
+		let stdout = stdout();
+		if stdout.is_terminal() {
+			Self(Some(stdout))
+		} else {
+			Self(None)
+		}
+	}
+}
+
+impl Clone for TerminalOut {
+	fn clone(&self) -> Self {
+		Self(self.0.as_ref().map(|_| stdout()))
+	}
+}
+impl TerminalOut {
+	pub(crate) fn map_ln<F, S>(&mut self, f: F) -> Result<()>
+	where
+		F: Fn() -> S,
+		S: Display,
+	{
+		if let Some(ref mut o) = self.0 {
+			writeln!(o, "{}", f())?;
+			o.flush()?;
+		}
+		Ok(())
+	}
+
+	pub(crate) fn map<F, S>(&mut self, f: F) -> Result<()>
+	where
+		F: Fn() -> S,
+		S: Display,
+	{
+		if let Some(ref mut o) = self.0 {
+			write!(o, "{}", f())?;
+			o.flush()?;
+		}
+		Ok(())
+	}
 }
