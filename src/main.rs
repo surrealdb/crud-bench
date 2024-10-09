@@ -11,7 +11,7 @@ use crate::keydb::KeydbClientProvider;
 use crate::mongodb::MongoDBClientProvider;
 #[cfg(feature = "postgres")]
 use crate::postgres::PostgresClientProvider;
-#[cfg(feature = "rocksdb")]
+#[cfg(feature = "redb")]
 use crate::redb::ReDBClientProvider;
 #[cfg(feature = "redis")]
 use crate::redis::RedisClientProvider;
@@ -71,8 +71,12 @@ pub(crate) struct Args {
 	pub(crate) threads: u32,
 
 	/// Number of samples to be created, read, updated, and deleted
-	#[clap(short, long, value_parser=clap::value_parser!(i32).range(1..))]
-	pub(crate) samples: i32,
+	#[clap(short, long, value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) samples: u32,
+
+	/// Generate the keys in a pseudo-randomized order
+	#[clap(short, long)]
+	pub(crate) random: bool,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -200,12 +204,13 @@ fn main() -> ExitCode {
 				None => println!("Benchmark result for {:?}", args.database),
 			}
 			println!(
-				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {}",
+				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Random: {}",
 				num_cpus::get(),
 				args.workers,
 				args.clients,
 				args.threads,
 				args.samples,
+				args.random,
 			);
 			println!("--------------------------------------------------");
 			println!("{res}");

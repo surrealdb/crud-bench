@@ -83,7 +83,7 @@ impl BenchmarkClient for SpeeDBClient {
 		Ok(())
 	}
 
-	async fn create(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn create(&mut self, key: u32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		// Set the transaction options
@@ -123,7 +123,7 @@ impl BenchmarkClient for SpeeDBClient {
 		Ok(())
 	}
 
-	async fn update(&mut self, key: i32, record: &Record) -> Result<()> {
+	async fn update(&mut self, key: u32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		// Set the transaction options
