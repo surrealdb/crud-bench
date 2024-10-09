@@ -3,6 +3,7 @@ use crate::docker::DockerContainer;
 use crate::docker::DockerParams;
 use crate::dry::DryClientProvider;
 use std::io::IsTerminal;
+use std::process::ExitCode;
 
 #[cfg(feature = "keydb")]
 use crate::keydb::KeydbClientProvider;
@@ -166,7 +167,7 @@ impl Database {
 	}
 }
 
-fn main() {
+fn main() -> ExitCode {
 	// Initialise the logger
 	env_logger::init();
 	// Parse the command line arguments
@@ -209,13 +210,18 @@ fn main() {
 			println!("--------------------------------------------------");
 			println!("{res}");
 			println!("--------------------------------------------------");
+			ExitCode::from(0)
 		}
 		// Output the errors
 		Err(e) => {
+			println!("--------------------------------------------------");
 			if let Some(container) = &container {
 				container.logs();
 			}
+			eprintln!("--------------------------------------------------");
 			eprintln!("Failure: {e}");
+			println!("--------------------------------------------------");
+			ExitCode::from(1)
 		}
 	}
 }
