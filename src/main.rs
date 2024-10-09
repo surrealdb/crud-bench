@@ -73,7 +73,7 @@ pub(crate) struct Args {
 	#[clap(short, long, value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) samples: u32,
 
-	/// Number of samples to be created, read, updated, and deleted
+	/// Generate the keys in a pseudo-randomized order
 	#[clap(short, long)]
 	pub(crate) random: bool,
 }
