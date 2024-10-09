@@ -1,12 +1,3 @@
-use std::fmt::{Display, Formatter};
-use std::future::Future;
-use std::io;
-use std::io::IsTerminal;
-use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
-
 use crate::Args;
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
@@ -14,6 +5,13 @@ use log::{error, info};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter};
+use std::future::Future;
+use std::io::Write;
+use std::io::{stdout, IsTerminal, Stdout};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::task;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -28,7 +26,9 @@ pub(crate) struct Benchmark {
 	/// The number of threads to spawn
 	threads: u32,
 	/// The number of samples to run
-	samples: i32,
+	samples: u32,
+	/// Randomized
+	random: bool,
 }
 
 impl Benchmark {
@@ -39,6 +39,7 @@ impl Benchmark {
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
+			random: args.random,
 		}
 	}
 	/// Run the benchmark for the desired benchmark engine
@@ -127,16 +128,20 @@ impl Benchmark {
 		// Whether we have experienced an error
 		let error = Arc::new(AtomicBool::new(false));
 		// The total records processed so far
-		let current = Arc::new(AtomicI32::new(0));
+		let current = Arc::new(AtomicU32::new(0));
 		// Store the futures in a vector
 		let mut futures = Vec::with_capacity(total);
 		// Print out the first stage
-		if std::io::stdout().is_terminal() {
-			print!("\r{operation} 0%");
-			io::stdout().flush()?;
-		}
+		let mut out = TerminalOut::default();
+		out.map(|| Some(format!("\r{operation} 0%")))?;
 		// Measure the starting time
 		let time = Instant::now();
+		// Prepare the key provider
+		let kp = if self.random {
+			|s: u32| feistel_transform(s)
+		} else {
+			|s: u32| s
+		};
 		// Loop over the clients
 		for (client, c) in clients.iter().cloned().zip(1..) {
 			// Loop over the threads
@@ -144,11 +149,13 @@ impl Benchmark {
 				let error = error.clone();
 				let current = current.clone();
 				let client = client.clone();
+				let out = out.clone();
 				let samples = self.samples;
 				futures.push(task::spawn(async move {
 					info!("Task #{c}/{t}/{operation} starting");
 					if let Err(e) =
-						Self::operation_loop(client, samples, &error, &current, operation).await
+						Self::operation_loop(client, samples, &error, &current, operation, kp, out)
+							.await
 					{
 						error!("{e}");
 						error.store(true, Ordering::Relaxed);
@@ -157,7 +164,7 @@ impl Benchmark {
 				}));
 			}
 		}
-		// Wait for all of the threads to complete
+		// Wait for all the threads to complete
 		if let Err(e) = try_join_all(futures).await {
 			error.store(true, Ordering::Relaxed);
 			error!("{e}");
@@ -165,24 +172,25 @@ impl Benchmark {
 		// Calculate the elapsed time
 		let elapsed = time.elapsed();
 		// Print out the last stage
-		if std::io::stdout().is_terminal() {
-			println!("\r{operation} 100%");
-			io::stdout().flush()?;
-		}
+		out.map_ln(|| Some(format!("\r{operation} 100%")))?;
 		// Everything ok
 		Ok(elapsed)
 	}
 
-	async fn operation_loop<C>(
+	async fn operation_loop<C, K>(
 		client: Arc<C>,
-		samples: i32,
+		samples: u32,
 		error: &AtomicBool,
-		current: &AtomicI32,
+		current: &AtomicU32,
 		operation: BenchmarkOperation,
+		key_provider: K,
+		mut out: TerminalOut,
 	) -> Result<()>
 	where
 		C: BenchmarkClient,
+		K: Fn(u32) -> u32,
 	{
+		let mut old_percent = 0;
 		// Check if we have encountered an error
 		while !error.load(Ordering::Relaxed) {
 			let sample = current.fetch_add(1, Ordering::Relaxed);
@@ -191,32 +199,37 @@ impl Benchmark {
 				break;
 			}
 			// Calculate the completion percent
-			if std::io::stdout().is_terminal() {
-				let percent = if sample == 0 {
+			out.map(|| {
+				let new_percent = if sample == 0 {
 					0u8
 				} else {
 					(sample * 20 / samples) as u8
 				};
-				print!("\r{operation} {}%", percent * 5);
-				io::stdout().flush()?;
-			}
+				if new_percent != old_percent {
+					old_percent = new_percent;
+					Some(format!("\r{operation} {}%", new_percent * 5))
+				} else {
+					None
+				}
+			})?;
+			let key = key_provider(sample);
 			// Perform the benchmark operation
 			match operation {
 				BenchmarkOperation::Read => {
-					client.read(sample).await?;
+					client.read(key).await?;
 				}
 				BenchmarkOperation::Create => {
 					let mut provider = RecordProvider::default();
 					let record = provider.sample();
-					client.create(sample, record).await?;
+					client.create(key, record).await?;
 				}
 				BenchmarkOperation::Update => {
 					let mut provider = RecordProvider::default();
 					let record = provider.sample();
-					client.update(sample, record).await?;
+					client.update(key, record).await?;
 				}
 				BenchmarkOperation::Delete => {
-					client.delete(sample).await?;
+					client.delete(key).await?;
 				}
 			}
 		}
@@ -310,11 +323,88 @@ pub(crate) trait BenchmarkClient: Send + Sync + 'static {
 		async { Ok(()) }
 	}
 	/// Create a record at a key
-	fn create(&self, key: i32, record: &Record) -> impl Future<Output = Result<()>> + Send;
+	fn create(&self, key: u32, record: &Record) -> impl Future<Output = Result<()>> + Send;
 	/// Read a record at a key
-	fn read(&self, key: i32) -> impl Future<Output = Result<()>> + Send;
+	fn read(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
 	/// Update a record at a key
-	fn update(&self, key: i32, record: &Record) -> impl Future<Output = Result<()>> + Send;
+	fn update(&self, key: u32, record: &Record) -> impl Future<Output = Result<()>> + Send;
 	/// Delete a record at a key
-	fn delete(&self, key: i32) -> impl Future<Output = Result<()>> + Send;
+	fn delete(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
+}
+
+pub(crate) struct TerminalOut(Option<Stdout>);
+
+impl Default for TerminalOut {
+	fn default() -> Self {
+		let stdout = stdout();
+		if stdout.is_terminal() {
+			Self(Some(stdout))
+		} else {
+			Self(None)
+		}
+	}
+}
+
+impl Clone for TerminalOut {
+	fn clone(&self) -> Self {
+		Self(self.0.as_ref().map(|_| stdout()))
+	}
+}
+impl TerminalOut {
+	pub(crate) fn map_ln<F, S>(&mut self, mut f: F) -> Result<()>
+	where
+		F: FnMut() -> Option<S>,
+		S: Display,
+	{
+		if let Some(ref mut o) = self.0 {
+			if let Some(s) = f() {
+				writeln!(o, "{}", s)?;
+				o.flush()?;
+			}
+		}
+		Ok(())
+	}
+
+	pub(crate) fn map<F, S>(&mut self, mut f: F) -> Result<()>
+	where
+		F: FnMut() -> Option<S>,
+		S: Display,
+	{
+		if let Some(ref mut o) = self.0 {
+			if let Some(s) = f() {
+				write!(o, "{}", s)?;
+				o.flush()?;
+			}
+		}
+		Ok(())
+	}
+}
+
+// A very simple round function: XOR the input with the key and shift
+fn feistel_round_function(value: u32, key: u32) -> u32 {
+	(value ^ key).rotate_left(5).wrapping_add(key)
+}
+
+// Perform one round of the Feistel network
+fn feistel_round(left: u16, right: u16, round_key: u32) -> (u16, u16) {
+	let new_left = right;
+	let new_right = left ^ (feistel_round_function(right as u32, round_key) as u16);
+	(new_left, new_right)
+}
+
+fn feistel_transform(input: u32) -> u32 {
+	let mut left = (input >> 16) as u16;
+	let mut right = (input & 0xFFFF) as u16;
+
+	// Hard-coded keys for simplicity
+	let keys = [0xA5A5A5A5, 0x5A5A5A5A, 0x3C3C3C3C];
+
+	for &key in &keys {
+		let (new_left, new_right) = feistel_round(left, right, key);
+		left = new_left;
+		right = new_right;
+	}
+
+	// Combine left and right halves back into a single u32
+	((left as u32) << 16) | (right as u32)
 }

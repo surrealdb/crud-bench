@@ -70,8 +70,12 @@ pub(crate) struct Args {
 	pub(crate) threads: u32,
 
 	/// Number of samples to be created, read, updated, and deleted
-	#[clap(short, long, value_parser=clap::value_parser!(i32).range(1..))]
-	pub(crate) samples: i32,
+	#[clap(short, long, value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) samples: u32,
+
+	/// Generate the keys in a pseudo-randomized order
+	#[clap(short, long)]
+	pub(crate) random: bool,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -199,12 +203,13 @@ fn main() {
 				None => println!("Benchmark result for {:?}", args.database),
 			}
 			println!(
-				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {}",
+				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Random: {}",
 				num_cpus::get(),
 				args.workers,
 				args.clients,
 				args.threads,
 				args.samples,
+				args.random,
 			);
 			println!("--------------------------------------------------");
 			println!("{res}");

@@ -49,7 +49,7 @@ impl BenchmarkClient for SurrealKVClient {
 		Ok(())
 	}
 
-	async fn create(&self, key: i32, record: &Record) -> Result<()> {
+	async fn create(&self, key: u32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
@@ -58,7 +58,7 @@ impl BenchmarkClient for SurrealKVClient {
 		Ok(())
 	}
 
-	async fn read(&self, key: i32) -> Result<()> {
+	async fn read(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let mut txn = self.db.begin_with_mode(Mode::ReadOnly)?;
 		let read: Option<Vec<u8>> = txn.get(key)?;
@@ -66,7 +66,7 @@ impl BenchmarkClient for SurrealKVClient {
 		Ok(())
 	}
 
-	async fn update(&self, key: i32, record: &Record) -> Result<()> {
+	async fn update(&self, key: u32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
@@ -75,7 +75,7 @@ impl BenchmarkClient for SurrealKVClient {
 		Ok(())
 	}
 
-	async fn delete(&self, key: i32) -> Result<()> {
+	async fn delete(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.delete(key)?;
