@@ -1,37 +1,17 @@
-use crate::benchmark::{Benchmark, BenchmarkResult};
-use crate::docker::DockerContainer;
-use crate::docker::DockerParams;
-use crate::dry::DryClientProvider;
+use crate::benchmark::Benchmark;
 use std::io::IsTerminal;
 
-#[cfg(feature = "keydb")]
-use crate::keydb::KeydbClientProvider;
-#[cfg(feature = "mongodb")]
-use crate::mongodb::MongoDBClientProvider;
-#[cfg(feature = "postgres")]
-use crate::postgres::PostgresClientProvider;
-#[cfg(feature = "redb")]
-use crate::redb::ReDBClientProvider;
-#[cfg(feature = "redis")]
-use crate::redis::RedisClientProvider;
-#[cfg(feature = "rocksdb")]
-use crate::rocksdb::RocksDBClientProvider;
-#[cfg(feature = "scylladb")]
-use crate::scylladb::ScyllaDBClientProvider;
-#[cfg(feature = "speedb")]
-use crate::speedb::SpeeDBClientProvider;
-#[cfg(feature = "surrealdb")]
-use crate::surrealdb::SurrealDBClientProvider;
-#[cfg(feature = "surrealkv")]
-use crate::surrealkv::SurrealKVClientProvider;
-use anyhow::Result;
+use crate::database::Database;
+use crate::keyprovider::{KeyProvider, OrderedInteger, UnorderedInteger};
 use clap::{Parser, ValueEnum};
 use tokio::runtime::Builder;
 
 mod benchmark;
+mod database;
 mod docker;
 mod dry;
 mod keydb;
+mod keyprovider;
 mod mongodb;
 mod postgres;
 mod redb;
@@ -82,38 +62,7 @@ pub(crate) struct Args {
 	pub(crate) key: KeyType,
 }
 
-#[derive(ValueEnum, Debug, Clone)]
-pub(crate) enum Database {
-	Dry,
-	#[cfg(feature = "redb")]
-	Redb,
-	#[cfg(feature = "speedb")]
-	Speedb,
-	#[cfg(feature = "rocksdb")]
-	Rocksdb,
-	#[cfg(feature = "surrealkv")]
-	Surrealkv,
-	#[cfg(feature = "surrealdb")]
-	Surrealdb,
-	#[cfg(feature = "surrealdb")]
-	SurrealdbMemory,
-	#[cfg(feature = "surrealdb")]
-	SurrealdbRocksdb,
-	#[cfg(feature = "surrealdb")]
-	SurrealdbSurrealkv,
-	#[cfg(feature = "scylladb")]
-	Scylladb,
-	#[cfg(feature = "mongodb")]
-	Mongodb,
-	#[cfg(feature = "postgres")]
-	Postgres,
-	#[cfg(feature = "redis")]
-	Redis,
-	#[cfg(feature = "keydb")]
-	Keydb,
-}
-
-#[derive(Debug, ValueEnum, Clone)]
+#[derive(Debug, ValueEnum, Clone, Copy)]
 pub(crate) enum KeyType {
 	/// 4 bytes integer
 	Integer,
@@ -123,67 +72,6 @@ pub(crate) enum KeyType {
 	String68,
 	/// UUID type 7
 	Uuid,
-}
-
-impl Database {
-	/// Start the Docker container if necessary
-	fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
-		let params: DockerParams = match self {
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbMemory => surrealdb::SURREALDB_MEMORY_DOCKER_PARAMS,
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbRocksdb => surrealdb::SURREALDB_ROCKSDB_DOCKER_PARAMS,
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbSurrealkv => surrealdb::SURREALDB_SURREALKV_DOCKER_PARAMS,
-			#[cfg(feature = "scylladb")]
-			Database::Scylladb => scylladb::SCYLLADB_DOCKER_PARAMS,
-			#[cfg(feature = "mongodb")]
-			Database::Mongodb => mongodb::MONGODB_DOCKER_PARAMS,
-			#[cfg(feature = "postgres")]
-			Database::Postgres => postgres::POSTGRES_DOCKER_PARAMS,
-			#[cfg(feature = "redis")]
-			Database::Redis => redis::REDIS_DOCKER_PARAMS,
-			#[cfg(feature = "keydb")]
-			Database::Keydb => keydb::KEYDB_DOCKER_PARAMS,
-			#[allow(unreachable_patterns)]
-			_ => return None,
-		};
-		let image = image.unwrap_or(params.image.to_string());
-		let container = DockerContainer::start(image, params.pre_args, params.post_args);
-		Some(container)
-	}
-	/// Run the benchmarks for the chosen database
-	async fn run(&self, benchmark: &Benchmark) -> Result<BenchmarkResult> {
-		match self {
-			Database::Dry => benchmark.run(DryClientProvider::default()).await,
-			#[cfg(feature = "redb")]
-			Database::Redb => benchmark.run(ReDBClientProvider::setup().await?).await,
-			#[cfg(feature = "speedb")]
-			Database::Speedb => benchmark.run(SpeeDBClientProvider::setup().await?).await,
-			#[cfg(feature = "rocksdb")]
-			Database::Rocksdb => benchmark.run(RocksDBClientProvider::setup().await?).await,
-			#[cfg(feature = "surrealkv")]
-			Database::Surrealkv => benchmark.run(SurrealKVClientProvider::setup().await?).await,
-			#[cfg(feature = "surrealdb")]
-			Database::Surrealdb => benchmark.run(SurrealDBClientProvider::default()).await,
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbMemory => benchmark.run(SurrealDBClientProvider::default()).await,
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbRocksdb => benchmark.run(SurrealDBClientProvider::default()).await,
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbSurrealkv => benchmark.run(SurrealDBClientProvider::default()).await,
-			#[cfg(feature = "scylladb")]
-			Database::Scylladb => benchmark.run(ScyllaDBClientProvider::default()).await,
-			#[cfg(feature = "mongodb")]
-			Database::Mongodb => benchmark.run(MongoDBClientProvider::default()).await,
-			#[cfg(feature = "postgres")]
-			Database::Postgres => benchmark.run(PostgresClientProvider::default()).await,
-			#[cfg(feature = "redis")]
-			Database::Redis => benchmark.run(RedisClientProvider::default()).await,
-			#[cfg(feature = "keydb")]
-			Database::Keydb => benchmark.run(KeydbClientProvider::default()).await,
-		}
-	}
 }
 
 fn main() {
@@ -208,7 +96,37 @@ fn main() {
 		println!("--------------------------------------------------");
 	}
 	// Run the benchmark
-	let res = runtime.block_on(async { args.database.run(&benchmark).await });
+	let res = runtime.block_on(async {
+		if args.random {
+			match args.key {
+				KeyType::Integer => {
+					UnorderedInteger::default().run(&benchmark, &args.database).await
+				}
+				KeyType::String16 => {
+					todo!()
+				}
+				KeyType::String68 => {
+					todo!()
+				}
+				KeyType::Uuid => {
+					todo!()
+				}
+			}
+		} else {
+			match args.key {
+				KeyType::Integer => OrderedInteger::default().run(&benchmark, &args.database).await,
+				KeyType::String16 => {
+					todo!()
+				}
+				KeyType::String68 => {
+					todo!()
+				}
+				KeyType::Uuid => {
+					todo!()
+				}
+			}
+		}
+	});
 	// Output the results
 	match res {
 		// Output the results

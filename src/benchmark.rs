@@ -1,3 +1,4 @@
+use crate::keyprovider::KeyProvider;
 use crate::Args;
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
@@ -27,8 +28,6 @@ pub(crate) struct Benchmark {
 	threads: u32,
 	/// The number of samples to run
 	samples: u32,
-	/// Randomized
-	random: bool,
 }
 
 impl Benchmark {
@@ -39,27 +38,30 @@ impl Benchmark {
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
-			random: args.random,
 		}
 	}
 	/// Run the benchmark for the desired benchmark engine
-	pub(crate) async fn run<C, P>(&self, engine: P) -> Result<BenchmarkResult>
+	pub(crate) async fn run<C, P, K>(&self, engine: P, kp: K) -> Result<BenchmarkResult>
 	where
 		C: BenchmarkClient + Send + Sync,
 		P: BenchmarkEngine<C> + Send + Sync,
+		K: KeyProvider + Send + Sync,
 	{
 		// Setup the datastore
 		self.wait_for_client(&engine).await?.startup().await?;
 		// Setup the clients
 		let clients = self.setup_clients(&engine).await?;
 		// Run the "creates" benchmark
-		let creates = self.run_operation::<C, P>(&clients, BenchmarkOperation::Create).await?;
+		let creates =
+			self.run_operation::<C, P, K>(&clients, BenchmarkOperation::Create, kp).await?;
 		// Run the "reads" benchmark
-		let reads = self.run_operation::<C, P>(&clients, BenchmarkOperation::Read).await?;
+		let reads = self.run_operation::<C, P, K>(&clients, BenchmarkOperation::Read, kp).await?;
 		// Run the "reads" benchmark
-		let updates = self.run_operation::<C, P>(&clients, BenchmarkOperation::Update).await?;
+		let updates =
+			self.run_operation::<C, P, K>(&clients, BenchmarkOperation::Update, kp).await?;
 		// Run the "deletes" benchmark
-		let deletes = self.run_operation::<C, P>(&clients, BenchmarkOperation::Delete).await?;
+		let deletes =
+			self.run_operation::<C, P, K>(&clients, BenchmarkOperation::Delete, kp).await?;
 		// Setup the datastore
 		self.wait_for_client(&engine).await?.shutdown().await?;
 		// Return the benchmark results
@@ -114,14 +116,16 @@ impl Benchmark {
 		Ok(try_join_all(clients).await?.into_iter().map(Arc::new).collect())
 	}
 
-	async fn run_operation<C, P>(
+	async fn run_operation<C, P, K>(
 		&self,
 		clients: &[Arc<C>],
 		operation: BenchmarkOperation,
+		key_provider: K,
 	) -> Result<Duration>
 	where
 		C: BenchmarkClient + Send + Sync,
 		P: BenchmarkEngine<C> + Send + Sync,
+		K: KeyProvider + Send + Sync,
 	{
 		// Get the total concurrent futures
 		let total = (self.clients * self.threads) as usize;
@@ -136,12 +140,6 @@ impl Benchmark {
 		out.map(|| Some(format!("\r{operation} 0%")))?;
 		// Measure the starting time
 		let time = Instant::now();
-		// Prepare the key provider
-		let kp = if self.random {
-			|s: u32| feistel_transform(s)
-		} else {
-			|s: u32| s
-		};
 		// Loop over the clients
 		for (client, c) in clients.iter().cloned().zip(1..) {
 			// Loop over the threads
@@ -150,12 +148,20 @@ impl Benchmark {
 				let current = current.clone();
 				let client = client.clone();
 				let out = out.clone();
+				let key_provider = key_provider.clone();
 				let samples = self.samples;
 				futures.push(task::spawn(async move {
 					info!("Task #{c}/{t}/{operation} starting");
-					if let Err(e) =
-						Self::operation_loop(client, samples, &error, &current, operation, kp, out)
-							.await
+					if let Err(e) = Self::operation_loop(
+						client,
+						samples,
+						&error,
+						&current,
+						operation,
+						key_provider,
+						out,
+					)
+					.await
 					{
 						error!("{e}");
 						error.store(true, Ordering::Relaxed);
@@ -183,12 +189,12 @@ impl Benchmark {
 		error: &AtomicBool,
 		current: &AtomicU32,
 		operation: BenchmarkOperation,
-		key_provider: K,
+		mut key_provider: K,
 		mut out: TerminalOut,
 	) -> Result<()>
 	where
 		C: BenchmarkClient,
-		K: Fn(u32) -> u32,
+		K: KeyProvider,
 	{
 		let mut old_percent = 0;
 		// Check if we have encountered an error
@@ -212,7 +218,7 @@ impl Benchmark {
 					None
 				}
 			})?;
-			let key = key_provider(sample);
+			let key = key_provider.key(sample);
 			// Perform the benchmark operation
 			match operation {
 				BenchmarkOperation::Read => {
@@ -378,33 +384,4 @@ impl TerminalOut {
 		}
 		Ok(())
 	}
-}
-
-// A very simple round function: XOR the input with the key and shift
-fn feistel_round_function(value: u32, key: u32) -> u32 {
-	(value ^ key).rotate_left(5).wrapping_add(key)
-}
-
-// Perform one round of the Feistel network
-fn feistel_round(left: u16, right: u16, round_key: u32) -> (u16, u16) {
-	let new_left = right;
-	let new_right = left ^ (feistel_round_function(right as u32, round_key) as u16);
-	(new_left, new_right)
-}
-
-fn feistel_transform(input: u32) -> u32 {
-	let mut left = (input >> 16) as u16;
-	let mut right = (input & 0xFFFF) as u16;
-
-	// Hard-coded keys for simplicity
-	let keys = [0xA5A5A5A5, 0x5A5A5A5A, 0x3C3C3C3C];
-
-	for &key in &keys {
-		let (new_left, new_right) = feistel_round(left, right, key);
-		left = new_left;
-		right = new_right;
-	}
-
-	// Combine left and right halves back into a single u32
-	((left as u32) << 16) | (right as u32)
 }
