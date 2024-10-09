@@ -76,6 +76,10 @@ pub(crate) struct Args {
 	/// Generate the keys in a pseudo-randomized order
 	#[clap(short, long)]
 	pub(crate) random: bool,
+
+	/// The type of the key
+	#[clap(short, long, default_value_t = KeyType::Integer, value_enum)]
+	pub(crate) key: KeyType,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -107,6 +111,18 @@ pub(crate) enum Database {
 	Redis,
 	#[cfg(feature = "keydb")]
 	Keydb,
+}
+
+#[derive(Debug, ValueEnum, Clone)]
+pub(crate) enum KeyType {
+	/// 4 bytes integer
+	Integer,
+	/// 16 ascii bytes
+	String16,
+	/// 68 ascii bytes
+	String68,
+	/// UUID type 7
+	Uuid,
 }
 
 impl Database {
