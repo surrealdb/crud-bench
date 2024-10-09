@@ -172,7 +172,7 @@ impl Benchmark {
 		// Wait for all the threads to complete
 		if let Err(e) = try_join_all(futures).await {
 			error.store(true, Ordering::Relaxed);
-			error!("{e}");
+			Err(e)?;
 		}
 		// Calculate the elapsed time
 		let elapsed = time.elapsed();

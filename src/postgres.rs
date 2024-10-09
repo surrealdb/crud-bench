@@ -85,6 +85,7 @@ impl BenchmarkClient for PostgresClient {
 	}
 
 	async fn delete(&self, key: u32) -> Result<()> {
+		let key = key as i32;
 		let res = self.client.execute("DELETE FROM record WHERE id=$1", &[&key]).await?;
 		assert_eq!(res, 1);
 		Ok(())
