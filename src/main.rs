@@ -10,7 +10,7 @@ use crate::keydb::KeydbClientProvider;
 use crate::mongodb::MongoDBClientProvider;
 #[cfg(feature = "postgres")]
 use crate::postgres::PostgresClientProvider;
-#[cfg(feature = "rocksdb")]
+#[cfg(feature = "redb")]
 use crate::redb::ReDBClientProvider;
 #[cfg(feature = "redis")]
 use crate::redis::RedisClientProvider;
