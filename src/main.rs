@@ -57,19 +57,19 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
 
-	/// Number of async runtime workers (default: cpus)
-	#[clap(short, long, value_parser=clap::value_parser!(u32).range(1..))]
-	pub(crate) workers: Option<usize>,
+	/// Number of async runtime workers, defaulting to the number of CPUs
+	#[clap(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) workers: u32,
 
-	/// Number of concurrent clients (default: 1)
+	/// Number of concurrent clients
 	#[clap(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) clients: u32,
 
-	/// Number of concurrent threads per client (default: 1)
+	/// Number of concurrent threads per client
 	#[clap(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) threads: u32,
 
-	/// Number of samples
+	/// Number of samples to be created, read, updated, and deleted
 	#[clap(short, long, value_parser=clap::value_parser!(i32).range(1..))]
 	pub(crate) samples: i32,
 }
@@ -176,12 +176,10 @@ fn main() {
 	// If a Docker image is specified, spawn the container
 	let container = args.database.start_docker(args.image);
 	let image = container.as_ref().map(|c| c.image().to_string());
-	// Calculate the number of worker threads
-	let workers = args.workers.unwrap_or_else(num_cpus::get);
 	// Setup the asynchronous runtime
 	let runtime = Builder::new_multi_thread()
 		.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
-		.worker_threads(workers) // Set the number of worker threads
+		.worker_threads(args.workers as usize) // Set the number of worker threads
 		.enable_all() // Enables all runtime features, including I/O and time
 		.build()
 		.expect("Failed to create a runtime");
@@ -201,8 +199,9 @@ fn main() {
 				None => println!("Benchmark result for {:?}", args.database),
 			}
 			println!(
-				"CPUs: {} - Workers: {workers} - Clients: {} - Threads: {} - Samples: {}",
+				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {}",
 				num_cpus::get(),
+				args.workers,
 				args.clients,
 				args.threads,
 				args.samples,

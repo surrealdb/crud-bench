@@ -34,16 +34,16 @@ cargo run -r -- --help
 ```
 
 ```bash
-Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES> --threads <THREADS>
+Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
   -i, --image <IMAGE>        Docker image
   -d, --database <DATABASE>  Database [possible values: dry, redb, rocksdb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, scylladb, mongodb, postgres, redis, keydb]
-  -e, --endpoint <ENDPOINT>  Database
-  -s, --samples <SAMPLES>    Number of samples
-  -t, --threads <THREADS>    Number of concurrent threads (per client)
-  -w, --workers <WORKERS>    Number of workers for the client async runtime (tokio)
-  -c, --clients <CLIENTS>    Number of concurrent clients (default: 1)
+  -e, --endpoint <ENDPOINT>  Endpoint
+  -w, --workers <WORKERS>    Number of async runtime workers, defaulting to the number of CPUs [default: 12]
+  -c, --clients <CLIENTS>    Number of concurrent clients [default: 1]
+  -t, --threads <THREADS>    Number of concurrent threads per client [default: 1]
+  -s, --samples <SAMPLES>    Number of samples to be created, read, updated, and deleted
   -h, --help                 Print help
 ```
 
