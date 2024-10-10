@@ -43,10 +43,20 @@ impl BenchmarkClient for KeydbClient {
 		Ok(())
 	}
 
+	#[allow(dependency_on_unit_never_type_fallback)]
+	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+		todo!()
+	}
+
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let val: Vec<u8> = self.conn.lock().await.get(key).await?;
 		assert!(!val.is_empty());
 		Ok(())
+	}
+
+	#[allow(dependency_on_unit_never_type_fallback)]
+	async fn read_string(&self, key: String) -> Result<()> {
+		todo!()
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
@@ -57,8 +67,18 @@ impl BenchmarkClient for KeydbClient {
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
+	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+		todo!()
+	}
+
+	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
 		self.conn.lock().await.del(key).await?;
 		Ok(())
+	}
+
+	#[allow(dependency_on_unit_never_type_fallback)]
+	async fn delete_string(&self, key: String) -> Result<()> {
+		todo!()
 	}
 }

@@ -90,6 +90,10 @@ impl BenchmarkClient for RocksDBClient {
 		Ok(())
 	}
 
+	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+		todo!()
+	}
+
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Set the transaction options
@@ -113,6 +117,10 @@ impl BenchmarkClient for RocksDBClient {
 		Ok(())
 	}
 
+	async fn read_string(&self, key: String) -> Result<()> {
+		todo!()
+	}
+
 	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
@@ -130,6 +138,10 @@ impl BenchmarkClient for RocksDBClient {
 		Ok(())
 	}
 
+	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+		todo!()
+	}
+
 	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Set the transaction options
@@ -144,5 +156,9 @@ impl BenchmarkClient for RocksDBClient {
 		txn.delete(key)?;
 		txn.commit()?;
 		Ok(())
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		todo!()
 	}
 }

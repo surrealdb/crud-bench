@@ -80,6 +80,11 @@ fn main() -> Result<()> {
 	env_logger::init();
 	// Parse the command line arguments
 	let args = Args::parse();
+	// Run the benchmark
+	run(args)
+}
+
+fn run(args: Args) -> Result<()> {
 	// Prepare the benchmark
 	let benchmark = Benchmark::new(&args);
 	// If a Docker image is specified, spawn the container
@@ -110,12 +115,13 @@ fn main() -> Result<()> {
 				None => println!("Benchmark result for {:?}", args.database),
 			}
 			println!(
-				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Random: {}",
+				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
 				num_cpus::get(),
 				args.workers,
 				args.clients,
 				args.threads,
 				args.samples,
+				args.key,
 				args.random,
 			);
 			println!("--------------------------------------------------");
@@ -130,5 +136,54 @@ fn main() -> Result<()> {
 			}
 			Err(e)
 		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use crate::{run, Args, Database, KeyType};
+	use anyhow::Result;
+	fn test(key: KeyType, random: bool) -> Result<()> {
+		run(Args {
+			image: None,
+			database: Database::Dry,
+			endpoint: None,
+			workers: 5,
+			clients: 2,
+			threads: 2,
+			samples: 10000,
+			random,
+			key,
+		})
+	}
+
+	#[test]
+	fn test_integer_ordered() -> Result<()> {
+		test(KeyType::Integer, false)
+	}
+
+	#[test]
+	fn test_integer_unordered() -> Result<()> {
+		test(KeyType::Integer, true)
+	}
+
+	#[test]
+	fn test_string16_ordered() -> Result<()> {
+		test(KeyType::String16, false)
+	}
+
+	#[test]
+	fn test_string16_unordered() -> Result<()> {
+		test(KeyType::String16, true)
+	}
+
+	#[test]
+	fn test_string68_ordered() -> Result<()> {
+		test(KeyType::String68, false)
+	}
+
+	#[test]
+	fn test_string68_unordered() -> Result<()> {
+		test(KeyType::String68, true)
 	}
 }

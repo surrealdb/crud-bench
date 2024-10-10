@@ -7,7 +7,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(crate) enum DryDatabase {
 	Integer(Arc<DashMap<u32, Record>>),
-	_String(Arc<DashMap<String, Record>>),
+	String(Arc<DashMap<String, Record>>),
 }
 
 impl From<KeyType> for DryDatabase {
@@ -44,8 +44,26 @@ impl BenchmarkClient for DryClient {
 		Ok(())
 	}
 
+	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+		if let DryDatabase::String(m) = &self.0 {
+			assert!(m.insert(key, record.clone()).is_none());
+		} else {
+			bail!("Invalid DryDatabase variant");
+		}
+		Ok(())
+	}
+
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		if let DryDatabase::Integer(m) = &self.0 {
+			assert!(m.get(&key).is_some());
+		} else {
+			bail!("Invalid DryDatabase variant");
+		}
+		Ok(())
+	}
+
+	async fn read_string(&self, key: String) -> Result<()> {
+		if let DryDatabase::String(m) = &self.0 {
 			assert!(m.get(&key).is_some());
 		} else {
 			bail!("Invalid DryDatabase variant");
@@ -61,9 +79,28 @@ impl BenchmarkClient for DryClient {
 		}
 		Ok(())
 	}
-	async fn delete_u32(&self, sample: u32) -> Result<()> {
+
+	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+		if let DryDatabase::String(m) = &self.0 {
+			assert!(m.insert(key, record.clone()).is_some());
+		} else {
+			bail!("Invalid DryDatabase variant");
+		}
+		Ok(())
+	}
+
+	async fn delete_u32(&self, key: u32) -> Result<()> {
 		if let DryDatabase::Integer(m) = &self.0 {
-			assert!(m.remove(&sample).is_some());
+			assert!(m.remove(&key).is_some());
+		} else {
+			bail!("Invalid DryDatabase variant");
+		}
+		Ok(())
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		if let DryDatabase::String(m) = &self.0 {
+			assert!(m.remove(&key).is_some());
 		} else {
 			bail!("Invalid DryDatabase variant");
 		}

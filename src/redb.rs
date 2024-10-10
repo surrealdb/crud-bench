@@ -48,6 +48,10 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
+	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+		todo!()
+	}
+
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Create a new transaction
@@ -58,6 +62,10 @@ impl BenchmarkClient for ReDBClient {
 		let read: Option<_> = tab.get(key.as_ref())?;
 		assert!(read.is_some());
 		Ok(())
+	}
+
+	async fn read_string(&self, key: String) -> Result<()> {
+		todo!()
 	}
 
 	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
@@ -74,6 +82,10 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
+	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+		todo!()
+	}
+
 	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Create a new transaction
@@ -85,5 +97,9 @@ impl BenchmarkClient for ReDBClient {
 		drop(tab);
 		txn.commit()?;
 		Ok(())
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		todo!()
 	}
 }

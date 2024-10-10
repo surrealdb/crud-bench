@@ -2,8 +2,10 @@ use crate::KeyType;
 
 #[derive(Clone, Copy)]
 pub(crate) enum KeyProvider {
-	OrderInteger(OrderedInteger),
+	OrderedInteger(OrderedInteger),
 	UnorderedInteger(UnorderedInteger),
+	OrderedString(OrderedString),
+	UnorderedString(UnorderedString),
 }
 
 impl KeyProvider {
@@ -13,14 +15,22 @@ impl KeyProvider {
 				if random {
 					Self::UnorderedInteger(UnorderedInteger::default())
 				} else {
-					Self::OrderInteger(OrderedInteger::default())
+					Self::OrderedInteger(OrderedInteger::default())
 				}
 			}
 			KeyType::String16 => {
-				todo!()
+				if random {
+					Self::UnorderedString(UnorderedString::new(16))
+				} else {
+					Self::OrderedString(OrderedString::new(16))
+				}
 			}
 			KeyType::String68 => {
-				todo!()
+				if random {
+					Self::UnorderedString(UnorderedString::new(68))
+				} else {
+					Self::OrderedString(OrderedString::new(68))
+				}
 			}
 			KeyType::Uuid => {
 				todo!()
@@ -31,6 +41,10 @@ impl KeyProvider {
 
 pub(crate) trait IntegerKeyProvider {
 	fn key(&mut self, n: u32) -> u32;
+}
+
+pub(crate) trait StringKeyProvider {
+	fn key(&mut self, n: u32) -> String;
 }
 
 #[derive(Default, Clone, Copy)]
@@ -77,5 +91,35 @@ impl UnorderedInteger {
 
 		// Combine left and right halves back into a single u32
 		((left as u32) << 16) | (right as u32)
+	}
+}
+
+#[derive(Default, Clone, Copy)]
+pub(crate) struct OrderedString(usize);
+
+impl OrderedString {
+	fn new(length: usize) -> Self {
+		OrderedString(length)
+	}
+}
+
+impl StringKeyProvider for OrderedString {
+	fn key(&mut self, n: u32) -> String {
+		todo!()
+	}
+}
+
+#[derive(Default, Clone, Copy)]
+pub(crate) struct UnorderedString(usize);
+
+impl UnorderedString {
+	fn new(length: usize) -> Self {
+		UnorderedString(length)
+	}
+}
+
+impl StringKeyProvider for UnorderedString {
+	fn key(&mut self, n: u32) -> String {
+		todo!()
 	}
 }

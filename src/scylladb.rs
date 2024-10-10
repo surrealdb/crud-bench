@@ -67,6 +67,10 @@ impl BenchmarkClient for ScylladbClient {
 		Ok(())
 	}
 
+	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+		todo!()
+	}
+
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let key = key as i32;
 		let res = self
@@ -75,6 +79,10 @@ impl BenchmarkClient for ScylladbClient {
 			.await?;
 		assert_eq!(res.rows_num()?, 1);
 		Ok(())
+	}
+
+	async fn read_string(&self, key: String) -> Result<()> {
+		todo!()
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
@@ -89,10 +97,18 @@ impl BenchmarkClient for ScylladbClient {
 		Ok(())
 	}
 
+	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+		todo!()
+	}
+
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let key = key as i32;
 		self.0.query_unpaged("DELETE FROM bench.record WHERE id=?", (&key,)).await?;
 		Ok(())
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		todo!()
 	}
 }

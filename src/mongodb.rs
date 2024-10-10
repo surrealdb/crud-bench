@@ -76,11 +76,19 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
+	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+		todo!()
+	}
+
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let filter = doc! { "id": key };
 		let doc = self.0.find_one(filter).await?;
 		assert_eq!(doc.unwrap().id, key);
 		Ok(())
+	}
+
+	async fn read_string(&self, key: String) -> Result<()> {
+		todo!()
 	}
 
 	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
@@ -91,10 +99,18 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
+	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+		todo!()
+	}
+
 	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let filter = doc! { "id": key };
 		let res = self.0.delete_one(filter).await?;
 		assert_eq!(res.deleted_count, 1);
 		Ok(())
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		todo!()
 	}
 }
