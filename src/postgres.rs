@@ -5,6 +5,7 @@ use tokio_postgres::{Client, NoTls};
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 use crate::docker::DockerParams;
+use crate::KeyType;
 
 pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "postgres",
@@ -12,10 +13,13 @@ pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 	post_args: "postgres -N 1024",
 };
 
-#[derive(Default)]
 pub(crate) struct PostgresClientProvider {}
 
 impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
+	async fn setup(_: KeyType) -> Result<Self> {
+		Ok(Self {})
+	}
+
 	async fn create_client(&self, endpoint: Option<String>) -> Result<PostgresClient> {
 		let url = endpoint.unwrap_or("host=localhost user=postgres password=postgres".to_owned());
 		let (client, connection) = tokio_postgres::connect(&url, NoTls).await?;
@@ -50,7 +54,7 @@ impl BenchmarkClient for PostgresClient {
 		Ok(())
 	}
 
-	async fn create(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let key = key as i32;
 		let res = self
 			.client
@@ -63,7 +67,7 @@ impl BenchmarkClient for PostgresClient {
 		Ok(())
 	}
 
-	async fn read(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<()> {
 		let key = key as i32;
 		let res =
 			self.client.query("SELECT id, text, integer FROM record WHERE id=$1", &[&key]).await?;
@@ -71,7 +75,7 @@ impl BenchmarkClient for PostgresClient {
 		Ok(())
 	}
 
-	async fn update(&self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let key = key as i32;
 		let res = self
 			.client
@@ -84,7 +88,7 @@ impl BenchmarkClient for PostgresClient {
 		Ok(())
 	}
 
-	async fn delete(&self, key: u32) -> Result<()> {
+	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let key = key as i32;
 		let res = self.client.execute("DELETE FROM record WHERE id=$1", &[&key]).await?;
 		assert_eq!(res, 1);

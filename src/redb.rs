@@ -1,40 +1,30 @@
 #![cfg(feature = "redb")]
 
-use anyhow::Error;
 use anyhow::Result;
 use redb::{Database, TableDefinition};
 use std::sync::Arc;
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::KeyType;
 
 const TABLE: TableDefinition<&[u8], Vec<u8>> = TableDefinition::new("test");
 
-pub(crate) struct ReDBClientProvider {
-	db: Arc<Database>,
-}
+pub(crate) struct ReDBClientProvider(Arc<Database>);
 
-impl ReDBClientProvider {
-	pub(crate) async fn setup() -> Result<Self, Error> {
+impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
+	async fn setup(_: KeyType) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("redb");
 		// Create the store
-		Ok(Self {
-			db: Arc::new(Database::create("redb")?),
-		})
+		Ok(Self(Arc::new(Database::create("redb")?)))
 	}
-}
 
-impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 	async fn create_client(&self, _: Option<String>) -> Result<ReDBClient> {
-		Ok(ReDBClient {
-			db: self.db.clone(),
-		})
+		Ok(ReDBClient(self.0.clone()))
 	}
 }
 
-pub(crate) struct ReDBClient {
-	db: Arc<Database>,
-}
+pub(crate) struct ReDBClient(Arc<Database>);
 
 impl BenchmarkClient for ReDBClient {
 	async fn shutdown(&self) -> Result<()> {
@@ -44,11 +34,11 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn create(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		// Create a new transaction
-		let txn = self.db.begin_write()?;
+		let txn = self.0.begin_write()?;
 		// Open the database table
 		let mut tab = txn.open_table(TABLE)?;
 		// Process the data
@@ -58,10 +48,10 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn read(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Create a new transaction
-		let txn = self.db.begin_read()?;
+		let txn = self.0.begin_read()?;
 		// Open the database table
 		let tab = txn.open_table(TABLE)?;
 		// Process the data
@@ -70,11 +60,11 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn update(&self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		// Create a new transaction
-		let txn = self.db.begin_write()?;
+		let txn = self.0.begin_write()?;
 		// Open the database table
 		let mut tab = txn.open_table(TABLE)?;
 		// Process the data
@@ -84,10 +74,10 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn delete(&self, key: u32) -> Result<()> {
+	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Create a new transaction
-		let txn = self.db.begin_write()?;
+		let txn = self.0.begin_write()?;
 		// Open the database table
 		let mut tab = txn.open_table(TABLE)?;
 		// Process the data

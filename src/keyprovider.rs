@@ -1,17 +1,41 @@
-use crate::benchmark::{Benchmark, BenchmarkResult};
-use crate::database::Database;
-use anyhow::Result;
+use crate::KeyType;
 
-pub(crate) trait KeyProvider: Default + Clone + Copy + Send + Sync + 'static {
-	fn key(&mut self, n: u32) -> u32;
-	async fn run(self, benchmark: &Benchmark, database: &Database) -> Result<BenchmarkResult> {
-		database.run(benchmark, self).await
+#[derive(Clone, Copy)]
+pub(crate) enum KeyProvider {
+	OrderInteger(OrderedInteger),
+	UnorderedInteger(UnorderedInteger),
+}
+
+impl KeyProvider {
+	pub(crate) fn new(key_type: KeyType, random: bool) -> Self {
+		match key_type {
+			KeyType::Integer => {
+				if random {
+					Self::UnorderedInteger(UnorderedInteger::default())
+				} else {
+					Self::OrderInteger(OrderedInteger::default())
+				}
+			}
+			KeyType::String16 => {
+				todo!()
+			}
+			KeyType::String68 => {
+				todo!()
+			}
+			KeyType::Uuid => {
+				todo!()
+			}
+		}
 	}
+}
+
+pub(crate) trait IntegerKeyProvider {
+	fn key(&mut self, n: u32) -> u32;
 }
 
 #[derive(Default, Clone, Copy)]
 pub(crate) struct OrderedInteger();
-impl KeyProvider for OrderedInteger {
+impl IntegerKeyProvider for OrderedInteger {
 	fn key(&mut self, n: u32) -> u32 {
 		n
 	}
@@ -19,7 +43,7 @@ impl KeyProvider for OrderedInteger {
 #[derive(Default, Clone, Copy)]
 pub(crate) struct UnorderedInteger();
 
-impl KeyProvider for UnorderedInteger {
+impl IntegerKeyProvider for UnorderedInteger {
 	fn key(&mut self, n: u32) -> u32 {
 		Self::feistel_transform(n)
 	}

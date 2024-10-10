@@ -2,7 +2,7 @@ use crate::benchmark::Benchmark;
 use std::io::IsTerminal;
 
 use crate::database::Database;
-use crate::keyprovider::{KeyProvider, OrderedInteger, UnorderedInteger};
+use crate::keyprovider::KeyProvider;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use tokio::runtime::Builder;
@@ -96,38 +96,10 @@ fn main() -> Result<()> {
 	if std::io::stdout().is_terminal() {
 		println!("--------------------------------------------------");
 	}
+	// Build the key provider
+	let kp = KeyProvider::new(args.key, args.random);
 	// Run the benchmark
-	let res = runtime.block_on(async {
-		if args.random {
-			match args.key {
-				KeyType::Integer => {
-					UnorderedInteger::default().run(&benchmark, &args.database).await
-				}
-				KeyType::String16 => {
-					todo!()
-				}
-				KeyType::String68 => {
-					todo!()
-				}
-				KeyType::Uuid => {
-					todo!()
-				}
-			}
-		} else {
-			match args.key {
-				KeyType::Integer => OrderedInteger::default().run(&benchmark, &args.database).await,
-				KeyType::String16 => {
-					todo!()
-				}
-				KeyType::String68 => {
-					todo!()
-				}
-				KeyType::Uuid => {
-					todo!()
-				}
-			}
-		}
-	});
+	let res = runtime.block_on(async { args.database.run(&benchmark, args.key, kp).await });
 	// Output the results
 	match res {
 		// Output the results

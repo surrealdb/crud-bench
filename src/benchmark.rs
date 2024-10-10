@@ -1,5 +1,5 @@
-use crate::keyprovider::KeyProvider;
-use crate::Args;
+use crate::keyprovider::{IntegerKeyProvider, KeyProvider};
+use crate::{Args, KeyType};
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
 use log::{error, info};
@@ -41,27 +41,23 @@ impl Benchmark {
 		}
 	}
 	/// Run the benchmark for the desired benchmark engine
-	pub(crate) async fn run<C, P, K>(&self, engine: P, kp: K) -> Result<BenchmarkResult>
+	pub(crate) async fn run<C, E>(&self, engine: E, kp: KeyProvider) -> Result<BenchmarkResult>
 	where
 		C: BenchmarkClient + Send + Sync,
-		P: BenchmarkEngine<C> + Send + Sync,
-		K: KeyProvider + Send + Sync,
+		E: BenchmarkEngine<C> + Send + Sync,
 	{
 		// Setup the datastore
 		self.wait_for_client(&engine).await?.startup().await?;
 		// Setup the clients
 		let clients = self.setup_clients(&engine).await?;
 		// Run the "creates" benchmark
-		let creates =
-			self.run_operation::<C, P, K>(&clients, BenchmarkOperation::Create, kp).await?;
+		let creates = self.run_operation(&clients, BenchmarkOperation::Create, kp).await?;
 		// Run the "reads" benchmark
-		let reads = self.run_operation::<C, P, K>(&clients, BenchmarkOperation::Read, kp).await?;
+		let reads = self.run_operation(&clients, BenchmarkOperation::Read, kp).await?;
 		// Run the "reads" benchmark
-		let updates =
-			self.run_operation::<C, P, K>(&clients, BenchmarkOperation::Update, kp).await?;
+		let updates = self.run_operation::<C>(&clients, BenchmarkOperation::Update, kp).await?;
 		// Run the "deletes" benchmark
-		let deletes =
-			self.run_operation::<C, P, K>(&clients, BenchmarkOperation::Delete, kp).await?;
+		let deletes = self.run_operation::<C>(&clients, BenchmarkOperation::Delete, kp).await?;
 		// Setup the datastore
 		self.wait_for_client(&engine).await?.shutdown().await?;
 		// Return the benchmark results
@@ -73,10 +69,10 @@ impl Benchmark {
 		})
 	}
 
-	async fn wait_for_client<C, P>(&self, engine: &P) -> Result<C>
+	async fn wait_for_client<C, E>(&self, engine: &E) -> Result<C>
 	where
 		C: BenchmarkClient + Send + Sync,
-		P: BenchmarkEngine<C> + Send + Sync,
+		E: BenchmarkEngine<C> + Send + Sync,
 	{
 		// Wait for a small amount of time
 		tokio::time::sleep(TIMEOUT).await;
@@ -96,10 +92,10 @@ impl Benchmark {
 		bail!("Can't create the client")
 	}
 
-	async fn setup_clients<C, P>(&self, engine: &P) -> Result<Vec<Arc<C>>>
+	async fn setup_clients<C, E>(&self, engine: &E) -> Result<Vec<Arc<C>>>
 	where
 		C: BenchmarkClient + Send + Sync,
-		P: BenchmarkEngine<C> + Send + Sync,
+		E: BenchmarkEngine<C> + Send + Sync,
 	{
 		// Create a set of client connections
 		let mut clients = Vec::with_capacity(self.clients as usize);
@@ -116,16 +112,14 @@ impl Benchmark {
 		Ok(try_join_all(clients).await?.into_iter().map(Arc::new).collect())
 	}
 
-	async fn run_operation<C, P, K>(
+	async fn run_operation<C>(
 		&self,
 		clients: &[Arc<C>],
 		operation: BenchmarkOperation,
-		key_provider: K,
+		kp: KeyProvider,
 	) -> Result<Duration>
 	where
 		C: BenchmarkClient + Send + Sync,
-		P: BenchmarkEngine<C> + Send + Sync,
-		K: KeyProvider + Send + Sync,
 	{
 		// Get the total concurrent futures
 		let total = (self.clients * self.threads) as usize;
@@ -151,16 +145,9 @@ impl Benchmark {
 				let samples = self.samples;
 				futures.push(task::spawn(async move {
 					info!("Task #{c}/{t}/{operation} starting");
-					if let Err(e) = Self::operation_loop(
-						client,
-						samples,
-						&error,
-						&current,
-						operation,
-						key_provider,
-						out,
-					)
-					.await
+					if let Err(e) =
+						Self::operation_loop(client, samples, &error, &current, operation, kp, out)
+							.await
 					{
 						error!("{e}");
 						error.store(true, Ordering::Relaxed);
@@ -182,18 +169,17 @@ impl Benchmark {
 		Ok(elapsed)
 	}
 
-	async fn operation_loop<C, K>(
+	async fn operation_loop<C>(
 		client: Arc<C>,
 		samples: u32,
 		error: &AtomicBool,
 		current: &AtomicU32,
 		operation: BenchmarkOperation,
-		mut key_provider: K,
+		mut key_provider: KeyProvider,
 		mut out: TerminalOut,
 	) -> Result<()>
 	where
 		C: BenchmarkClient,
-		K: KeyProvider,
 	{
 		let mut old_percent = 0;
 		// Check if we have encountered an error
@@ -217,24 +203,23 @@ impl Benchmark {
 					None
 				}
 			})?;
-			let key = key_provider.key(sample);
 			// Perform the benchmark operation
 			match operation {
 				BenchmarkOperation::Read => {
-					client.read(key).await?;
+					client.read(sample, &mut key_provider).await?;
 				}
 				BenchmarkOperation::Create => {
 					let mut provider = RecordProvider::default();
 					let record = provider.sample();
-					client.create(key, record).await?;
+					client.create(sample, record, &mut key_provider).await?;
 				}
 				BenchmarkOperation::Update => {
 					let mut provider = RecordProvider::default();
 					let record = provider.sample();
-					client.update(key, record).await?;
+					client.update(sample, record, &mut key_provider).await?;
 				}
 				BenchmarkOperation::Delete => {
-					client.delete(key).await?;
+					client.delete(sample, &mut key_provider).await?;
 				}
 			}
 		}
@@ -251,7 +236,7 @@ pub(crate) enum BenchmarkOperation {
 }
 
 impl Display for BenchmarkOperation {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		match self {
 			Self::Create => write!(f, "Create"),
 			Self::Read => write!(f, "Read"),
@@ -311,14 +296,15 @@ impl RecordProvider {
 	}
 }
 
-pub(crate) trait BenchmarkEngine<C>: Send + Sync
+pub(crate) trait BenchmarkEngine<C>: Sized
 where
 	C: BenchmarkClient,
 {
+	fn setup(kt: KeyType) -> impl Future<Output = Result<Self>> + Send;
 	fn create_client(&self, endpoint: Option<String>) -> impl Future<Output = Result<C>> + Send;
 }
 
-pub(crate) trait BenchmarkClient: Send + Sync + 'static {
+pub(crate) trait BenchmarkClient: 'static {
 	/// Initialise the store at startup
 	async fn startup(&self) -> Result<()> {
 		Ok(())
@@ -327,14 +313,50 @@ pub(crate) trait BenchmarkClient: Send + Sync + 'static {
 	fn shutdown(&self) -> impl Future<Output = Result<()>> + Send {
 		async { Ok(()) }
 	}
+	fn create(
+		&self,
+		n: u32,
+		record: &Record,
+		kp: &mut KeyProvider,
+	) -> impl Future<Output = Result<()>> + Send {
+		match kp {
+			KeyProvider::OrderInteger(p) => self.create_u32(p.key(n), record),
+			KeyProvider::UnorderedInteger(p) => self.create_u32(p.key(n), record),
+		}
+	}
+
+	fn read(&self, n: u32, kp: &mut KeyProvider) -> impl Future<Output = Result<()>> + Send {
+		match kp {
+			KeyProvider::OrderInteger(p) => self.read_u32(p.key(n)),
+			KeyProvider::UnorderedInteger(p) => self.read_u32(p.key(n)),
+		}
+	}
+	fn update(
+		&self,
+		n: u32,
+		record: &Record,
+		kp: &mut KeyProvider,
+	) -> impl Future<Output = Result<()>> + Send {
+		match kp {
+			KeyProvider::OrderInteger(p) => self.update_u32(p.key(n), record),
+			KeyProvider::UnorderedInteger(p) => self.update_u32(p.key(n), record),
+		}
+	}
+	fn delete(&self, n: u32, kp: &mut KeyProvider) -> impl Future<Output = Result<()>> + Send {
+		match kp {
+			KeyProvider::OrderInteger(p) => self.delete_u32(p.key(n)),
+			KeyProvider::UnorderedInteger(p) => self.delete_u32(p.key(n)),
+		}
+	}
+
 	/// Create a record at a key
-	fn create(&self, key: u32, record: &Record) -> impl Future<Output = Result<()>> + Send;
+	fn create_u32(&self, key: u32, record: &Record) -> impl Future<Output = Result<()>> + Send;
 	/// Read a record at a key
-	fn read(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
+	fn read_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
 	/// Update a record at a key
-	fn update(&self, key: u32, record: &Record) -> impl Future<Output = Result<()>> + Send;
+	fn update_u32(&self, key: u32, record: &Record) -> impl Future<Output = Result<()>> + Send;
 	/// Delete a record at a key
-	fn delete(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
+	fn delete_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
 }
 
 pub(crate) struct TerminalOut(Option<Stdout>);

@@ -5,6 +5,7 @@ use scylla::{Session, SessionBuilder};
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 use crate::docker::DockerParams;
+use crate::KeyType;
 
 pub(crate) const SCYLLADB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "scylladb/scylla",
@@ -12,26 +13,25 @@ pub(crate) const SCYLLADB_DOCKER_PARAMS: DockerParams = DockerParams {
 	post_args: "",
 };
 
-#[derive(Default)]
 pub(crate) struct ScyllaDBClientProvider {}
 
 impl BenchmarkEngine<ScylladbClient> for ScyllaDBClientProvider {
+	async fn setup(_: KeyType) -> Result<Self> {
+		Ok(ScyllaDBClientProvider {})
+	}
+
 	async fn create_client(&self, endpoint: Option<String>) -> Result<ScylladbClient> {
 		let node = endpoint.unwrap_or("127.0.0.1:9042".to_owned());
 		let session = SessionBuilder::new().known_node(node).build().await?;
-		Ok(ScylladbClient {
-			session,
-		})
+		Ok(ScylladbClient(session))
 	}
 }
 
-pub(crate) struct ScylladbClient {
-	session: Session,
-}
+pub(crate) struct ScylladbClient(Session);
 
 impl BenchmarkClient for ScylladbClient {
 	async fn startup(&self) -> Result<()> {
-		self.session
+		self.0
 			.query_unpaged(
 				"
 					CREATE KEYSPACE bench 
@@ -41,7 +41,7 @@ impl BenchmarkClient for ScylladbClient {
 				(),
 			)
 			.await?;
-		self.session
+		self.0
 			.query_unpaged(
 				"
 					CREATE TABLE bench.record (
@@ -56,9 +56,9 @@ impl BenchmarkClient for ScylladbClient {
 		Ok(())
 	}
 
-	async fn create(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let key = key as i32;
-		self.session
+		self.0
 			.query_unpaged(
 				"INSERT INTO bench.record (id, text, integer) VALUES (?, ?, ?)",
 				(&key, &record.text, &record.integer),
@@ -67,10 +67,10 @@ impl BenchmarkClient for ScylladbClient {
 		Ok(())
 	}
 
-	async fn read(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<()> {
 		let key = key as i32;
 		let res = self
-			.session
+			.0
 			.query_unpaged("SELECT id, text, integer FROM bench.record WHERE id=?", (&key,))
 			.await?;
 		assert_eq!(res.rows_num()?, 1);
@@ -78,9 +78,9 @@ impl BenchmarkClient for ScylladbClient {
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update(&self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let key = key as i32;
-		self.session
+		self.0
 			.query_unpaged(
 				"UPDATE bench.record SET text=?, integer=? WHERE id=?",
 				(&record.text, &record.integer, &key),
@@ -90,9 +90,9 @@ impl BenchmarkClient for ScylladbClient {
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn delete(&self, key: u32) -> Result<()> {
+	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let key = key as i32;
-		self.session.query_unpaged("DELETE FROM bench.record WHERE id=?", (&key,)).await?;
+		self.0.query_unpaged("DELETE FROM bench.record WHERE id=?", (&key,)).await?;
 		Ok(())
 	}
 }
