@@ -1,4 +1,6 @@
 use crate::KeyType;
+use std::hash::Hasher;
+use twox_hash::XxHash64;
 
 #[derive(Clone, Copy)]
 pub(crate) enum KeyProvider {
@@ -18,18 +20,25 @@ impl KeyProvider {
 					Self::OrderedInteger(OrderedInteger::default())
 				}
 			}
-			KeyType::String16 => {
+			KeyType::String26 => {
 				if random {
-					Self::UnorderedString(UnorderedString::new(16))
+					Self::UnorderedString(UnorderedString::new(1))
 				} else {
-					Self::OrderedString(OrderedString::new(16))
+					Self::OrderedString(OrderedString::new(1))
 				}
 			}
-			KeyType::String68 => {
+			KeyType::String90 => {
 				if random {
-					Self::UnorderedString(UnorderedString::new(68))
+					Self::UnorderedString(UnorderedString::new(5))
 				} else {
-					Self::OrderedString(OrderedString::new(68))
+					Self::OrderedString(OrderedString::new(5))
+				}
+			}
+			KeyType::String506 => {
+				if random {
+					Self::UnorderedString(UnorderedString::new(31))
+				} else {
+					Self::OrderedString(OrderedString::new(31))
 				}
 			}
 			KeyType::Uuid => {
@@ -94,18 +103,30 @@ impl UnorderedInteger {
 	}
 }
 
-#[derive(Default, Clone, Copy)]
+fn hash_string(n: u32, repeat: usize) -> String {
+	let mut hex_string = String::with_capacity(repeat * 16 + 10);
+	for s in 0..repeat as u64 {
+		let mut hasher = XxHash64::with_seed(s);
+		hasher.write(&n.to_be_bytes());
+		let hash_result = hasher.finish();
+		hex_string.push_str(&format!("{:x}", hash_result));
+	}
+	hex_string
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct OrderedString(usize);
 
 impl OrderedString {
-	fn new(length: usize) -> Self {
-		OrderedString(length)
+	fn new(repeat: usize) -> Self {
+		Self(repeat)
 	}
 }
 
 impl StringKeyProvider for OrderedString {
 	fn key(&mut self, n: u32) -> String {
-		todo!()
+		let hex_string = hash_string(n, self.0);
+		format!("{:010}{hex_string}", n)
 	}
 }
 
@@ -113,13 +134,67 @@ impl StringKeyProvider for OrderedString {
 pub(crate) struct UnorderedString(usize);
 
 impl UnorderedString {
-	fn new(length: usize) -> Self {
-		UnorderedString(length)
+	fn new(repeat: usize) -> Self {
+		Self(repeat)
 	}
 }
 
 impl StringKeyProvider for UnorderedString {
 	fn key(&mut self, n: u32) -> String {
-		todo!()
+		let hex_string = hash_string(n, self.0);
+		format!("{hex_string}{:010}", n)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use crate::keyprovider::{OrderedString, StringKeyProvider, UnorderedString};
+
+	#[test]
+	fn ordered_string_26() {
+		let mut o = OrderedString::new(1);
+		let s = o.key(12345678);
+		assert_eq!(s.len(), 26);
+		assert_eq!(s, "0012345678d79235c904e704c6");
+	}
+
+	#[test]
+	fn unordered_string_26() {
+		let mut o = UnorderedString::new(1);
+		let s = o.key(12345678);
+		assert_eq!(s.len(), 26);
+		assert_eq!(s, "d79235c904e704c60012345678");
+	}
+
+	#[test]
+	fn ordered_string_90() {
+		let mut o = OrderedString::new(5);
+		let s = o.key(12345678);
+		assert_eq!(s.len(), 90);
+		assert_eq!(s, "0012345678d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d3");
+	}
+
+	#[test]
+	fn unordered_string_90() {
+		let mut o = UnorderedString::new(5);
+		let s = o.key(12345678);
+		assert_eq!(s.len(), 90);
+		assert_eq!(s, "d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d30012345678");
+	}
+
+	#[test]
+	fn ordered_string_506() {
+		let mut o = OrderedString::new(31);
+		let s = o.key(12345678);
+		assert_eq!(s.len(), 90);
+		assert_eq!(s, "0012345678d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d3");
+	}
+
+	#[test]
+	fn unordered_string_506() {
+		let mut o = UnorderedString::new(31);
+		let s = o.key(12345678);
+		assert_eq!(s.len(), 90);
+		assert_eq!(s, "d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d30012345678");
 	}
 }

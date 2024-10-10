@@ -75,10 +75,11 @@ Options:
           [default: integer]
 
           Possible values:
-          - integer:  4 bytes integer
-          - string16: 16 ascii bytes
-          - string68: 68 ascii bytes
-          - uuid:     UUID type 7
+          - integer:   4 bytes integer
+          - string26:  26 ascii bytes
+          - string90:  90 ascii bytes
+          - string506: 506 ascii bytes
+          - uuid:      UUID type 7
 
   -h, --help
           Print help (see a summary with '-h')

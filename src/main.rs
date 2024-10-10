@@ -67,10 +67,12 @@ pub(crate) struct Args {
 pub(crate) enum KeyType {
 	/// 4 bytes integer
 	Integer,
-	/// 16 ascii bytes
-	String16,
-	/// 68 ascii bytes
-	String68,
+	/// 26 ascii bytes
+	String26,
+	/// 90 ascii bytes
+	String90,
+	/// 506 ascii bytes
+	String506,
 	/// UUID type 7
 	Uuid,
 }
@@ -168,22 +170,32 @@ mod test {
 	}
 
 	#[test]
-	fn test_string16_ordered() -> Result<()> {
-		test(KeyType::String16, false)
+	fn test_string26_ordered() -> Result<()> {
+		test(KeyType::String26, false)
 	}
 
 	#[test]
-	fn test_string16_unordered() -> Result<()> {
-		test(KeyType::String16, true)
+	fn test_string26_unordered() -> Result<()> {
+		test(KeyType::String26, true)
 	}
 
 	#[test]
-	fn test_string68_ordered() -> Result<()> {
-		test(KeyType::String68, false)
+	fn test_string90_ordered() -> Result<()> {
+		test(KeyType::String90, false)
 	}
 
 	#[test]
-	fn test_string68_unordered() -> Result<()> {
-		test(KeyType::String68, true)
+	fn test_string90_unordered() -> Result<()> {
+		test(KeyType::String90, true)
+	}
+
+	#[test]
+	fn test_string506_ordered() -> Result<()> {
+		test(KeyType::String506, false)
+	}
+
+	#[test]
+	fn test_string506_unordered() -> Result<()> {
+		test(KeyType::String506, true)
 	}
 }

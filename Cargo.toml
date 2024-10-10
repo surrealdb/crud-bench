@@ -46,3 +46,4 @@ surrealdb = { version = "2.0.4", optional = true }
 surrealkv = { version = "0.3.7", optional = true }
 tokio = { version = "1.40.0", features = ["macros", "time", "rt-multi-thread"] }
 tokio-postgres = { version = "0.7.12", optional = true }
+twox-hash = "1.6.3"

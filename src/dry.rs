@@ -14,7 +14,9 @@ impl From<KeyType> for DryDatabase {
 	fn from(t: KeyType) -> Self {
 		match t {
 			KeyType::Integer => Self::Integer(DashMap::new().into()),
-			KeyType::String16 | KeyType::String68 => Self::Integer(DashMap::new().into()),
+			KeyType::String26 | KeyType::String90 | KeyType::String506 => {
+				Self::String(DashMap::new().into())
+			}
 			KeyType::Uuid => todo!(),
 		}
 	}

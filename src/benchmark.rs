@@ -2,7 +2,7 @@ use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::{Args, KeyType};
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
-use log::{error, info};
+use log::info;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -149,10 +149,13 @@ impl Benchmark {
 						Self::operation_loop(client, samples, &error, &current, operation, kp, out)
 							.await
 					{
-						error!("{e}");
+						eprintln!("{e}");
 						error.store(true, Ordering::Relaxed);
+						Err(e)
+					} else {
+						info!("Task #{c}/{t}/{operation} finished");
+						Ok(())
 					}
-					info!("Task #{c}/{t}/{operation} finished");
 				}));
 			}
 		}
@@ -160,6 +163,9 @@ impl Benchmark {
 		if let Err(e) = try_join_all(futures).await {
 			error.store(true, Ordering::Relaxed);
 			Err(e)?;
+		}
+		if error.load(Ordering::Relaxed) {
+			bail!("Task failure");
 		}
 		// Calculate the elapsed time
 		let elapsed = time.elapsed();
