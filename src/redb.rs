@@ -35,7 +35,40 @@ impl BenchmarkClient for ReDBClient {
 	}
 
 	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
-		let key = &key.to_ne_bytes();
+		self.create_bytes(&key.to_ne_bytes(), record).await
+	}
+
+	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+		self.create_bytes(&key.into_bytes(), record).await
+	}
+
+	async fn read_u32(&self, key: u32) -> Result<()> {
+		self.read_bytes(&key.to_ne_bytes()).await
+	}
+
+	async fn read_string(&self, key: String) -> Result<()> {
+		self.read_bytes(&key.into_bytes()).await
+	}
+
+	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
+		self.update_bytes(&key.to_ne_bytes(), record).await
+	}
+
+	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+		self.update_bytes(&key.into_bytes(), record).await
+	}
+
+	async fn delete_u32(&self, key: u32) -> Result<()> {
+		self.delete_bytes(&key.to_ne_bytes()).await
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		self.delete_bytes(&key.into_bytes()).await
+	}
+}
+
+impl ReDBClient {
+	async fn create_bytes(&self, key: &[u8], record: &Record) -> Result<()> {
 		let val = bincode::serialize(record)?;
 		// Create a new transaction
 		let txn = self.0.begin_write()?;
@@ -48,12 +81,7 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
-		todo!()
-	}
-
-	async fn read_u32(&self, key: u32) -> Result<()> {
-		let key = &key.to_ne_bytes();
+	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
 		let txn = self.0.begin_read()?;
 		// Open the database table
@@ -64,12 +92,7 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
-		todo!()
-	}
-
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
-		let key = &key.to_ne_bytes();
+	async fn update_bytes(&self, key: &[u8], record: &Record) -> Result<()> {
 		let val = bincode::serialize(record)?;
 		// Create a new transaction
 		let txn = self.0.begin_write()?;
@@ -82,12 +105,7 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
-		todo!()
-	}
-
-	async fn delete_u32(&self, key: u32) -> Result<()> {
-		let key = &key.to_ne_bytes();
+	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
 		let txn = self.0.begin_write()?;
 		// Open the database table
@@ -97,9 +115,5 @@ impl BenchmarkClient for ReDBClient {
 		drop(tab);
 		txn.commit()?;
 		Ok(())
-	}
-
-	async fn delete_string(&self, key: String) -> Result<()> {
-		todo!()
 	}
 }

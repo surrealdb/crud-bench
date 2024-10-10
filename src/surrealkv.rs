@@ -53,7 +53,12 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
-		todo!()
+		let key = key.into_bytes();
+		let val = bincode::serialize(record)?;
+		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
+		txn.set(&key, &val)?;
+		txn.commit().await?;
+		Ok(())
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
@@ -65,7 +70,11 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		todo!()
+		let key = key.into_bytes();
+		let mut txn = self.db.begin_with_mode(Mode::ReadOnly)?;
+		let read: Option<Vec<u8>> = txn.get(&key)?;
+		assert!(read.is_some());
+		Ok(())
 	}
 
 	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
@@ -78,7 +87,12 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
-		todo!()
+		let key = key.into_bytes();
+		let val = bincode::serialize(record)?;
+		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
+		txn.set(&key, &val)?;
+		txn.commit().await?;
+		Ok(())
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
@@ -90,6 +104,10 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
-		todo!()
+		let key = key.into_bytes();
+		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
+		txn.delete(&key)?;
+		txn.commit().await?;
+		Ok(())
 	}
 }
