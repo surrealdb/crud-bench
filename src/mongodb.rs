@@ -27,18 +27,7 @@ impl BenchmarkEngine<MongoDBIntegerClient> for MongoDBClientIntegerProvider {
 	}
 
 	async fn create_client(&self, endpoint: Option<String>) -> Result<MongoDBIntegerClient> {
-		let url = endpoint.unwrap_or("mongodb://root:root@localhost:27017".to_owned());
-		let opts = ClientOptions::parse(&url).await?;
-		let client = Client::with_options(opts)?;
-		let db = client.database_with_options(
-			"crud-bench",
-			DatabaseOptions::builder()
-				.write_concern(WriteConcern::builder().journal(false).build())
-				.read_concern(ReadConcern::majority())
-				.build(),
-		);
-		let collection = db.collection::<MongoDBIntegerRecord>("record");
-		Ok(MongoDBIntegerClient(collection))
+		Ok(MongoDBIntegerClient(create_mongo_client(endpoint).await?))
 	}
 }
 
@@ -50,19 +39,25 @@ impl BenchmarkEngine<MongoDBStringClient> for MongoDBClientStringProvider {
 	}
 
 	async fn create_client(&self, endpoint: Option<String>) -> Result<MongoDBStringClient> {
-		let url = endpoint.unwrap_or("mongodb://root:root@localhost:27017".to_owned());
-		let opts = ClientOptions::parse(&url).await?;
-		let client = Client::with_options(opts)?;
-		let db = client.database_with_options(
-			"crud-bench",
-			DatabaseOptions::builder()
-				.write_concern(WriteConcern::builder().journal(false).build())
-				.read_concern(ReadConcern::majority())
-				.build(),
-		);
-		let collection = db.collection::<MongoDBStringRecord>("record");
-		Ok(MongoDBStringClient(collection))
+		Ok(MongoDBStringClient(create_mongo_client(endpoint).await?))
 	}
+}
+
+async fn create_mongo_client<T>(endpoint: Option<String>) -> Result<Collection<T>>
+where
+	T: Send + Sync,
+{
+	let url = endpoint.unwrap_or("mongodb://root:root@localhost:27017".to_owned());
+	let opts = ClientOptions::parse(&url).await?;
+	let client = Client::with_options(opts)?;
+	let db = client.database_with_options(
+		"crud-bench",
+		DatabaseOptions::builder()
+			.write_concern(WriteConcern::builder().journal(false).build())
+			.read_concern(ReadConcern::majority())
+			.build(),
+	);
+	Ok(db.collection("record"))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -101,13 +96,19 @@ impl MongoDBStringRecord {
 
 pub(crate) struct MongoDBStringClient(Collection<MongoDBStringRecord>);
 
+async fn mongo_startup<T>(collection: &Collection<T>) -> Result<()>
+where
+	T: Send + Sync,
+{
+	let index_options = IndexOptions::builder().unique(true).build();
+	let index_model = IndexModel::builder().keys(doc! { "id": 1 }).options(index_options).build();
+	collection.create_index(index_model).await?;
+	Ok(())
+}
+
 impl BenchmarkClient for MongoDBStringClient {
 	async fn startup(&self) -> Result<()> {
-		let index_options = IndexOptions::builder().unique(true).build();
-		let index_model =
-			IndexModel::builder().keys(doc! { "id": 1 }).options(index_options).build();
-		self.0.create_index(index_model).await?;
-		Ok(())
+		mongo_startup(&self.0).await
 	}
 
 	async fn create_u32(&self, _: u32, _: &Record) -> Result<()> {
@@ -159,11 +160,7 @@ pub(crate) struct MongoDBIntegerClient(Collection<MongoDBIntegerRecord>);
 
 impl BenchmarkClient for MongoDBIntegerClient {
 	async fn startup(&self) -> Result<()> {
-		let index_options = IndexOptions::builder().unique(true).build();
-		let index_model =
-			IndexModel::builder().keys(doc! { "id": 1 }).options(index_options).build();
-		self.0.create_index(index_model).await?;
-		Ok(())
+		mongo_startup(&self.0).await
 	}
 
 	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
@@ -207,6 +204,6 @@ impl BenchmarkClient for MongoDBIntegerClient {
 	}
 
 	async fn delete_string(&self, _: String) -> Result<()> {
-		todo!()
+		bail!("Invalid MongoDBClient")
 	}
 }
