@@ -99,7 +99,7 @@ impl Database {
 			}
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbRocksdb => {
-				benchmark.run(crate::mongodb::MongoDBClientProvider::setup(kt).await?, kp).await
+				benchmark.run(crate::surrealdb::SurrealDBClientProvider::setup(kt).await?, kp).await
 			}
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbSurrealkv => {
@@ -110,9 +110,19 @@ impl Database {
 				benchmark.run(crate::scylladb::ScyllaDBClientProvider::setup(kt).await?, kp).await
 			}
 			#[cfg(feature = "mongodb")]
-			Database::Mongodb => {
-				benchmark.run(crate::mongodb::MongoDBClientProvider::setup(kt).await?, kp).await
-			}
+			Database::Mongodb => match kt {
+				KeyType::Integer => {
+					benchmark
+						.run(crate::mongodb::MongoDBClientIntegerProvider::setup(kt).await?, kp)
+						.await
+				}
+				KeyType::String26 | KeyType::String90 | KeyType::String506 => {
+					benchmark
+						.run(crate::mongodb::MongoDBClientStringProvider::setup(kt).await?, kp)
+						.await
+				}
+				KeyType::Uuid => todo!(),
+			},
 			#[cfg(feature = "postgres")]
 			Database::Postgres => {
 				benchmark.run(crate::postgres::PostgresClientProvider::setup(kt).await?, kp).await

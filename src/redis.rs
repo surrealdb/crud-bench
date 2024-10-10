@@ -43,8 +43,11 @@ impl BenchmarkClient for RedisClient {
 		Ok(())
 	}
 
+	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
-		todo!()
+		let val = bincode::serialize(record)?;
+		self.conn.lock().await.set(key, val).await?;
+		Ok(())
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
@@ -53,8 +56,11 @@ impl BenchmarkClient for RedisClient {
 		Ok(())
 	}
 
+	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn read_string(&self, key: String) -> Result<()> {
-		todo!()
+		let val: Vec<u8> = self.conn.lock().await.get(key).await?;
+		assert!(!val.is_empty());
+		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
@@ -64,8 +70,11 @@ impl BenchmarkClient for RedisClient {
 		Ok(())
 	}
 
+	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
-		todo!()
+		let val = bincode::serialize(record)?;
+		self.conn.lock().await.set(key, val).await?;
+		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
@@ -74,7 +83,9 @@ impl BenchmarkClient for RedisClient {
 		Ok(())
 	}
 
+	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_string(&self, key: String) -> Result<()> {
-		todo!()
+		self.conn.lock().await.del(key).await?;
+		Ok(())
 	}
 }
