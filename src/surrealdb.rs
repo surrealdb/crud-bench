@@ -9,6 +9,7 @@ use surrealdb::Surreal;
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
 use crate::docker::DockerParams;
+use crate::KeyType;
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
@@ -32,6 +33,9 @@ pub(crate) const SURREALDB_SURREALKV_DOCKER_PARAMS: DockerParams = DockerParams 
 pub(crate) struct SurrealDBClientProvider {}
 
 impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
+	async fn setup(_: KeyType) -> Result<Self> {
+		Ok(Self {})
+	}
 	async fn create_client(&self, endpoint: Option<String>) -> Result<SurrealDBClient> {
 		// Get the endpoint if specified
 		let ep = endpoint.unwrap_or("ws://127.0.0.1:8000".to_owned());
@@ -77,28 +81,54 @@ impl BenchmarkClient for SurrealDBClient {
 		Ok(())
 	}
 
-	async fn create(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let created: Option<SurrealRecord> =
 			self.db.create(("record", key as i64)).content(record.clone()).await?;
 		assert!(created.is_some());
 		Ok(())
 	}
 
-	async fn read(&self, key: u32) -> Result<()> {
+	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+		let created: Option<SurrealRecord> =
+			self.db.create(("record", key)).content(record.clone()).await?;
+		assert!(created.is_some());
+		Ok(())
+	}
+
+	async fn read_u32(&self, key: u32) -> Result<()> {
 		let read: Option<Record> = self.db.select(("record", key as i64)).await?;
 		assert!(read.is_some());
 		Ok(())
 	}
 
-	async fn update(&self, key: u32, record: &Record) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<()> {
+		let read: Option<Record> = self.db.select(("record", key)).await?;
+		assert!(read.is_some());
+		Ok(())
+	}
+
+	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let updated: Option<SurrealRecord> =
 			self.db.update(("record", key as i64)).content(record.clone()).await?;
 		assert!(updated.is_some());
 		Ok(())
 	}
 
-	async fn delete(&self, key: u32) -> Result<()> {
+	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+		let updated: Option<SurrealRecord> =
+			self.db.update(("record", key)).content(record.clone()).await?;
+		assert!(updated.is_some());
+		Ok(())
+	}
+
+	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let deleted: Option<Record> = self.db.delete(("record", key as i64)).await?;
+		assert!(deleted.is_some());
+		Ok(())
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		let deleted: Option<Record> = self.db.delete(("record", key)).await?;
 		assert!(deleted.is_some());
 		Ok(())
 	}

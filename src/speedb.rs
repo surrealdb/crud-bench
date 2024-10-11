@@ -9,13 +9,12 @@ use speedb::{
 use std::sync::Arc;
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::KeyType;
 
-pub(crate) struct SpeeDBClientProvider {
-	db: Arc<OptimisticTransactionDB>,
-}
+pub(crate) struct SpeeDBClientProvider(Arc<OptimisticTransactionDB>);
 
-impl SpeeDBClientProvider {
-	pub(crate) async fn setup() -> Result<Self, Error> {
+impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
+	async fn setup(_: KeyType) -> Result<Self, Error> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("speedb");
 		// Configure custom options
@@ -57,33 +56,24 @@ impl SpeeDBClientProvider {
 			DBCompressionType::Lz4hc,
 		]);
 		// Create the store
-		Ok(Self {
-			db: Arc::new(OptimisticTransactionDB::open(&opts, "speedb")?),
-		})
+		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, "speedb")?)))
 	}
-}
-
-impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 	async fn create_client(&self, _: Option<String>) -> Result<SpeeDBClient> {
-		Ok(SpeeDBClient {
-			db: self.db.clone(),
-		})
+		Ok(SpeeDBClient(self.0.clone()))
 	}
 }
 
-pub(crate) struct SpeeDBClient {
-	db: Arc<OptimisticTransactionDB>,
-}
+pub(crate) struct SpeeDBClient(Arc<OptimisticTransactionDB>);
 
 impl BenchmarkClient for SpeeDBClient {
-	async fn shutdown(&mut self) -> Result<()> {
+	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("speedb");
 		// Ok
 		Ok(())
 	}
 
-	async fn create(&mut self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		// Set the transaction options
@@ -93,14 +83,14 @@ impl BenchmarkClient for SpeeDBClient {
 		let mut wo = WriteOptions::default();
 		wo.set_sync(false);
 		// Create a new transaction
-		let txn = self.db.transaction_opt(&wo, &to);
+		let txn = self.0.transaction_opt(&wo, &to);
 		// Process the data
 		txn.put(key, val)?;
 		txn.commit()?;
 		Ok(())
 	}
 
-	async fn read(&mut self, key: i32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
@@ -109,21 +99,21 @@ impl BenchmarkClient for SpeeDBClient {
 		let mut wo = WriteOptions::default();
 		wo.set_sync(false);
 		// Get the database snapshot
-		let ss = self.db.snapshot();
+		let ss = self.0.snapshot();
 		// Configure read options
 		let mut ro = ReadOptions::default();
 		ro.set_snapshot(&ss);
 		ro.set_async_io(true);
 		ro.fill_cache(true);
 		// Create a new transaction
-		let txn = self.db.transaction_opt(&wo, &to);
+		let txn = self.0.transaction_opt(&wo, &to);
 		// Process the data
 		let read: Option<Vec<u8>> = txn.get_opt(key, &ro)?;
 		assert!(read.is_some());
 		Ok(())
 	}
 
-	async fn update(&mut self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(record)?;
 		// Set the transaction options
@@ -133,14 +123,14 @@ impl BenchmarkClient for SpeeDBClient {
 		let mut wo = WriteOptions::default();
 		wo.set_sync(false);
 		// Create a new transaction
-		let txn = self.db.transaction_opt(&wo, &to);
+		let txn = self.0.transaction_opt(&wo, &to);
 		// Process the data
 		txn.put(key, val)?;
 		txn.commit()?;
 		Ok(())
 	}
 
-	async fn delete(&mut self, key: i32) -> Result<()> {
+	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
@@ -149,7 +139,7 @@ impl BenchmarkClient for SpeeDBClient {
 		let mut wo = WriteOptions::default();
 		wo.set_sync(false);
 		// Create a new transaction
-		let txn = self.db.transaction_opt(&wo, &to);
+		let txn = self.0.transaction_opt(&wo, &to);
 		// Process the data
 		txn.delete(key)?;
 		txn.commit()?;
