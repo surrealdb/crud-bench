@@ -7,7 +7,8 @@ use rocksdb::{
 };
 use std::sync::Arc;
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::valueprovider::Record;
 use crate::KeyType;
 
 pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
@@ -73,11 +74,11 @@ impl BenchmarkClient for RocksDBClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: Record) -> Result<()> {
 		self.create_bytes(&key.to_ne_bytes(), record).await
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn create_string(&self, key: String, record: Record) -> Result<()> {
 		self.create_bytes(&key.into_bytes(), record).await
 	}
 
@@ -89,11 +90,11 @@ impl BenchmarkClient for RocksDBClient {
 		self.read_bytes(&key.into_bytes()).await
 	}
 
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, record: Record) -> Result<()> {
 		self.update_bytes(&key.to_ne_bytes(), record).await
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn update_string(&self, key: String, record: Record) -> Result<()> {
 		self.update_bytes(&key.into_bytes(), record).await
 	}
 
@@ -107,8 +108,8 @@ impl BenchmarkClient for RocksDBClient {
 }
 
 impl RocksDBClient {
-	async fn create_bytes(&self, key: &[u8], record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn create_bytes(&self, key: &[u8], record: Record) -> Result<()> {
+		let val = bincode::serialize(&record)?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
@@ -145,8 +146,8 @@ impl RocksDBClient {
 		Ok(())
 	}
 
-	async fn update_bytes(&self, key: &[u8], record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn update_bytes(&self, key: &[u8], record: Record) -> Result<()> {
+		let val = bincode::serialize(&record)?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);

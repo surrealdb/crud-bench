@@ -3,6 +3,7 @@ use std::io::IsTerminal;
 
 use crate::database::Database;
 use crate::keyprovider::KeyProvider;
+use crate::valueprovider::ValueProvider;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use tokio::runtime::Builder;
@@ -23,6 +24,7 @@ mod scylladb;
 mod speedb;
 mod surrealdb;
 mod surrealkv;
+mod valueprovider;
 
 #[derive(Parser, Debug)]
 #[command(term_width = 0)]
@@ -62,6 +64,10 @@ pub(crate) struct Args {
 	/// The type of the key
 	#[clap(short, long, default_value_t = KeyType::Integer, value_enum)]
 	pub(crate) key: KeyType,
+
+	/// Size of the text value
+	#[clap(short, long, default_value = "{text:'String50', integer:'i32'}", value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) value: String,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -106,8 +112,10 @@ fn run(args: Args) -> Result<()> {
 	}
 	// Build the key provider
 	let kp = KeyProvider::new(args.key, args.random);
+	// Build the value provider
+	let vp = ValueProvider::new(&args.value)?;
 	// Run the benchmark
-	let res = runtime.block_on(async { args.database.run(&benchmark, args.key, kp).await });
+	let res = runtime.block_on(async { args.database.run(&benchmark, args.key, kp, vp).await });
 	// Output the results
 	match res {
 		// Output the results
@@ -160,9 +168,10 @@ mod test {
 			workers: 5,
 			clients: 2,
 			threads: 2,
-			samples: 1000000,
+			samples: 10000,
 			random,
 			key,
+			value: r#"{"text":"String50", "integer":"i32"}"#.to_string(),
 		})
 	}
 

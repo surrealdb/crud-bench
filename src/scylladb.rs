@@ -1,7 +1,8 @@
 #![cfg(feature = "scylladb")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
+use crate::valueprovider::Record;
 use crate::KeyType;
 use anyhow::Result;
 use scylla::_macro_internal::SerializeValue;
@@ -71,11 +72,11 @@ impl BenchmarkClient for ScylladbClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: Record) -> Result<()> {
 		self.create_key(key as i32, record).await
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn create_string(&self, key: String, record: Record) -> Result<()> {
 		self.create_key(key, record).await
 	}
 
@@ -88,11 +89,11 @@ impl BenchmarkClient for ScylladbClient {
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, record: Record) -> Result<()> {
 		self.update_key(key as i32, record).await
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn update_string(&self, key: String, record: Record) -> Result<()> {
 		self.update_key(key, record).await
 	}
 
@@ -107,7 +108,7 @@ impl BenchmarkClient for ScylladbClient {
 }
 
 impl ScylladbClient {
-	async fn create_key<T>(&self, key: T, record: &Record) -> Result<()>
+	async fn create_key<T>(&self, key: T, record: Record) -> Result<()>
 	where
 		T: SerializeValue,
 	{
@@ -132,7 +133,7 @@ impl ScylladbClient {
 		Ok(())
 	}
 
-	async fn update_key<T>(&self, key: T, record: &Record) -> Result<()>
+	async fn update_key<T>(&self, key: T, record: Record) -> Result<()>
 	where
 		T: SerializeValue,
 	{

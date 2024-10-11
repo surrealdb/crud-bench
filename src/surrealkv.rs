@@ -7,7 +7,8 @@ use surrealkv::Mode;
 use surrealkv::Options;
 use surrealkv::Store;
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::valueprovider::Record;
 use crate::KeyType;
 
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
@@ -43,18 +44,18 @@ impl BenchmarkClient for SurrealKVClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let val = bincode::serialize(record)?;
+		let val = bincode::serialize(&record)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(key, &val)?;
 		txn.commit().await?;
 		Ok(())
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn create_string(&self, key: String, record: Record) -> Result<()> {
 		let key = key.into_bytes();
-		let val = bincode::serialize(record)?;
+		let val = bincode::serialize(&record)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(&key, &val)?;
 		txn.commit().await?;
@@ -77,18 +78,18 @@ impl BenchmarkClient for SurrealKVClient {
 		Ok(())
 	}
 
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, record: Record) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let val = bincode::serialize(record)?;
+		let val = bincode::serialize(&record)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(key, &val)?;
 		txn.commit().await?;
 		Ok(())
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn update_string(&self, key: String, record: Record) -> Result<()> {
 		let key = key.into_bytes();
-		let val = bincode::serialize(record)?;
+		let val = bincode::serialize(&record)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(&key, &val)?;
 		txn.commit().await?;

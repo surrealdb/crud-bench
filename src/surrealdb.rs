@@ -7,8 +7,9 @@ use surrealdb::opt::auth::Root;
 use surrealdb::sql::Thing;
 use surrealdb::Surreal;
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
+use crate::valueprovider::Record;
 use crate::KeyType;
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
@@ -81,16 +82,16 @@ impl BenchmarkClient for SurrealDBClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: Record) -> Result<()> {
 		let created: Option<SurrealRecord> =
-			self.db.create(("record", key as i64)).content(record.clone()).await?;
+			self.db.create(("record", key as i64)).content(record).await?;
 		assert!(created.is_some());
 		Ok(())
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn create_string(&self, key: String, record: Record) -> Result<()> {
 		let created: Option<SurrealRecord> =
-			self.db.create(("record", key)).content(record.clone()).await?;
+			self.db.create(("record", key)).content(record).await?;
 		assert!(created.is_some());
 		Ok(())
 	}
@@ -107,16 +108,16 @@ impl BenchmarkClient for SurrealDBClient {
 		Ok(())
 	}
 
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, record: Record) -> Result<()> {
 		let updated: Option<SurrealRecord> =
-			self.db.update(("record", key as i64)).content(record.clone()).await?;
+			self.db.update(("record", key as i64)).content(record).await?;
 		assert!(updated.is_some());
 		Ok(())
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn update_string(&self, key: String, record: Record) -> Result<()> {
 		let updated: Option<SurrealRecord> =
-			self.db.update(("record", key)).content(record.clone()).await?;
+			self.db.update(("record", key)).content(record).await?;
 		assert!(updated.is_some());
 		Ok(())
 	}

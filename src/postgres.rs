@@ -2,8 +2,9 @@
 
 use tokio_postgres::{Client, NoTls};
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
+use crate::valueprovider::Record;
 use crate::KeyType;
 use anyhow::Result;
 use tokio_postgres::types::ToSql;
@@ -66,11 +67,11 @@ impl BenchmarkClient for PostgresClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: Record) -> Result<()> {
 		self.create_key(key as i32, record).await
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn create_string(&self, key: String, record: Record) -> Result<()> {
 		self.create_key(key, record).await
 	}
 
@@ -82,11 +83,11 @@ impl BenchmarkClient for PostgresClient {
 		self.read_key(key).await
 	}
 
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, record: Record) -> Result<()> {
 		self.update_key(key as i32, record).await
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn update_string(&self, key: String, record: Record) -> Result<()> {
 		self.update_key(key, record).await
 	}
 
@@ -100,7 +101,7 @@ impl BenchmarkClient for PostgresClient {
 }
 
 impl PostgresClient {
-	async fn create_key<T>(&self, key: T, record: &Record) -> Result<()>
+	async fn create_key<T>(&self, key: T, record: Record) -> Result<()>
 	where
 		T: ToSql + Sync,
 	{
@@ -124,7 +125,7 @@ impl PostgresClient {
 		Ok(())
 	}
 
-	async fn update_key<T>(&self, key: T, record: &Record) -> Result<()>
+	async fn update_key<T>(&self, key: T, record: Record) -> Result<()>
 	where
 		T: ToSql + Sync,
 	{

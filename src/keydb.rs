@@ -1,7 +1,8 @@
 #![cfg(feature = "keydb")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
+use crate::valueprovider::Record;
 use crate::KeyType;
 use anyhow::Result;
 use redis::aio::MultiplexedConnection;
@@ -37,15 +38,15 @@ pub(crate) struct KeydbClient {
 
 impl BenchmarkClient for KeydbClient {
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn create_u32(&self, key: u32, record: Record) -> Result<()> {
+		let val = bincode::serialize(&record)?;
 		self.conn.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn create_string(&self, key: String, record: Record) -> Result<()> {
+		let val = bincode::serialize(&record)?;
 		self.conn.lock().await.set(key, val).await?;
 		Ok(())
 	}
@@ -65,15 +66,15 @@ impl BenchmarkClient for KeydbClient {
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn update_u32(&self, key: u32, record: Record) -> Result<()> {
+		let val = bincode::serialize(&record)?;
 		self.conn.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn update_string(&self, key: String, record: Record) -> Result<()> {
+		let val = bincode::serialize(&record)?;
 		self.conn.lock().await.set(key, val).await?;
 		Ok(())
 	}

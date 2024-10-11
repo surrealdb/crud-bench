@@ -1,7 +1,8 @@
 #![cfg(feature = "mongodb")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
+use crate::valueprovider::Record;
 use crate::KeyType;
 use anyhow::{bail, Result};
 use mongodb::bson::doc;
@@ -68,10 +69,10 @@ struct MongoDBIntegerRecord {
 }
 
 impl MongoDBIntegerRecord {
-	fn new(key: u32, record: &Record) -> Self {
+	fn new(key: u32, record: Record) -> Self {
 		Self {
 			id: key,
-			text: record.text.clone(),
+			text: record.text,
 			integer: record.integer,
 		}
 	}
@@ -85,10 +86,10 @@ struct MongoDBStringRecord {
 }
 
 impl MongoDBStringRecord {
-	fn new(key: String, record: &Record) -> Self {
+	fn new(key: String, record: Record) -> Self {
 		Self {
 			id: key,
-			text: record.text.clone(),
+			text: record.text,
 			integer: record.integer,
 		}
 	}
@@ -111,11 +112,11 @@ impl BenchmarkClient for MongoDBStringClient {
 		mongo_startup(&self.0).await
 	}
 
-	async fn create_u32(&self, _: u32, _: &Record) -> Result<()> {
+	async fn create_u32(&self, _: u32, _: Record) -> Result<()> {
 		bail!("Invalid MongoDBClient")
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn create_string(&self, key: String, record: Record) -> Result<()> {
 		let doc = MongoDBStringRecord::new(key, record);
 		self.0.insert_one(doc).await?;
 		Ok(())
@@ -132,11 +133,11 @@ impl BenchmarkClient for MongoDBStringClient {
 		Ok(())
 	}
 
-	async fn update_u32(&self, _: u32, _: &Record) -> Result<()> {
+	async fn update_u32(&self, _: u32, _: Record) -> Result<()> {
 		bail!("Invalid MongoDBClient")
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn update_string(&self, key: String, record: Record) -> Result<()> {
 		let doc = MongoDBStringRecord::new(key.clone(), record);
 		let filter = doc! { "id": key };
 		let res = self.0.replace_one(filter, doc).await?;
@@ -163,13 +164,13 @@ impl BenchmarkClient for MongoDBIntegerClient {
 		mongo_startup(&self.0).await
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, record: Record) -> Result<()> {
 		let doc = MongoDBIntegerRecord::new(key, record);
 		self.0.insert_one(doc).await?;
 		Ok(())
 	}
 
-	async fn create_string(&self, _: String, _: &Record) -> Result<()> {
+	async fn create_string(&self, _: String, _: Record) -> Result<()> {
 		bail!("Invalid MongoDBClient")
 	}
 
@@ -184,7 +185,7 @@ impl BenchmarkClient for MongoDBIntegerClient {
 		bail!("Invalid MongoDBClient")
 	}
 
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, record: Record) -> Result<()> {
 		let doc = MongoDBIntegerRecord::new(key, record);
 		let filter = doc! { "id": key };
 		let res = self.0.replace_one(filter, doc).await?;
@@ -192,7 +193,7 @@ impl BenchmarkClient for MongoDBIntegerClient {
 		Ok(())
 	}
 
-	async fn update_string(&self, _: String, _: &Record) -> Result<()> {
+	async fn update_string(&self, _: String, _: Record) -> Result<()> {
 		bail!("Invalid MongoDBClient")
 	}
 
