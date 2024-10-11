@@ -135,8 +135,12 @@ fn run(args: Args) -> Result<()> {
 		// Output the errors
 		Err(e) => {
 			if let Some(container) = &container {
+				eprintln!("--------------------------------------------------");
 				container.logs();
 			}
+			eprintln!("--------------------------------------------------");
+			eprintln!("Failure: {e}");
+			eprintln!("--------------------------------------------------");
 			Err(e)
 		}
 	}
