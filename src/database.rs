@@ -1,8 +1,9 @@
 use crate::benchmark::{Benchmark, BenchmarkEngine, BenchmarkResult};
 use crate::docker::{DockerContainer, DockerParams};
-use crate::dry::DryClientProvider;
 use crate::keyprovider::KeyProvider;
+use crate::map::MapClientProvider;
 
+use crate::dry::DryClientProvider;
 use crate::KeyType;
 use anyhow::Result;
 use clap::ValueEnum;
@@ -10,6 +11,7 @@ use clap::ValueEnum;
 #[derive(ValueEnum, Debug, Clone)]
 pub(crate) enum Database {
 	Dry,
+	Map,
 	#[cfg(feature = "redb")]
 	Redb,
 	#[cfg(feature = "speedb")]
@@ -75,6 +77,7 @@ impl Database {
 	) -> Result<BenchmarkResult> {
 		match self {
 			Database::Dry => benchmark.run(DryClientProvider::setup(kt).await?, kp).await,
+			Database::Map => benchmark.run(MapClientProvider::setup(kt).await?, kp).await,
 			#[cfg(feature = "redb")]
 			Database::Redb => benchmark.run(crate::redb::ReDBClientProvider::setup(kt).await?, kp).await,
 			#[cfg(feature = "speedb")]

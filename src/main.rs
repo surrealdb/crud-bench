@@ -13,6 +13,7 @@ mod docker;
 mod dry;
 mod keydb;
 mod keyprovider;
+mod map;
 mod mongodb;
 mod postgres;
 mod redb;
@@ -145,57 +146,79 @@ fn run(args: Args) -> Result<()> {
 mod test {
 	use crate::{run, Args, Database, KeyType};
 	use anyhow::Result;
-	fn test(key: KeyType, random: bool) -> Result<()> {
+	use serial_test::serial;
+
+	fn test(database: Database, key: KeyType, random: bool) -> Result<()> {
 		run(Args {
 			image: None,
-			database: Database::Dry,
+			database,
 			endpoint: None,
 			workers: 5,
 			clients: 2,
 			threads: 2,
-			samples: 10000,
+			samples: 1000000,
 			random,
 			key,
 		})
 	}
 
 	#[test]
+	#[serial]
 	fn test_integer_ordered() -> Result<()> {
-		test(KeyType::Integer, false)
+		test(Database::Map, KeyType::Integer, false)
 	}
 
 	#[test]
-	fn test_integer_unordered() -> Result<()> {
-		test(KeyType::Integer, true)
+	#[serial]
+	fn test_integer_unordered_dry() -> Result<()> {
+		test(Database::Dry, KeyType::Integer, true)
 	}
 
 	#[test]
+	#[serial]
+	fn test_integer_unordered_map() -> Result<()> {
+		test(Database::Map, KeyType::Integer, true)
+	}
+
+	#[test]
+	#[serial]
 	fn test_string26_ordered() -> Result<()> {
-		test(KeyType::String26, false)
+		test(Database::Map, KeyType::String26, false)
 	}
 
 	#[test]
+	#[serial]
 	fn test_string26_unordered() -> Result<()> {
-		test(KeyType::String26, true)
+		test(Database::Map, KeyType::String26, true)
 	}
 
 	#[test]
+	#[serial]
 	fn test_string90_ordered() -> Result<()> {
-		test(KeyType::String90, false)
+		test(Database::Map, KeyType::String90, false)
 	}
 
 	#[test]
+	#[serial]
 	fn test_string90_unordered() -> Result<()> {
-		test(KeyType::String90, true)
+		test(Database::Map, KeyType::String90, true)
 	}
 
 	#[test]
+	#[serial]
 	fn test_string506_ordered() -> Result<()> {
-		test(KeyType::String506, false)
+		test(Database::Map, KeyType::String506, false)
 	}
 
 	#[test]
-	fn test_string506_unordered() -> Result<()> {
-		test(KeyType::String506, true)
+	#[serial]
+	fn test_string506_unordered_map() -> Result<()> {
+		test(Database::Map, KeyType::String506, true)
+	}
+
+	#[test]
+	#[serial]
+	fn test_string506_unordered_dry() -> Result<()> {
+		test(Database::Dry, KeyType::String506, true)
 	}
 }

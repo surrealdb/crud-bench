@@ -122,6 +122,9 @@ jobs:
         include:
           # Dry
           - database: dry
+            description: Dry
+          # Map
+          - database: map
             description: Map
           # Redis
           - database: redis
