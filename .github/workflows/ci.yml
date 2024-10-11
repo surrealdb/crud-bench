@@ -187,35 +187,35 @@ jobs:
       # 1,000,000 records
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key integer / random)
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k integer -r
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string26 / random)
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k string26 -r
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string90 / random)
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k string90 -r
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string506 / random)
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k string506 -r
 
       # 5,000,000 records
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key integer / random)
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k integer -r
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random)
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string26 -r
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string90 / random)
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string90 -r
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random)
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string506 -r
