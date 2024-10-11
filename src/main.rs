@@ -10,6 +10,7 @@ use tokio::runtime::Builder;
 mod benchmark;
 mod database;
 mod docker;
+mod dragonfly;
 mod dry;
 mod keydb;
 mod keyprovider;

@@ -10,12 +10,24 @@ use clap::ValueEnum;
 #[derive(ValueEnum, Debug, Clone)]
 pub(crate) enum Database {
 	Dry,
+	#[cfg(feature = "dragonfly")]
+	Dragonfly,
+	#[cfg(feature = "keydb")]
+	Keydb,
+	#[cfg(feature = "mongodb")]
+	Mongodb,
+	#[cfg(feature = "postgres")]
+	Postgres,
 	#[cfg(feature = "redb")]
 	Redb,
-	#[cfg(feature = "speedb")]
-	Speedb,
+	#[cfg(feature = "redis")]
+	Redis,
 	#[cfg(feature = "rocksdb")]
 	Rocksdb,
+	#[cfg(feature = "scylladb")]
+	Scylladb,
+	#[cfg(feature = "speedb")]
+	Speedb,
 	#[cfg(feature = "surrealkv")]
 	Surrealkv,
 	#[cfg(feature = "surrealdb")]
@@ -26,16 +38,6 @@ pub(crate) enum Database {
 	SurrealdbRocksdb,
 	#[cfg(feature = "surrealdb")]
 	SurrealdbSurrealkv,
-	#[cfg(feature = "scylladb")]
-	Scylladb,
-	#[cfg(feature = "mongodb")]
-	Mongodb,
-	#[cfg(feature = "postgres")]
-	Postgres,
-	#[cfg(feature = "redis")]
-	Redis,
-	#[cfg(feature = "keydb")]
-	Keydb,
 }
 
 impl Database {
@@ -54,6 +56,8 @@ impl Database {
 			Self::Mongodb => crate::mongodb::MONGODB_DOCKER_PARAMS,
 			#[cfg(feature = "postgres")]
 			Self::Postgres => crate::postgres::POSTGRES_DOCKER_PARAMS,
+			#[cfg(feature = "dragonfly")]
+			Self::Dragonfly => crate::dragonfly::DRAGONFLY_DOCKER_PARAMS,
 			#[cfg(feature = "redis")]
 			Self::Redis => crate::redis::REDIS_DOCKER_PARAMS,
 			#[cfg(feature = "keydb")]
@@ -75,6 +79,10 @@ impl Database {
 	) -> Result<BenchmarkResult> {
 		match self {
 			Database::Dry => benchmark.run(DryClientProvider::setup(kt).await?, kp).await,
+			#[cfg(feature = "dragonfly")]
+			Database::Dragonfly => {
+				benchmark.run(crate::dragonfly::DragonflyClientProvider::setup(kt).await?, kp).await
+			}
 			#[cfg(feature = "redb")]
 			Database::Redb => benchmark.run(crate::redb::ReDBClientProvider::setup(kt).await?, kp).await,
 			#[cfg(feature = "speedb")]
