@@ -1,38 +1,18 @@
-use crate::benchmark::{Benchmark, BenchmarkResult};
-use crate::docker::DockerContainer;
-use crate::docker::DockerParams;
-use crate::dry::DryClientProvider;
+use crate::benchmark::Benchmark;
 use std::io::IsTerminal;
-use std::process::ExitCode;
 
-#[cfg(feature = "keydb")]
-use crate::keydb::KeydbClientProvider;
-#[cfg(feature = "mongodb")]
-use crate::mongodb::MongoDBClientProvider;
-#[cfg(feature = "postgres")]
-use crate::postgres::PostgresClientProvider;
-#[cfg(feature = "redb")]
-use crate::redb::ReDBClientProvider;
-#[cfg(feature = "redis")]
-use crate::redis::RedisClientProvider;
-#[cfg(feature = "rocksdb")]
-use crate::rocksdb::RocksDBClientProvider;
-#[cfg(feature = "scylladb")]
-use crate::scylladb::ScyllaDBClientProvider;
-#[cfg(feature = "speedb")]
-use crate::speedb::SpeeDBClientProvider;
-#[cfg(feature = "surrealdb")]
-use crate::surrealdb::SurrealDBClientProvider;
-#[cfg(feature = "surrealkv")]
-use crate::surrealkv::SurrealKVClientProvider;
+use crate::database::Database;
+use crate::keyprovider::KeyProvider;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use tokio::runtime::Builder;
 
 mod benchmark;
+mod database;
 mod docker;
 mod dry;
 mod keydb;
+mod keyprovider;
 mod mongodb;
 mod postgres;
 mod redb;
@@ -77,105 +57,36 @@ pub(crate) struct Args {
 	/// Generate the keys in a pseudo-randomized order
 	#[clap(short, long)]
 	pub(crate) random: bool,
+
+	/// The type of the key
+	#[clap(short, long, default_value_t = KeyType::Integer, value_enum)]
+	pub(crate) key: KeyType,
 }
 
-#[derive(ValueEnum, Debug, Clone)]
-pub(crate) enum Database {
-	Dry,
-	#[cfg(feature = "redb")]
-	Redb,
-	#[cfg(feature = "speedb")]
-	Speedb,
-	#[cfg(feature = "rocksdb")]
-	Rocksdb,
-	#[cfg(feature = "surrealkv")]
-	Surrealkv,
-	#[cfg(feature = "surrealdb")]
-	Surrealdb,
-	#[cfg(feature = "surrealdb")]
-	SurrealdbMemory,
-	#[cfg(feature = "surrealdb")]
-	SurrealdbRocksdb,
-	#[cfg(feature = "surrealdb")]
-	SurrealdbSurrealkv,
-	#[cfg(feature = "scylladb")]
-	Scylladb,
-	#[cfg(feature = "mongodb")]
-	Mongodb,
-	#[cfg(feature = "postgres")]
-	Postgres,
-	#[cfg(feature = "redis")]
-	Redis,
-	#[cfg(feature = "keydb")]
-	Keydb,
+#[derive(Debug, ValueEnum, Clone, Copy)]
+pub(crate) enum KeyType {
+	/// 4 bytes integer
+	Integer,
+	/// 26 ascii bytes
+	String26,
+	/// 90 ascii bytes
+	String90,
+	/// 506 ascii bytes
+	String506,
+	/// UUID type 7
+	Uuid,
 }
 
-impl Database {
-	/// Start the Docker container if necessary
-	fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
-		let params: DockerParams = match self {
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbMemory => surrealdb::SURREALDB_MEMORY_DOCKER_PARAMS,
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbRocksdb => surrealdb::SURREALDB_ROCKSDB_DOCKER_PARAMS,
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbSurrealkv => surrealdb::SURREALDB_SURREALKV_DOCKER_PARAMS,
-			#[cfg(feature = "scylladb")]
-			Database::Scylladb => scylladb::SCYLLADB_DOCKER_PARAMS,
-			#[cfg(feature = "mongodb")]
-			Database::Mongodb => mongodb::MONGODB_DOCKER_PARAMS,
-			#[cfg(feature = "postgres")]
-			Database::Postgres => postgres::POSTGRES_DOCKER_PARAMS,
-			#[cfg(feature = "redis")]
-			Database::Redis => redis::REDIS_DOCKER_PARAMS,
-			#[cfg(feature = "keydb")]
-			Database::Keydb => keydb::KEYDB_DOCKER_PARAMS,
-			#[allow(unreachable_patterns)]
-			_ => return None,
-		};
-		let image = image.unwrap_or(params.image.to_string());
-		let container = DockerContainer::start(image, params.pre_args, params.post_args);
-		Some(container)
-	}
-	/// Run the benchmarks for the chosen database
-	async fn run(&self, benchmark: &Benchmark) -> Result<BenchmarkResult> {
-		match self {
-			Database::Dry => benchmark.run(DryClientProvider::default()).await,
-			#[cfg(feature = "redb")]
-			Database::Redb => benchmark.run(ReDBClientProvider::setup().await?).await,
-			#[cfg(feature = "speedb")]
-			Database::Speedb => benchmark.run(SpeeDBClientProvider::setup().await?).await,
-			#[cfg(feature = "rocksdb")]
-			Database::Rocksdb => benchmark.run(RocksDBClientProvider::setup().await?).await,
-			#[cfg(feature = "surrealkv")]
-			Database::Surrealkv => benchmark.run(SurrealKVClientProvider::setup().await?).await,
-			#[cfg(feature = "surrealdb")]
-			Database::Surrealdb => benchmark.run(SurrealDBClientProvider::default()).await,
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbMemory => benchmark.run(SurrealDBClientProvider::default()).await,
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbRocksdb => benchmark.run(SurrealDBClientProvider::default()).await,
-			#[cfg(feature = "surrealdb")]
-			Database::SurrealdbSurrealkv => benchmark.run(SurrealDBClientProvider::default()).await,
-			#[cfg(feature = "scylladb")]
-			Database::Scylladb => benchmark.run(ScyllaDBClientProvider::default()).await,
-			#[cfg(feature = "mongodb")]
-			Database::Mongodb => benchmark.run(MongoDBClientProvider::default()).await,
-			#[cfg(feature = "postgres")]
-			Database::Postgres => benchmark.run(PostgresClientProvider::default()).await,
-			#[cfg(feature = "redis")]
-			Database::Redis => benchmark.run(RedisClientProvider::default()).await,
-			#[cfg(feature = "keydb")]
-			Database::Keydb => benchmark.run(KeydbClientProvider::default()).await,
-		}
-	}
-}
-
-fn main() -> ExitCode {
+fn main() -> Result<()> {
 	// Initialise the logger
 	env_logger::init();
 	// Parse the command line arguments
 	let args = Args::parse();
+	// Run the benchmark
+	run(args)
+}
+
+fn run(args: Args) -> Result<()> {
 	// Prepare the benchmark
 	let benchmark = Benchmark::new(&args);
 	// If a Docker image is specified, spawn the container
@@ -192,8 +103,10 @@ fn main() -> ExitCode {
 	if std::io::stdout().is_terminal() {
 		println!("--------------------------------------------------");
 	}
+	// Build the key provider
+	let kp = KeyProvider::new(args.key, args.random);
 	// Run the benchmark
-	let res = runtime.block_on(async { args.database.run(&benchmark).await });
+	let res = runtime.block_on(async { args.database.run(&benchmark, args.key, kp).await });
 	// Output the results
 	match res {
 		// Output the results
@@ -204,18 +117,19 @@ fn main() -> ExitCode {
 				None => println!("Benchmark result for {:?}", args.database),
 			}
 			println!(
-				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Random: {}",
+				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
 				num_cpus::get(),
 				args.workers,
 				args.clients,
 				args.threads,
 				args.samples,
+				args.key,
 				args.random,
 			);
 			println!("--------------------------------------------------");
 			println!("{res}");
 			println!("--------------------------------------------------");
-			ExitCode::from(0)
+			Ok(())
 		}
 		// Output the errors
 		Err(e) => {
@@ -226,7 +140,66 @@ fn main() -> ExitCode {
 			eprintln!("--------------------------------------------------");
 			eprintln!("Failure: {e}");
 			eprintln!("--------------------------------------------------");
-			ExitCode::from(1)
+			Err(e)
 		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use crate::{run, Args, Database, KeyType};
+	use anyhow::Result;
+	fn test(key: KeyType, random: bool) -> Result<()> {
+		run(Args {
+			image: None,
+			database: Database::Dry,
+			endpoint: None,
+			workers: 5,
+			clients: 2,
+			threads: 2,
+			samples: 10000,
+			random,
+			key,
+		})
+	}
+
+	#[test]
+	fn test_integer_ordered() -> Result<()> {
+		test(KeyType::Integer, false)
+	}
+
+	#[test]
+	fn test_integer_unordered() -> Result<()> {
+		test(KeyType::Integer, true)
+	}
+
+	#[test]
+	fn test_string26_ordered() -> Result<()> {
+		test(KeyType::String26, false)
+	}
+
+	#[test]
+	fn test_string26_unordered() -> Result<()> {
+		test(KeyType::String26, true)
+	}
+
+	#[test]
+	fn test_string90_ordered() -> Result<()> {
+		test(KeyType::String90, false)
+	}
+
+	#[test]
+	fn test_string90_unordered() -> Result<()> {
+		test(KeyType::String90, true)
+	}
+
+	#[test]
+	fn test_string506_ordered() -> Result<()> {
+		test(KeyType::String506, false)
+	}
+
+	#[test]
+	fn test_string506_unordered() -> Result<()> {
+		test(KeyType::String506, true)
 	}
 }

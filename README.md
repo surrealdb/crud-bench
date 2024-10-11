@@ -37,15 +37,52 @@ cargo run -r -- --help
 Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
-  -i, --image <IMAGE>        Docker image
-  -d, --database <DATABASE>  Database [possible values: dry, redb, rocksdb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, scylladb, mongodb, postgres, redis, keydb]
-  -e, --endpoint <ENDPOINT>  Endpoint
-  -w, --workers <WORKERS>    Number of async runtime workers, defaulting to the number of CPUs [default: 12]
-  -c, --clients <CLIENTS>    Number of concurrent clients [default: 1]
-  -t, --threads <THREADS>    Number of concurrent threads per client [default: 1]
-  -s, --samples <SAMPLES>    Number of samples to be created, read, updated, and deleted
-  -r, --random               Generate the keys in a pseudo-randomized order
-  -h, --help                 Print help
+  -i, --image <IMAGE>
+          Docker image
+
+  -d, --database <DATABASE>
+          Database
+          
+          [possible values: dry, redb, rocksdb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, scylladb, mongodb, postgres, redis, keydb]
+
+  -e, --endpoint <ENDPOINT>
+          Endpoint
+
+  -w, --workers <WORKERS>
+          Number of async runtime workers, defaulting to the number of CPUs
+          
+          [default: 12]
+
+  -c, --clients <CLIENTS>
+          Number of concurrent clients
+          
+          [default: 1]
+
+  -t, --threads <THREADS>
+          Number of concurrent threads per client
+          
+          [default: 1]
+
+  -s, --samples <SAMPLES>
+          Number of samples to be created, read, updated, and deleted
+
+  -r, --random
+          Generate the keys in a pseudo-randomized order
+
+  -k, --key <KEY>
+          The type of the key
+          
+          [default: integer]
+
+          Possible values:
+          - integer:   4 bytes integer
+          - string26:  26 ascii bytes
+          - string90:  90 ascii bytes
+          - string506: 506 ascii bytes
+          - uuid:      UUID type 7
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## Dry run
