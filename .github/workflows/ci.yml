@@ -141,9 +141,6 @@ jobs:
           # ScyllaDB
           - database: scylladb
             description: ScyllaDB
-          # ReDB
-          - database: redb
-            description: ReDB
           # RocksDB
           - database: rocksdb
             description: RocksDB
