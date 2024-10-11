@@ -141,9 +141,6 @@ jobs:
           # MongoDB
           - database: mongodb
             description: MongoDB
-          # ScyllaDB
-          - database: scylladb
-            description: ScyllaDB
           # RocksDB
           - database: rocksdb
             description: RocksDB
