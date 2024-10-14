@@ -2,17 +2,17 @@
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
-use crate::valueprovider::Record;
+use crate::valueprovider::Columns;
 use crate::KeyType;
 use anyhow::{bail, Result};
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
 use mongodb::options::IndexOptions;
 use mongodb::options::ReadConcern;
 use mongodb::options::WriteConcern;
-use mongodb::{Client, Collection, IndexModel};
-use serde::{Deserialize, Serialize};
+use mongodb::{bson, Client, Collection, IndexModel};
+use serde_json::Value;
 
 pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "mongo",
@@ -20,29 +20,19 @@ pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 	post_args: "",
 };
 
-pub(crate) struct MongoDBClientIntegerProvider {}
+pub(crate) struct MongoDBClientProvider {}
 
-impl BenchmarkEngine<MongoDBIntegerClient> for MongoDBClientIntegerProvider {
-	async fn setup(_: KeyType) -> Result<Self> {
+impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
+	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self> {
 		Ok(Self {})
 	}
 
-	async fn create_client(&self, endpoint: Option<String>) -> Result<MongoDBIntegerClient> {
-		Ok(MongoDBIntegerClient(create_mongo_client(endpoint).await?))
+	async fn create_client(&self, endpoint: Option<String>) -> Result<MongoDBClient> {
+		Ok(MongoDBClient(create_mongo_client(endpoint).await?))
 	}
 }
 
-pub(crate) struct MongoDBClientStringProvider {}
-
-impl BenchmarkEngine<MongoDBStringClient> for MongoDBClientStringProvider {
-	async fn setup(_: KeyType) -> Result<Self> {
-		Ok(Self {})
-	}
-
-	async fn create_client(&self, endpoint: Option<String>) -> Result<MongoDBStringClient> {
-		Ok(MongoDBStringClient(create_mongo_client(endpoint).await?))
-	}
-}
+pub(crate) struct MongoDBClient(Collection<Document>);
 
 async fn create_mongo_client<T>(endpoint: Option<String>) -> Result<Collection<T>>
 where
@@ -61,42 +51,6 @@ where
 	Ok(db.collection("record"))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct MongoDBIntegerRecord {
-	id: u32,
-	text: String,
-	integer: i32,
-}
-
-impl MongoDBIntegerRecord {
-	fn new(key: u32, record: Record) -> Self {
-		Self {
-			id: key,
-			text: record.text,
-			integer: record.integer,
-		}
-	}
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct MongoDBStringRecord {
-	id: String,
-	text: String,
-	integer: i32,
-}
-
-impl MongoDBStringRecord {
-	fn new(key: String, record: Record) -> Self {
-		Self {
-			id: key,
-			text: record.text,
-			integer: record.integer,
-		}
-	}
-}
-
-pub(crate) struct MongoDBStringClient(Collection<MongoDBStringRecord>);
-
 async fn mongo_startup<T>(collection: &Collection<T>) -> Result<()>
 where
 	T: Send + Sync,
@@ -107,19 +61,23 @@ where
 	Ok(())
 }
 
-impl BenchmarkClient for MongoDBStringClient {
+impl BenchmarkClient for MongoDBClient {
 	async fn startup(&self) -> Result<()> {
 		mongo_startup(&self.0).await
 	}
 
-	async fn create_u32(&self, _: u32, _: Record) -> Result<()> {
+	async fn create_u32(&self, _: u32, _: Value) -> Result<()> {
 		bail!("Invalid MongoDBClient")
 	}
 
-	async fn create_string(&self, key: String, record: Record) -> Result<()> {
-		let doc = MongoDBStringRecord::new(key, record);
-		self.0.insert_one(doc).await?;
-		Ok(())
+	async fn create_string(&self, key: String, mut val: Value) -> Result<()> {
+		val.as_object_mut().unwrap().insert("id".to_string(), Value::String(key));
+		if let Bson::Document(doc) = bson::to_bson(&val)? {
+			self.0.insert_one(doc).await?;
+			Ok(())
+		} else {
+			bail!("Invalid document")
+		}
 	}
 
 	async fn read_u32(&self, _: u32) -> Result<()> {
@@ -129,20 +87,23 @@ impl BenchmarkClient for MongoDBStringClient {
 	async fn read_string(&self, key: String) -> Result<()> {
 		let filter = doc! { "id": key.clone() };
 		let doc = self.0.find_one(filter).await?;
-		assert_eq!(doc.unwrap().id, key);
+		assert_eq!(doc.unwrap().get_str("id")?, key);
 		Ok(())
 	}
 
-	async fn update_u32(&self, _: u32, _: Record) -> Result<()> {
+	async fn update_u32(&self, _: u32, _: Value) -> Result<()> {
 		bail!("Invalid MongoDBClient")
 	}
 
-	async fn update_string(&self, key: String, record: Record) -> Result<()> {
-		let doc = MongoDBStringRecord::new(key.clone(), record);
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
 		let filter = doc! { "id": key };
-		let res = self.0.replace_one(filter, doc).await?;
-		assert_eq!(res.modified_count, 1);
-		Ok(())
+		if let Bson::Document(doc) = bson::to_bson(&val)? {
+			let res = self.0.replace_one(filter, doc).await?;
+			assert_eq!(res.modified_count, 1);
+			Ok(())
+		} else {
+			bail!("Invalid document")
+		}
 	}
 
 	async fn delete_u32(&self, _: u32) -> Result<()> {
@@ -154,57 +115,5 @@ impl BenchmarkClient for MongoDBStringClient {
 		let res = self.0.delete_one(filter).await?;
 		assert_eq!(res.deleted_count, 1);
 		Ok(())
-	}
-}
-
-pub(crate) struct MongoDBIntegerClient(Collection<MongoDBIntegerRecord>);
-
-impl BenchmarkClient for MongoDBIntegerClient {
-	async fn startup(&self) -> Result<()> {
-		mongo_startup(&self.0).await
-	}
-
-	async fn create_u32(&self, key: u32, record: Record) -> Result<()> {
-		let doc = MongoDBIntegerRecord::new(key, record);
-		self.0.insert_one(doc).await?;
-		Ok(())
-	}
-
-	async fn create_string(&self, _: String, _: Record) -> Result<()> {
-		bail!("Invalid MongoDBClient")
-	}
-
-	async fn read_u32(&self, key: u32) -> Result<()> {
-		let filter = doc! { "id": key };
-		let doc = self.0.find_one(filter).await?;
-		assert_eq!(doc.unwrap().id, key);
-		Ok(())
-	}
-
-	async fn read_string(&self, _: String) -> Result<()> {
-		bail!("Invalid MongoDBClient")
-	}
-
-	async fn update_u32(&self, key: u32, record: Record) -> Result<()> {
-		let doc = MongoDBIntegerRecord::new(key, record);
-		let filter = doc! { "id": key };
-		let res = self.0.replace_one(filter, doc).await?;
-		assert_eq!(res.modified_count, 1);
-		Ok(())
-	}
-
-	async fn update_string(&self, _: String, _: Record) -> Result<()> {
-		bail!("Invalid MongoDBClient")
-	}
-
-	async fn delete_u32(&self, key: u32) -> Result<()> {
-		let filter = doc! { "id": key };
-		let res = self.0.delete_one(filter).await?;
-		assert_eq!(res.deleted_count, 1);
-		Ok(())
-	}
-
-	async fn delete_string(&self, _: String) -> Result<()> {
-		bail!("Invalid MongoDBClient")
 	}
 }

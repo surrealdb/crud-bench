@@ -1,9 +1,10 @@
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
-use crate::valueprovider::{Record, ValueProvider};
+use crate::valueprovider::{Columns, ValueProvider};
 use crate::{Args, KeyType};
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
 use log::info;
+use serde_json::Value;
 use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::io::Write;
@@ -225,12 +226,12 @@ impl Benchmark {
 			match operation {
 				BenchmarkOperation::Read => client.read(sample, &mut kp).await?,
 				BenchmarkOperation::Create => {
-					let record = vp.sample();
-					client.create(sample, record, &mut kp).await?
+					let value = vp.generate_value()?;
+					client.create(sample, value, &mut kp).await?
 				}
 				BenchmarkOperation::Update => {
-					let record = vp.sample();
-					client.update(sample, record, &mut kp).await?
+					let value = vp.generate_value()?;
+					client.update(sample, value, &mut kp).await?
 				}
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 			};
@@ -278,7 +279,7 @@ pub(crate) trait BenchmarkEngine<C>: Sized
 where
 	C: BenchmarkClient + Send,
 {
-	async fn setup(kt: KeyType) -> Result<Self>;
+	async fn setup(kt: KeyType, columns: Columns) -> Result<Self>;
 	async fn create_client(&self, endpoint: Option<String>) -> Result<C>;
 }
 
@@ -294,15 +295,15 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	fn create(
 		&self,
 		n: u32,
-		record: Record,
+		val: Value,
 		kp: &mut KeyProvider,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move {
 			match kp {
-				KeyProvider::OrderedInteger(p) => self.create_u32(p.key(n), record).await,
-				KeyProvider::UnorderedInteger(p) => self.create_u32(p.key(n), record).await,
-				KeyProvider::OrderedString(p) => self.create_string(p.key(n), record).await,
-				KeyProvider::UnorderedString(p) => self.create_string(p.key(n), record).await,
+				KeyProvider::OrderedInteger(p) => self.create_u32(p.key(n), val).await,
+				KeyProvider::UnorderedInteger(p) => self.create_u32(p.key(n), val).await,
+				KeyProvider::OrderedString(p) => self.create_string(p.key(n), val).await,
+				KeyProvider::UnorderedString(p) => self.create_string(p.key(n), val).await,
 			}
 		}
 	}
@@ -320,15 +321,15 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	fn update(
 		&self,
 		n: u32,
-		record: Record,
+		val: Value,
 		kp: &mut KeyProvider,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move {
 			match kp {
-				KeyProvider::OrderedInteger(p) => self.update_u32(p.key(n), record).await,
-				KeyProvider::UnorderedInteger(p) => self.update_u32(p.key(n), record).await,
-				KeyProvider::OrderedString(p) => self.update_string(p.key(n), record).await,
-				KeyProvider::UnorderedString(p) => self.update_string(p.key(n), record).await,
+				KeyProvider::OrderedInteger(p) => self.update_u32(p.key(n), val).await,
+				KeyProvider::UnorderedInteger(p) => self.update_u32(p.key(n), val).await,
+				KeyProvider::OrderedString(p) => self.update_string(p.key(n), val).await,
+				KeyProvider::UnorderedString(p) => self.update_string(p.key(n), val).await,
 			}
 		}
 	}
@@ -344,10 +345,9 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	}
 
 	/// Create a record at a key
-	fn create_u32(&self, key: u32, record: Record) -> impl Future<Output = Result<()>> + Send;
+	fn create_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;
 
-	fn create_string(&self, key: String, record: Record)
-		-> impl Future<Output = Result<()>> + Send;
+	fn create_string(&self, key: String, val: Value) -> impl Future<Output = Result<()>> + Send;
 
 	/// Read a record at a key
 	fn read_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
@@ -355,10 +355,9 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	fn read_string(&self, key: String) -> impl Future<Output = Result<()>> + Send;
 
 	/// Update a record at a key
-	fn update_u32(&self, key: u32, record: Record) -> impl Future<Output = Result<()>> + Send;
+	fn update_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;
 
-	fn update_string(&self, key: String, record: Record)
-		-> impl Future<Output = Result<()>> + Send;
+	fn update_string(&self, key: String, val: Value) -> impl Future<Output = Result<()>> + Send;
 
 	/// Delete a record at a key
 	fn delete_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;

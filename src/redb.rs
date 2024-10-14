@@ -1,19 +1,19 @@
 #![cfg(feature = "redb")]
 
-use anyhow::Result;
-use redb::{Database, TableDefinition};
-use std::sync::Arc;
-
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Record;
 use crate::KeyType;
+use anyhow::Result;
+use redb::{Database, TableDefinition};
+use serde_json::{Map, Value};
+use std::sync::Arc;
 
 const TABLE: TableDefinition<&[u8], Vec<u8>> = TableDefinition::new("test");
 
 pub(crate) struct ReDBClientProvider(Arc<Database>);
 
 impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
-	async fn setup(_: KeyType) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: &Map<String, Value>) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("redb");
 		// Create the store
@@ -35,11 +35,11 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.create_bytes(&key.to_ne_bytes(), record).await
 	}
 
-	async fn create_string(&self, key: String, record: Record) -> Result<()> {
+	async fn create_string(&self, key: String, val: Value) -> Result<()> {
 		self.create_bytes(&key.into_bytes(), record).await
 	}
 
@@ -51,11 +51,11 @@ impl BenchmarkClient for ReDBClient {
 		self.read_bytes(&key.into_bytes()).await
 	}
 
-	async fn update_u32(&self, key: u32, record: Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.update_bytes(&key.to_ne_bytes(), record).await
 	}
 
-	async fn update_string(&self, key: String, record: Record) -> Result<()> {
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
 		self.update_bytes(&key.into_bytes(), record).await
 	}
 
@@ -69,7 +69,7 @@ impl BenchmarkClient for ReDBClient {
 }
 
 impl ReDBClient {
-	async fn create_bytes(&self, key: &[u8], record: Record) -> Result<()> {
+	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		let val = bincode::serialize(&record)?;
 		// Create a new transaction
 		let txn = self.0.begin_write()?;
@@ -93,7 +93,7 @@ impl ReDBClient {
 		Ok(())
 	}
 
-	async fn update_bytes(&self, key: &[u8], record: Record) -> Result<()> {
+	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		let val = bincode::serialize(&record)?;
 		// Create a new transaction
 		let txn = self.0.begin_write()?;

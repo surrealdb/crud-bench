@@ -1,50 +1,110 @@
 use anyhow::{bail, Result};
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
-use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use std::str::FromStr;
 
 #[derive(Clone)]
 pub(crate) struct ValueProvider {
-	value: Value,
+	val: Value,
 	rng: SmallRng,
+	columns: Columns,
+}
+
+#[derive(Clone)]
+pub(crate) struct Columns(pub(crate) Vec<(String, ColumnType)>);
+
+#[derive(Clone)]
+pub(crate) enum ColumnType {
+	String,
+	Integer,
+	Object,
+}
+
+impl Columns {
+	pub(crate) fn insert_clauses(&self, val: Value) -> Result<(String, String)> {
+		let val = val.as_object().unwrap();
+		let mut fields = Vec::with_capacity(self.0.len());
+		let mut values = Vec::with_capacity(self.0.len());
+		for (n, _) in &self.0 {
+			fields.push(n.to_string());
+			values.push(serde_json::to_string(val.get(n).unwrap())?);
+		}
+		let fields = fields.join(",");
+		let values = values.join(",");
+		Ok((fields, values))
+	}
+
+	pub(crate) fn set_clause(&self, val: Value) -> Result<String> {
+		let mut updates = Vec::with_capacity(self.0.len());
+		let val = val.as_object().unwrap();
+		for (n, _) in &self.0 {
+			let value = serde_json::to_string(val.get(n).unwrap())?;
+			updates.push(format!("{n}={value}"));
+		}
+		Ok(updates.join(","))
+	}
 }
 
 const CHARSET: &[u8; 37] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789";
 
 impl ValueProvider {
 	pub(crate) fn new(json: &str) -> Result<Self> {
-		let value = serde_json::from_str(json)?;
+		let val = serde_json::from_str(json)?;
+		let columns = Self::parse_columns(&val)?;
 		Ok(Self {
-			value,
+			val,
+			columns,
 			rng: SmallRng::from_entropy(),
 		})
 	}
 
-	pub(crate) fn columns(&self) -> Option<&Map<String, Value>> {
-		self.value.as_object()
+	fn parse_columns(val: &Value) -> Result<Columns> {
+		let o = val.as_object().unwrap();
+		let mut columns = Vec::with_capacity(o.len());
+		for (f, t) in o {
+			// Arrays
+			if t.is_object() {
+				columns.push((f.to_string(), ColumnType::Object));
+			} else if let Some(str) = t.as_str() {
+				let str = str.to_ascii_lowercase();
+				if str.starts_with("string") {
+					columns.push((f.to_string(), ColumnType::String));
+				} else if str.eq("i32") {
+					columns.push((f.to_string(), ColumnType::Integer));
+				} else {
+					bail!("Invalid JSON type: {str}");
+				}
+			} else {
+				bail!("Unsupported JSON type: {t}");
+			}
+		}
+		Ok(Columns(columns))
+	}
+
+	pub(crate) fn columns(&self) -> Columns {
+		self.columns.clone()
 	}
 
 	pub(crate) fn generate_value(&mut self) -> Result<Value> {
-		Self::explore_value(&mut self.rng, &self.value)
+		Self::parse_value(&mut self.rng, &self.val)
 	}
-
-	fn explore_value(rng: &mut SmallRng, value: &Value) -> Result<Value> {
+	fn parse_value(rng: &mut SmallRng, value: &Value) -> Result<Value> {
 		if let Some(object) = value.as_object() {
 			let mut map = Map::<String, Value>::new();
 			for (key, value) in object {
-				map.insert(key.clone(), Self::explore_value(rng, value)?);
+				map.insert(key.clone(), Self::parse_value(rng, value)?);
 			}
 			Ok(Value::Object(map))
 		} else if let Some(array) = value.as_array() {
 			let mut vec = Vec::with_capacity(array.len());
 			for value in array {
-				vec.push(Self::explore_value(rng, value)?);
+				vec.push(Self::parse_value(rng, value)?);
 			}
 			Ok(Value::Array(vec))
 		} else if let Some(str) = value.as_str() {
-			if let Some(size) = str.strip_prefix("String") {
+			let str = str.to_ascii_lowercase();
+			if let Some(size) = str.strip_prefix("string") {
 				let size = usize::from_str(size)?;
 				let random_string: String = (0..size)
 					.map(|_| {
@@ -63,21 +123,4 @@ impl ValueProvider {
 			bail!("Unsupported JSON type: {value}");
 		}
 	}
-	pub(crate) fn sample(&mut self) -> Record {
-		Record {
-			integer: self.rng.gen(),
-			text: (0..50)
-				.map(|_| {
-					let idx = self.rng.gen_range(0..CHARSET.len());
-					CHARSET[idx] as char
-				})
-				.collect(),
-		}
-	}
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub(crate) struct Record {
-	pub(crate) text: String,
-	pub(crate) integer: i32,
 }

@@ -67,7 +67,7 @@ pub(crate) struct Args {
 	pub(crate) key: KeyType,
 
 	/// Size of the text value
-	#[clap(short, long, default_value = "{text:'String50', integer:'i32'}", value_parser=clap::value_parser!(u32).range(1..))]
+	#[clap(short, long, default_value = "{\"text\":\"String50\", \"integer\":\"i32\"}")]
 	pub(crate) value: String,
 }
 

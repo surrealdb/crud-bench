@@ -1,14 +1,15 @@
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
-use crate::valueprovider::Record;
+use crate::valueprovider::Columns;
 use crate::KeyType;
 use anyhow::{bail, Result};
 use dashmap::DashMap;
+use serde_json::Value;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub(crate) enum MapDatabase {
-	Integer(Arc<DashMap<u32, Record>>),
-	String(Arc<DashMap<String, Record>>),
+	Integer(Arc<DashMap<u32, Value>>),
+	String(Arc<DashMap<String, Value>>),
 }
 
 impl From<KeyType> for MapDatabase {
@@ -26,7 +27,7 @@ impl From<KeyType> for MapDatabase {
 pub(crate) struct MapClientProvider(MapDatabase);
 
 impl BenchmarkEngine<MapClient> for MapClientProvider {
-	async fn setup(kt: KeyType) -> Result<Self> {
+	async fn setup(kt: KeyType, _columns: Columns) -> Result<Self> {
 		Ok(Self(kt.into()))
 	}
 
@@ -38,18 +39,18 @@ impl BenchmarkEngine<MapClient> for MapClientProvider {
 pub(crate) struct MapClient(MapDatabase);
 
 impl BenchmarkClient for MapClient {
-	async fn create_u32(&self, key: u32, record: Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
-			assert!(m.insert(key, record).is_none());
+			assert!(m.insert(key, val).is_none());
 		} else {
 			bail!("Invalid MapDatabase variant");
 		}
 		Ok(())
 	}
 
-	async fn create_string(&self, key: String, record: Record) -> Result<()> {
+	async fn create_string(&self, key: String, val: Value) -> Result<()> {
 		if let MapDatabase::String(m) = &self.0 {
-			assert!(m.insert(key, record).is_none());
+			assert!(m.insert(key, val).is_none());
 		} else {
 			bail!("Invalid MapDatabase variant");
 		}
@@ -74,18 +75,18 @@ impl BenchmarkClient for MapClient {
 		Ok(())
 	}
 
-	async fn update_u32(&self, key: u32, record: Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
-			assert!(m.insert(key, record).is_some());
+			assert!(m.insert(key, val).is_some());
 		} else {
 			bail!("Invalid MapDatabase variant");
 		}
 		Ok(())
 	}
 
-	async fn update_string(&self, key: String, record: Record) -> Result<()> {
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
 		if let MapDatabase::String(m) = &self.0 {
-			assert!(m.insert(key, record).is_some());
+			assert!(m.insert(key, val).is_some());
 		} else {
 			bail!("Invalid MapDatabase variant");
 		}
