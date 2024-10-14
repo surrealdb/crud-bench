@@ -13,14 +13,14 @@ use clap::ValueEnum;
 pub(crate) enum Database {
 	Dry,
 	Map,
-    #[cfg(feature = "dragonfly")]
-    Dragonfly,
-    #[cfg(feature = "keydb")]
-    Keydb,
-    #[cfg(feature = "mongodb")]
-    Mongodb,
-    #[cfg(feature = "postgres")]
-    Postgres,
+	#[cfg(feature = "dragonfly")]
+	Dragonfly,
+	#[cfg(feature = "keydb")]
+	Keydb,
+	#[cfg(feature = "mongodb")]
+	Mongodb,
+	#[cfg(feature = "postgres")]
+	Postgres,
 	#[cfg(feature = "redb")]
 	Redb,
 	#[cfg(feature = "redis")]
@@ -86,7 +86,9 @@ impl Database {
 			Database::Map => benchmark.run(MapClientProvider::setup(kt).await?, kp, vp).await,
 			#[cfg(feature = "dragonfly")]
 			Database::Dragonfly => {
-				benchmark.run(crate::dragonfly::DragonflyClientProvider::setup(kt).await?, kp).await
+				benchmark
+					.run(crate::dragonfly::DragonflyClientProvider::setup(kt).await?, kp, vp)
+					.await
 			}
 			#[cfg(feature = "redb")]
 			Database::Redb => benchmark.run(crate::redb::ReDBClientProvider::setup(kt).await?, kp, vp).await,
