@@ -67,9 +67,9 @@ impl BenchmarkClient for PostgresClient {
 			})
 			.collect();
 		let fields = fields.join(",");
-		self.client
-			.batch_execute(&format!("CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields})"))
-			.await?;
+		let stm = format!("CREATE TABLE record ( id {id_type} PRIMARY KEY,{fields});");
+		// println!("{stm}");
+		self.client.batch_execute(&stm).await?;
 		Ok(())
 	}
 
@@ -112,8 +112,8 @@ impl PostgresClient {
 		T: ToSql + Sync,
 	{
 		let (fields, values) = self.columns.insert_clauses(val)?;
-		let stm = format!("INSERT INTO record (id, {fields}) VALUES ($1, {values})");
-		println!("{stm}");
+		let stm = format!("INSERT INTO record (id,{fields}) VALUES ($1,{values})");
+		// println!("{stm}");
 		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);
 		Ok(())
@@ -134,7 +134,7 @@ impl PostgresClient {
 	{
 		let set = self.columns.set_clause(val)?;
 		let stm = format!("UPDATE record SET {set} WHERE id=$1");
-		println!("{stm}");
+		// println!("{stm}");
 		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);
 		Ok(())

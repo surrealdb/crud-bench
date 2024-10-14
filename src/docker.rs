@@ -19,6 +19,7 @@ impl DockerContainer {
 		info!("Start Docker image {}", image);
 		let mut arguments = Arguments::new(["run"]);
 		arguments.append(pre);
+		#[cfg(not(target_os = "macos"))]
 		arguments.add(["--net", "host"]);
 		arguments.add(["-d", &image]);
 		arguments.append(post);

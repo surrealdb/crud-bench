@@ -97,13 +97,13 @@ impl BenchmarkClient for SurrealDBClient {
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		let read: Option<Value> = self.db.select(("record", key as i64)).await?;
+		let read: Option<SurrealRecord> = self.db.select(("record", key as i64)).await?;
 		assert!(read.is_some());
 		Ok(())
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		let read: Option<Value> = self.db.select(("record", key)).await?;
+		let read: Option<SurrealRecord> = self.db.select(("record", key)).await?;
 		assert!(read.is_some());
 		Ok(())
 	}
@@ -122,13 +122,13 @@ impl BenchmarkClient for SurrealDBClient {
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		let deleted: Option<Value> = self.db.delete(("record", key as i64)).await?;
+		let deleted: Option<SurrealRecord> = self.db.delete(("record", key as i64)).await?;
 		assert!(deleted.is_some());
 		Ok(())
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
-		let deleted: Option<Value> = self.db.delete(("record", key)).await?;
+		let deleted: Option<SurrealRecord> = self.db.delete(("record", key)).await?;
 		assert!(deleted.is_some());
 		Ok(())
 	}

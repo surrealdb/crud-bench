@@ -21,14 +21,27 @@ pub(crate) enum ColumnType {
 	Object,
 }
 
+impl ColumnType {
+	fn to_sql_string(&self, val: &Value) -> String {
+		match self {
+			Self::String => format!("'{}'", val.as_str().unwrap()),
+			Self::Object => {
+				format!("'{}'", serde_json::to_string(val.as_object().unwrap()).unwrap())
+			}
+			Self::Integer => val.to_string(),
+		}
+	}
+}
+
 impl Columns {
 	pub(crate) fn insert_clauses(&self, val: Value) -> Result<(String, String)> {
 		let val = val.as_object().unwrap();
 		let mut fields = Vec::with_capacity(self.0.len());
 		let mut values = Vec::with_capacity(self.0.len());
-		for (n, _) in &self.0 {
+		for (n, t) in &self.0 {
 			fields.push(n.to_string());
-			values.push(serde_json::to_string(val.get(n).unwrap())?);
+			let value = t.to_sql_string(val.get(n).unwrap());
+			values.push(value);
 		}
 		let fields = fields.join(",");
 		let values = values.join(",");
@@ -38,8 +51,8 @@ impl Columns {
 	pub(crate) fn set_clause(&self, val: Value) -> Result<String> {
 		let mut updates = Vec::with_capacity(self.0.len());
 		let val = val.as_object().unwrap();
-		for (n, _) in &self.0 {
-			let value = serde_json::to_string(val.get(n).unwrap())?;
+		for (n, t) in &self.0 {
+			let value = t.to_sql_string(val.get(n).unwrap());
 			updates.push(format!("{n}={value}"));
 		}
 		Ok(updates.join(","))
