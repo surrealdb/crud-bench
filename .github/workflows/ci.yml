@@ -153,9 +153,6 @@ jobs:
           # Scylladb
           - database: scylladb
             description: ScyllaDB
-          # SpeedB
-          - database: speedb
-            description: SpeeDB
           # SurrealDB + Memory
           - database: surrealdb-memory
             description: SurrealDB with in-memory storage
