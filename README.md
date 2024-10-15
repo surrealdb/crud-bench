@@ -93,8 +93,8 @@ Options:
 
 ### Customizable value
 
-Use the argument `--value` (or environment variable `CRUD_BENCH_VALUE` ) to customize the value.
-Pass a JSON structure that will serve as a template for building a randomized value.
+You can use the argument `--value` (or the environment variable `CRUD_BENCH_VALUE`) to customize the value
+Pass a JSON structure that will serve as a template for generating a randomized value.
 
 Eg.:
 
@@ -115,11 +115,12 @@ Eg.:
 }
 ```
 
-- Every `stringXX` will be replaced be a random string with XX characters.
-- Every `i32`: will be replaced by a random integer.
+- Every occurrence of `stringXX` will be replaced by a random string with XX characters.
+- Every `i32` will be replaced by a random integer.
 
-For column oriented databases (Postgres, Scylladb), the first level are translated as columns.
-The nested structures one stored in a JSON column.
+For column-oriented databases (e.g., PostgreSQL, ScyllaDB), the first-level fields of the JSON structure are translated
+as columns.
+Nested structures will be stored in a JSON column.
 
 ## Dry run
 

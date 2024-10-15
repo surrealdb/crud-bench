@@ -2,7 +2,7 @@
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
-use crate::valueprovider::Columns;
+use crate::valueprovider::{ColumnType, Columns};
 use crate::KeyType;
 use anyhow::Result;
 use scylla::_macro_internal::SerializeValue;
@@ -59,17 +59,20 @@ impl BenchmarkClient for ScylladbClient {
 				todo!()
 			}
 		};
+		let fields: Vec<String> = self
+			.columns
+			.0
+			.iter()
+			.map(|(n, t)| match t {
+				ColumnType::String => format!("{n} TEXT"),
+				ColumnType::Integer => format!("{n} INT"),
+				ColumnType::Object => format!("{n} TEXT"),
+			})
+			.collect();
+		let fields = fields.join(",");
 		self.session
 			.query_unpaged(
-				format!(
-					"
-					CREATE TABLE bench.record (
-						id {id_type} PRIMARY KEY,
-						text text,
-						integer int
-					)
-				"
-				),
+				format!("CREATE TABLE bench.record ( id {id_type} PRIMARY KEY, {fields})"),
 				(),
 			)
 			.await?;

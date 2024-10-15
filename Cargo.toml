@@ -6,7 +6,7 @@ license = "Apache-2.0"
 readme = "README.md"
 
 [features]
-default = ["dragonfly", "keydb", "redis", "rocksdb", "postgres", "mongodb", "scylladb", "surrealkv", "surrealdb"]
+default = ["dragonfly", "keydb", "mongodb", "postgres", "redb", "redis", "rocksdb", "scylladb", "speedb", "surrealkv", "surrealdb"]
 dragonfly = ["dep:redis"]
 keydb = ["dep:redis"]
 mongodb = ["dep:mongodb"]

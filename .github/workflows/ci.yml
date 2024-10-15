@@ -123,33 +123,39 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Dragonfly
+          - database: dragonfly
+          - description: Dragonfly
           # Dry
           - database: dry
             description: Dry
-          # Map
-          - database: map
-            description: Map
-          # Redis
-          - database: redis
-            description: Redis
           # KeyDB
           - database: keydb
             description: KeyDB
-          # Dragonfly
-          - database: dragonfly
-            description: Dragonfly
-          # Postgres
-          - database: postgres
-            description: Postgres
+          # Map
+          - database: map
+            description: Map
           # MongoDB
           - database: mongodb
             description: MongoDB
+          # Postgres
+          - database: postgres
+            description: Postgres
+          # Redb
+          - database: redb
+            description: Redb
+          # Redis
+          - database: redis
+            description: Redis
           # RocksDB
           - database: rocksdb
             description: RocksDB
-          # SurrealKV
-          - database: surrealkv
-            description: SurrealKV
+          # Scylladb
+          - database: scylladb
+            description: ScyllaDB
+          # SpeedB
+          - database: speedb
+            description: SpeeDB
           # SurrealDB + Memory
           - database: surrealdb-memory
             description: SurrealDB with in-memory storage
@@ -159,6 +165,9 @@ jobs:
           # SurrealDB + SurrealKV
           - database: surrealdb-surrealkv
             description: SurrealDB with SurrealKV storage
+          # SurrealKV
+          - database: surrealkv
+            description: SurrealKV
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
