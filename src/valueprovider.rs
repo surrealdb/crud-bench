@@ -1,10 +1,8 @@
 use anyhow::{bail, Result};
+use log::debug;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
 use serde_json::{Map, Number, Value};
-use std::fs::File;
-use std::io::BufReader;
-use std::path::PathBuf;
 use std::str::FromStr;
 
 #[derive(Clone)]
@@ -65,10 +63,9 @@ impl Columns {
 const CHARSET: &[u8; 37] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789";
 
 impl ValueProvider {
-	pub(crate) fn new(json: &PathBuf) -> Result<Self> {
-		let file = File::open(json)?;
-		let reader = BufReader::new(file);
-		let val = serde_json::from_reader(reader)?;
+	pub(crate) fn new(json: &str) -> Result<Self> {
+		let val = serde_json::from_str(json)?;
+		debug!("Value template: {val:#}");
 		let columns = Self::parse_columns(&val)?;
 		Ok(Self {
 			val,

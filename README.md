@@ -43,7 +43,7 @@ Options:
   -d, --database <DATABASE>
           Database
           
-          [possible values: dry, redb, rocksdb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, scylladb, mongodb, postgres, redis, keydb]
+          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
 
   -e, --endpoint <ENDPOINT>
           Endpoint
@@ -81,9 +81,45 @@ Options:
           - string506: 506 ascii bytes
           - uuid:      UUID type 7
 
+  -v, --value <VALUE>
+          Size of the text value
+          
+          [env: CRUD_BENCH_VALUE=]
+          [default: "{\"text\":\"string50\", \"integer\":\"i32\"}"]
+
   -h, --help
           Print help (see a summary with '-h')
 ```
+
+### Customizable value
+
+Use the argument `--value` (or environment variable `CRUD_BENCH_VALUE` ) to customize the value.
+Pass a JSON structure that will serve as a template for building a randomized value.
+
+Eg.:
+
+```json
+{
+  "text": "string50",
+  "integer": "i32",
+  "nested": {
+    "text": "string1000",
+    "array": [
+      "string10",
+      "string10",
+      "string10",
+      "string10",
+      "string10"
+    ]
+  }
+}
+```
+
+- Every `stringXX` will be replaced be a random string with XX characters.
+- Every `i32`: will be replaced by a random integer.
+
+For column oriented databases (Postgres, Scylladb), the first level are translated as columns.
+The nested structures one stored in a JSON column.
 
 ## Dry run
 

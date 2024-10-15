@@ -5,7 +5,6 @@ use crate::valueprovider::ValueProvider;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use std::io::IsTerminal;
-use std::path::PathBuf;
 use tokio::runtime::Builder;
 
 mod benchmark;
@@ -43,32 +42,37 @@ pub(crate) struct Args {
 	pub(crate) endpoint: Option<String>,
 
 	/// Number of async runtime workers, defaulting to the number of CPUs
-	#[clap(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
+	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) workers: u32,
 
 	/// Number of concurrent clients
-	#[clap(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
+	#[arg(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) clients: u32,
 
 	/// Number of concurrent threads per client
-	#[clap(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
+	#[arg(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) threads: u32,
 
 	/// Number of samples to be created, read, updated, and deleted
-	#[clap(short, long, value_parser=clap::value_parser!(u32).range(1..))]
+	#[arg(short, long, value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) samples: u32,
 
 	/// Generate the keys in a pseudo-randomized order
-	#[clap(short, long)]
+	#[arg(short, long)]
 	pub(crate) random: bool,
 
 	/// The type of the key
-	#[clap(short, long, default_value_t = KeyType::Integer, value_enum)]
+	#[arg(short, long, default_value_t = KeyType::Integer, value_enum)]
 	pub(crate) key: KeyType,
 
 	/// Size of the text value
-	#[clap(short, long, default_value = "template/default.json")]
-	pub(crate) value: PathBuf,
+	#[arg(
+		short,
+		long,
+		env = "CRUD_BENCH_VALUE",
+		default_value = "{\"text\":\"string50\", \"integer\":\"i32\"}"
+	)]
+	pub(crate) value: String,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
