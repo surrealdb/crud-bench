@@ -4,7 +4,7 @@ use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
 use crate::valueprovider::Columns;
 use crate::KeyType;
-use anyhow::{bail, Result};
+use anyhow::Result;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
@@ -66,54 +66,92 @@ impl BenchmarkClient for MongoDBClient {
 		mongo_startup(&self.0).await
 	}
 
-	async fn create_u32(&self, _: u32, _: Value) -> Result<()> {
-		bail!("Invalid MongoDBClient")
+	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+		self.create(key, val).await
 	}
 
-	async fn create_string(&self, key: String, mut val: Value) -> Result<()> {
-		val.as_object_mut().unwrap().insert("id".to_string(), Value::String(key));
-		if let Bson::Document(doc) = bson::to_bson(&val)? {
-			self.0.insert_one(doc).await?;
-			Ok(())
-		} else {
-			bail!("Invalid document")
-		}
+	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+		self.create(key, val).await
 	}
 
-	async fn read_u32(&self, _: u32) -> Result<()> {
-		bail!("Invalid MongoDBClient")
+	async fn read_u32(&self, key: u32) -> Result<()> {
+		let doc = self.read(key).await?;
+		assert_eq!(doc.unwrap().get("id").unwrap().as_i64().unwrap() as u32, key);
+		Ok(())
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		let filter = doc! { "id": key.clone() };
-		let doc = self.0.find_one(filter).await?;
+		let doc = self.read(key.clone()).await?;
 		assert_eq!(doc.unwrap().get_str("id")?, key);
 		Ok(())
 	}
 
-	async fn update_u32(&self, _: u32, _: Value) -> Result<()> {
-		bail!("Invalid MongoDBClient")
+	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+		self.update(key, val).await
 	}
 
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let filter = doc! { "id": key };
-		if let Bson::Document(doc) = bson::to_bson(&val)? {
-			let res = self.0.replace_one(filter, doc).await?;
-			assert_eq!(res.modified_count, 1);
-			Ok(())
-		} else {
-			bail!("Invalid document")
-		}
+		self.update(key, val).await
 	}
 
-	async fn delete_u32(&self, _: u32) -> Result<()> {
-		bail!("Invalid MongoDBClient")
+	async fn delete_u32(&self, key: u32) -> Result<()> {
+		self.delete(key).await
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
+		self.delete(key).await
+	}
+}
+
+impl MongoDBClient {
+	fn to_doc<K>(key: K, mut val: Value) -> Result<Bson>
+	where
+		K: Into<Value> + Into<Bson>,
+	{
+		let obj = val.as_object_mut().unwrap();
+		obj.insert("id".to_string(), key.into());
+		Ok(bson::to_bson(&val)?)
+	}
+	async fn create<K>(&self, key: K, val: Value) -> Result<()>
+	where
+		K: Into<Value> + Into<Bson>,
+	{
+		let bson = Self::to_doc(key, val)?;
+		let doc = bson.as_document().unwrap();
+		let res = self.0.insert_one(doc).await?;
+		assert_ne!(res.inserted_id, Bson::Null, "create");
+		Ok(())
+	}
+
+	async fn read<K>(&self, key: K) -> Result<Option<Document>>
+	where
+		K: Into<Bson>,
+	{
+		let filter = doc! { "id": key };
+		let doc = self.0.find_one(filter).await?;
+		assert!(doc.is_some(), "read");
+		Ok(doc)
+	}
+
+	async fn update<K>(&self, key: K, val: Value) -> Result<()>
+	where
+		K: Into<Value> + Into<Bson> + Clone,
+	{
+		let bson = Self::to_doc(key.clone(), val)?;
+		let doc = bson.as_document().unwrap();
+		let filter = doc! { "id": key };
+		let res = self.0.replace_one(filter, doc).await?;
+		assert_eq!(res.modified_count, 1, "update");
+		Ok(())
+	}
+
+	async fn delete<K>(&self, key: K) -> Result<()>
+	where
+		K: Into<Bson>,
+	{
 		let filter = doc! { "id": key };
 		let res = self.0.delete_one(filter).await?;
-		assert_eq!(res.deleted_count, 1);
+		assert_eq!(res.deleted_count, 1, "delete");
 		Ok(())
 	}
 }
