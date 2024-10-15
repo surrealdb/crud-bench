@@ -1,0 +1,14 @@
+{
+  "text": "string50",
+  "integer": "i32",
+  "nested": {
+    "text": "string1000",
+    "array": [
+      "string10",
+      "string10",
+      "string10",
+      "string10",
+      "string10"
+    ]
+  }
+}

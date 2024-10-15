@@ -1,11 +1,11 @@
 use crate::benchmark::Benchmark;
-use std::io::IsTerminal;
-
 use crate::database::Database;
 use crate::keyprovider::KeyProvider;
 use crate::valueprovider::ValueProvider;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use std::io::IsTerminal;
+use std::path::PathBuf;
 use tokio::runtime::Builder;
 
 mod benchmark;
@@ -67,8 +67,8 @@ pub(crate) struct Args {
 	pub(crate) key: KeyType,
 
 	/// Size of the text value
-	#[clap(short, long, default_value = "{\"text\":\"String50\", \"integer\":\"i32\"}")]
-	pub(crate) value: String,
+	#[clap(short, long, default_value = "template/default.json")]
+	pub(crate) value: PathBuf,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
