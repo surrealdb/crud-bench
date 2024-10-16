@@ -193,6 +193,12 @@ jobs:
         timeout-minutes: 10
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 250000 -c 128 -t 48 -k integer
 
+      - name: Run benchmarks (250,000 samples / 128 clients / 48 threads / 1.5K value)
+        timeout-minutes: 20
+        env:
+          CRUD_BENCH_VALUE: '{ "text": "string50", "integer": "i32", "nested": { "text": "string1000", "array": [ "string50", "string50", "string50", "string50", "string50" ] } }'
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 250000 -c 128 -t 48 -k integer
+
       # 1,000,000 records
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key integer / random)
@@ -211,6 +217,12 @@ jobs:
         timeout-minutes: 15
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k string506 -r
 
+      - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string506 / random / 1.5K value)
+        timeout-minutes: 30
+        env:
+          CRUD_BENCH_VALUE: '{ "text": "string50", "integer": "i32", "nested": { "text": "string1000", "array": [ "string50", "string50", "string50", "string50", "string50" ] } }'
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k string506 -r
+
       # 5,000,000 records
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key integer / random)
@@ -227,10 +239,4 @@ jobs:
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random)
         timeout-minutes: 30
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string506 -r
-
-      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random / value 1K)
-        timeout-minutes: 30
-        env:
-          CRUD_BENCH_VALUE: '{ "text": "string50", "integer": "i32", "nested": { "text": "string1000", "array": [ "string50", "string50", "string50", "string50", "string50" ] } }'
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string506 -r
