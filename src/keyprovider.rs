@@ -1,5 +1,4 @@
 use crate::KeyType;
-use std::hash::Hasher;
 use twox_hash::XxHash64;
 
 #[derive(Clone, Copy)]
@@ -106,9 +105,7 @@ impl UnorderedInteger {
 fn hash_string(n: u32, repeat: usize) -> String {
 	let mut hex_string = String::with_capacity(repeat * 16 + 10);
 	for s in 0..repeat as u64 {
-		let mut hasher = XxHash64::with_seed(s);
-		hasher.write(&n.to_be_bytes());
-		let hash_result = hasher.finish();
+		let hash_result = XxHash64::oneshot(s, &n.to_be_bytes());
 		hex_string.push_str(&format!("{:x}", hash_result));
 	}
 	hex_string
