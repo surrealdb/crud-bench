@@ -46,7 +46,7 @@ serde_json = "1.0.128"
 serial_test = "3.1.1"
 speedb = { version = "0.0.5", features = ["lz4", "snappy"], optional = true }
 surrealdb = { version = "2.0.4", optional = true }
-surrealkv = { version = "0.3.7", optional = true }
-tokio = { version = "1.40.0", features = ["macros", "time", "rt-multi-thread"] }
+surrealkv = { version = "0.4.3", optional = true }
+tokio = { version = "1.41.0", features = ["macros", "time", "rt-multi-thread"] }
 tokio-postgres = { version = "0.7.12", optional = true }
-twox-hash = "1.6.3"
+twox-hash = "2.0.0"

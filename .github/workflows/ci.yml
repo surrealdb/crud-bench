@@ -247,7 +247,8 @@ jobs:
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random / 1.5K value)
         timeout-minutes: 30
-        if: matrix.database != 'surrealdb-memory'
+        if: matrix.database != 'surrealdb-memory' && matrix.database != postgres
+        #        It is actually disabled for postgres due to resource capacities on Docker (probably volume size)
         env:
           CRUD_BENCH_VALUE: '{ "text": "string50", "integer": "i32", "nested": { "text": "string1000", "array": [ "string50", "string50", "string50", "string50", "string50" ] } }'
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string506 -r
