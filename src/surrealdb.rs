@@ -14,7 +14,7 @@ use crate::KeyType;
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
 	pre_args: "-p 8000:8000",
-	post_args: "start --user root --pass root memory",
+	post_args: "start --log debug --user root --pass root memory",
 };
 
 pub(crate) const SURREALDB_ROCKSDB_DOCKER_PARAMS: DockerParams = DockerParams {
@@ -26,7 +26,7 @@ pub(crate) const SURREALDB_ROCKSDB_DOCKER_PARAMS: DockerParams = DockerParams {
 pub(crate) const SURREALDB_SURREALKV_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
 	pre_args: "-p 8000:8000",
-	post_args: "start --user root --pass root surrealkv://tmp/crud-bench.db",
+	post_args: "start --log debug --user root --pass root surrealkv://tmp/crud-bench.db",
 };
 
 #[derive(Default)]
