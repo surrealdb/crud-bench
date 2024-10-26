@@ -20,7 +20,7 @@ jobs:
 
   format:
     name: Check format
-    runs-on: [ runner-arm64-small ]
+    runs-on: [ runner-amd64-small ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -41,7 +41,7 @@ jobs:
 
   clippy:
     name: Check clippy
-    runs-on: [ runner-arm64-small ]
+    runs-on: [ runner-amd64-small ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -62,7 +62,7 @@ jobs:
 
   test:
     name: Check tests
-    runs-on: [ runner-arm64-small ]
+    runs-on: [ runner-amd64-small ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -81,7 +81,7 @@ jobs:
 
   build:
     name: Build crud-bench
-    runs-on: [ runner-arm64-2xlarge-private ]
+    runs-on: [ runner-amd64-2xlarge-private ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -110,7 +110,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [ runner-arm64-2xlarge-private ]
+    runs-on: [ runner-amd64-2xlarge-private ]
     continue-on-error: true
     strategy:
       fail-fast: false
