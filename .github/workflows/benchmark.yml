@@ -1,13 +1,9 @@
-name: CI
+name: Benchmark
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-  merge_group:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'
 
 concurrency:
   # Use github.run_id on main branch
@@ -85,7 +81,7 @@ jobs:
 
   build:
     name: Build crud-bench
-    runs-on: [ runner-arm64-large ]
+    runs-on: [ runner-arm64-2xlarge-private ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -114,7 +110,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [ runner-arm64-large ]
+    runs-on: [ runner-arm64-2xlarge-private ]
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -146,7 +142,7 @@ jobs:
             description: Postgres
           # Redb
           - database: redb
-            enabled: true
+            enabled: false
             description: Redb
           # Redis
           - database: redis
@@ -186,32 +182,32 @@ jobs:
       - name: Set file permissions
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
 
-      # 100,000 records
+      # 5,000,000 records
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key integer / random)
-        timeout-minutes: 3
+      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key integer / random)
+        timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k integer -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k integer -r
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random)
-        timeout-minutes: 3
+      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random)
+        timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string26 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string26 -r
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string90 / random)
-        timeout-minutes: 3
+      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string90 / random)
+        timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string90 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string90 -r
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random)
-        timeout-minutes: 3
+      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random)
+        timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string506 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string506 -r
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random / 1.5KiB row and object size)
-        timeout-minutes: 3
+      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random / 1.5KiB row and object size)
+        timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string506 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string506 -r
         env:
           CRUD_BENCH_VALUE: '{ "text": "string50", "integer": "i32", "nested": { "text": "string1000", "array": [ "string50", "string50", "string50", "string50", "string50" ] } }'
 
