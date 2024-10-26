@@ -24,7 +24,7 @@ jobs:
 
   format:
     name: Check format
-    runs-on: [ runner-amd64-small ]
+    runs-on: [ runner-amd64-large ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -45,7 +45,7 @@ jobs:
 
   clippy:
     name: Check clippy
-    runs-on: [ runner-amd64-small ]
+    runs-on: [ runner-amd64-large ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -66,7 +66,7 @@ jobs:
 
   test:
     name: Check tests
-    runs-on: [ runner-amd64-small ]
+    runs-on: [ runner-amd64-large ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
