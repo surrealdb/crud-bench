@@ -2,10 +2,12 @@
 
 use tokio_postgres::{Client, NoTls};
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
+use crate::valueprovider::{ColumnType, Columns};
 use crate::KeyType;
 use anyhow::Result;
+use serde_json::Value;
 use tokio_postgres::types::ToSql;
 
 pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
@@ -14,11 +16,11 @@ pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 	post_args: "postgres -N 1024",
 };
 
-pub(crate) struct PostgresClientProvider(KeyType);
+pub(crate) struct PostgresClientProvider(KeyType, Columns);
 
 impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
-	async fn setup(kt: KeyType) -> Result<Self> {
-		Ok(Self(kt))
+	async fn setup(kt: KeyType, columns: Columns) -> Result<Self> {
+		Ok(Self(kt, columns))
 	}
 
 	async fn create_client(&self, endpoint: Option<String>) -> Result<PostgresClient> {
@@ -32,6 +34,7 @@ impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 		Ok(PostgresClient {
 			client,
 			kt: self.0,
+			columns: self.1.clone(),
 		})
 	}
 }
@@ -39,6 +42,7 @@ impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 pub(crate) struct PostgresClient {
 	client: Client,
 	kt: KeyType,
+	columns: Columns,
 }
 
 impl BenchmarkClient for PostgresClient {
@@ -52,98 +56,93 @@ impl BenchmarkClient for PostgresClient {
 				todo!()
 			}
 		};
-		self.client
-			.batch_execute(&format!(
-				"
-					CREATE TABLE record (
-						id      {id_type} PRIMARY KEY,
-						text    TEXT NOT NULL,
-						integer    INTEGER NOT NULL
-					)
-				"
-			))
-			.await?;
+		let fields: Vec<String> = self
+			.columns
+			.0
+			.iter()
+			.map(|(n, t)| match t {
+				ColumnType::String => format!("{n} TEXT NOT NULL"),
+				ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
+				ColumnType::Object => format!("{n} JSON NOT NULL"),
+			})
+			.collect();
+		let fields = fields.join(",");
+		let stm = format!("CREATE TABLE record ( id {id_type} PRIMARY KEY,{fields});");
+		self.client.batch_execute(&stm).await?;
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
-		self.create_key(key as i32, record).await
+	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+		self.create(key as i32, val).await
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
-		self.create_key(key, record).await
+	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+		self.create(key, val).await
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		self.read_key(key as i32).await
+		self.read(key as i32).await
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		self.read_key(key).await
+		self.read(key).await
 	}
 
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
-		self.update_key(key as i32, record).await
+	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+		self.update(key as i32, val).await
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
-		self.update_key(key, record).await
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+		self.update(key, val).await
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.delete_key(key as i32).await
+		self.delete(key as i32).await
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
-		self.delete_key(key).await
+		self.delete(key).await
 	}
 }
 
 impl PostgresClient {
-	async fn create_key<T>(&self, key: T, record: &Record) -> Result<()>
+	async fn create<T>(&self, key: T, val: Value) -> Result<()>
 	where
 		T: ToSql + Sync,
 	{
-		let res = self
-			.client
-			.execute(
-				"INSERT INTO record (id, text, integer) VALUES ($1, $2, $3)",
-				&[&key, &record.text, &record.integer],
-			)
-			.await?;
+		let (fields, values) = self.columns.insert_clauses(val)?;
+		let stm = format!("INSERT INTO record (id,{fields}) VALUES ($1,{values})");
+		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);
 		Ok(())
 	}
-	async fn read_key<T>(&self, key: T) -> Result<()>
+	async fn read<T>(&self, key: T) -> Result<()>
 	where
 		T: ToSql + Sync,
 	{
-		let res =
-			self.client.query("SELECT id, text, integer FROM record WHERE id=$1", &[&key]).await?;
+		let stm = "SELECT id, text, integer FROM record WHERE id=$1";
+		let res = self.client.query(stm, &[&key]).await?;
 		assert_eq!(res.len(), 1);
 		Ok(())
 	}
 
-	async fn update_key<T>(&self, key: T, record: &Record) -> Result<()>
+	async fn update<T>(&self, key: T, val: Value) -> Result<()>
 	where
 		T: ToSql + Sync,
 	{
-		let res = self
-			.client
-			.execute(
-				"UPDATE record SET text=$1, integer=$2 WHERE id=$3",
-				&[&record.text, &record.integer, &key],
-			)
-			.await?;
+		let set = self.columns.set_clause(val)?;
+		let stm = format!("UPDATE record SET {set} WHERE id=$1");
+		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);
 		Ok(())
 	}
 
-	async fn delete_key<T>(&self, key: T) -> Result<()>
+	async fn delete<T>(&self, key: T) -> Result<()>
 	where
 		T: ToSql + Sync,
 	{
-		let res = self.client.execute("DELETE FROM record WHERE id=$1", &[&key]).await?;
+		let stm = "DELETE FROM record WHERE id=$1";
+		let res = self.client.execute(stm, &[&key]).await?;
 		assert_eq!(res, 1);
 		Ok(())
 	}

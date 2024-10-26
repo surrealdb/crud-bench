@@ -1,10 +1,10 @@
 use crate::benchmark::Benchmark;
-use std::io::IsTerminal;
-
 use crate::database::Database;
 use crate::keyprovider::KeyProvider;
+use crate::valueprovider::ValueProvider;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use std::io::IsTerminal;
 use tokio::runtime::Builder;
 
 mod benchmark;
@@ -14,6 +14,7 @@ mod dragonfly;
 mod dry;
 mod keydb;
 mod keyprovider;
+mod map;
 mod mongodb;
 mod postgres;
 mod redb;
@@ -23,6 +24,7 @@ mod scylladb;
 mod speedb;
 mod surrealdb;
 mod surrealkv;
+mod valueprovider;
 
 #[derive(Parser, Debug)]
 #[command(term_width = 0)]
@@ -40,28 +42,37 @@ pub(crate) struct Args {
 	pub(crate) endpoint: Option<String>,
 
 	/// Number of async runtime workers, defaulting to the number of CPUs
-	#[clap(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
+	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) workers: u32,
 
 	/// Number of concurrent clients
-	#[clap(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
+	#[arg(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) clients: u32,
 
 	/// Number of concurrent threads per client
-	#[clap(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
+	#[arg(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) threads: u32,
 
 	/// Number of samples to be created, read, updated, and deleted
-	#[clap(short, long, value_parser=clap::value_parser!(u32).range(1..))]
+	#[arg(short, long, value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) samples: u32,
 
 	/// Generate the keys in a pseudo-randomized order
-	#[clap(short, long)]
+	#[arg(short, long)]
 	pub(crate) random: bool,
 
 	/// The type of the key
-	#[clap(short, long, default_value_t = KeyType::Integer, value_enum)]
+	#[arg(short, long, default_value_t = KeyType::Integer, value_enum)]
 	pub(crate) key: KeyType,
+
+	/// Size of the text value
+	#[arg(
+		short,
+		long,
+		env = "CRUD_BENCH_VALUE",
+		default_value = "{\"text\":\"string50\", \"integer\":\"i32\"}"
+	)]
+	pub(crate) value: String,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -106,8 +117,10 @@ fn run(args: Args) -> Result<()> {
 	}
 	// Build the key provider
 	let kp = KeyProvider::new(args.key, args.random);
+	// Build the value provider
+	let vp = ValueProvider::new(&args.value)?;
 	// Run the benchmark
-	let res = runtime.block_on(async { args.database.run(&benchmark, args.key, kp).await });
+	let res = runtime.block_on(async { args.database.run(&benchmark, args.key, kp, vp).await });
 	// Output the results
 	match res {
 		// Output the results
@@ -150,10 +163,12 @@ fn run(args: Args) -> Result<()> {
 mod test {
 	use crate::{run, Args, Database, KeyType};
 	use anyhow::Result;
-	fn test(key: KeyType, random: bool) -> Result<()> {
+	use serial_test::serial;
+
+	fn test(database: Database, key: KeyType, random: bool) -> Result<()> {
 		run(Args {
 			image: None,
-			database: Database::Dry,
+			database,
 			endpoint: None,
 			workers: 5,
 			clients: 2,
@@ -161,46 +176,67 @@ mod test {
 			samples: 10000,
 			random,
 			key,
+			value: r#"{"text":"String50", "integer":"i32"}"#.to_string(),
 		})
 	}
 
 	#[test]
+	#[serial]
 	fn test_integer_ordered() -> Result<()> {
-		test(KeyType::Integer, false)
+		test(Database::Map, KeyType::Integer, false)
 	}
 
 	#[test]
-	fn test_integer_unordered() -> Result<()> {
-		test(KeyType::Integer, true)
+	#[serial]
+	fn test_integer_unordered_dry() -> Result<()> {
+		test(Database::Dry, KeyType::Integer, true)
 	}
 
 	#[test]
+	#[serial]
+	fn test_integer_unordered_map() -> Result<()> {
+		test(Database::Map, KeyType::Integer, true)
+	}
+
+	#[test]
+	#[serial]
 	fn test_string26_ordered() -> Result<()> {
-		test(KeyType::String26, false)
+		test(Database::Map, KeyType::String26, false)
 	}
 
 	#[test]
+	#[serial]
 	fn test_string26_unordered() -> Result<()> {
-		test(KeyType::String26, true)
+		test(Database::Map, KeyType::String26, true)
 	}
 
 	#[test]
+	#[serial]
 	fn test_string90_ordered() -> Result<()> {
-		test(KeyType::String90, false)
+		test(Database::Map, KeyType::String90, false)
 	}
 
 	#[test]
+	#[serial]
 	fn test_string90_unordered() -> Result<()> {
-		test(KeyType::String90, true)
+		test(Database::Map, KeyType::String90, true)
 	}
 
 	#[test]
+	#[serial]
 	fn test_string506_ordered() -> Result<()> {
-		test(KeyType::String506, false)
+		test(Database::Map, KeyType::String506, false)
 	}
 
 	#[test]
-	fn test_string506_unordered() -> Result<()> {
-		test(KeyType::String506, true)
+	#[serial]
+	fn test_string506_unordered_map() -> Result<()> {
+		test(Database::Map, KeyType::String506, true)
+	}
+
+	#[test]
+	#[serial]
+	fn test_string506_unordered_dry() -> Result<()> {
+		test(Database::Dry, KeyType::String506, true)
 	}
 }

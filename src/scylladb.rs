@@ -1,11 +1,14 @@
 #![cfg(feature = "scylladb")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
+use crate::valueprovider::{ColumnType, Columns};
 use crate::KeyType;
 use anyhow::Result;
 use scylla::_macro_internal::SerializeValue;
 use scylla::{Session, SessionBuilder};
+use serde_json::Value;
+use std::fmt::Display;
 
 pub(crate) const SCYLLADB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "scylladb/scylla",
@@ -13,11 +16,11 @@ pub(crate) const SCYLLADB_DOCKER_PARAMS: DockerParams = DockerParams {
 	post_args: "",
 };
 
-pub(crate) struct ScyllaDBClientProvider(KeyType);
+pub(crate) struct ScyllaDBClientProvider(KeyType, Columns);
 
 impl BenchmarkEngine<ScylladbClient> for ScyllaDBClientProvider {
-	async fn setup(kt: KeyType) -> Result<Self> {
-		Ok(ScyllaDBClientProvider(kt))
+	async fn setup(kt: KeyType, columns: Columns) -> Result<Self> {
+		Ok(ScyllaDBClientProvider(kt, columns))
 	}
 
 	async fn create_client(&self, endpoint: Option<String>) -> Result<ScylladbClient> {
@@ -26,6 +29,7 @@ impl BenchmarkEngine<ScylladbClient> for ScyllaDBClientProvider {
 		Ok(ScylladbClient {
 			session,
 			kt: self.0,
+			columns: self.1.clone(),
 		})
 	}
 }
@@ -33,6 +37,7 @@ impl BenchmarkEngine<ScylladbClient> for ScyllaDBClientProvider {
 pub(crate) struct ScylladbClient {
 	session: Session,
 	kt: KeyType,
+	columns: Columns,
 }
 
 impl BenchmarkClient for ScylladbClient {
@@ -54,73 +59,77 @@ impl BenchmarkClient for ScylladbClient {
 				todo!()
 			}
 		};
+		let fields: Vec<String> = self
+			.columns
+			.0
+			.iter()
+			.map(|(n, t)| match t {
+				ColumnType::String => format!("{n} TEXT"),
+				ColumnType::Integer => format!("{n} INT"),
+				ColumnType::Object => format!("{n} TEXT"),
+			})
+			.collect();
+		let fields = fields.join(",");
 		self.session
 			.query_unpaged(
-				format!(
-					"
-					CREATE TABLE bench.record (
-						id {id_type} PRIMARY KEY,
-						text text,
-						integer int
-					)
-				"
-				),
+				format!("CREATE TABLE bench.record ( id {id_type} PRIMARY KEY, {fields})"),
 				(),
 			)
 			.await?;
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
-		self.create_key(key as i32, record).await
+	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+		self.create(key as i32, val).await
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
-		self.create_key(key, record).await
+	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+		self.create(key, val).await
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		self.read_key(key as i32).await
+		self.read(key as i32).await
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		self.read_key(key).await
+		self.read(key).await
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
-		self.update_key(key as i32, record).await
+	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+		self.update(key as i32, val).await
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
-		self.update_key(key, record).await
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+		self.update(key, val).await
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.delete_key(key as i32).await
+		self.delete(key as i32).await
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
-		self.delete_key(key).await
+		self.delete(key).await
 	}
 }
 
 impl ScylladbClient {
-	async fn create_key<T>(&self, key: T, record: &Record) -> Result<()>
+	async fn create<T>(&self, key: T, val: Value) -> Result<()>
 	where
-		T: SerializeValue,
+		T: Display,
 	{
+		let (fields, values) = self.columns.insert_clauses(val)?;
 		self.session
 			.query_unpaged(
-				"INSERT INTO bench.record (id, text, integer) VALUES (?, ?, ?)",
-				(&key, &record.text, &record.integer),
+				format!("INSERT INTO bench.record (id, {fields}) VALUES ({key}, {values})"),
+				(),
 			)
 			.await?;
 		Ok(())
 	}
 
-	async fn read_key<T>(&self, key: T) -> Result<()>
+	async fn read<T>(&self, key: T) -> Result<()>
 	where
 		T: SerializeValue,
 	{
@@ -132,20 +141,18 @@ impl ScylladbClient {
 		Ok(())
 	}
 
-	async fn update_key<T>(&self, key: T, record: &Record) -> Result<()>
+	async fn update<T>(&self, key: T, val: Value) -> Result<()>
 	where
-		T: SerializeValue,
+		T: Display,
 	{
+		let set = self.columns.set_clause(val)?;
 		self.session
-			.query_unpaged(
-				"UPDATE bench.record SET text=?, integer=? WHERE id=?",
-				(&record.text, &record.integer, &key),
-			)
+			.query_unpaged(format!("UPDATE bench.record SET {set} WHERE id={key}"), ())
 			.await?;
 		Ok(())
 	}
 
-	async fn delete_key<T>(&self, key: T) -> Result<()>
+	async fn delete<T>(&self, key: T) -> Result<()>
 	where
 		T: SerializeValue,
 	{

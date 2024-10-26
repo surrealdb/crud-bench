@@ -1,20 +1,21 @@
 #![cfg(feature = "speedb")]
 
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::valueprovider::Columns;
+use crate::KeyType;
 use anyhow::Error;
 use anyhow::Result;
+use serde_json::Value;
 use speedb::{
 	DBCompactionStyle, DBCompressionType, LogLevel, OptimisticTransactionDB,
 	OptimisticTransactionOptions, Options, ReadOptions, WriteOptions,
 };
 use std::sync::Arc;
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
-use crate::KeyType;
-
 pub(crate) struct SpeeDBClientProvider(Arc<OptimisticTransactionDB>);
 
 impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
-	async fn setup(_: KeyType) -> Result<Self, Error> {
+	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self, Error> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("speedb");
 		// Configure custom options
@@ -73,9 +74,42 @@ impl BenchmarkClient for SpeeDBClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
-		let key = &key.to_ne_bytes();
-		let val = bincode::serialize(record)?;
+	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+		self.create(&key.to_ne_bytes(), val).await
+	}
+
+	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+		self.create(&key.into_bytes(), val).await
+	}
+
+	async fn read_u32(&self, key: u32) -> Result<()> {
+		self.read(&key.to_ne_bytes()).await
+	}
+
+	async fn read_string(&self, key: String) -> Result<()> {
+		self.read(&key.into_bytes()).await
+	}
+
+	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+		self.update(&key.to_ne_bytes(), val).await
+	}
+
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+		self.update(&key.into_bytes(), val).await
+	}
+
+	async fn delete_u32(&self, key: u32) -> Result<()> {
+		self.delete(&key.to_ne_bytes()).await
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		self.delete(&key.into_bytes()).await
+	}
+}
+
+impl SpeeDBClient {
+	async fn create(&self, key: &[u8], val: Value) -> Result<()> {
+		let val = bincode::serialize(&val)?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
@@ -90,8 +124,7 @@ impl BenchmarkClient for SpeeDBClient {
 		Ok(())
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
-		let key = &key.to_ne_bytes();
+	async fn read(&self, key: &[u8]) -> Result<()> {
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
@@ -113,9 +146,8 @@ impl BenchmarkClient for SpeeDBClient {
 		Ok(())
 	}
 
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
-		let key = &key.to_ne_bytes();
-		let val = bincode::serialize(record)?;
+	async fn update(&self, key: &[u8], val: Value) -> Result<()> {
+		let val = bincode::serialize(&val)?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
@@ -130,8 +162,7 @@ impl BenchmarkClient for SpeeDBClient {
 		Ok(())
 	}
 
-	async fn delete_u32(&self, key: u32) -> Result<()> {
-		let key = &key.to_ne_bytes();
+	async fn delete(&self, key: &[u8]) -> Result<()> {
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);

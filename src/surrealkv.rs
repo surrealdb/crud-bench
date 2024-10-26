@@ -1,19 +1,21 @@
 #![cfg(feature = "surrealkv")]
 
 use anyhow::Result;
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use surrealkv::Mode;
 use surrealkv::Options;
 use surrealkv::Store;
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::valueprovider::Columns;
 use crate::KeyType;
 
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
 impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
-	async fn setup(_: KeyType) -> Result<Self> {
+	async fn setup(_: KeyType, _columns: Columns) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("surrealkv");
 		// Configure custom options
@@ -43,18 +45,18 @@ impl BenchmarkClient for SurrealKVClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let val = bincode::serialize(record)?;
+		let val = bincode::serialize(&val)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(key, &val)?;
 		txn.commit().await?;
 		Ok(())
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn create_string(&self, key: String, val: Value) -> Result<()> {
 		let key = key.into_bytes();
-		let val = bincode::serialize(record)?;
+		let val = bincode::serialize(&val)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(&key, &val)?;
 		txn.commit().await?;
@@ -77,18 +79,18 @@ impl BenchmarkClient for SurrealKVClient {
 		Ok(())
 	}
 
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let val = bincode::serialize(record)?;
+		let val = bincode::serialize(&val)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(key, &val)?;
 		txn.commit().await?;
 		Ok(())
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
 		let key = key.into_bytes();
-		let val = bincode::serialize(record)?;
+		let val = bincode::serialize(&val)?;
 		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
 		txn.set(&key, &val)?;
 		txn.commit().await?;

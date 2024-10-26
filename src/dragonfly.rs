@@ -1,11 +1,13 @@
 #![cfg(feature = "dragonfly")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
+use crate::valueprovider::Columns;
 use crate::KeyType;
 use anyhow::Result;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client};
+use serde_json::Value;
 use tokio::sync::Mutex;
 
 pub(crate) const DRAGONFLY_DOCKER_PARAMS: DockerParams = DockerParams {
@@ -17,7 +19,7 @@ pub(crate) const DRAGONFLY_DOCKER_PARAMS: DockerParams = DockerParams {
 pub(crate) struct DragonflyClientProvider {}
 
 impl BenchmarkEngine<DragonflyClient> for DragonflyClientProvider {
-	async fn setup(_: KeyType) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self> {
 		Ok(Self {})
 	}
 
@@ -37,19 +39,20 @@ pub(crate) struct DragonflyClient {
 
 impl BenchmarkClient for DragonflyClient {
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+		let val = bincode::serialize(&val)?;
 		self.conn.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+		let val = bincode::serialize(&val)?;
 		self.conn.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
+	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let val: Vec<u8> = self.conn.lock().await.get(key).await?;
 		assert!(!val.is_empty());
@@ -64,15 +67,15 @@ impl BenchmarkClient for DragonflyClient {
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+		let val = bincode::serialize(&val)?;
 		self.conn.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+		let val = bincode::serialize(&val)?;
 		self.conn.lock().await.set(key, val).await?;
 		Ok(())
 	}

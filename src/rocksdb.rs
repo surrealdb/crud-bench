@@ -1,19 +1,20 @@
 #![cfg(feature = "rocksdb")]
 
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::valueprovider::Columns;
+use crate::KeyType;
 use anyhow::Result;
 use rocksdb::{
 	DBCompactionStyle, DBCompressionType, LogLevel, OptimisticTransactionDB,
 	OptimisticTransactionOptions, Options, ReadOptions, WriteOptions,
 };
+use serde_json::Value;
 use std::sync::Arc;
-
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, Record};
-use crate::KeyType;
 
 pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
 
 impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
-	async fn setup(_: KeyType) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("rocksdb");
 		// Configure custom options
@@ -73,12 +74,12 @@ impl BenchmarkClient for RocksDBClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, record: &Record) -> Result<()> {
-		self.create_bytes(&key.to_ne_bytes(), record).await
+	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+		self.create_bytes(&key.to_ne_bytes(), val).await
 	}
 
-	async fn create_string(&self, key: String, record: &Record) -> Result<()> {
-		self.create_bytes(&key.into_bytes(), record).await
+	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+		self.create_bytes(&key.into_bytes(), val).await
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
@@ -89,12 +90,12 @@ impl BenchmarkClient for RocksDBClient {
 		self.read_bytes(&key.into_bytes()).await
 	}
 
-	async fn update_u32(&self, key: u32, record: &Record) -> Result<()> {
-		self.update_bytes(&key.to_ne_bytes(), record).await
+	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+		self.update_bytes(&key.to_ne_bytes(), val).await
 	}
 
-	async fn update_string(&self, key: String, record: &Record) -> Result<()> {
-		self.update_bytes(&key.into_bytes(), record).await
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+		self.update_bytes(&key.into_bytes(), val).await
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
@@ -107,8 +108,8 @@ impl BenchmarkClient for RocksDBClient {
 }
 
 impl RocksDBClient {
-	async fn create_bytes(&self, key: &[u8], record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+		let val = bincode::serialize(&val)?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
@@ -145,8 +146,8 @@ impl RocksDBClient {
 		Ok(())
 	}
 
-	async fn update_bytes(&self, key: &[u8], record: &Record) -> Result<()> {
-		let val = bincode::serialize(record)?;
+	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+		let val = bincode::serialize(&val)?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
