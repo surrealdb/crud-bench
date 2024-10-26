@@ -50,7 +50,7 @@ jobs:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: clippy
 
       - name: Checkout sources
         uses: actions/checkout@v4

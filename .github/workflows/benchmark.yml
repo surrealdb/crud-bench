@@ -18,67 +18,6 @@ defaults:
 
 jobs:
 
-  format:
-    name: Check format
-    runs-on: [ runner-amd64-small ]
-    steps:
-      - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Check format
-        run: cargo fmt --all --check
-
-  clippy:
-    name: Check clippy
-    runs-on: [ runner-amd64-small ]
-    steps:
-      - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Check clippy
-        run: cargo clippy --tests -- -D warnings
-
-  test:
-    name: Check tests
-    runs-on: [ runner-amd64-small ]
-    steps:
-      - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Check tests
-        run: cargo test
-
   build:
     name: Build crud-bench
     runs-on: [ runner-amd64-2xlarge-private ]
