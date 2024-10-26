@@ -125,45 +125,59 @@ jobs:
         include:
           # Dragonfly
           - database: dragonfly
+            enabled: true
             description: Dragonfly
           # Dry
           - database: dry
+            enabled: true
             description: Dry
           # KeyDB
           - database: keydb
+            enabled: true
             description: KeyDB
           # Map
           - database: map
+            enabled: true
             description: Map
           # MongoDB
           - database: mongodb
+            enabled: true
             description: MongoDB
           # Postgres
           - database: postgres
+            enabled: true
             description: Postgres
           # Redb
-          #          - database: redb
-          #            description: Redb
+          - database: redb
+            enabled: false
+            description: Redb
           # Redis
           - database: redis
+            enabled: true
             description: Redis
           # RocksDB
           - database: rocksdb
+            enabled: true
             description: RocksDB
           # Scylladb
-          #          - database: scylladb
-          #            description: ScyllaDB
+          - database: scylladb
+            enabled: false
+            description: ScyllaDB
           # SurrealDB + Memory
           - database: surrealdb-memory
+            enabled: true
             description: SurrealDB with in-memory storage
           # SurrealDB + RocksDB
           - database: surrealdb-rocksdb
+            enabled: true
             description: SurrealDB with RocksDB storage
           # SurrealDB + SurrealKV
           - database: surrealdb-surrealkv
+            enabled: true
             description: SurrealDB with SurrealKV storage
           # SurrealKV
           - database: surrealkv
+            enabled: true
             description: SurrealKV
     steps:
       - name: Download artifacts
@@ -179,76 +193,85 @@ jobs:
 
       - name: Run benchmarks (250,000 samples / 32 clients / 1 threads)
         timeout-minutes: 10
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 250000 -c 32 -t 1 -k integer
 
       - name: Run benchmarks (250,000 samples / 128 clients / 1 threads)
         timeout-minutes: 10
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 250000 -c 128 -t 1 -k integer
 
       - name: Run benchmarks (250,000 samples / 128 clients / 24 threads)
         timeout-minutes: 10
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 250000 -c 128 -t 24 -k integer
 
       - name: Run benchmarks (250,000 samples / 128 clients / 48 threads)
         timeout-minutes: 10
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 250000 -c 128 -t 48 -k integer
 
-      - name: Run benchmarks (250,000 samples / 128 clients / 48 threads / 1.5K value)
+      - name: Run benchmarks (250,000 samples / 128 clients / 48 threads / 1.5KiB row and object size)
         timeout-minutes: 20
+        if: ${{ matrix.enabled }}
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 250000 -c 128 -t 48 -k integer
         env:
           CRUD_BENCH_VALUE: '{ "text": "string50", "integer": "i32", "nested": { "text": "string1000", "array": [ "string50", "string50", "string50", "string50", "string50" ] } }'
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 250000 -c 128 -t 48 -k integer
 
       # 1,000,000 records
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 15
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k integer -r
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string26 / random)
         timeout-minutes: 15
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k string26 -r
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string90 / random)
         timeout-minutes: 15
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k string90 -r
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string506 / random)
         timeout-minutes: 15
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k string506 -r
 
-      - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string506 / random / 1.5K value)
+      - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string506 / random / 1.5KiB row and object size)
         timeout-minutes: 30
+        if: ${{ matrix.enabled }}
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k string506 -r
         env:
           CRUD_BENCH_VALUE: '{ "text": "string50", "integer": "i32", "nested": { "text": "string1000", "array": [ "string50", "string50", "string50", "string50", "string50" ] } }'
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 1000000 -c 128 -t 48 -k string506 -r
 
       # 5,000,000 records
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 30
-        if: matrix.database != 'surrealdb-memory'
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k integer -r
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random)
         timeout-minutes: 30
-        if: matrix.database != 'surrealdb-memory'
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string26 -r
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string90 / random)
         timeout-minutes: 30
-        if: matrix.database != 'surrealdb-memory'
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string90 -r
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random)
         timeout-minutes: 30
-        if: matrix.database != 'surrealdb-memory'
+        if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string506 -r
 
-      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random / 1.5K value)
+      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random / 1.5KiB row and object size)
         timeout-minutes: 30
-        if: matrix.database != 'surrealdb-memory' && matrix.database != 'postgres'
-        #        It is actually disabled for postgres due to resource capacities on Docker (probably volume size)
+        if: ${{ matrix.enabled }}
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string506 -r
         env:
           CRUD_BENCH_VALUE: '{ "text": "string50", "integer": "i32", "nested": { "text": "string1000", "array": [ "string50", "string50", "string50", "string50", "string50" ] } }'
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 5000000 -c 128 -t 48 -k string506 -r
