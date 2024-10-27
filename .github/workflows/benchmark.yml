@@ -150,5 +150,6 @@ jobs:
         env:
           CRUD_BENCH_VALUE: '{ "text": "string50", "integer": "i32", "nested": { "text": "string1000", "array": [ "string50", "string50", "string50", "string50", "string50" ] } }'
 
-      - run: echo "Complete"
+      - name: Finish benchmarking
+        run: echo "Complete"
         if: success() || failure()

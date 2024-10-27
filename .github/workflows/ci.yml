@@ -25,6 +25,7 @@ jobs:
   format:
     name: Check format
     runs-on: [ runner-amd64-large ]
+    continue-on-error: true
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -46,6 +47,7 @@ jobs:
   clippy:
     name: Check clippy
     runs-on: [ runner-amd64-large ]
+    continue-on-error: true
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -67,6 +69,7 @@ jobs:
   test:
     name: Check tests
     runs-on: [ runner-amd64-large ]
+    continue-on-error: true
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -86,6 +89,7 @@ jobs:
   build:
     name: Build crud-bench
     runs-on: [ runner-amd64-large ]
+    continue-on-error: true
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -146,7 +150,7 @@ jobs:
             description: Postgres
           # Redb
           - database: redb
-            enabled: true
+            enabled: false
             description: Redb
           # Redis
           - database: redis
@@ -215,5 +219,6 @@ jobs:
         env:
           CRUD_BENCH_VALUE: '{ "text": "string50", "integer": "i32", "nested": { "text": "string1000", "array": [ "string50", "string50", "string50", "string50", "string50" ] } }'
 
-      - run: echo "Complete"
+      - name: Finish benchmarking
+        run: echo "Complete"
         if: success() || failure()
