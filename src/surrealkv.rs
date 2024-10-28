@@ -4,7 +4,6 @@ use anyhow::Result;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
-use surrealkv::Mode;
 use surrealkv::Options;
 use surrealkv::Store;
 
@@ -48,7 +47,7 @@ impl BenchmarkClient for SurrealKVClient {
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(&val)?;
-		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
+		let mut txn = self.db.begin()?;
 		txn.set(key, &val)?;
 		txn.commit().await?;
 		Ok(())
@@ -57,7 +56,7 @@ impl BenchmarkClient for SurrealKVClient {
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
 		let key = key.into_bytes();
 		let val = bincode::serialize(&val)?;
-		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
+		let mut txn = self.db.begin()?;
 		txn.set(&key, &val)?;
 		txn.commit().await?;
 		Ok(())
@@ -65,7 +64,7 @@ impl BenchmarkClient for SurrealKVClient {
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let mut txn = self.db.begin_with_mode(Mode::ReadOnly)?;
+		let mut txn = self.db.begin()?;
 		let read: Option<Vec<u8>> = txn.get(key)?;
 		assert!(read.is_some());
 		Ok(())
@@ -73,7 +72,7 @@ impl BenchmarkClient for SurrealKVClient {
 
 	async fn read_string(&self, key: String) -> Result<()> {
 		let key = key.into_bytes();
-		let mut txn = self.db.begin_with_mode(Mode::ReadOnly)?;
+		let mut txn = self.db.begin()?;
 		let read: Option<Vec<u8>> = txn.get(&key)?;
 		assert!(read.is_some());
 		Ok(())
@@ -82,7 +81,7 @@ impl BenchmarkClient for SurrealKVClient {
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(&val)?;
-		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
+		let mut txn = self.db.begin()?;
 		txn.set(key, &val)?;
 		txn.commit().await?;
 		Ok(())
@@ -91,7 +90,7 @@ impl BenchmarkClient for SurrealKVClient {
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
 		let key = key.into_bytes();
 		let val = bincode::serialize(&val)?;
-		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
+		let mut txn = self.db.begin()?;
 		txn.set(&key, &val)?;
 		txn.commit().await?;
 		Ok(())
@@ -99,7 +98,7 @@ impl BenchmarkClient for SurrealKVClient {
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let key = &key.to_ne_bytes();
-		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
+		let mut txn = self.db.begin()?;
 		txn.delete(key)?;
 		txn.commit().await?;
 		Ok(())
@@ -107,7 +106,7 @@ impl BenchmarkClient for SurrealKVClient {
 
 	async fn delete_string(&self, key: String) -> Result<()> {
 		let key = key.into_bytes();
-		let mut txn = self.db.begin_with_mode(Mode::WriteOnly)?;
+		let mut txn = self.db.begin()?;
 		txn.delete(&key)?;
 		txn.commit().await?;
 		Ok(())
