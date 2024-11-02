@@ -85,7 +85,7 @@ Options:
           Size of the text value
           
           [env: CRUD_BENCH_VALUE=]
-          [default: "{\"text\":\"string50\", \"integer\":\"i32\"}"]
+          [default: "{\"text\":\"@fake:string:50\", \"integer\":\"@fake:int\"}"]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -100,16 +100,16 @@ Eg.:
 
 ```json
 {
-  "text": "string50",
-  "integer": "i32",
+  "text": "@fake:string:50",
+  "integer": "@fake:int",
   "nested": {
-    "text": "string1000",
+    "text": "@fake:string:1000",
     "array": [
-      "string10",
-      "string10",
-      "string10",
-      "string10",
-      "string10"
+      "@fake:string:10",
+      "@fake:string:10",
+      "@fake:string:10",
+      "@fake:string:10",
+      "@fake:string:10"
     ]
   }
 }

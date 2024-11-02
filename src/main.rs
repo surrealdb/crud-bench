@@ -41,7 +41,7 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
 
-	/// Number of async runtime workers, defaulting to the number of CPUs
+	/// Number of async runtime workers (default is the number of CPU cores)
 	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) workers: u32,
 
@@ -70,7 +70,7 @@ pub(crate) struct Args {
 		short,
 		long,
 		env = "CRUD_BENCH_VALUE",
-		default_value = "{\"text\":\"string50\", \"integer\":\"i32\"}"
+		default_value = "{\"text\":\"@fake:string:50\", \"integer\":\"@fake:int\"}"
 	)]
 	pub(crate) value: String,
 }
