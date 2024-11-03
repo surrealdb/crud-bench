@@ -1,6 +1,7 @@
 #![cfg(feature = "scylladb")]
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::dialect::AnsiSqlDialect;
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::KeyType;
@@ -67,6 +68,7 @@ impl BenchmarkClient for ScylladbClient {
 				ColumnType::String => format!("{n} TEXT"),
 				ColumnType::Integer => format!("{n} INT"),
 				ColumnType::Object => format!("{n} TEXT"),
+				_ => todo!(),
 			})
 			.collect();
 		let fields = fields.join(",");
@@ -119,7 +121,7 @@ impl ScylladbClient {
 	where
 		T: Display,
 	{
-		let (fields, values) = self.columns.insert_clauses(val)?;
+		let (fields, values) = self.columns.insert_clauses::<AnsiSqlDialect>(val)?;
 		self.session
 			.query_unpaged(
 				format!("INSERT INTO bench.record (id, {fields}) VALUES ({key}, {values})"),
@@ -145,7 +147,7 @@ impl ScylladbClient {
 	where
 		T: Display,
 	{
-		let set = self.columns.set_clause(val)?;
+		let set = self.columns.set_clause::<AnsiSqlDialect>(val)?;
 		self.session
 			.query_unpaged(format!("UPDATE bench.record SET {set} WHERE id={key}"), ())
 			.await?;

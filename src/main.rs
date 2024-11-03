@@ -9,6 +9,7 @@ use tokio::runtime::Builder;
 
 mod benchmark;
 mod database;
+mod dialect;
 mod docker;
 mod dragonfly;
 mod dry;

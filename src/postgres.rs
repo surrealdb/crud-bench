@@ -3,6 +3,7 @@
 use tokio_postgres::{Client, NoTls};
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::dialect::AnsiSqlDialect;
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::KeyType;
@@ -64,6 +65,7 @@ impl BenchmarkClient for PostgresClient {
 				ColumnType::String => format!("{n} TEXT NOT NULL"),
 				ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
 				ColumnType::Object => format!("{n} JSON NOT NULL"),
+				_ => todo!(),
 			})
 			.collect();
 		let fields = fields.join(",");
@@ -110,7 +112,7 @@ impl PostgresClient {
 	where
 		T: ToSql + Sync,
 	{
-		let (fields, values) = self.columns.insert_clauses(val)?;
+		let (fields, values) = self.columns.insert_clauses::<AnsiSqlDialect>(val)?;
 		let stm = format!("INSERT INTO record (id,{fields}) VALUES ($1,{values})");
 		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);
@@ -130,7 +132,7 @@ impl PostgresClient {
 	where
 		T: ToSql + Sync,
 	{
-		let set = self.columns.set_clause(val)?;
+		let set = self.columns.set_clause::<AnsiSqlDialect>(val)?;
 		let stm = format!("UPDATE record SET {set} WHERE id=$1");
 		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);

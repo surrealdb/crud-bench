@@ -1,3 +1,4 @@
+use crate::dialect::Dialect;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::valueprovider::{Columns, ValueProvider};
 use crate::{Args, KeyType};
@@ -40,7 +41,7 @@ impl Benchmark {
 		}
 	}
 	/// Run the benchmark for the desired benchmark engine
-	pub(crate) async fn run<C, E>(
+	pub(crate) async fn run<C, D, E>(
 		&self,
 		engine: E,
 		kp: KeyProvider,
@@ -48,6 +49,7 @@ impl Benchmark {
 	) -> Result<BenchmarkResult>
 	where
 		C: BenchmarkClient + Send + Sync,
+		D: Dialect,
 		E: BenchmarkEngine<C> + Send + Sync,
 	{
 		// Setup the datastore
@@ -55,15 +57,19 @@ impl Benchmark {
 		// Setup the clients
 		let clients = self.setup_clients(&engine).await?;
 		// Run the "creates" benchmark
-		let creates =
-			self.run_operation(&clients, BenchmarkOperation::Create, kp, vp.clone()).await?;
+		let creates = self
+			.run_operation::<C, D>(&clients, BenchmarkOperation::Create, kp, vp.clone())
+			.await?;
 		// Run the "reads" benchmark
-		let reads = self.run_operation(&clients, BenchmarkOperation::Read, kp, vp.clone()).await?;
+		let reads =
+			self.run_operation::<C, D>(&clients, BenchmarkOperation::Read, kp, vp.clone()).await?;
 		// Run the "reads" benchmark
-		let updates =
-			self.run_operation::<C>(&clients, BenchmarkOperation::Update, kp, vp.clone()).await?;
+		let updates = self
+			.run_operation::<C, D>(&clients, BenchmarkOperation::Update, kp, vp.clone())
+			.await?;
 		// Run the "deletes" benchmark
-		let deletes = self.run_operation::<C>(&clients, BenchmarkOperation::Delete, kp, vp).await?;
+		let deletes =
+			self.run_operation::<C, D>(&clients, BenchmarkOperation::Delete, kp, vp).await?;
 		// Setup the datastore
 		self.wait_for_client(&engine).await?.shutdown().await?;
 		// Return the benchmark results
@@ -118,7 +124,7 @@ impl Benchmark {
 		Ok(try_join_all(clients).await?.into_iter().map(Arc::new).collect())
 	}
 
-	async fn run_operation<C>(
+	async fn run_operation<C, D>(
 		&self,
 		clients: &[Arc<C>],
 		operation: BenchmarkOperation,
@@ -127,6 +133,7 @@ impl Benchmark {
 	) -> Result<Duration>
 	where
 		C: BenchmarkClient + Send + Sync,
+		D: Dialect,
 	{
 		// Get the total concurrent futures
 		let total = (self.clients * self.threads) as usize;
@@ -153,7 +160,7 @@ impl Benchmark {
 				let samples = self.samples;
 				futures.push(task::spawn(async move {
 					info!("Task #{c}/{t}/{operation} starting");
-					if let Err(e) = Self::operation_loop(
+					if let Err(e) = Self::operation_loop::<C, D>(
 						client,
 						samples,
 						&error,
@@ -189,7 +196,7 @@ impl Benchmark {
 		Ok(elapsed)
 	}
 
-	async fn operation_loop<C>(
+	async fn operation_loop<C, D>(
 		client: Arc<C>,
 		samples: u32,
 		error: &AtomicBool,
@@ -199,6 +206,7 @@ impl Benchmark {
 	) -> Result<()>
 	where
 		C: BenchmarkClient,
+		D: Dialect,
 	{
 		let mut old_percent = 0;
 		// Check if we have encountered an error
@@ -226,11 +234,11 @@ impl Benchmark {
 			match operation {
 				BenchmarkOperation::Read => client.read(sample, &mut kp).await?,
 				BenchmarkOperation::Create => {
-					let value = vp.generate_value()?;
+					let value = vp.generate_value::<D>();
 					client.create(sample, value, &mut kp).await?
 				}
 				BenchmarkOperation::Update => {
-					let value = vp.generate_value()?;
+					let value = vp.generate_value::<D>();
 					client.update(sample, value, &mut kp).await?
 				}
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
