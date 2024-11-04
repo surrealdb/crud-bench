@@ -179,7 +179,7 @@ mod test {
 			samples: 10000,
 			random,
 			key,
-			value: r#"{"text":"String50", "integer":"i32"}"#.to_string(),
+			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),
 		})
 	}
 
