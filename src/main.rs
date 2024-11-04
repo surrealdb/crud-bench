@@ -71,7 +71,7 @@ pub(crate) struct Args {
 		short,
 		long,
 		env = "CRUD_BENCH_VALUE",
-		default_value = "{\"text\":\"@fake:string:50\", \"integer\":\"@fake:int\"}"
+		default_value = "{\"text\":\"string:50\", \"integer\":\"int\"}"
 	)]
 	pub(crate) value: String,
 }

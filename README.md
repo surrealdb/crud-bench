@@ -85,7 +85,7 @@ Options:
           Size of the text value
           
           [env: CRUD_BENCH_VALUE=]
-          [default: "{\"text\":\"@fake:string:50\", \"integer\":\"@fake:int\"}"]
+          [default: "{\"text\":\"string:50\", \"integer\":\"int\"}"]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -100,23 +100,39 @@ Eg.:
 
 ```json
 {
-  "text": "@fake:string:50",
-  "integer": "@fake:int",
+  "text": "text:30",
+  "string": "string:20",
+  "bool": "bool",
+  "enum": "enum:foo,bar",
+  "datetime": "datetime",
+  "float_range": "float:1..10",
+  "integer": "int",
+  "integer_range": "int:1..5",
+  "uuid": "uuid",
   "nested": {
-    "text": "@fake:string:1000",
+    "text_range": "text:10..50",
     "array": [
-      "@fake:string:10",
-      "@fake:string:10",
-      "@fake:string:10",
-      "@fake:string:10",
-      "@fake:string:10"
+      "string:10",
+      "string:2..5"
     ]
   }
 }
 ```
 
-- Every occurrence of `stringXX` will be replaced by a random string with XX characters.
-- Every `i32` will be replaced by a random integer.
+- Every occurrence of `string:XX` will be replaced by a random string with XX characters.
+- Every occurrence of `text:XX` will be replaced by a random string made of words of 2 to 10 characters, for a total of
+  XX characters.
+- Every occurrence of `string:X..Y` will be replaced by a random string between X and Y characters.
+- Every occurrence of `text:X..Y` will be replaced by a random string made of words of 2 to 10 characters, for a total
+  between X and Y characters.
+- Every `int` will be replaced by a random integer (i32).
+- Every `int:X..Y` will be replaced by a random integer (i32) between X and Y.
+- Every `float` will be replaced by a random float (f32).
+- Every `float:X..Y` will be replaced by a random float (f32) between X and Y.
+- Every `uuid` will be replaced by a random UUID (v4).
+- Every `bool` will be replaced by a `true` or `false` (v4).
+- Every `enum:A,B,C` will be replaced by either `A` `B` or `C`.
+- Every `datetime` will be replaced by a datetime (ISO 8601).
 
 For column-oriented databases (e.g., PostgreSQL, ScyllaDB), the first-level fields of the JSON structure are translated
 as columns.
