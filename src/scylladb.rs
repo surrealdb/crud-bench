@@ -68,7 +68,10 @@ impl BenchmarkClient for ScylladbClient {
 				ColumnType::String => format!("{n} TEXT"),
 				ColumnType::Integer => format!("{n} INT"),
 				ColumnType::Object => format!("{n} TEXT"),
-				_ => todo!(),
+				ColumnType::Float => format!("{n} FLOAT"),
+				ColumnType::DateTime => format!("{n} TIMESTAMP"),
+				ColumnType::Uuid => format!("{n} UUID"),
+				ColumnType::Bool => format!("{n} BOOLEAN"),
 			})
 			.collect();
 		let fields = fields.join(",");

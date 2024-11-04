@@ -45,13 +45,15 @@ impl Benchmark {
 		&self,
 		engine: E,
 		kp: KeyProvider,
-		vp: ValueProvider,
+		mut vp: ValueProvider,
 	) -> Result<BenchmarkResult>
 	where
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
 		E: BenchmarkEngine<C> + Send + Sync,
 	{
+		// Generate a value sample for the report
+		let sample = vp.generate_value::<D>();
 		// Setup the datastore
 		self.wait_for_client(&engine).await?.startup().await?;
 		// Setup the clients
@@ -78,6 +80,7 @@ impl Benchmark {
 			reads,
 			updates,
 			deletes,
+			sample,
 		})
 	}
 
@@ -272,6 +275,7 @@ pub(crate) struct BenchmarkResult {
 	reads: Duration,
 	updates: Duration,
 	deletes: Duration,
+	pub(super) sample: Value,
 }
 
 impl Display for BenchmarkResult {

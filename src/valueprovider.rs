@@ -1,6 +1,5 @@
 use crate::dialect::Dialect;
 use anyhow::{anyhow, bail, Result};
-use fake::Fake;
 use log::debug;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -25,7 +24,7 @@ impl ValueProvider {
 		debug!("Value template: {val:#}");
 		// Compile a value generator
 		let generator = ValueGenerator::new(val)?;
-		// Identifies the field in the top level (used for column oriented DB lijke Postgresql)
+		// Identifies the field in the top level (used for column oriented DB like Postgresql)
 		let columns = Columns::new(&generator)?;
 		Ok(Self {
 			generator,
@@ -55,11 +54,49 @@ enum ValueGenerator {
 	Float,
 	DateTime,
 	Uuid,
-	IntegerRange(Range<i64>),
-	FloatRange(Range<f64>),
+	// We use i32 for better compatibility across DBs
+	IntegerRange(Range<i32>),
+	// We use f32 by default for better compatibility across DBs
+	FloatRange(Range<f32>),
 	StringEnum(Vec<String>),
 	Array(Vec<ValueGenerator>),
 	Object(BTreeMap<String, ValueGenerator>),
+}
+
+const CHARSET: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+fn string(rng: &mut SmallRng, size: usize) -> String {
+	(0..size)
+		.map(|_| {
+			let idx = rng.gen_range(0..CHARSET.len());
+			CHARSET[idx] as char
+		})
+		.collect()
+}
+
+fn string_range(rng: &mut SmallRng, range: Range<usize>) -> String {
+	let l = rng.gen_range(range);
+	string(rng, l)
+}
+
+fn text(rng: &mut SmallRng, size: usize) -> String {
+	let mut l = 0;
+	let mut words = Vec::with_capacity(size / 5);
+	let mut i = 0;
+	while l < size {
+		let w = string_range(rng, 2..10);
+		l += w.len();
+		words.push(w);
+		l += i;
+		// We ignore the first whitespace, but not the following ones
+		i = 1;
+	}
+	words.join(" ")
+}
+
+fn text_range(rng: &mut SmallRng, range: Range<usize>) -> String {
+	let l = rng.gen_range(range);
+	text(rng, l)
 }
 
 impl ValueGenerator {
@@ -86,6 +123,12 @@ impl ValueGenerator {
 			} else {
 				bail!("Expected a range but got: {i}");
 			}
+		} else if let Some(i) = s.strip_prefix("float:") {
+			if let Length::Range(r) = Length::new(i)? {
+				Self::FloatRange(r)
+			} else {
+				bail!("Expected a range but got: {i}");
+			}
 		} else if let Some(i) = s.strip_prefix("enum:") {
 			let labels = i.split(",").map(|s| s.to_string()).collect();
 			Self::StringEnum(labels)
@@ -93,6 +136,8 @@ impl ValueGenerator {
 			Self::Bool
 		} else if s.eq("int") {
 			Self::Integer
+		} else if s.eq("float") {
+			Self::Float
 		} else if s.eq("datetime") {
 			Self::DateTime
 		} else if s.eq("uuid") {
@@ -130,25 +175,25 @@ impl ValueGenerator {
 			}
 			ValueGenerator::String(l) => {
 				let val = match l {
-					Length::Range(r) => r.fake::<String>(),
-					Length::Fixed(l) => l.fake::<String>(),
+					Length::Range(r) => string_range(rng, r.clone()),
+					Length::Fixed(l) => string(rng, *l),
 				};
 				Value::String(val)
 			}
 			ValueGenerator::Text(l) => {
 				let val = match l {
-					Length::Range(r) => fake::faker::lorem::en::Paragraph(r.clone()).fake(),
-					Length::Fixed(l) => fake::faker::lorem::en::Paragraph(*l..*l).fake(),
+					Length::Range(r) => text_range(rng, r.clone()),
+					Length::Fixed(l) => text(rng, *l),
 				};
 				Value::String(val)
 			}
 			ValueGenerator::Integer => {
-				let v = rng.gen::<i64>();
+				let v = rng.gen::<i32>();
 				Value::Number(Number::from(v))
 			}
 			ValueGenerator::Float => {
-				let v = rng.gen::<f64>();
-				Value::Number(Number::from_f64(v).unwrap())
+				let v = rng.gen::<f32>();
+				Value::Number(Number::from_f64(v as f64).unwrap())
 			}
 			ValueGenerator::DateTime => {
 				// Number of seconds from Epoch to 31/12/2030
@@ -165,7 +210,7 @@ impl ValueGenerator {
 			}
 			ValueGenerator::FloatRange(r) => {
 				let v = rng.gen_range(r.start..r.end);
-				Value::Number(Number::from_f64(v).unwrap())
+				Value::Number(Number::from_f64(v as f64).unwrap())
 			}
 			ValueGenerator::StringEnum(a) => {
 				let i = rng.gen_range(0..a.len());
@@ -226,7 +271,7 @@ where
 	}
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 /// This structures defines the main columns use for create the schema
 /// and insert generated data into a column-oriented database (PostreSQL).
 pub(crate) struct Columns(pub(crate) Vec<(String, ColumnType)>);
@@ -235,8 +280,8 @@ impl Columns {
 	fn new(value: &ValueGenerator) -> Result<Self> {
 		if let ValueGenerator::Object(o) = value {
 			let mut columns = Vec::with_capacity(o.len());
-			for (f, _) in o {
-				columns.push((f.to_string(), ColumnType::Object));
+			for (f, g) in o {
+				columns.push((f.to_string(), ColumnType::new(g)?));
 			}
 			Ok(Columns(columns))
 		} else {
@@ -245,10 +290,11 @@ impl Columns {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum ColumnType {
 	String,
 	Integer,
+	Float,
 	DateTime,
 	Uuid,
 	Object,
@@ -263,6 +309,7 @@ impl ColumnType {
 				ColumnType::String
 			}
 			ValueGenerator::Integer | ValueGenerator::IntegerRange(_) => ColumnType::Integer,
+			ValueGenerator::Float | ValueGenerator::FloatRange(_) => ColumnType::Float,
 			ValueGenerator::DateTime => ColumnType::DateTime,
 			ValueGenerator::Bool => ColumnType::Bool,
 			ValueGenerator::Uuid => ColumnType::Uuid,
@@ -279,12 +326,13 @@ impl Columns {
 	where
 		D: Dialect,
 	{
-		let val = val.as_object().unwrap();
 		let mut fields = Vec::with_capacity(self.0.len());
 		let mut values = Vec::with_capacity(self.0.len());
-		for (f, v) in val {
-			fields.push(f.to_string());
-			values.push(D::arg_string(v));
+		if let Value::Object(map) = val {
+			for (f, v) in map {
+				fields.push(D::escape_field(f));
+				values.push(D::arg_string(v));
+			}
 		}
 		let fields = fields.join(",");
 		let values = values.join(",");
@@ -296,10 +344,12 @@ impl Columns {
 		D: Dialect,
 	{
 		let mut updates = Vec::with_capacity(self.0.len());
-		let val = val.as_object().unwrap();
-		for (f, v) in val {
-			let value = D::arg_string(v);
-			updates.push(format!("{f}={value}"));
+		if let Value::Object(map) = val {
+			for (f, v) in map {
+				let field = D::escape_field(f);
+				let value = D::arg_string(v);
+				updates.push(format!("{field}={value}"));
+			}
 		}
 		Ok(updates.join(","))
 	}

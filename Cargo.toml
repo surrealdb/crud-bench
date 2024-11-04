@@ -33,7 +33,6 @@ clap = { version = "4.5.20", features = ["derive", "string", "env", "color"] }
 chrono = "0.4.38"
 dashmap = "6.1.0"
 env_logger = "0.11.5"
-fake = { version = "3.0.0", features = ["chrono", "ulid", "uuid"] }
 futures = "0.3.31"
 log = "0.4.22"
 mongodb = { version = "3.1.0", optional = true }

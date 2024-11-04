@@ -3,7 +3,7 @@
 use tokio_postgres::{Client, NoTls};
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
-use crate::dialect::AnsiSqlDialect;
+use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::KeyType;
@@ -61,11 +61,17 @@ impl BenchmarkClient for PostgresClient {
 			.columns
 			.0
 			.iter()
-			.map(|(n, t)| match t {
-				ColumnType::String => format!("{n} TEXT NOT NULL"),
-				ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
-				ColumnType::Object => format!("{n} JSON NOT NULL"),
-				_ => todo!(),
+			.map(|(n, t)| {
+				let n = AnsiSqlDialect::escape_field(n.clone());
+				match t {
+					ColumnType::String => format!("{n} TEXT NOT NULL"),
+					ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
+					ColumnType::Object => format!("{n} JSON NOT NULL"),
+					ColumnType::Float => format!("{n} REAL NOT NULL"),
+					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
+					ColumnType::Uuid => format!("{n} UUID NOT NULL"),
+					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
+				}
 			})
 			.collect();
 		let fields = fields.join(",");

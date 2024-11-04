@@ -6,7 +6,8 @@ use uuid::Uuid;
 pub(crate) trait Dialect {
 	fn uuid(u: Uuid) -> Value;
 	fn date_time(secs_from_epoch: i64) -> Value;
-	fn arg_string(val: &Value) -> String;
+	fn escape_field(field: String) -> String;
+	fn arg_string(val: Value) -> String;
 }
 
 pub(crate) struct AnsiSqlDialect();
@@ -21,11 +22,15 @@ impl Dialect for AnsiSqlDialect {
 		// Get the current UTC time
 		let datetime: DateTime<Utc> = Utc.timestamp_opt(secs_from_epoch, 0).unwrap();
 		// Format it to the SQL-friendly ISO 8601 format
-		let formatted = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+		let formatted = datetime.to_rfc3339();
 		Value::String(formatted)
 	}
 
-	fn arg_string(val: &Value) -> String {
+	fn escape_field(field: String) -> String {
+		format!("\"{field}\"")
+	}
+
+	fn arg_string(val: Value) -> String {
 		match val {
 			Value::Null => "null".to_string(),
 			Value::Bool(b) => b.to_string(),
@@ -44,7 +49,7 @@ impl Dialect for DefaultDialect {
 		Value::String(u.to_string())
 	}
 
-	// The Default format is a String using ISO 8601
+	/// The Default format is a String using ISO 8601
 	fn date_time(secs_from_epoch: i64) -> Value {
 		// Get the current UTC time
 		let datetime: DateTime<Utc> = Utc.timestamp_opt(secs_from_epoch, 0).unwrap();
@@ -53,7 +58,12 @@ impl Dialect for DefaultDialect {
 		Value::String(formatted)
 	}
 
-	fn arg_string(val: &Value) -> String {
+	/// By default we don't escape
+	fn escape_field(field: String) -> String {
+		field
+	}
+
+	fn arg_string(val: Value) -> String {
 		val.to_string()
 	}
 }
