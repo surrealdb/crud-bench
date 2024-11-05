@@ -138,10 +138,8 @@ impl ScylladbClient {
 	where
 		T: SerializeValue,
 	{
-		let res = self
-			.session
-			.query_unpaged("SELECT id, text, integer FROM bench.record WHERE id=?", (&key,))
-			.await?;
+		let res =
+			self.session.query_unpaged("SELECT * FROM bench.record WHERE id=?", (&key,)).await?;
 		assert_eq!(res.rows_num()?, 1);
 		Ok(())
 	}

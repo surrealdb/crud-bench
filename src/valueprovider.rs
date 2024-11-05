@@ -59,6 +59,8 @@ enum ValueGenerator {
 	// We use f32 by default for better compatibility across DBs
 	FloatRange(Range<f32>),
 	StringEnum(Vec<String>),
+	IntegerEnum(Vec<Number>),
+	FloatEnum(Vec<Number>),
 	Array(Vec<ValueGenerator>),
 	Object(BTreeMap<String, ValueGenerator>),
 }
@@ -129,9 +131,23 @@ impl ValueGenerator {
 			} else {
 				bail!("Expected a range but got: {i}");
 			}
-		} else if let Some(i) = s.strip_prefix("enum:") {
-			let labels = i.split(",").map(|s| s.to_string()).collect();
+		} else if let Some(s) = s.strip_prefix("string_enum:") {
+			let labels = s.split(",").map(|s| s.to_string()).collect();
 			Self::StringEnum(labels)
+		} else if let Some(s) = s.strip_prefix("int_enum:") {
+			let split: Vec<&str> = s.split(",").collect();
+			let mut numbers = Vec::with_capacity(split.len());
+			for s in split {
+				numbers.push(s.parse::<i32>()?.into());
+			}
+			Self::IntegerEnum(numbers)
+		} else if let Some(s) = s.strip_prefix("float_enum:") {
+			let split: Vec<&str> = s.split(",").collect();
+			let mut numbers = Vec::with_capacity(split.len());
+			for s in split {
+				numbers.push(Number::from_f64(s.parse::<f32>()? as f64).unwrap());
+			}
+			Self::FloatEnum(numbers)
 		} else if s.eq("bool") {
 			Self::Bool
 		} else if s.eq("int") {
@@ -215,6 +231,14 @@ impl ValueGenerator {
 			ValueGenerator::StringEnum(a) => {
 				let i = rng.gen_range(0..a.len());
 				Value::String(a[i].to_string())
+			}
+			ValueGenerator::IntegerEnum(a) => {
+				let i = rng.gen_range(0..a.len());
+				Value::Number(a[i].clone())
+			}
+			ValueGenerator::FloatEnum(a) => {
+				let i = rng.gen_range(0..a.len());
+				Value::Number(a[i].clone())
 			}
 			ValueGenerator::Array(a) => {
 				// Generate any array structure values
@@ -308,8 +332,12 @@ impl ColumnType {
 			ValueGenerator::StringEnum(_) | ValueGenerator::String(_) | ValueGenerator::Text(_) => {
 				ColumnType::String
 			}
-			ValueGenerator::Integer | ValueGenerator::IntegerRange(_) => ColumnType::Integer,
-			ValueGenerator::Float | ValueGenerator::FloatRange(_) => ColumnType::Float,
+			ValueGenerator::Integer
+			| ValueGenerator::IntegerRange(_)
+			| ValueGenerator::IntegerEnum(_) => ColumnType::Integer,
+			ValueGenerator::Float
+			| ValueGenerator::FloatRange(_)
+			| ValueGenerator::FloatEnum(_) => ColumnType::Float,
 			ValueGenerator::DateTime => ColumnType::DateTime,
 			ValueGenerator::Bool => ColumnType::Bool,
 			ValueGenerator::Uuid => ColumnType::Uuid,

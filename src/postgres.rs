@@ -128,7 +128,7 @@ impl PostgresClient {
 	where
 		T: ToSql + Sync,
 	{
-		let stm = "SELECT id, text, integer FROM record WHERE id=$1";
+		let stm = "SELECT * FROM record WHERE id=$1";
 		let res = self.client.query(stm, &[&key]).await?;
 		assert_eq!(res.len(), 1);
 		Ok(())

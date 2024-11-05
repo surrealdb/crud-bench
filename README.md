@@ -101,16 +101,19 @@ Eg.:
 ```json
 {
   "text": "text:30",
-  "string": "string:20",
+  "text_range": "text:10..50",
   "bool": "bool",
-  "enum": "enum:foo,bar",
+  "string_enum": "enum:foo,bar",
   "datetime": "datetime",
+  "float": "float",
   "float_range": "float:1..10",
+  "float_enum": "float:1.1,2.2,3.3",
   "integer": "int",
   "integer_range": "int:1..5",
+  "integer_enum": "int:1,2,3",
   "uuid": "uuid",
   "nested": {
-    "text_range": "text:10..50",
+    "text": "text:100",
     "array": [
       "string:10",
       "string:2..5"
@@ -131,7 +134,9 @@ Eg.:
 - Every `float:X..Y` will be replaced by a random float (f32) between X and Y.
 - Every `uuid` will be replaced by a random UUID (v4).
 - Every `bool` will be replaced by a `true` or `false` (v4).
-- Every `enum:A,B,C` will be replaced by either `A` `B` or `C`.
+- Every `string_enum:A,B,C` will be replaced by a string from `A` `B` or `C`.
+- Every `int_enum:A,B,C` will be replaced by a i32 from  `A` `B` or `C`.
+- Every `float_enum:A,B,C` will be replaced by a f32 from  `A` `B` or `C`.
 - Every `datetime` will be replaced by a datetime (ISO 8601).
 
 For column-oriented databases (e.g., PostgreSQL, ScyllaDB), the first-level fields of the JSON structure are translated
