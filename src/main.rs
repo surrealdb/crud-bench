@@ -9,6 +9,7 @@ use tokio::runtime::Builder;
 
 mod benchmark;
 mod database;
+mod dialect;
 mod docker;
 mod dragonfly;
 mod dry;
@@ -41,7 +42,7 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
 
-	/// Number of async runtime workers, defaulting to the number of CPUs
+	/// Number of async runtime workers (default is the number of CPU cores)
 	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) workers: u32,
 
@@ -70,7 +71,7 @@ pub(crate) struct Args {
 		short,
 		long,
 		env = "CRUD_BENCH_VALUE",
-		default_value = "{\"text\":\"string50\", \"integer\":\"i32\"}"
+		default_value = "{\"text\":\"string:50\", \"integer\":\"int\"}"
 	)]
 	pub(crate) value: String,
 }
@@ -143,6 +144,8 @@ fn run(args: Args) -> Result<()> {
 			println!("--------------------------------------------------");
 			println!("{res}");
 			println!("--------------------------------------------------");
+			println!("Value sample: {:#}", res.sample);
+			println!("--------------------------------------------------");
 			Ok(())
 		}
 		// Output the errors
@@ -176,7 +179,7 @@ mod test {
 			samples: 10000,
 			random,
 			key,
-			value: r#"{"text":"String50", "integer":"i32"}"#.to_string(),
+			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),
 		})
 	}
 

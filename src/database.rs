@@ -3,6 +3,7 @@ use crate::docker::{DockerContainer, DockerParams};
 use crate::keyprovider::KeyProvider;
 use crate::map::MapClientProvider;
 
+use crate::dialect::{AnsiSqlDialect, DefaultDialect};
 use crate::dry::DryClientProvider;
 use crate::valueprovider::ValueProvider;
 use crate::KeyType;
@@ -83,15 +84,27 @@ impl Database {
 	) -> Result<BenchmarkResult> {
 		match self {
 			Database::Dry => {
-				benchmark.run(DryClientProvider::setup(kt, vp.columns()).await?, kp, vp).await
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						DryClientProvider::setup(kt, vp.columns()).await?,
+						kp,
+						vp,
+					)
+					.await
 			}
 			Database::Map => {
-				benchmark.run(MapClientProvider::setup(kt, vp.columns()).await?, kp, vp).await
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						MapClientProvider::setup(kt, vp.columns()).await?,
+						kp,
+						vp,
+					)
+					.await
 			}
 			#[cfg(feature = "dragonfly")]
 			Database::Dragonfly => {
 				benchmark
-					.run(
+					.run::<_, DefaultDialect, _>(
 						crate::dragonfly::DragonflyClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -101,13 +114,17 @@ impl Database {
 			#[cfg(feature = "redb")]
 			Database::Redb => {
 				benchmark
-					.run(crate::redb::ReDBClientProvider::setup(kt, vp.columns()).await?, kp, vp)
+					.run::<_, DefaultDialect, _>(
+						crate::redb::ReDBClientProvider::setup(kt, vp.columns()).await?,
+						kp,
+						vp,
+					)
 					.await
 			}
 			#[cfg(feature = "speedb")]
 			Database::Speedb => {
 				benchmark
-					.run(
+					.run::<_, DefaultDialect, _>(
 						crate::speedb::SpeeDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -117,7 +134,7 @@ impl Database {
 			#[cfg(feature = "rocksdb")]
 			Database::Rocksdb => {
 				benchmark
-					.run(
+					.run::<_, DefaultDialect, _>(
 						crate::rocksdb::RocksDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -127,7 +144,7 @@ impl Database {
 			#[cfg(feature = "surrealkv")]
 			Database::Surrealkv => {
 				benchmark
-					.run(
+					.run::<_, DefaultDialect, _>(
 						crate::surrealkv::SurrealKVClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -137,7 +154,7 @@ impl Database {
 			#[cfg(feature = "surrealdb")]
 			Database::Surrealdb => {
 				benchmark
-					.run(
+					.run::<_, DefaultDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -147,7 +164,7 @@ impl Database {
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbMemory => {
 				benchmark
-					.run(
+					.run::<_, DefaultDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -157,7 +174,7 @@ impl Database {
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbRocksdb => {
 				benchmark
-					.run(
+					.run::<_, DefaultDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -167,7 +184,7 @@ impl Database {
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbSurrealkv => {
 				benchmark
-					.run(
+					.run::<_, DefaultDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -177,7 +194,7 @@ impl Database {
 			#[cfg(feature = "scylladb")]
 			Database::Scylladb => {
 				benchmark
-					.run(
+					.run::<_, AnsiSqlDialect, _>(
 						crate::scylladb::ScyllaDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -187,7 +204,7 @@ impl Database {
 			#[cfg(feature = "mongodb")]
 			Database::Mongodb => {
 				benchmark
-					.run(
+					.run::<_, DefaultDialect, _>(
 						crate::mongodb::MongoDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -197,7 +214,7 @@ impl Database {
 			#[cfg(feature = "postgres")]
 			Database::Postgres => {
 				benchmark
-					.run(
+					.run::<_, AnsiSqlDialect, _>(
 						crate::postgres::PostgresClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
@@ -207,13 +224,21 @@ impl Database {
 			#[cfg(feature = "redis")]
 			Database::Redis => {
 				benchmark
-					.run(crate::redis::RedisClientProvider::setup(kt, vp.columns()).await?, kp, vp)
+					.run::<_, DefaultDialect, _>(
+						crate::redis::RedisClientProvider::setup(kt, vp.columns()).await?,
+						kp,
+						vp,
+					)
 					.await
 			}
 			#[cfg(feature = "keydb")]
 			Database::Keydb => {
 				benchmark
-					.run(crate::keydb::KeydbClientProvider::setup(kt, vp.columns()).await?, kp, vp)
+					.run::<_, DefaultDialect, _>(
+						crate::keydb::KeydbClientProvider::setup(kt, vp.columns()).await?,
+						kp,
+						vp,
+					)
 					.await
 			}
 		}

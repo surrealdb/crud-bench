@@ -3,6 +3,7 @@
 use tokio_postgres::{Client, NoTls};
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::KeyType;
@@ -60,10 +61,17 @@ impl BenchmarkClient for PostgresClient {
 			.columns
 			.0
 			.iter()
-			.map(|(n, t)| match t {
-				ColumnType::String => format!("{n} TEXT NOT NULL"),
-				ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
-				ColumnType::Object => format!("{n} JSON NOT NULL"),
+			.map(|(n, t)| {
+				let n = AnsiSqlDialect::escape_field(n.clone());
+				match t {
+					ColumnType::String => format!("{n} TEXT NOT NULL"),
+					ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
+					ColumnType::Object => format!("{n} JSON NOT NULL"),
+					ColumnType::Float => format!("{n} REAL NOT NULL"),
+					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
+					ColumnType::Uuid => format!("{n} UUID NOT NULL"),
+					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
+				}
 			})
 			.collect();
 		let fields = fields.join(",");
@@ -110,7 +118,7 @@ impl PostgresClient {
 	where
 		T: ToSql + Sync,
 	{
-		let (fields, values) = self.columns.insert_clauses(val)?;
+		let (fields, values) = self.columns.insert_clauses::<AnsiSqlDialect>(val)?;
 		let stm = format!("INSERT INTO record (id,{fields}) VALUES ($1,{values})");
 		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);
@@ -120,7 +128,7 @@ impl PostgresClient {
 	where
 		T: ToSql + Sync,
 	{
-		let stm = "SELECT id, text, integer FROM record WHERE id=$1";
+		let stm = "SELECT * FROM record WHERE id=$1";
 		let res = self.client.query(stm, &[&key]).await?;
 		assert_eq!(res.len(), 1);
 		Ok(())
@@ -130,7 +138,7 @@ impl PostgresClient {
 	where
 		T: ToSql + Sync,
 	{
-		let set = self.columns.set_clause(val)?;
+		let set = self.columns.set_clause::<AnsiSqlDialect>(val)?;
 		let stm = format!("UPDATE record SET {set} WHERE id=$1");
 		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);
