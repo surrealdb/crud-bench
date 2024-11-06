@@ -74,6 +74,10 @@ pub(crate) struct Args {
 		default_value = "{\"text\":\"string:50\", \"integer\":\"int\"}"
 	)]
 	pub(crate) value: String,
+
+	/// Print-out an example of value
+	#[arg(long)]
+	pub(crate) show_sample: bool,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -105,7 +109,7 @@ fn run(args: Args) -> Result<()> {
 	// If a Docker image is specified, spawn the container
 	let container = args.database.start_docker(args.image);
 	let image = container.as_ref().map(|c| c.image().to_string());
-	// Setup the asynchronous runtime
+	// Set up the asynchronous runtime
 	let runtime = Builder::new_multi_thread()
 		.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
 		.worker_threads(args.workers as usize) // Set the number of worker threads
@@ -144,8 +148,10 @@ fn run(args: Args) -> Result<()> {
 			println!("--------------------------------------------------");
 			println!("{res}");
 			println!("--------------------------------------------------");
-			println!("Value sample: {:#}", res.sample);
-			println!("--------------------------------------------------");
+			if args.show_sample {
+				println!("Value sample: {:#}", res.sample);
+				println!("--------------------------------------------------");
+			}
 			Ok(())
 		}
 		// Output the errors

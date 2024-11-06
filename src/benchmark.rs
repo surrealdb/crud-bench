@@ -10,9 +10,11 @@ use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::io::Write;
 use std::io::{stdout, IsTerminal, Stdout};
+use std::process;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
+use sysinfo::{LoadAvg, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use tokio::task;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -29,7 +31,6 @@ pub(crate) struct Benchmark {
 	/// The number of samples to run
 	samples: u32,
 }
-
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
 		Self {
@@ -133,7 +134,7 @@ impl Benchmark {
 		operation: BenchmarkOperation,
 		kp: KeyProvider,
 		vp: ValueProvider,
-	) -> Result<Duration>
+	) -> Result<OperationResult>
 	where
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
@@ -150,7 +151,7 @@ impl Benchmark {
 		let mut out = TerminalOut::default();
 		out.map(|| Some(format!("\r{operation} 0%")))?;
 		// Measure the starting time
-		let time = Instant::now();
+		let metric = OperationMetric::new();
 		// Loop over the clients
 		for (client, c) in clients.iter().cloned().zip(1..) {
 			// Loop over the threads
@@ -191,12 +192,12 @@ impl Benchmark {
 		if error.load(Ordering::Relaxed) {
 			bail!("Task failure");
 		}
-		// Calculate the elapsed time
-		let elapsed = time.elapsed();
+		// Calculate runtime information
+		let result = OperationResult::new(metric);
 		// Print out the last stage
 		out.map_ln(|| Some(format!("\r{operation} 100%")))?;
 		// Everything ok
-		Ok(elapsed)
+		Ok(result)
 	}
 
 	async fn operation_loop<C, D>(
@@ -247,6 +248,7 @@ impl Benchmark {
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 			};
 		}
+
 		Ok(())
 	}
 }
@@ -271,19 +273,80 @@ impl Display for BenchmarkOperation {
 }
 
 pub(crate) struct BenchmarkResult {
-	creates: Duration,
-	reads: Duration,
-	updates: Duration,
-	deletes: Duration,
+	creates: OperationResult,
+	reads: OperationResult,
+	updates: OperationResult,
+	deletes: OperationResult,
 	pub(super) sample: Value,
 }
 
 impl Display for BenchmarkResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		writeln!(f, "[C]reates: {:?}", self.creates)?;
-		writeln!(f, "[R]eads: {:?}", self.reads)?;
-		writeln!(f, "[U]pdates: {:?}", self.updates)?;
-		write!(f, "[D]eletes: {:?}", self.deletes)
+		writeln!(f, "[C]reates: {}", self.creates)?;
+		writeln!(f, "[R]eads: {}", self.reads)?;
+		writeln!(f, "[U]pdates: {}", self.updates)?;
+		write!(f, "[D]eletes: {}", self.deletes)
+	}
+}
+
+struct OperationMetric {
+	system: System,
+	pid: Pid,
+	start_time: Instant,
+}
+
+impl OperationMetric {
+	fn new() -> Self {
+		let pid = Pid::from(process::id() as usize);
+		let system = System::new_with_specifics(
+			RefreshKind::new().with_processes(ProcessRefreshKind::new().with_memory().with_cpu()),
+		);
+		Self {
+			pid,
+			system,
+			start_time: Instant::now(),
+		}
+	}
+}
+
+struct OperationResult {
+	elapsed: Duration,
+	cpu_usage: f32,
+	used_memory: f64,
+	load_avg: LoadAvg,
+}
+
+impl OperationResult {
+	fn new(mut metric: OperationMetric) -> Self {
+		let elapsed = metric.start_time.elapsed();
+		metric.system.refresh_processes(ProcessesToUpdate::Some(&[metric.pid]), true);
+		let (cpu_usage, used_memory) = if let Some(process) = metric.system.process(metric.pid) {
+			(process.cpu_usage(), process.memory() as f64 / 1024.0)
+		} else {
+			(0.0, 0.0)
+		};
+		metric.system.refresh_cpu_all();
+		Self {
+			elapsed,
+			cpu_usage,
+			used_memory,
+			load_avg: System::load_average(),
+		}
+	}
+}
+
+impl Display for OperationResult {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		write!(
+			f,
+			"{:?} - cpu: {:.2} - memory: {} MB - load average: {:.2}/{:.2}/{:.2}",
+			self.elapsed,
+			self.cpu_usage,
+			self.used_memory,
+			self.load_avg.one,
+			self.load_avg.five,
+			self.load_avg.fifteen
+		)
 	}
 }
 
