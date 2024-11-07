@@ -17,7 +17,7 @@ pub(super) struct OperationMetric {
 impl OperationMetric {
 	pub(super) fn new(pid: Option<u32>) -> Self {
 		// We collect the PID
-		let pid = Pid::from(pid.unwrap_or_else(|| process::id()) as usize);
+		let pid = Pid::from(pid.unwrap_or_else(process::id) as usize);
 		let refresh_kind = ProcessRefreshKind::new().with_memory().with_cpu().with_disk_usage();
 		let system = System::new_with_specifics(RefreshKind::new().with_processes(refresh_kind));
 		let mut metric = Self {
