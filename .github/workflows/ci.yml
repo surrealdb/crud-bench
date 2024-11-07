@@ -212,10 +212,10 @@ jobs:
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string506 -r
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random / 1.5KiB row and object size)
+      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 5
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string506 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string26 -r
         env:
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
 
