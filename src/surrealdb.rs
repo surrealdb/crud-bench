@@ -72,11 +72,11 @@ impl BenchmarkClient for SurrealDBClient {
 	async fn startup(&self) -> Result<()> {
 		// Ensure the table exists. This wouldn't
 		// normally be an issue, as SurrealDB is
-		// schemaless, but because we are testing
+		// schemaless. However, because we are testing
 		// benchmarking of concurrent, optimistic
 		// transactions, each initial concurrent
 		// insert/create into the table attempts
-		// to setup the NS+DB+TB, and this causes
+		// to set up the NS+DB+TB, and this causes
 		// 'resource busy' key conflict failures.
 		self.db.query("REMOVE TABLE IF EXISTS record").await?;
 		self.db.query("DEFINE TABLE record").await?;

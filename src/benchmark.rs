@@ -1,5 +1,6 @@
 use crate::dialect::Dialect;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
+use crate::result::{OperationMetric, OperationResult};
 use crate::valueprovider::{Columns, ValueProvider};
 use crate::{Args, KeyType};
 use anyhow::{bail, Result};
@@ -10,11 +11,9 @@ use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::io::Write;
 use std::io::{stdout, IsTerminal, Stdout};
-use std::process;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
-use sysinfo::{LoadAvg, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+use std::time::{Duration, SystemTime};
 use tokio::task;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -286,67 +285,6 @@ impl Display for BenchmarkResult {
 		writeln!(f, "[R]eads: {}", self.reads)?;
 		writeln!(f, "[U]pdates: {}", self.updates)?;
 		write!(f, "[D]eletes: {}", self.deletes)
-	}
-}
-
-struct OperationMetric {
-	system: System,
-	pid: Pid,
-	start_time: Instant,
-}
-
-impl OperationMetric {
-	fn new() -> Self {
-		let pid = Pid::from(process::id() as usize);
-		let system = System::new_with_specifics(
-			RefreshKind::new().with_processes(ProcessRefreshKind::new().with_memory().with_cpu()),
-		);
-		Self {
-			pid,
-			system,
-			start_time: Instant::now(),
-		}
-	}
-}
-
-struct OperationResult {
-	elapsed: Duration,
-	cpu_usage: f32,
-	used_memory: f64,
-	load_avg: LoadAvg,
-}
-
-impl OperationResult {
-	fn new(mut metric: OperationMetric) -> Self {
-		let elapsed = metric.start_time.elapsed();
-		metric.system.refresh_processes(ProcessesToUpdate::Some(&[metric.pid]), true);
-		let (cpu_usage, used_memory) = if let Some(process) = metric.system.process(metric.pid) {
-			(process.cpu_usage(), process.memory() as f64 / 1024.0)
-		} else {
-			(0.0, 0.0)
-		};
-		metric.system.refresh_cpu_all();
-		Self {
-			elapsed,
-			cpu_usage,
-			used_memory,
-			load_avg: System::load_average(),
-		}
-	}
-}
-
-impl Display for OperationResult {
-	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		write!(
-			f,
-			"{:?} - cpu: {:.2} - memory: {} MB - load average: {:.2}/{:.2}/{:.2}",
-			self.elapsed,
-			self.cpu_usage,
-			self.used_memory,
-			self.load_avg.one,
-			self.load_avg.five,
-			self.load_avg.fifteen
-		)
 	}
 }
 

@@ -20,6 +20,7 @@ mod mongodb;
 mod postgres;
 mod redb;
 mod redis;
+mod result;
 mod rocksdb;
 mod scylladb;
 mod speedb;
