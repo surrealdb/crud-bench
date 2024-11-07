@@ -79,6 +79,10 @@ pub(crate) struct Args {
 	/// Print-out an example of value
 	#[arg(long)]
 	pub(crate) show_sample: bool,
+
+	/// Collect system information for a given pid
+	#[arg(short, long, value_parser=clap::value_parser!(u32).range(0..))]
+	pub(crate) pid: Option<u32>,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -187,6 +191,8 @@ mod test {
 			random,
 			key,
 			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),
+			show_sample: false,
+			pid: None,
 		})
 	}
 

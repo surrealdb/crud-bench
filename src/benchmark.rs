@@ -29,6 +29,8 @@ pub(crate) struct Benchmark {
 	threads: u32,
 	/// The number of samples to run
 	samples: u32,
+	/// Pid to monitor
+	pid: Option<u32>,
 }
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
@@ -38,6 +40,7 @@ impl Benchmark {
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
+			pid: args.pid,
 		}
 	}
 	/// Run the benchmark for the desired benchmark engine
@@ -150,7 +153,7 @@ impl Benchmark {
 		let mut out = TerminalOut::default();
 		out.map(|| Some(format!("\r{operation} 0%")))?;
 		// Measure the starting time
-		let metric = OperationMetric::new();
+		let metric = OperationMetric::new(self.pid);
 		// Loop over the clients
 		for (client, c) in clients.iter().cloned().zip(1..) {
 			// Loop over the threads

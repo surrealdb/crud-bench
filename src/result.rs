@@ -15,8 +15,9 @@ pub(super) struct OperationMetric {
 }
 
 impl OperationMetric {
-	pub(super) fn new() -> Self {
-		let pid = Pid::from(process::id() as usize);
+	pub(super) fn new(pid: Option<u32>) -> Self {
+		// We collect the PID
+		let pid = Pid::from(pid.unwrap_or_else(|| process::id()) as usize);
 		let refresh_kind = ProcessRefreshKind::new().with_memory().with_cpu().with_disk_usage();
 		let system = System::new_with_specifics(RefreshKind::new().with_processes(refresh_kind));
 		let mut metric = Self {
@@ -50,16 +51,23 @@ pub(super) struct OperationResult {
 	used_memory: u64,
 	disk_usage: DiskUsage,
 	load_avg: LoadAvg,
+	process_name: String,
+	process_pid: Pid,
 }
 
 impl OperationResult {
 	pub(super) fn new(mut metric: OperationMetric) -> Self {
 		let elapsed = metric.start_time.elapsed();
-		let (mut cpu_usage, used_memory, mut disk_usage) =
+		let (mut cpu_usage, used_memory, mut disk_usage, process_name) =
 			if let Some(process) = metric.collect_process() {
-				(process.cpu_usage(), process.memory(), process.disk_usage())
+				(
+					process.cpu_usage(),
+					process.memory(),
+					process.disk_usage(),
+					process.name().to_string_lossy().to_string(),
+				)
 			} else {
-				(0.0, 0, DiskUsage::default())
+				(0.0, 0, DiskUsage::default(), "-".to_string())
 			};
 		// Subtract the initial disk usage
 		disk_usage.total_written_bytes -= metric.initial_disk_usage.total_written_bytes;
@@ -72,6 +80,8 @@ impl OperationResult {
 			used_memory,
 			disk_usage,
 			load_avg: System::load_average(),
+			process_name,
+			process_pid: metric.pid,
 		}
 	}
 }
@@ -79,16 +89,18 @@ impl OperationResult {
 impl Display for OperationResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		write!(
-            f,
-            "{:?} - cpu: {:.2}% - memory: {} - writes: {} - reads: {} - load avg: {:.2}/{:.2}/{:.2}",
-            self.elapsed,
-            self.cpu_usage,
-            ByteSize(self.used_memory),
-            ByteSize(self.disk_usage.total_written_bytes),
-            ByteSize(self.disk_usage.total_read_bytes),
-            self.load_avg.one,
-            self.load_avg.five,
-            self.load_avg.fifteen
-        )
+			f,
+			"{:?} - cpu: {:.2}% - memory: {} - writes: {} - reads: {} - load avg: {:.2}/{:.2}/{:.2} - process: {}/{}",
+			self.elapsed,
+			self.cpu_usage,
+			ByteSize(self.used_memory),
+			ByteSize(self.disk_usage.total_written_bytes),
+			ByteSize(self.disk_usage.total_read_bytes),
+			self.load_avg.one,
+			self.load_avg.five,
+			self.load_avg.fifteen,
+			self.process_name,
+			self.process_pid
+		)
 	}
 }
