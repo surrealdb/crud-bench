@@ -135,6 +135,9 @@ jobs:
         with:
           path: docker-build-artifacts
 
+      - name: Review downloaded artifacts
+        run: find docker-build-artifacts
+
       - name: Login to Amazon ECR
         id: login-ecr
         run: |
