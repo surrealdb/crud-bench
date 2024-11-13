@@ -161,14 +161,20 @@ jobs:
           echo "docker-repo=$DOCKER_REPO" >> $GITHUB_OUTPUT
           echo "docker-tag=$DOCKER_TAG" >> $GITHUB_OUTPUT
 
-      - name: Build Docker image
-        run: |
-          docker build --platform linux/amd64,linux/arm64 -t ${{ steps.image.outputs.docker-repo }}:${{ steps.image.outputs.docker-tag }} .
+      - name: Build Docker image for testing
+        uses: docker/build-push-action@v6
+        if: github.event_name == 'pull_request'
+        with:
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.image.outputs.docker-repo }}:${{ steps.image.outputs.docker-tag }}
 
-      - name: Push image to Amazon ECR
+      - name: Build and push Docker image for release
+        uses: docker/build-push-action@v6
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          docker push ${{ steps.image.outputs.docker-repo }}:${{ steps.image.outputs.docker-tag }}
+        with:
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.image.outputs.docker-repo }}:${{ steps.image.outputs.docker-tag }}
+          push: true
 
   benchmark:
     name: Benchmark ${{ matrix.description }}
