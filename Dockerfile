@@ -1,5 +1,7 @@
 FROM cgr.dev/chainguard/glibc-dynamic:latest
 
-COPY target/x86_64-unknown-linux-gnu/release/crud-bench /crud-bench
+ARG TARGETARCH
+COPY docker-build-artifacts/crud-bench-${TARGETARCH}/crud-bench /crud-bench
+RUN chmod +x /crud-bench
 
 ENTRYPOINT ["/crud-bench"]
