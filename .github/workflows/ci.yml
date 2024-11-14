@@ -145,6 +145,9 @@ jobs:
       - name: Review downloaded artifacts
         run: find artifacts
 
+      - name: Make crud-bench executable
+        run: chmod +x ${{ github.workspace }}/artifacts/crud-bench-amd64/crud-bench ${{ github.workspace }}/artifacts/crud-bench-arm64/crud-bench
+
       - name: Login to Amazon ECR
         id: login-ecr
         run: |
