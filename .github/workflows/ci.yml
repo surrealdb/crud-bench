@@ -130,13 +130,20 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Download artifacts
+      - name: Download amd64 artifact
         uses: actions/download-artifact@v4
         with:
-          path: docker-build-artifacts
+          name: crud-bench-amd64
+          path: ${{ github.workspace }}/artifacts/crud-bench-amd64
+
+      - name: Download arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: crud-bench-arm64
+          path: ${{ github.workspace }}/artifacts/crud-bench-arm64
 
       - name: Review downloaded artifacts
-        run: find docker-build-artifacts
+        run: find artifacts
 
       - name: Login to Amazon ECR
         id: login-ecr
