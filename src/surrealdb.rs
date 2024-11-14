@@ -11,7 +11,7 @@ use surrealdb::Surreal;
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{KeyType, Scan};
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
@@ -81,6 +81,10 @@ impl BenchmarkClient for SurrealDBClient {
 		self.db.query("REMOVE TABLE IF EXISTS record").await?;
 		self.db.query("DEFINE TABLE record").await?;
 		Ok(())
+	}
+
+	async fn scan(&self, _scan: &Scan) -> Result<()> {
+		todo!()
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {

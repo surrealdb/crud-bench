@@ -4,6 +4,8 @@ use crate::keyprovider::KeyProvider;
 use crate::valueprovider::ValueProvider;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::io::IsTerminal;
 use tokio::runtime::Builder;
 
@@ -71,9 +73,28 @@ pub(crate) struct Args {
 		short,
 		long,
 		env = "CRUD_BENCH_VALUE",
-		default_value = "{\"text\":\"string:50\", \"integer\":\"int\"}"
+		default_value = "{\"text\":\"string:50\", \"integer\":\"int\"}",
+		value_parser = parse_scans
 	)]
-	pub(crate) value: String,
+	pub(crate) value: Value,
+
+	/// Size of the text value
+	#[arg(
+		short = 'a',
+		long,
+		env = "CRUD_BENCH_SCANS",
+		default_value = "[{\"name\": \"limit\", \"limit\": 100}]",
+		value_parser = parse_value
+	)]
+	pub(crate) scans: Scans,
+}
+
+fn parse_scans(s: &str) -> Result<Scans, serde_json::Error> {
+	serde_json::from_str(s)
+}
+
+fn parse_value(s: &str) -> Result<Value, serde_json::Error> {
+	serde_json::from_str(s)
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -88,6 +109,15 @@ pub(crate) enum KeyType {
 	String506,
 	/// UUID type 7
 	Uuid,
+}
+
+pub(crate) type Scans = Vec<Scan>;
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct Scan {
+	name: String,
+	condition: Option<String>,
+	start: Option<usize>,
+	limit: Option<usize>,
 }
 
 fn main() -> Result<()> {
@@ -119,9 +149,10 @@ fn run(args: Args) -> Result<()> {
 	// Build the key provider
 	let kp = KeyProvider::new(args.key, args.random);
 	// Build the value provider
-	let vp = ValueProvider::new(&args.value)?;
+	let vp = ValueProvider::new(args.value)?;
 	// Run the benchmark
-	let res = runtime.block_on(async { args.database.run(&benchmark, args.key, kp, vp).await });
+	let res = runtime
+		.block_on(async { args.database.run(&benchmark, args.key, kp, vp, args.scans).await });
 	// Output the results
 	match res {
 		// Output the results
@@ -179,7 +210,8 @@ mod test {
 			samples: 10000,
 			random,
 			key,
-			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),
+			value: serde_json::from_str(r#"{"text":"String:50", "integer":"int"}"#)?,
+			scans: serde_json::from_str(r#"[{"name": "limit", "limit": 100}]"#)?,
 		})
 	}
 

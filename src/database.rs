@@ -6,7 +6,7 @@ use crate::map::MapClientProvider;
 use crate::dialect::{AnsiSqlDialect, DefaultDialect};
 use crate::dry::DryClientProvider;
 use crate::valueprovider::ValueProvider;
-use crate::KeyType;
+use crate::{KeyType, Scans};
 use anyhow::Result;
 use clap::ValueEnum;
 
@@ -81,6 +81,7 @@ impl Database {
 		kt: KeyType,
 		kp: KeyProvider,
 		vp: ValueProvider,
+		scans: Scans,
 	) -> Result<BenchmarkResult> {
 		match self {
 			Database::Dry => {
@@ -89,6 +90,7 @@ impl Database {
 						DryClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -98,6 +100,7 @@ impl Database {
 						MapClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -108,6 +111,7 @@ impl Database {
 						crate::dragonfly::DragonflyClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -118,6 +122,7 @@ impl Database {
 						crate::redb::ReDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -128,6 +133,7 @@ impl Database {
 						crate::speedb::SpeeDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -138,6 +144,7 @@ impl Database {
 						crate::rocksdb::RocksDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -148,6 +155,7 @@ impl Database {
 						crate::surrealkv::SurrealKVClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -158,6 +166,7 @@ impl Database {
 						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -168,6 +177,7 @@ impl Database {
 						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -178,6 +188,7 @@ impl Database {
 						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -188,6 +199,7 @@ impl Database {
 						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -198,6 +210,7 @@ impl Database {
 						crate::scylladb::ScyllaDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -208,6 +221,7 @@ impl Database {
 						crate::mongodb::MongoDBClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -218,6 +232,7 @@ impl Database {
 						crate::postgres::PostgresClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -228,6 +243,7 @@ impl Database {
 						crate::redis::RedisClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}
@@ -238,6 +254,7 @@ impl Database {
 						crate::keydb::KeydbClientProvider::setup(kt, vp.columns()).await?,
 						kp,
 						vp,
+						scans,
 					)
 					.await
 			}

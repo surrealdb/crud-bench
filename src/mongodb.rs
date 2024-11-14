@@ -3,7 +3,7 @@
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{KeyType, Scan};
 use anyhow::Result;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
@@ -64,6 +64,10 @@ where
 impl BenchmarkClient for MongoDBClient {
 	async fn startup(&self) -> Result<()> {
 		mongo_startup(&self.0).await
+	}
+
+	async fn scan(&self, _scan: &Scan) -> Result<()> {
+		todo!()
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {

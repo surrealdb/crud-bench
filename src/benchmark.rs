@@ -1,7 +1,7 @@
 use crate::dialect::Dialect;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::valueprovider::{Columns, ValueProvider};
-use crate::{Args, KeyType};
+use crate::{Args, KeyType, Scan, Scans};
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
 use log::info;
@@ -46,6 +46,7 @@ impl Benchmark {
 		engine: E,
 		kp: KeyProvider,
 		mut vp: ValueProvider,
+		scans: Scans,
 	) -> Result<BenchmarkResult>
 	where
 		C: BenchmarkClient + Send + Sync,
@@ -60,18 +61,41 @@ impl Benchmark {
 		let clients = self.setup_clients(&engine).await?;
 		// Run the "creates" benchmark
 		let creates = self
-			.run_operation::<C, D>(&clients, BenchmarkOperation::Create, kp, vp.clone())
+			.run_operation::<C, D>(
+				&clients,
+				BenchmarkOperation::Create,
+				kp,
+				vp.clone(),
+				self.samples,
+			)
 			.await?;
 		// Run the "reads" benchmark
-		let reads =
-			self.run_operation::<C, D>(&clients, BenchmarkOperation::Read, kp, vp.clone()).await?;
+		let reads = self
+			.run_operation::<C, D>(&clients, BenchmarkOperation::Read, kp, vp.clone(), self.samples)
+			.await?;
 		// Run the "reads" benchmark
 		let updates = self
-			.run_operation::<C, D>(&clients, BenchmarkOperation::Update, kp, vp.clone())
+			.run_operation::<C, D>(
+				&clients,
+				BenchmarkOperation::Update,
+				kp,
+				vp.clone(),
+				self.samples,
+			)
 			.await?;
+		// Run the "scan" benchmarks
+		let mut scan_results = Vec::with_capacity(scans.len());
+		for scan in scans {
+			let name = scan.name.clone();
+			let duration = self
+				.run_operation::<C, D>(&clients, BenchmarkOperation::Scan(scan), kp, vp.clone(), 1)
+				.await?;
+			scan_results.push((name, duration));
+		}
 		// Run the "deletes" benchmark
-		let deletes =
-			self.run_operation::<C, D>(&clients, BenchmarkOperation::Delete, kp, vp).await?;
+		let deletes = self
+			.run_operation::<C, D>(&clients, BenchmarkOperation::Delete, kp, vp, self.samples)
+			.await?;
 		// Setup the datastore
 		self.wait_for_client(&engine).await?.shutdown().await?;
 		// Return the benchmark results
@@ -79,6 +103,7 @@ impl Benchmark {
 			creates,
 			reads,
 			updates,
+			scans: scan_results,
 			deletes,
 			sample,
 		})
@@ -133,6 +158,7 @@ impl Benchmark {
 		operation: BenchmarkOperation,
 		kp: KeyProvider,
 		vp: ValueProvider,
+		samples: u32,
 	) -> Result<Duration>
 	where
 		C: BenchmarkClient + Send + Sync,
@@ -152,17 +178,16 @@ impl Benchmark {
 		// Measure the starting time
 		let time = Instant::now();
 		// Loop over the clients
-		for (client, c) in clients.iter().cloned().zip(1..) {
+		for (client, _) in clients.iter().cloned().zip(1..) {
 			// Loop over the threads
-			for t in 0..self.threads {
+			for _ in 0..self.threads {
 				let error = error.clone();
 				let current = current.clone();
 				let client = client.clone();
 				let out = out.clone();
 				let vp = vp.clone();
-				let samples = self.samples;
+				let operation = operation.clone();
 				futures.push(task::spawn(async move {
-					info!("Task #{c}/{t}/{operation} starting");
 					if let Err(e) = Self::operation_loop::<C, D>(
 						client,
 						samples,
@@ -177,7 +202,6 @@ impl Benchmark {
 						error.store(true, Ordering::Relaxed);
 						Err(e)
 					} else {
-						info!("Task #{c}/{t}/{operation} finished");
 						Ok(())
 					}
 				}));
@@ -234,16 +258,17 @@ impl Benchmark {
 				}
 			})?;
 			// Perform the benchmark operation
-			match operation {
-				BenchmarkOperation::Read => client.read(sample, &mut kp).await?,
+			match &operation {
 				BenchmarkOperation::Create => {
 					let value = vp.generate_value::<D>();
 					client.create(sample, value, &mut kp).await?
 				}
+				BenchmarkOperation::Read => client.read(sample, &mut kp).await?,
 				BenchmarkOperation::Update => {
 					let value = vp.generate_value::<D>();
 					client.update(sample, value, &mut kp).await?
 				}
+				BenchmarkOperation::Scan(s) => client.scan(s).await?,
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 			};
 		}
@@ -251,11 +276,12 @@ impl Benchmark {
 	}
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum BenchmarkOperation {
 	Create,
 	Read,
 	Update,
+	Scan(Scan),
 	Delete,
 }
 
@@ -264,6 +290,7 @@ impl Display for BenchmarkOperation {
 		match self {
 			Self::Create => write!(f, "Create"),
 			Self::Read => write!(f, "Read"),
+			Self::Scan(s) => write!(f, "Scan::{}", s.name),
 			Self::Update => write!(f, "Update"),
 			Self::Delete => write!(f, "Delete"),
 		}
@@ -274,6 +301,7 @@ pub(crate) struct BenchmarkResult {
 	creates: Duration,
 	reads: Duration,
 	updates: Duration,
+	scans: Vec<(String, Duration)>,
 	deletes: Duration,
 	pub(super) sample: Value,
 }
@@ -283,6 +311,9 @@ impl Display for BenchmarkResult {
 		writeln!(f, "[C]reates: {:?}", self.creates)?;
 		writeln!(f, "[R]eads: {:?}", self.reads)?;
 		writeln!(f, "[U]pdates: {:?}", self.updates)?;
+		for (name, duration) in &self.scans {
+			writeln!(f, "[S]can::{name}: {duration:?}")?;
+		}
 		write!(f, "[D]eletes: {:?}", self.deletes)
 	}
 }
@@ -345,6 +376,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 			}
 		}
 	}
+
 	fn delete(&self, n: u32, kp: &mut KeyProvider) -> impl Future<Output = Result<()>> + Send {
 		async move {
 			match kp {
@@ -355,6 +387,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 			}
 		}
 	}
+	fn scan(&self, scan: &Scan) -> impl Future<Output = Result<()>> + Send;
 
 	/// Create a record at a key
 	fn create_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;

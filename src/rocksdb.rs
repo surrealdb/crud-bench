@@ -2,7 +2,7 @@
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{KeyType, Scan};
 use anyhow::Result;
 use rocksdb::{
 	DBCompactionStyle, DBCompressionType, LogLevel, OptimisticTransactionDB,
@@ -72,6 +72,10 @@ impl BenchmarkClient for RocksDBClient {
 		let _ = std::fs::remove_dir_all("rocksdb");
 		// Ok
 		Ok(())
+	}
+
+	async fn scan(&self, _scan: &Scan) -> Result<()> {
+		todo!()
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {

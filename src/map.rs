@@ -1,6 +1,6 @@
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{KeyType, Scan};
 use anyhow::{bail, Result};
 use dashmap::DashMap;
 use serde_json::Value;
@@ -39,6 +39,10 @@ impl BenchmarkEngine<MapClient> for MapClientProvider {
 pub(crate) struct MapClient(MapDatabase);
 
 impl BenchmarkClient for MapClient {
+	async fn scan(&self, _scan: &Scan) -> Result<()> {
+		todo!()
+	}
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
 			assert!(m.insert(key, val).is_none());

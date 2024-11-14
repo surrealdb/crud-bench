@@ -1,6 +1,6 @@
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{KeyType, Scan};
 use anyhow::Result;
 use serde_json::Value;
 use std::hint::black_box;
@@ -20,6 +20,11 @@ impl BenchmarkEngine<DryClient> for DryClientProvider {
 pub(crate) struct DryClient {}
 
 impl BenchmarkClient for DryClient {
+	async fn scan(&self, scan: &Scan) -> Result<()> {
+		black_box(scan);
+		Ok(())
+	}
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		black_box((key, val));
 		Ok(())

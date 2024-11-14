@@ -18,9 +18,8 @@ pub(crate) struct ValueProvider {
 }
 
 impl ValueProvider {
-	pub(crate) fn new(json: &str) -> Result<Self> {
+	pub(crate) fn new(val: Value) -> Result<Self> {
 		// Decode the JSON string
-		let val = serde_json::from_str(json)?;
 		debug!("Value template: {val:#}");
 		// Compile a value generator
 		let generator = ValueGenerator::new(val)?;

@@ -4,7 +4,7 @@ use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::dialect::AnsiSqlDialect;
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::KeyType;
+use crate::{KeyType, Scan};
 use anyhow::Result;
 use scylla::_macro_internal::SerializeValue;
 use scylla::{Session, SessionBuilder};
@@ -82,6 +82,10 @@ impl BenchmarkClient for ScylladbClient {
 			)
 			.await?;
 		Ok(())
+	}
+
+	async fn scan(&self, _scan: &Scan) -> Result<()> {
+		todo!()
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {

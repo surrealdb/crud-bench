@@ -3,7 +3,7 @@
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{KeyType, Scan};
 use anyhow::Result;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client};
@@ -38,6 +38,10 @@ pub(crate) struct RedisClient {
 }
 
 impl BenchmarkClient for RedisClient {
+	async fn scan(&self, _scan: &Scan) -> Result<()> {
+		todo!()
+	}
+
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
