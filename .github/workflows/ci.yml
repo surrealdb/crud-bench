@@ -175,6 +175,7 @@ jobs:
         uses: docker/build-push-action@v6
         if: github.event_name == 'pull_request'
         with:
+          context: .
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.image.outputs.docker-repo }}:${{ steps.image.outputs.docker-tag }}
 
@@ -182,6 +183,7 @@ jobs:
         uses: docker/build-push-action@v6
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
+          context: .
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.image.outputs.docker-repo }}:${{ steps.image.outputs.docker-tag }}
           push: true
