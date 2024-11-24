@@ -92,8 +92,15 @@ impl Benchmark {
 		let mut scan_results = Vec::with_capacity(scans.len());
 		for scan in scans {
 			let name = scan.name.clone();
+			let samples = scan.samples.map(|s| s as u32).unwrap_or(self.samples);
 			let duration = self
-				.run_operation::<C, D>(&clients, BenchmarkOperation::Scan(scan), kp, vp.clone(), 1)
+				.run_operation::<C, D>(
+					&clients,
+					BenchmarkOperation::Scan(scan),
+					kp,
+					vp.clone(),
+					samples,
+				)
 				.await?;
 			scan_results.push((name, duration));
 		}

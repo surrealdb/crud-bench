@@ -139,7 +139,7 @@ impl ScylladbClient {
 	{
 		let res =
 			self.session.query_unpaged("SELECT * FROM bench.record WHERE id=?", (&key,)).await?;
-		assert_eq!(res.rows_num()?, 1);
+		assert_eq!(res.into_rows_result()?.rows_num(), 1);
 		Ok(())
 	}
 

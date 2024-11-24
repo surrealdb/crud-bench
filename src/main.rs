@@ -113,6 +113,7 @@ pub(crate) type Scans = Vec<Scan>;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct Scan {
 	name: String,
+	samples: Option<usize>,
 	condition: Option<String>,
 	start: Option<usize>,
 	limit: Option<usize>,
