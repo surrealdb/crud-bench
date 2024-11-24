@@ -5,7 +5,6 @@ use crate::valueprovider::ValueProvider;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::io::IsTerminal;
 use tokio::runtime::Builder;
 
@@ -73,28 +72,18 @@ pub(crate) struct Args {
 		short,
 		long,
 		env = "CRUD_BENCH_VALUE",
-		default_value = "{\"text\":\"string:50\", \"integer\":\"int\"}",
-		value_parser = parse_scans
+		default_value = "{\"text\":\"string:50\", \"integer\":\"int\"}"
 	)]
-	pub(crate) value: Value,
+	pub(crate) value: String,
 
 	/// Size of the text value
 	#[arg(
 		short = 'a',
 		long,
 		env = "CRUD_BENCH_SCANS",
-		default_value = "[{\"name\": \"limit\", \"limit\": 100}]",
-		value_parser = parse_value
+		default_value = "[{\"name\": \"limit\", \"limit\": 100}]"
 	)]
-	pub(crate) scans: Scans,
-}
-
-fn parse_scans(s: &str) -> Result<Scans, serde_json::Error> {
-	serde_json::from_str(s)
-}
-
-fn parse_value(s: &str) -> Result<Value, serde_json::Error> {
-	serde_json::from_str(s)
+	pub(crate) scans: String,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -118,6 +107,7 @@ pub(crate) struct Scan {
 	condition: Option<String>,
 	start: Option<usize>,
 	limit: Option<usize>,
+	expect: Option<usize>,
 }
 
 fn main() -> Result<()> {
@@ -149,10 +139,10 @@ fn run(args: Args) -> Result<()> {
 	// Build the key provider
 	let kp = KeyProvider::new(args.key, args.random);
 	// Build the value provider
-	let vp = ValueProvider::new(args.value)?;
+	let vp = ValueProvider::new(&args.value)?;
 	// Run the benchmark
 	let res = runtime
-		.block_on(async { args.database.run(&benchmark, args.key, kp, vp, args.scans).await });
+		.block_on(async { args.database.run(&benchmark, args.key, kp, vp, &args.scans).await });
 	// Output the results
 	match res {
 		// Output the results
@@ -211,7 +201,9 @@ mod test {
 			random,
 			key,
 			value: serde_json::from_str(r#"{"text":"String:50", "integer":"int"}"#)?,
-			scans: serde_json::from_str(r#"[{"name": "limit", "limit": 100}]"#)?,
+			scans: serde_json::from_str(
+				r#"[{"name": "limit", "start": 50, "limit": 100, "expect": 100}]"#,
+			)?,
 		})
 	}
 

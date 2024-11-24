@@ -6,7 +6,7 @@ use crate::map::MapClientProvider;
 use crate::dialect::{AnsiSqlDialect, DefaultDialect};
 use crate::dry::DryClientProvider;
 use crate::valueprovider::ValueProvider;
-use crate::{KeyType, Scans};
+use crate::KeyType;
 use anyhow::Result;
 use clap::ValueEnum;
 
@@ -81,8 +81,9 @@ impl Database {
 		kt: KeyType,
 		kp: KeyProvider,
 		vp: ValueProvider,
-		scans: Scans,
+		scans: &str,
 	) -> Result<BenchmarkResult> {
+		let scans = serde_json::from_str(scans)?;
 		match self {
 			Database::Dry => {
 				benchmark

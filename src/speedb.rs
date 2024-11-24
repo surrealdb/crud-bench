@@ -2,7 +2,7 @@
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{KeyType, Scan};
 use anyhow::Error;
 use anyhow::Result;
 use serde_json::Value;
@@ -72,6 +72,10 @@ impl BenchmarkClient for SpeeDBClient {
 		let _ = std::fs::remove_dir_all("speedb");
 		// Ok
 		Ok(())
+	}
+
+	async fn scan(&self, _scan: &Scan) -> Result<()> {
+		todo!()
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
