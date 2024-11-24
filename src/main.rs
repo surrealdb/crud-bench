@@ -77,14 +77,13 @@ pub(crate) struct Args {
 	)]
 	pub(crate) value: String,
 
+	/// Print-out an example of value
+	#[arg(long)]
+	pub(crate) show_sample: bool,
 
-    /// Print-out an example of value
-    #[arg(long)]
-    pub(crate) show_sample: bool,
-
-    /// Collect system information for a given pid
-    #[arg(short, long, value_parser=clap::value_parser!(u32).range(0..))]
-    pub(crate) pid: Option<u32>,
+	/// Collect system information for a given pid
+	#[arg(short, long, value_parser=clap::value_parser!(u32).range(0..))]
+	pub(crate) pid: Option<u32>,
 
 	/// Size of the text value
 	#[arg(
@@ -212,10 +211,8 @@ mod test {
 			samples: 10000,
 			random,
 			key,
-			value: serde_json::from_str(r#"{"text":"String:50", "integer":"int"}"#)?,
-			scans: serde_json::from_str(
-				r#"[{"name": "limit", "start": 50, "limit": 100, "expect": 100}]"#,
-			)?,
+			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),
+			scans: r#"[{"name": "limit", "start": 50, "limit": 100, "expect": 100}]"#.to_string(),
 			show_sample: false,
 			pid: None,
 		})
