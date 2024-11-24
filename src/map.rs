@@ -39,42 +39,48 @@ impl BenchmarkEngine<MapClient> for MapClientProvider {
 pub(crate) struct MapClient(MapDatabase);
 
 impl BenchmarkClient for MapClient {
-	async fn scan(&self, scan: &Scan) -> Result<()> {
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
 		if scan.condition.is_some() {
-			bail!("Conditions not supported");
+			bail!("Condition not supported");
 		}
-		let values: Vec<Value> = match &self.0 {
-			MapDatabase::Integer(m) => {
-				if let Some(start) = scan.start {
-					if let Some(limit) = scan.limit {
-						m.iter().skip(start).take(limit).map(|e| e.value().clone()).collect()
-					} else {
-						m.iter().skip(start).map(|e| e.value().clone()).collect()
-					}
-				} else if let Some(limit) = scan.limit {
-					m.iter().take(limit).map(|e| e.value().clone()).collect()
+		if let MapDatabase::Integer(m) = &self.0 {
+			let values: Vec<Value> = if let Some(start) = scan.start {
+				if let Some(limit) = scan.limit {
+					m.iter().skip(start).take(limit).map(|e| e.value().clone()).collect()
 				} else {
-					m.iter().map(|e| e.value().clone()).collect()
+					m.iter().skip(start).map(|e| e.value().clone()).collect()
 				}
-			}
-			MapDatabase::String(m) => {
-				if let Some(start) = scan.start {
-					if let Some(limit) = scan.limit {
-						m.iter().skip(start).take(limit).map(|e| e.value().clone()).collect()
-					} else {
-						m.iter().skip(start).map(|e| e.value().clone()).collect()
-					}
-				} else if let Some(limit) = scan.limit {
-					m.iter().take(limit).map(|e| e.value().clone()).collect()
-				} else {
-					m.iter().map(|e| e.value().clone()).collect()
-				}
-			}
-		};
-		if let Some(expect) = scan.expect {
-			assert_eq!(expect, values.len());
+			} else if let Some(limit) = scan.limit {
+				m.iter().take(limit).map(|e| e.value().clone()).collect()
+			} else {
+				m.iter().map(|e| e.value().clone()).collect()
+			};
+			Ok(values.len())
+		} else {
+			bail!("Invalid MapDatabase variant");
 		}
-		Ok(())
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		if scan.condition.is_some() {
+			bail!("Condition not supported");
+		}
+		if let MapDatabase::String(m) = &self.0 {
+			let values: Vec<Value> = if let Some(start) = scan.start {
+				if let Some(limit) = scan.limit {
+					m.iter().skip(start).take(limit).map(|e| e.value().clone()).collect()
+				} else {
+					m.iter().skip(start).map(|e| e.value().clone()).collect()
+				}
+			} else if let Some(limit) = scan.limit {
+				m.iter().take(limit).map(|e| e.value().clone()).collect()
+			} else {
+				m.iter().map(|e| e.value().clone()).collect()
+			};
+			Ok(values.len())
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {

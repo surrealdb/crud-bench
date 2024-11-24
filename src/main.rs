@@ -90,7 +90,7 @@ pub(crate) struct Args {
 		short = 'a',
 		long,
 		env = "CRUD_BENCH_SCANS",
-		default_value = "[{\"name\": \"limit\", \"limit\": 100}]"
+		default_value = "[{\"name\": \"limit\", \"limit\": 100, \"expect\": 100}]"
 	)]
 	pub(crate) scans: String,
 }

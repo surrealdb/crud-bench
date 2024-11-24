@@ -18,6 +18,8 @@ use tokio::task;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
+const NOT_SUPPORTED_ERROR: &str = "NotSupported";
+
 pub(crate) struct Benchmark {
 	/// The server endpoint to connect to
 	endpoint: Option<String>,
@@ -162,7 +164,7 @@ impl Benchmark {
 		kp: KeyProvider,
 		vp: ValueProvider,
 		samples: u32,
-	) -> Result<OperationResult>
+	) -> Result<Option<OperationResult>>
 	where
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
@@ -171,6 +173,8 @@ impl Benchmark {
 		let total = (self.clients * self.threads) as usize;
 		// Whether we have experienced an error
 		let error = Arc::new(AtomicBool::new(false));
+		// Wether the test should be skipped
+		let skip = Arc::new(AtomicBool::new(false));
 		// The total records processed so far
 		let current = Arc::new(AtomicU32::new(0));
 		// Store the futures in a vector
@@ -185,13 +189,14 @@ impl Benchmark {
 			// Loop over the threads
 			for _ in 0..self.threads {
 				let error = error.clone();
+				let skip = skip.clone();
 				let current = current.clone();
 				let client = client.clone();
 				let out = out.clone();
 				let vp = vp.clone();
 				let operation = operation.clone();
 				futures.push(task::spawn(async move {
-					if let Err(e) = Self::operation_loop::<C, D>(
+					match Self::operation_loop::<C, D>(
 						client,
 						samples,
 						&error,
@@ -201,11 +206,16 @@ impl Benchmark {
 					)
 					.await
 					{
-						eprintln!("{e}");
-						error.store(true, Ordering::Relaxed);
-						Err(e)
-					} else {
-						Ok(())
+						Err(e) if e.to_string().eq(NOT_SUPPORTED_ERROR) => {
+							skip.store(true, Ordering::Relaxed);
+							Ok(())
+						}
+						Err(e) => {
+							eprintln!("{e}");
+							error.store(true, Ordering::Relaxed);
+							Err(e)
+						}
+						Ok(_) => Ok(()),
 					}
 				}));
 			}
@@ -222,8 +232,12 @@ impl Benchmark {
 		let result = OperationResult::new(metric);
 		// Print out the last stage
 		out.map_ln(|| Some(format!("\r{operation} 100%")))?;
+		// Shall we skip the operation? (operation not supported)
+		if skip.load(Ordering::Relaxed) {
+			return Ok(None);
+		}
 		// Everything ok
-		Ok(result)
+		Ok(Some(result))
 	}
 
 	async fn operation_loop<C, D>(
@@ -271,7 +285,7 @@ impl Benchmark {
 					let value = vp.generate_value::<D>();
 					client.update(sample, value, &mut kp).await?
 				}
-				BenchmarkOperation::Scan(s) => client.scan(s).await?,
+				BenchmarkOperation::Scan(s) => client.scan(s, &kp).await?,
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 			};
 		}
@@ -302,23 +316,36 @@ impl Display for BenchmarkOperation {
 }
 
 pub(crate) struct BenchmarkResult {
-	creates: OperationResult,
-	reads: OperationResult,
-	updates: OperationResult,
-	scans: Vec<(String, OperationResult)>,
-	deletes: OperationResult,
+	creates: Option<OperationResult>,
+	reads: Option<OperationResult>,
+	updates: Option<OperationResult>,
+	scans: Vec<(String, Option<OperationResult>)>,
+	deletes: Option<OperationResult>,
 	pub(super) sample: Value,
 }
 
 impl Display for BenchmarkResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		writeln!(f, "[C]reates: {}", self.creates)?;
-		writeln!(f, "[R]eads: {}", self.reads)?;
-		writeln!(f, "[U]pdates: {}", self.updates)?;
-		for (name, result) in &self.scans {
-			writeln!(f, "[S]can::{name}: {result}")?;
+		if let Some(r) = &self.creates {
+			writeln!(f, "[C]reates: {}", r)?;
 		}
-		write!(f, "[D]eletes: {}", self.deletes)
+		if let Some(r) = &self.reads {
+			writeln!(f, "[R]eads: {}", r)?;
+		}
+		if let Some(r) = &self.updates {
+			writeln!(f, "[U]pdates: {}", r)?;
+		}
+		for (name, result) in &self.scans {
+			if let Some(r) = &result {
+				writeln!(f, "[S]can::{name}: {r}")?;
+			} else {
+				writeln!(f, "[S]can::{name}: <Skipped - Not supported>")?;
+			}
+		}
+		if let Some(r) = &self.deletes {
+			writeln!(f, "[D]eletes: {}", r)?;
+		}
+		Ok(())
 	}
 }
 
@@ -391,7 +418,31 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 			}
 		}
 	}
-	fn scan(&self, scan: &Scan) -> impl Future<Output = Result<()>> + Send;
+
+	fn scan(&self, scan: &Scan, kp: &KeyProvider) -> impl Future<Output = Result<()>> + Send {
+		async move {
+			let result = match kp {
+				KeyProvider::OrderedInteger(_) | KeyProvider::UnorderedInteger(_) => {
+					self.scan_u32(scan).await?
+				}
+				KeyProvider::OrderedString(_) | KeyProvider::UnorderedString(_) => {
+					self.scan_string(scan).await?
+				}
+			};
+			if let Some(expect) = scan.expect {
+				assert_eq!(expect, result);
+			}
+			Ok(())
+		}
+	}
+
+	fn scan_u32(&self, _scan: &Scan) -> impl Future<Output = Result<usize>> + Send {
+		async move { bail!(NOT_SUPPORTED_ERROR) }
+	}
+
+	fn scan_string(&self, _scan: &Scan) -> impl Future<Output = Result<usize>> + Send {
+		async move { bail!(NOT_SUPPORTED_ERROR) }
+	}
 
 	/// Create a record at a key
 	fn create_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;

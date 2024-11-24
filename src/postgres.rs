@@ -6,7 +6,7 @@ use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{KeyType, Scan};
+use crate::KeyType;
 use anyhow::Result;
 use serde_json::Value;
 use tokio_postgres::types::ToSql;
@@ -78,9 +78,6 @@ impl BenchmarkClient for PostgresClient {
 		let stm = format!("CREATE TABLE record ( id {id_type} PRIMARY KEY,{fields});");
 		self.client.batch_execute(&stm).await?;
 		Ok(())
-	}
-	async fn scan(&self, _scan: &Scan) -> Result<()> {
-		todo!()
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
