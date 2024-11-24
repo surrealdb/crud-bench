@@ -1,5 +1,6 @@
 use crate::dialect::Dialect;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
+use crate::result::{OperationMetric, OperationResult};
 use crate::valueprovider::{Columns, ValueProvider};
 use crate::{Args, KeyType, Scan, Scans};
 use anyhow::{bail, Result};
@@ -12,7 +13,7 @@ use std::io::Write;
 use std::io::{stdout, IsTerminal, Stdout};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 use tokio::task;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -28,8 +29,9 @@ pub(crate) struct Benchmark {
 	threads: u32,
 	/// The number of samples to run
 	samples: u32,
+	/// Pid to monitor
+	pid: Option<u32>,
 }
-
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
 		Self {
@@ -38,6 +40,7 @@ impl Benchmark {
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
+			pid: args.pid,
 		}
 	}
 	/// Run the benchmark for the desired benchmark engine
@@ -159,7 +162,7 @@ impl Benchmark {
 		kp: KeyProvider,
 		vp: ValueProvider,
 		samples: u32,
-	) -> Result<Duration>
+	) -> Result<OperationResult>
 	where
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
@@ -176,7 +179,7 @@ impl Benchmark {
 		let mut out = TerminalOut::default();
 		out.map(|| Some(format!("\r{operation} 0%")))?;
 		// Measure the starting time
-		let time = Instant::now();
+		let metric = OperationMetric::new(self.pid);
 		// Loop over the clients
 		for (client, _) in clients.iter().cloned().zip(1..) {
 			// Loop over the threads
@@ -215,12 +218,12 @@ impl Benchmark {
 		if error.load(Ordering::Relaxed) {
 			bail!("Task failure");
 		}
-		// Calculate the elapsed time
-		let elapsed = time.elapsed();
+		// Calculate runtime information
+		let result = OperationResult::new(metric);
 		// Print out the last stage
 		out.map_ln(|| Some(format!("\r{operation} 100%")))?;
 		// Everything ok
-		Ok(elapsed)
+		Ok(result)
 	}
 
 	async fn operation_loop<C, D>(
@@ -272,6 +275,7 @@ impl Benchmark {
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 			};
 		}
+
 		Ok(())
 	}
 }
@@ -298,23 +302,23 @@ impl Display for BenchmarkOperation {
 }
 
 pub(crate) struct BenchmarkResult {
-	creates: Duration,
-	reads: Duration,
-	updates: Duration,
-	scans: Vec<(String, Duration)>,
-	deletes: Duration,
+	creates: OperationResult,
+	reads: OperationResult,
+	updates: OperationResult,
+	scans: Vec<(String, OperationResult)>,
+	deletes: OperationResult,
 	pub(super) sample: Value,
 }
 
 impl Display for BenchmarkResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		writeln!(f, "[C]reates: {:?}", self.creates)?;
-		writeln!(f, "[R]eads: {:?}", self.reads)?;
-		writeln!(f, "[U]pdates: {:?}", self.updates)?;
-		for (name, duration) in &self.scans {
-			writeln!(f, "[S]can::{name}: {duration:?}")?;
+		writeln!(f, "[C]reates: {}", self.creates)?;
+		writeln!(f, "[R]eads: {}", self.reads)?;
+		writeln!(f, "[U]pdates: {}", self.updates)?;
+		for (name, result) in &self.scans {
+			writeln!(f, "[S]can::{name}: {result}")?;
 		}
-		write!(f, "[D]eletes: {:?}", self.deletes)
+		write!(f, "[D]eletes: {}", self.deletes)
 	}
 }
 

@@ -43,13 +43,13 @@ Options:
   -d, --database <DATABASE>
           Database
           
-          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
+          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
 
   -e, --endpoint <ENDPOINT>
           Endpoint
 
   -w, --workers <WORKERS>
-          Number of async runtime workers, defaulting to the number of CPUs
+          Number of async runtime workers (default is the number of CPU cores)
           
           [default: 12]
 
@@ -86,6 +86,12 @@ Options:
           
           [env: CRUD_BENCH_VALUE=]
           [default: "{\"text\":\"string:50\", \"integer\":\"int\"}"]
+
+      --show-sample
+          Print-out an example of value
+
+  -p, --pid <PID>
+          Collect system information for a given pid
 
   -h, --help
           Print help (see a summary with '-h')
