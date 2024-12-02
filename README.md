@@ -1,15 +1,15 @@
 # crud-bench
 
+The crud-bench benchmarking tool is an open-source benchmarking tool for testing and comparing the performance of a number of different workloads on embedded, networked, and remote databases. It can be used to compare both SQL and NoSQL platforms including key-value, and embedded databases. Importantly crud-bench focuses on testing additional features which are not present in other benchmarking tools, but which are available in SurrealDB.
+
+The primary purpose of crud-bench is to continually test and monitor the performance of features and functionality built in to SurrealDB, enabling developers working on features in SurrealDB to assess the impact of their changes on database queries and performance.
+
+The crud-bench benchmarking tool is being actively developed with new features and functionality being added regularly.
+
 ## Purpose
 
 The goal of this benchmark is for developers working on features in SurrealDB to assess their impact on CRUD
 performance.
-
-E.g.:
-
-- Testing a new operator
-- Work on indexes
-- Work on query planner and execution plan
 
 ## How does it work?
 
@@ -20,7 +20,7 @@ In one table, the benchmark will operate 4 main tasks:
 - Update: update N unique records.
 - Delete: delete N unique records.
 
-The number of records (samples) and the number of threads are parameters.
+The number of records (samples), the number of concurrent clients, and the number of concurrent threads are configurable parameters.
 
 ## Requirements
 
