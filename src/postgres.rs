@@ -6,7 +6,7 @@ use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::KeyType;
+use crate::{KeyType, Scan};
 use anyhow::Result;
 use serde_json::Value;
 use tokio_postgres::types::ToSql;
@@ -96,6 +96,14 @@ impl BenchmarkClient for PostgresClient {
 		self.read(key).await
 	}
 
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.update(key as i32, val).await
 	}
@@ -132,6 +140,15 @@ impl PostgresClient {
 		let res = self.client.query(stm, &[&key]).await?;
 		assert_eq!(res.len(), 1);
 		Ok(())
+	}
+
+	async fn scan(&self, scan: &Scan) -> Result<usize> {
+		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or("".to_string());
+		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
+		let stm = format!("SELECT id FROM record {c} {l} {s}");
+		let res = self.client.query(&stm, &[]).await?;
+		Ok(res.len())
 	}
 
 	async fn update<T>(&self, key: T, val: Value) -> Result<()>
