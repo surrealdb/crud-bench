@@ -1,10 +1,11 @@
 #![cfg(feature = "mongodb")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
 use crate::docker::DockerParams;
 use crate::valueprovider::Columns;
-use crate::KeyType;
-use anyhow::Result;
+use crate::{KeyType, Scan};
+use anyhow::{bail, Result};
+use futures::StreamExt;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
@@ -86,6 +87,14 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.update(key, val).await
 	}
@@ -131,6 +140,18 @@ impl MongoDBClient {
 		let doc = self.0.find_one(filter).await?;
 		assert!(doc.is_some(), "read");
 		Ok(doc)
+	}
+
+	async fn scan(&self, scan: &Scan) -> Result<usize> {
+		if scan.condition.is_some() {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+		let s = scan.start.unwrap_or(0);
+		let l = scan.limit.unwrap_or(0);
+		let filter = doc! {};
+		let doc = self.0.find(filter).skip(s as u64).limit(l as i64).await?;
+		let count = doc.count().await;
+		Ok(count)
 	}
 
 	async fn update<K>(&self, key: K, val: Value) -> Result<()>

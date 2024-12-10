@@ -18,7 +18,7 @@ use tokio::task;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-const NOT_SUPPORTED_ERROR: &str = "NotSupported";
+pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
 
 pub(crate) struct Benchmark {
 	/// The server endpoint to connect to
