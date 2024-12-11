@@ -113,7 +113,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build benchmark
-        run: cargo build --release --target ${{ matrix.target }} --features surrealdb/kv-mem,surrealdb/kv-rocksdb,surrealdb/kv-surrealkv
+        run: cargo build --release --target ${{ matrix.target }} --features surrealdb/kv-mem,surrealdb/kv-surrealkv
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -257,11 +257,6 @@ jobs:
             enabled: true
             endpoint_cfg: -e memory
             description: SurrealDB memory engine
-          # SurrealDB RocksDB Engine
-          - database: surrealdb
-            enabled: true
-            endpoint_cfg: -e rocksdb:/tmp/rocksdb-engine
-            description: SurrealDB RocksDB engine
           # SurrealDB SurrealKV Engine
           - database: surrealdb
             enabled: true
