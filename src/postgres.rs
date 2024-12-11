@@ -146,7 +146,12 @@ impl PostgresClient {
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or("".to_string());
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
-		let stm = format!("SELECT id FROM record {c} {l} {s}");
+		let k = scan.keys_only.unwrap_or(false);
+		let stm = if k {
+			format!("SELECT id FROM record {c} {l} {s}")
+		} else {
+			format!("SELECT * FROM record {c} {l} {s}")
+		};
 		let res = self.client.query(&stm, &[]).await?;
 		Ok(res.len())
 	}

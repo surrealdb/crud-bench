@@ -112,7 +112,12 @@ impl BenchmarkClient for SurrealDBClient {
 		let s = scan.start.map(|s| format!("START {}", s)).unwrap_or("".to_string());
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
-		let query = format!("SELECT id FROM record {c} {s} {l}");
+		let k = scan.keys_only.unwrap_or(false);
+		let query = if k {
+			format!("SELECT id FROM record {c} {s} {l}")
+		} else {
+			format!("SELECT * FROM record {c} {s} {l}")
+		};
 		let scan: Vec<SurrealRecord> = self.db.query(query).await?.take(0)?;
 		Ok(scan.len())
 	}
