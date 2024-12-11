@@ -4,12 +4,12 @@ use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::KeyType;
 use anyhow::Result;
-use rocksdb::{
+use serde_json::Value;
+use std::sync::Arc;
+use surrealdb_rocksdb::{
 	DBCompactionStyle, DBCompressionType, LogLevel, OptimisticTransactionDB,
 	OptimisticTransactionOptions, Options, ReadOptions, WriteOptions,
 };
-use serde_json::Value;
-use std::sync::Arc;
 
 pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
 
