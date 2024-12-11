@@ -107,6 +107,18 @@ jobs:
           - database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
+          # Embedded SurrealDB Memory Engine
+          - database: memory-engine
+            enabled: true
+            description: An embedded SurrealDB memory engine
+          # Embedded SurrealDB RocksDB Rngine
+          - database: rocksdb-engine
+            enabled: true
+            description: An embedded SurrealDB RocksDB engine
+          # Embedded SurrealDB SurrealKV Engine
+          - database: surrealkv-engine
+            enabled: true
+            description: An embedded SurrealDB SurrealKV engine
           # SurrealKV
           - database: surrealkv
             enabled: true
