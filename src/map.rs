@@ -1,4 +1,4 @@
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
 use crate::valueprovider::Columns;
 use crate::{KeyType, Scan};
 use anyhow::{bail, Result};
@@ -41,7 +41,7 @@ pub(crate) struct MapClient(MapDatabase);
 impl BenchmarkClient for MapClient {
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
 		if scan.condition.is_some() || Some(true).eq(&scan.keys_only) {
-			bail!("Condition not supported");
+			bail!(NOT_SUPPORTED_ERROR);
 		}
 		if let MapDatabase::Integer(m) = &self.0 {
 			let values: Vec<Value> = if let Some(start) = scan.start {
