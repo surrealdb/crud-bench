@@ -40,7 +40,7 @@ pub(crate) struct MapClient(MapDatabase);
 
 impl BenchmarkClient for MapClient {
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		if scan.condition.is_some() {
+		if scan.condition.is_some() || Some(true).eq(&scan.keys_only) {
 			bail!("Condition not supported");
 		}
 		if let MapDatabase::Integer(m) = &self.0 {
