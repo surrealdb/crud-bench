@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
+use surrealdb::opt::Config;
 use surrealdb::sql::Thing;
 use surrealdb::Surreal;
 
@@ -41,14 +42,15 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 	async fn create_client(&self, endpoint: Option<String>) -> Result<SurrealDBClient> {
 		// Get the endpoint if specified
 		let ep = endpoint.unwrap_or("ws://127.0.0.1:8000".to_owned());
-		// Connect to the database
-		let db = connect(ep).await?;
-		// Signin as a namespace, database, or root user
-		db.signin(Root {
+		// Define root user details
+		let root = Root {
 			username: "root",
 			password: "root",
-		})
-		.await?;
+		};
+		// Connect to the database
+		let db = connect((ep, Config::new().user(root))).await?;
+		// Signin as a namespace, database, or root user
+		db.signin(root).await?;
 		// Select a specific namespace / database
 		db.use_ns("test").use_db("test").await?;
 		// Return the client
