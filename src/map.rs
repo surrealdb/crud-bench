@@ -1,6 +1,6 @@
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{KeyType, Scan};
 use anyhow::{bail, Result};
 use dashmap::DashMap;
 use serde_json::Value;
@@ -39,6 +39,50 @@ impl BenchmarkEngine<MapClient> for MapClientProvider {
 pub(crate) struct MapClient(MapDatabase);
 
 impl BenchmarkClient for MapClient {
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		if scan.condition.is_some() {
+			bail!("Condition not supported");
+		}
+		if let MapDatabase::Integer(m) = &self.0 {
+			let values: Vec<Value> = if let Some(start) = scan.start {
+				if let Some(limit) = scan.limit {
+					m.iter().skip(start).take(limit).map(|e| e.value().clone()).collect()
+				} else {
+					m.iter().skip(start).map(|e| e.value().clone()).collect()
+				}
+			} else if let Some(limit) = scan.limit {
+				m.iter().take(limit).map(|e| e.value().clone()).collect()
+			} else {
+				m.iter().map(|e| e.value().clone()).collect()
+			};
+			Ok(values.len())
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		if scan.condition.is_some() {
+			bail!("Condition not supported");
+		}
+		if let MapDatabase::String(m) = &self.0 {
+			let values: Vec<Value> = if let Some(start) = scan.start {
+				if let Some(limit) = scan.limit {
+					m.iter().skip(start).take(limit).map(|e| e.value().clone()).collect()
+				} else {
+					m.iter().skip(start).map(|e| e.value().clone()).collect()
+				}
+			} else if let Some(limit) = scan.limit {
+				m.iter().take(limit).map(|e| e.value().clone()).collect()
+			} else {
+				m.iter().map(|e| e.value().clone()).collect()
+			};
+			Ok(values.len())
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
+	}
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
 			assert!(m.insert(key, val).is_none());

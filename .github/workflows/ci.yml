@@ -64,7 +64,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check clippy
-        run: cargo clippy --tests -- -D warnings
+        run: cargo clippy --tests --all-features -- -D warnings
 
   test:
     name: Check tests

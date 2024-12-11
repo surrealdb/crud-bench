@@ -11,7 +11,7 @@ use surrealdb::Surreal;
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{KeyType, Scan};
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
@@ -106,6 +106,19 @@ impl BenchmarkClient for SurrealDBClient {
 		let read: Option<SurrealRecord> = self.db.select(("record", key)).await?;
 		assert!(read.is_some());
 		Ok(())
+	}
+
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		let s = scan.start.map(|s| format!("START {}", s)).unwrap_or("".to_string());
+		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
+		let query = format!("SELECT id FROM record {c} {s} {l}");
+		let scan: Vec<SurrealRecord> = self.db.query(query).await?.take(0)?;
+		Ok(scan.len())
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan_u32(scan).await
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {

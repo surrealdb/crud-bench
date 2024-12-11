@@ -4,6 +4,7 @@ use crate::keyprovider::KeyProvider;
 use crate::valueprovider::ValueProvider;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use serde::{Deserialize, Serialize};
 use std::io::IsTerminal;
 use tokio::runtime::Builder;
 
@@ -76,13 +77,22 @@ pub(crate) struct Args {
 	)]
 	pub(crate) value: String,
 
-	/// Print-out an example of value
+	/// Print-out an example of a generated value
 	#[arg(long)]
 	pub(crate) show_sample: bool,
 
 	/// Collect system information for a given pid
 	#[arg(short, long, value_parser=clap::value_parser!(u32).range(0..))]
 	pub(crate) pid: Option<u32>,
+
+	/// An array of scan specifications
+	#[arg(
+		short = 'a',
+		long,
+		env = "CRUD_BENCH_SCANS",
+		default_value = "[{\"name\": \"limit\", \"limit\": 100, \"expect\": 100}]"
+	)]
+	pub(crate) scans: String,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -97,6 +107,17 @@ pub(crate) enum KeyType {
 	String506,
 	/// UUID type 7
 	Uuid,
+}
+
+pub(crate) type Scans = Vec<Scan>;
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct Scan {
+	name: String,
+	samples: Option<usize>,
+	condition: Option<String>,
+	start: Option<usize>,
+	limit: Option<usize>,
+	expect: Option<usize>,
 }
 
 fn main() -> Result<()> {
@@ -130,7 +151,8 @@ fn run(args: Args) -> Result<()> {
 	// Build the value provider
 	let vp = ValueProvider::new(&args.value)?;
 	// Run the benchmark
-	let res = runtime.block_on(async { args.database.run(&benchmark, args.key, kp, vp).await });
+	let res = runtime
+		.block_on(async { args.database.run(&benchmark, args.key, kp, vp, &args.scans).await });
 	// Output the results
 	match res {
 		// Output the results
@@ -191,6 +213,7 @@ mod test {
 			random,
 			key,
 			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),
+			scans: r#"[{"name": "limit", "start": 50, "limit": 100, "expect": 100}]"#.to_string(),
 			show_sample: false,
 			pid: None,
 		})

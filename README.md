@@ -1,8 +1,13 @@
 # crud-bench
 
-The crud-bench benchmarking tool is an open-source benchmarking tool for testing and comparing the performance of a number of different workloads on embedded, networked, and remote databases. It can be used to compare both SQL and NoSQL platforms including key-value, and embedded databases. Importantly crud-bench focuses on testing additional features which are not present in other benchmarking tools, but which are available in SurrealDB.
+The crud-bench benchmarking tool is an open-source benchmarking tool for testing and comparing the performance of a
+number of different workloads on embedded, networked, and remote databases. It can be used to compare both SQL and NoSQL
+platforms including key-value, and embedded databases. Importantly crud-bench focuses on testing additional features
+which are not present in other benchmarking tools, but which are available in SurrealDB.
 
-The primary purpose of crud-bench is to continually test and monitor the performance of features and functionality built in to SurrealDB, enabling developers working on features in SurrealDB to assess the impact of their changes on database queries and performance.
+The primary purpose of crud-bench is to continually test and monitor the performance of features and functionality built
+in to SurrealDB, enabling developers working on features in SurrealDB to assess the impact of their changes on database
+queries and performance.
 
 The crud-bench benchmarking tool is being actively developed with new features and functionality being added regularly.
 
@@ -20,7 +25,8 @@ In one table, the benchmark will operate 4 main tasks:
 - Update: update N unique records.
 - Delete: delete N unique records.
 
-The number of records (samples), the number of concurrent clients, and the number of concurrent threads are configurable parameters.
+The number of records (samples), the number of concurrent clients, and the number of concurrent threads are configurable
+parameters.
 
 ## Requirements
 
@@ -93,6 +99,155 @@ Options:
   -p, --pid <PID>
           Collect system information for a given pid
 
+  -a, --scans <SCANS>
+          Size of the text value
+          
+          [env: CRUD_BENCH_SCANS=]
+          [default: "[{\"name\": \"limit\", \"limit\": 100, \"expect\": 100}]"]
+
+  -h, --help
+          Print help (see a summary with '-h')
+ekeller@EK-SUR-MBP16 crud-bench % cargo run -- --help
+    Blocking waiting for file lock on build directory
+   Compiling crud-bench v0.1.0 (/Users/ekeller/github/surrealdb/crud-bench)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.32s
+     Running `target/debug/crud-bench --help`
+Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
+
+Options:
+  -i, --image <IMAGE>
+          Docker image
+
+  -d, --database <DATABASE>
+          Database
+          
+          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
+
+  -e, --endpoint <ENDPOINT>
+          Endpoint
+
+  -w, --workers <WORKERS>
+          Number of async runtime workers (default is the number of CPU cores)
+          
+          [default: 12]
+
+  -c, --clients <CLIENTS>
+          Number of concurrent clients
+          
+          [default: 1]
+
+  -t, --threads <THREADS>
+          Number of concurrent threads per client
+          
+          [default: 1]
+
+  -s, --samples <SAMPLES>
+          Number of samples to be created, read, updated, and deleted
+
+  -r, --random
+          Generate the keys in a pseudo-randomized order
+
+  -k, --key <KEY>
+          The type of the key
+          
+          [default: integer]
+
+          Possible values:
+          - integer:   4 bytes integer
+          - string26:  26 ascii bytes
+          - string90:  90 ascii bytes
+          - string506: 506 ascii bytes
+          - uuid:      UUID type 7
+
+  -v, --value <VALUE>
+          Size of the text value
+          
+          [env: CRUD_BENCH_VALUE=]
+          [default: "{\"text\":\"string:50\", \"integer\":\"int\"}"]
+
+      --show-sample
+          Print-out an example of value
+
+  -p, --pid <PID>
+          Collect system information for a given pid
+
+  -a, --scans <SCANS>
+          An array of scan specifications
+          
+          [env: CRUD_BENCH_SCANS=]
+          [default: "[{\"name\": \"limit\", \"limit\": 100, \"expect\": 100}]"]
+
+  -h, --help
+          Print help (see a summary with '-h')
+ekeller@EK-SUR-MBP16 crud-bench % cargo run -- --help
+   Compiling crud-bench v0.1.0 (/Users/ekeller/github/surrealdb/crud-bench)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.03s
+     Running `target/debug/crud-bench --help`
+Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
+
+Options:
+  -i, --image <IMAGE>
+          Docker image
+
+  -d, --database <DATABASE>
+          Database
+          
+          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
+
+  -e, --endpoint <ENDPOINT>
+          Endpoint
+
+  -w, --workers <WORKERS>
+          Number of async runtime workers (default is the number of CPU cores)
+          
+          [default: 12]
+
+  -c, --clients <CLIENTS>
+          Number of concurrent clients
+          
+          [default: 1]
+
+  -t, --threads <THREADS>
+          Number of concurrent threads per client
+          
+          [default: 1]
+
+  -s, --samples <SAMPLES>
+          Number of samples to be created, read, updated, and deleted
+
+  -r, --random
+          Generate the keys in a pseudo-randomized order
+
+  -k, --key <KEY>
+          The type of the key
+          
+          [default: integer]
+
+          Possible values:
+          - integer:   4 bytes integer
+          - string26:  26 ascii bytes
+          - string90:  90 ascii bytes
+          - string506: 506 ascii bytes
+          - uuid:      UUID type 7
+
+  -v, --value <VALUE>
+          Size of the text value
+          
+          [env: CRUD_BENCH_VALUE=]
+          [default: "{\"text\":\"string:50\", \"integer\":\"int\"}"]
+
+      --show-sample
+          Print-out an example of a generated value
+
+  -p, --pid <PID>
+          Collect system information for a given pid
+
+  -a, --scans <SCANS>
+          An array of scan specifications
+          
+          [env: CRUD_BENCH_SCANS=]
+          [default: "[{\"name\": \"limit\", \"limit\": 100, \"expect\": 100}]"]
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -148,6 +303,37 @@ Eg.:
 For column-oriented databases (e.g., PostgreSQL, ScyllaDB), the first-level fields of the JSON structure are translated
 as columns.
 Nested structures will be stored in a JSON column.
+
+### Scans
+
+Scans can be tested using the `-a` parameter or the environment variable `CRUD_BENCH_SCANS`.
+This parameter accepts a JSON array, where each item represents a different scan test.
+Each test is defined as a JSON object specifying the scan parameters and the test name.
+
+```json
+[
+  {
+    "name": "limit100",
+    "start": 0,
+    "limit": 100,
+    "expect": 100
+  },
+  {
+    "name": "start100",
+    "start": 100,
+    "limit": 100,
+    "expect": 100
+  }
+]
+```
+
+- name: A descriptive name for the test.
+- start: Skips the specified number of rows before starting to return rows.
+- limit: Specifies the maximum number of rows to return.
+- expect: Asserts the expected number of rows returned.
+
+Note: Not every database adapter supports scans.
+In such cases, the log will not fail but will instead indicate `skipped`.
 
 ## Dry run
 

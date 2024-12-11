@@ -4,9 +4,11 @@ use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::dialect::AnsiSqlDialect;
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::KeyType;
+use crate::{KeyType, Scan};
 use anyhow::Result;
-use scylla::_macro_internal::SerializeValue;
+use futures::StreamExt;
+use scylla::_macro_internal::{SerializeRow, SerializeValue};
+use scylla::transport::iterator::TypedRowStream;
 use scylla::{Session, SessionBuilder};
 use serde_json::Value;
 use std::fmt::Display;
@@ -83,7 +85,6 @@ impl BenchmarkClient for ScylladbClient {
 			.await?;
 		Ok(())
 	}
-
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.create(key as i32, val).await
 	}
@@ -98,6 +99,14 @@ impl BenchmarkClient for ScylladbClient {
 
 	async fn read_string(&self, key: String) -> Result<()> {
 		self.read(key).await
+	}
+
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
@@ -140,10 +149,28 @@ impl ScylladbClient {
 	{
 		let res =
 			self.session.query_unpaged("SELECT * FROM bench.record WHERE id=?", (&key,)).await?;
-		assert_eq!(res.rows_num()?, 1);
+		assert_eq!(res.into_rows_result()?.rows_num(), 1);
 		Ok(())
 	}
 
+	async fn scan(&self, scan: &Scan) -> Result<usize> {
+		let s = scan.start.unwrap_or(0);
+		let l = (scan.start.unwrap_or(0) + scan.limit.unwrap_or(0)) as i32;
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
+		let stm = format!("SELECT id FROM record {c} LIMIT ?");
+		let mut rows_stream: TypedRowStream<(String,)> =
+			self.session.query_iter(stm, (&l,)).await?.rows_stream()?;
+		if s > 0 {
+			let _ = (&mut rows_stream).skip(s);
+		}
+		let mut count = 0;
+		while let Some(next_row_res) = rows_stream.next().await {
+			let id: (String,) = next_row_res?;
+			assert!(!id.is_empty());
+			count += 1;
+		}
+		Ok(count)
+	}
 	async fn update<T>(&self, key: T, val: Value) -> Result<()>
 	where
 		T: Display,
