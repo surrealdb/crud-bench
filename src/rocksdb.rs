@@ -1,14 +1,15 @@
 #![cfg(feature = "rocksdb")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
 use crate::valueprovider::Columns;
-use crate::KeyType;
-use anyhow::Result;
+use crate::{KeyType, Scan};
+use anyhow::{bail, Result};
 use rocksdb::{
-	DBCompactionStyle, DBCompressionType, LogLevel, OptimisticTransactionDB,
-	OptimisticTransactionOptions, Options, ReadOptions, WriteOptions,
+	DBCompactionStyle, DBCompressionType, IteratorMode, LogLevel, OptimisticTransactionDB,
+	OptimisticTransactionOptions, Options, ReadOptions, Transaction, WriteOptions,
 };
 use serde_json::Value;
+use std::hint::black_box;
 use std::sync::Arc;
 
 pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
@@ -94,6 +95,13 @@ impl BenchmarkClient for RocksDBClient {
 		self.update_bytes(&key.to_ne_bytes(), val).await
 	}
 
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan_bytes(scan).await
+	}
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan_bytes(scan).await
+	}
+
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
 		self.update_bytes(&key.into_bytes(), val).await
 	}
@@ -108,16 +116,25 @@ impl BenchmarkClient for RocksDBClient {
 }
 
 impl RocksDBClient {
-	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
+	fn get_options() -> (OptimisticTransactionOptions, WriteOptions) {
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
 		wo.set_sync(false);
+		(to, wo)
+	}
+
+	fn get_transaction(&self) -> Transaction<OptimisticTransactionDB> {
+		let (to, wo) = Self::get_options();
+		self.0.transaction_opt(&wo, &to)
+	}
+
+	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let txn = self.0.transaction_opt(&wo, &to);
+		let txn = self.get_transaction();
 		// Process the data
 		txn.put(key, val)?;
 		txn.commit()?;
@@ -125,12 +142,6 @@ impl RocksDBClient {
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Set the transaction options
-		let mut to = OptimisticTransactionOptions::default();
-		to.set_snapshot(true);
-		// Set the write options
-		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
 		// Get the database snapshot
 		let ss = self.0.snapshot();
 		// Configure read options
@@ -139,23 +150,52 @@ impl RocksDBClient {
 		ro.set_async_io(true);
 		ro.fill_cache(true);
 		// Create a new transaction
-		let txn = self.0.transaction_opt(&wo, &to);
+		let txn = self.get_transaction();
 		// Process the data
 		let read: Option<Vec<u8>> = txn.get_opt(key, &ro)?;
 		assert!(read.is_some());
 		Ok(())
 	}
 
+	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
+		if scan.condition.is_some() {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+
+		// Extract parameters
+		let s = scan.start.unwrap_or(0);
+		let l = scan.limit.unwrap_or(0);
+		let k = scan.keys_only.unwrap_or(false);
+		if k {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+
+		// Create a new transaction
+		let txn = self.get_transaction();
+
+		// Create an iterator starting at the beginning
+		let iter = txn.iterator(IteratorMode::Start);
+
+		// Skip `offset` entries, then collect `limit` entries
+		let results: Vec<_> = iter
+			.skip(s) // Skip the first `offset` entries
+			.take(l) // Take the next `limit` entries
+			.collect();
+
+		// Print the results
+		let mut count = 0;
+		for item in results {
+			let key = item?;
+			black_box(key);
+			count += 1;
+		}
+		Ok(count)
+	}
+
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		// Set the transaction options
-		let mut to = OptimisticTransactionOptions::default();
-		to.set_snapshot(true);
-		// Set the write options
-		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
 		// Create a new transaction
-		let txn = self.0.transaction_opt(&wo, &to);
+		let txn = self.get_transaction();
 		// Process the data
 		txn.put(key, val)?;
 		txn.commit()?;
@@ -163,14 +203,8 @@ impl RocksDBClient {
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Set the transaction options
-		let mut to = OptimisticTransactionOptions::default();
-		to.set_snapshot(true);
-		// Set the write options
-		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
 		// Create a new transaction
-		let txn = self.0.transaction_opt(&wo, &to);
+		let txn = self.get_transaction();
 		// Process the data
 		txn.delete(key)?;
 		txn.commit()?;

@@ -1,15 +1,15 @@
 #![cfg(feature = "surrealkv")]
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use surrealkv::Options;
 use surrealkv::Store;
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{KeyType, Scan};
 
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
@@ -78,6 +78,13 @@ impl BenchmarkClient for SurrealKVClient {
 		Ok(())
 	}
 
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		let key = &key.to_ne_bytes();
 		let val = bincode::serialize(&val)?;
@@ -110,5 +117,27 @@ impl BenchmarkClient for SurrealKVClient {
 		txn.delete(&key)?;
 		txn.commit().await?;
 		Ok(())
+	}
+}
+
+impl SurrealKVClient {
+	async fn scan(&self, scan: &Scan) -> Result<usize> {
+		if scan.condition.is_some() {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+
+		// Extract parameters
+		let s = scan.start.unwrap_or(0);
+		let l = scan.limit.unwrap_or(0);
+		let k = scan.keys_only.unwrap_or(false);
+		if k {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+
+		let mut txn = self.db.begin()?;
+		let start = [0u8].as_slice();
+		let end = [255u8].as_slice();
+		let res = txn.scan(start..end, Some(s + l))?;
+		Ok(res.len())
 	}
 }

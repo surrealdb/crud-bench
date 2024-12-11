@@ -5,7 +5,7 @@ use crate::docker::DockerParams;
 use crate::valueprovider::Columns;
 use crate::{KeyType, Scan};
 use anyhow::{bail, Result};
-use futures::StreamExt;
+use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
@@ -14,6 +14,7 @@ use mongodb::options::ReadConcern;
 use mongodb::options::WriteConcern;
 use mongodb::{bson, Client, Collection, IndexModel};
 use serde_json::Value;
+use std::hint::black_box;
 
 pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "mongo",
@@ -148,9 +149,18 @@ impl MongoDBClient {
 		}
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(0);
+		let k = scan.keys_only.unwrap_or(false);
 		let filter = doc! {};
-		let doc = self.0.find(filter).skip(s as u64).limit(l as i64).await?;
-		let count = doc.count().await;
+		let mut cursor = if k {
+			self.0.find(filter).skip(s as u64).limit(l as i64).projection(doc! { "id": 1 }).await?
+		} else {
+			self.0.find(filter).skip(s as u64).limit(l as i64).await?
+		};
+		let mut count = 0;
+		while let Some(doc) = cursor.try_next().await? {
+			black_box(doc);
+			count += 1;
+		}
 		Ok(count)
 	}
 
