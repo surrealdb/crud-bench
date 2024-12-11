@@ -35,7 +35,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build benchmark
-        run: cargo build --release --target x86_64-unknown-linux-gnu --features surrealdb/kv-mem,surrealdb/kv-surrealkv
+        run: cargo build --release --target x86_64-unknown-linux-gnu --features surrealdb/kv-mem,surrealdb/kv-rocksdb,surrealdb/kv-surrealkv
 
       - name: Store artifacts
         run: cp target/x86_64-unknown-linux-gnu/release/crud-bench crud-bench
@@ -112,6 +112,11 @@ jobs:
             enabled: true
             endpoint_cfg: -e memory
             description: SurrealDB memory engine
+          # SurrealDB RocksDB Rngine
+          - database: surrealdb
+            enabled: true
+            endpoint_cfg: -e rocksdb:/tmp/rocksdb-engine
+            description: SurrealDB RocksDB engine
           # SurrealDB SurrealKV Engine
           - database: surrealdb
             enabled: true
