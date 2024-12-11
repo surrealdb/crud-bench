@@ -314,6 +314,7 @@ Each test is defined as a JSON object specifying the scan parameters and the tes
 [
   {
     "name": "limit100",
+    "keys_only": false,
     "start": 0,
     "limit": 100,
     "expect": 100
@@ -328,6 +329,7 @@ Each test is defined as a JSON object specifying the scan parameters and the tes
 ```
 
 - name: A descriptive name for the test.
+- keys_only: if `true`, only the ID is returned. If `false` (or missing) the whole record is returned.
 - start: Skips the specified number of rows before starting to return rows.
 - limit: Specifies the maximum number of rows to return.
 - expect: Asserts the expected number of rows returned.
