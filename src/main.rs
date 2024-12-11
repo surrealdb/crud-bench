@@ -160,7 +160,12 @@ fn run(args: Args) -> Result<()> {
 			println!("--------------------------------------------------");
 			match image {
 				Some(v) => println!("Benchmark result for {:?} on docker {v}", args.database),
-				None => println!("Benchmark result for {:?}", args.database),
+				None => match args.endpoint {
+					Some(endpoint) => {
+						println!("Benchmark result for {:?}; endpoint => {endpoint}", args.database)
+					}
+					None => println!("Benchmark result for {:?}", args.database),
+				},
 			}
 			println!(
 				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",

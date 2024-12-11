@@ -6,7 +6,7 @@ use serde_json::Value;
 use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::Config;
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 use surrealdb::Surreal;
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
@@ -67,7 +67,7 @@ pub(crate) struct SurrealDBClient {
 #[derive(Debug, Deserialize)]
 struct SurrealRecord {
 	#[allow(dead_code)]
-	id: Thing,
+	id: RecordId,
 }
 
 impl BenchmarkClient for SurrealDBClient {

@@ -113,7 +113,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build benchmark
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} --features surrealdb/kv-mem,surrealdb/kv-rocksdb,surrealdb/kv-surrealkv
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -253,17 +253,20 @@ jobs:
             enabled: true
             description: SurrealDB with SurrealKV storage
           # SurrealDB Memory Engine
-          - database: memory-engine
+          - database: surrealdb
             enabled: true
-            description: An embedded SurrealDB memory engine
+            endpoint_cfg: -e memory
+            description: SurrealDB memory engine
           # SurrealDB RocksDB Engine
-          - database: rocksdb-engine
+          - database: surrealdb
             enabled: true
-            description: An embedded SurrealDB RocksDB engine
+            endpoint_cfg: -e rocksdb:/tmp/rocksdb-engine
+            description: SurrealDB RocksDB engine
           # SurrealDB SurrealKV Engine
-          - database: surrealkv-engine
+          - database: surrealdb
             enabled: true
-            description: An embedded SurrealDB SurrealKV engine
+            endpoint_cfg: -e surrealkv:/tmp/surrealkv-engine
+            description: SurrealDB SurrealKV engine
           # SurrealKV
           - database: surrealkv
             enabled: true
@@ -283,27 +286,27 @@ jobs:
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 5
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k integer -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint_cfg || '' }} -s 100000 -c 128 -t 48 -k integer -r
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random)
         timeout-minutes: 5
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string26 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint_cfg || '' }} -s 100000 -c 128 -t 48 -k string26 -r
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string90 / random)
         timeout-minutes: 5
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string90 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint_cfg || '' }} -s 100000 -c 128 -t 48 -k string90 -r
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random)
         timeout-minutes: 5
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string506 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint_cfg || '' }} -s 100000 -c 128 -t 48 -k string506 -r
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 5
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} -s 100000 -c 128 -t 48 -k string26 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint_cfg || '' }} -s 100000 -c 128 -t 48 -k string26 -r
         env:
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
 
