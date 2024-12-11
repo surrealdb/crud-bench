@@ -42,6 +42,12 @@ pub(crate) enum Database {
 	SurrealdbRocksdb,
 	#[cfg(feature = "surrealdb")]
 	SurrealdbSurrealkv,
+	#[cfg(feature = "surrealdb")]
+	MemoryEngine,
+	#[cfg(feature = "surrealdb")]
+	RocksdbEngine,
+	#[cfg(feature = "surrealdb")]
+	SurrealkvEngine,
 }
 
 impl Database {
@@ -195,6 +201,39 @@ impl Database {
 			}
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbSurrealkv => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "surrealdb")]
+			Database::MemoryEngine => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "surrealdb")]
+			Database::RocksdbEngine => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "surrealdb")]
+			Database::SurrealkvEngine => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(kt, vp.columns()).await?,
