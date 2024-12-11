@@ -112,11 +112,6 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get -qq -y update
-          sudo apt-get -qq -y install clang curl
-
       - name: Build benchmark
         run: cargo build --release --target ${{ matrix.target }} --features surrealdb/kv-mem,surrealdb/kv-rocksdb,surrealdb/kv-surrealkv
 
