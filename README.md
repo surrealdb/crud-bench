@@ -49,7 +49,7 @@ Options:
   -d, --database <DATABASE>
           Database
           
-          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
+          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, memory-engine, rocksdb-engine, surrealkv-engine]
 
   -e, --endpoint <ENDPOINT>
           Endpoint
@@ -121,7 +121,7 @@ Options:
   -d, --database <DATABASE>
           Database
           
-          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
+          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, memory-engine, rocksdb-engine, surrealkv-engine]
 
   -e, --endpoint <ENDPOINT>
           Endpoint
@@ -192,7 +192,7 @@ Options:
   -d, --database <DATABASE>
           Database
           
-          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
+          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, memory-engine, rocksdb-engine, surrealkv-engine]
 
   -e, --endpoint <ENDPOINT>
           Endpoint
@@ -405,6 +405,30 @@ Run the benchmark against SurreadDB with SurrealKV:
 
 ```bash
 cargo run -r -- -d surrealdb-surrealkv -s 100000 -t 3 -r
+```
+
+## Embedded SurrealDB Memory Engine benchmark
+
+Run the benchmark against an embedded SurrealDB memory engine:
+
+```bash
+cargo run -r -- -d memory-engine -s 100000 -t 3 -r
+```
+
+## Embedded SurrealDB RocksDB Engine benchmark
+
+Run the benchmark against an embedded SurreadDB RocksDB engine:
+
+```bash
+cargo run -r -- -d rocksdb-engine -s 100000 -t 3 -r
+```
+
+## Embedded SurrealDB SurrealKV Engine benchmark
+
+Run the benchmark against an embedded SurreadDB SurrealKV engine:
+
+```bash
+cargo run -r -- -d surrealkv-engine -s 100000 -t 3 -r
 ```
 
 ## SurrealDB local benchmark
