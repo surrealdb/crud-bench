@@ -311,12 +311,20 @@ This parameter accepts a JSON array, where each item represents a different scan
 Each test is defined as a JSON object specifying the scan parameters and the test name.
 
 ```json
-{
-  "name": "Name of the test",
-  "start": 10,
-  "limit": 100,
-  "expect": 100
-}
+[
+  {
+    "name": "limit100",
+    "start": 0,
+    "limit": 100,
+    "expect": 100
+  },
+  {
+    "name": "start100",
+    "start": 100,
+    "limit": 100,
+    "expect": 100
+  }
+]
 ```
 
 - name: A descriptive name for the test.
