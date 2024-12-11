@@ -77,7 +77,7 @@ pub(crate) struct Args {
 	)]
 	pub(crate) value: String,
 
-	/// Print-out an example of value
+	/// Print-out an example of a generated value
 	#[arg(long)]
 	pub(crate) show_sample: bool,
 
@@ -85,7 +85,7 @@ pub(crate) struct Args {
 	#[arg(short, long, value_parser=clap::value_parser!(u32).range(0..))]
 	pub(crate) pid: Option<u32>,
 
-	/// Size of the text value
+	/// An array of scan specifications
 	#[arg(
 		short = 'a',
 		long,
