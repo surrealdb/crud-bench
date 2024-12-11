@@ -13,7 +13,7 @@ mongodb = ["dep:mongodb"]
 postgres = ["dep:tokio-postgres"]
 redb = ["dep:redb"]
 redis = ["dep:redis"]
-rocksdb = ["dep:surrealdb-rocksdb"]
+rocksdb = ["dep:rocksdb"]
 scylladb = ["dep:scylla"]
 speedb = ["dep:speedb"]
 surrealdb = ["dep:surrealdb"]
@@ -41,8 +41,7 @@ num_cpus = "1.16.0"
 rand = { version = "0.8.5", features = ["small_rng"] }
 redb = { version = "2.2.0", optional = true }
 redis = { version = "0.27.6", features = ["tokio-comp"], optional = true }
-# We have to use a different name for the fork because `rocksdb` conflicts with the `surrealdb`'s dependency
-surrealdb-rocksdb = { git = "https://github.com/surrealdb/rust-rocksdb", features = ["lz4", "snappy"], optional = true }
+rocksdb = { git = "https://github.com/surrealdb/rust-rocksdb", features = ["lz4", "snappy"], optional = true }
 scylla = { version = "0.15.0", optional = true }
 serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.133"
