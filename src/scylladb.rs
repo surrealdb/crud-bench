@@ -157,7 +157,12 @@ impl ScylladbClient {
 		let s = scan.start.unwrap_or(0);
 		let l = (scan.start.unwrap_or(0) + scan.limit.unwrap_or(0)) as i32;
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
-		let stm = format!("SELECT id FROM record {c} LIMIT ?");
+		let k = scan.keys_only.unwrap_or(false);
+		let stm = if k {
+			format!("SELECT id FROM record {c} LIMIT ?")
+		} else {
+			format!("SELECT * FROM record {c} LIMIT ?")
+		};
 		let mut rows_stream: TypedRowStream<(String,)> =
 			self.session.query_iter(stm, (&l,)).await?.rows_stream()?;
 		if s > 0 {
