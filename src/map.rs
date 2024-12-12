@@ -1,6 +1,6 @@
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
 use crate::valueprovider::Columns;
-use crate::{KeyType, Scan};
+use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use dashmap::DashMap;
 use serde_json::Value;
@@ -40,24 +40,48 @@ pub(crate) struct MapClient(MapDatabase);
 
 impl BenchmarkClient for MapClient {
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		if scan.condition.is_some() || Some(true).eq(&scan.keys_only) {
+		let projection = scan.projection()?;
+		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
-		if let MapDatabase::Integer(m) = &self.0 {
-			let values: Vec<Value> = if let Some(start) = scan.start {
-				if let Some(limit) = scan.limit {
-					m.iter().skip(start).take(limit).map(|e| e.value().clone()).collect()
+		match projection {
+			Projection::Id => bail!(NOT_SUPPORTED_ERROR),
+			Projection::Full => {
+				if let MapDatabase::Integer(m) = &self.0 {
+					let values: Vec<Value> = if let Some(start) = scan.start {
+						if let Some(limit) = scan.limit {
+							m.iter().skip(start).take(limit).map(|e| e.value().clone()).collect()
+						} else {
+							m.iter().skip(start).map(|e| e.value().clone()).collect()
+						}
+					} else if let Some(limit) = scan.limit {
+						m.iter().take(limit).map(|e| e.value().clone()).collect()
+					} else {
+						m.iter().map(|e| e.value().clone()).collect()
+					};
+					Ok(values.len())
 				} else {
-					m.iter().skip(start).map(|e| e.value().clone()).collect()
+					bail!("Invalid MapDatabase variant");
 				}
-			} else if let Some(limit) = scan.limit {
-				m.iter().take(limit).map(|e| e.value().clone()).collect()
-			} else {
-				m.iter().map(|e| e.value().clone()).collect()
-			};
-			Ok(values.len())
-		} else {
-			bail!("Invalid MapDatabase variant");
+			}
+			Projection::Count => {
+				if let MapDatabase::Integer(m) = &self.0 {
+					let c = if let Some(start) = scan.start {
+						if let Some(limit) = scan.limit {
+							m.iter().skip(start).take(limit).count()
+						} else {
+							m.iter().skip(start).count()
+						}
+					} else if let Some(limit) = scan.limit {
+						m.iter().take(limit).count()
+					} else {
+						m.iter().count()
+					};
+					Ok(c)
+				} else {
+					bail!("Invalid MapDatabase variant");
+				}
+			}
 		}
 	}
 

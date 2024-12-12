@@ -4,8 +4,8 @@ use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::dialect::AnsiSqlDialect;
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{KeyType, Scan};
-use anyhow::Result;
+use crate::{KeyType, Projection, Scan};
+use anyhow::{bail, Result};
 use futures::StreamExt;
 use scylla::_macro_internal::{SerializeRow, SerializeValue};
 use scylla::transport::iterator::TypedRowStream;
@@ -157,24 +157,43 @@ impl ScylladbClient {
 		let s = scan.start.unwrap_or(0);
 		let l = (scan.start.unwrap_or(0) + scan.limit.unwrap_or(0)) as i32;
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
-		let k = scan.keys_only.unwrap_or(false);
-		let stm = if k {
-			format!("SELECT id FROM record {c} LIMIT ?")
-		} else {
-			format!("SELECT * FROM record {c} LIMIT ?")
+		let p = scan.projection()?;
+		let stm = match p {
+			Projection::Id => {
+				format!("SELECT id FROM record {c} LIMIT ?")
+			}
+			Projection::Full => {
+				format!("SELECT * FROM record {c} LIMIT ?")
+			}
+			Projection::Count => {
+				format!("SELECT count(*) FROM record {c} LIMIT ?")
+			}
 		};
 		let mut rows_stream: TypedRowStream<(String,)> =
 			self.session.query_iter(stm, (&l,)).await?.rows_stream()?;
 		if s > 0 {
 			let _ = (&mut rows_stream).skip(s);
 		}
-		let mut count = 0;
-		while let Some(next_row_res) = rows_stream.next().await {
-			let id: (String,) = next_row_res?;
-			assert!(!id.is_empty());
-			count += 1;
+		match p {
+			Projection::Id | Projection::Full => {
+				let mut count = 0;
+				while let Some(next_row_res) = rows_stream.next().await {
+					let id: (String,) = next_row_res?;
+					assert!(!id.is_empty());
+					count += 1;
+				}
+				Ok(count)
+			}
+			Projection::Count => {
+				if let Some(next_row_res) = rows_stream.next().await {
+					let count: (String,) = next_row_res?;
+					let count: usize = count.0.parse()?;
+					Ok(count)
+				} else {
+					bail!("No row returned");
+				}
+			}
 		}
-		Ok(count)
 	}
 	async fn update<T>(&self, key: T, val: Value) -> Result<()>
 	where

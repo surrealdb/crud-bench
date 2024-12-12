@@ -6,7 +6,7 @@ use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{KeyType, Scan};
+use crate::{KeyType, Projection, Scan};
 use anyhow::Result;
 use serde_json::Value;
 use tokio_postgres::types::ToSql;
@@ -146,14 +146,25 @@ impl PostgresClient {
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or("".to_string());
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
-		let k = scan.keys_only.unwrap_or(false);
-		let stm = if k {
-			format!("SELECT id FROM record {c} {l} {s}")
-		} else {
-			format!("SELECT * FROM record {c} {l} {s}")
-		};
-		let res = self.client.query(&stm, &[]).await?;
-		Ok(res.len())
+		let p = scan.projection()?;
+		match p {
+			Projection::Id => {
+				let stm = format!("SELECT id FROM record {c} {l} {s}");
+				let res = self.client.query(&stm, &[]).await?;
+				Ok(res.len())
+			}
+			Projection::Full => {
+				let stm = format!("SELECT * FROM record {c} {l} {s}");
+				let res = self.client.query(&stm, &[]).await?;
+				Ok(res.len())
+			}
+			Projection::Count => {
+				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s}) AS t");
+				let res = self.client.query(&stm, &[]).await?;
+				let count: i64 = res.get(0).unwrap().get(0);
+				Ok(count as usize)
+			}
+		}
 	}
 
 	async fn update<T>(&self, key: T, val: Value) -> Result<()>
