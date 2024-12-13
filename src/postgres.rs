@@ -161,7 +161,7 @@ impl PostgresClient {
 			Projection::Count => {
 				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s}) AS t");
 				let res = self.client.query(&stm, &[]).await?;
-				let count: i64 = res.get(0).unwrap().get(0);
+				let count: i64 = res.first().unwrap().get(0);
 				Ok(count as usize)
 			}
 		}

@@ -116,7 +116,13 @@ impl BenchmarkClient for SurrealDBClient {
 		let stm = match p {
 			Projection::Id => format!("SELECT id FROM record {c} {s} {l}"),
 			Projection::Full => format!("SELECT * FROM record {c} {s} {l}"),
-			Projection::Count => format!("SELECT COUNT() FROM record {c} {s} {l}"),
+			Projection::Count => {
+				if s.is_empty() && l.is_empty() {
+					format!("SELECT id FROM record {c} {s} {l} GROUP ALL")
+				} else {
+					format!("SELECT COUNT() FROM (SELECT id FROM record {c} {s} {l}) GROUP ALL")
+				}
+			}
 		};
 		match p {
 			Projection::Id | Projection::Full => {
@@ -124,8 +130,17 @@ impl BenchmarkClient for SurrealDBClient {
 				Ok(res.len())
 			}
 			Projection::Count => {
-				let count: Vec<usize> = self.db.query(stm).await?.take(0)?;
-				Ok(count[0])
+				let res: Vec<Value> = self.db.query(stm).await?.take(0)?;
+				Ok(
+					res.first()
+						.unwrap()
+						.as_object()
+						.unwrap()
+						.get("count")
+						.unwrap()
+						.as_i64()
+						.unwrap() as usize,
+				)
 			}
 		}
 	}

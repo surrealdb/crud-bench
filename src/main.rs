@@ -128,7 +128,7 @@ pub(crate) enum Projection {
 }
 impl Scan {
 	fn projection(&self) -> Result<Projection> {
-		match self.projection.as_ref().map(|s| s.as_str()) {
+		match self.projection.as_deref() {
 			Some("ID") => Ok(Projection::Id),
 			Some("COUNT") => Ok(Projection::Count),
 			Some(o) => bail!(format!("Unsupported projection: {}", o)),
