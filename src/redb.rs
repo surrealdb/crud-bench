@@ -70,6 +70,7 @@ impl BenchmarkClient for ReDBClient {
 
 impl ReDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
 		let txn = self.0.begin_write()?;

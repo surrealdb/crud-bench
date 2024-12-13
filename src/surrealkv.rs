@@ -91,6 +91,7 @@ impl BenchmarkClient for SurrealKVClient {
 
 impl SurrealKVClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
 		let mut txn = self.db.begin_with_mode(ReadWrite)?;
@@ -110,6 +111,7 @@ impl SurrealKVClient {
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
 		let mut txn = self.db.begin_with_mode(ReadWrite)?;

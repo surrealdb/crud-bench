@@ -129,6 +129,7 @@ impl RocksDBClient {
 	}
 
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
 		let txn = self.get_transaction();
@@ -155,6 +156,7 @@ impl RocksDBClient {
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
 		let txn = self.get_transaction();
