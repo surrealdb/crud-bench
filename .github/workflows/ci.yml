@@ -261,7 +261,7 @@ jobs:
           - database: surrealdb
             enabled: true
             endpoint_cfg: -e rocksdb:/tmp/rocksdb-engine
-            description: SurrealDB RocksDB engine
+            description: SurrealDB embedded with RocksDB storage
           # SurrealDB SurrealKV Engine
           - database: surrealdb
             enabled: true
