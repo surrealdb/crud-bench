@@ -3,16 +3,16 @@
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
 use crate::docker::DockerParams;
 use crate::valueprovider::Columns;
-use crate::{KeyType, Scan};
+use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
 use mongodb::options::IndexOptions;
 use mongodb::options::ReadConcern;
 use mongodb::options::WriteConcern;
-use mongodb::{bson, Client, Collection, IndexModel};
+use mongodb::{bson, Client, Collection, Cursor, IndexModel};
 use serde_json::Value;
 use std::hint::black_box;
 
@@ -149,19 +149,46 @@ impl MongoDBClient {
 		}
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(0);
-		let k = scan.keys_only.unwrap_or(false);
-		let filter = doc! {};
-		let mut cursor = if k {
-			self.0.find(filter).skip(s as u64).limit(l as i64).projection(doc! { "id": 1 }).await?
-		} else {
-			self.0.find(filter).skip(s as u64).limit(l as i64).await?
+		let p = scan.projection()?;
+		let consume = |mut cursor: Cursor<Document>| async move {
+			let mut count = 0;
+			while let Some(doc) = cursor.try_next().await? {
+				black_box(doc);
+				count += 1;
+			}
+			Ok(count)
 		};
-		let mut count = 0;
-		while let Some(doc) = cursor.try_next().await? {
-			black_box(doc);
-			count += 1;
+		match p {
+			Projection::Id => {
+				let cursor = self
+					.0
+					.find(doc! {})
+					.skip(s as u64)
+					.limit(l as i64)
+					.projection(doc! { "id": 1 })
+					.await?;
+				consume(cursor).await
+			}
+			Projection::Full => {
+				let cursor = self.0.find(doc! {}).skip(s as u64).limit(l as i64).await?;
+				consume(cursor).await
+			}
+			Projection::Count => {
+				let pipeline = vec![
+					doc! { "$skip": s as i64 },
+					doc! { "$limit": l as i64 },
+					doc! { "$count": "count" },
+				];
+				let mut cursor = self.0.aggregate(pipeline).await?;
+				if let Some(result) = cursor.next().await {
+					let doc: Document = result?;
+					let count = doc.get_i32("count").unwrap_or(0);
+					Ok(count as usize)
+				} else {
+					bail!("No row returned");
+				}
+			}
 		}
-		Ok(count)
 	}
 
 	async fn update<K>(&self, key: K, val: Value) -> Result<()>

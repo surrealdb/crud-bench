@@ -9,7 +9,7 @@ use surrealkv::Store;
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
 use crate::valueprovider::Columns;
-use crate::{KeyType, Scan};
+use crate::{KeyType, Projection, Scan};
 
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
@@ -129,8 +129,8 @@ impl SurrealKVClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(0);
-		let k = scan.keys_only.unwrap_or(false);
-		if k {
+		let p = scan.projection()?;
+		if matches!(p, Projection::Id | Projection::Count) {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
 
