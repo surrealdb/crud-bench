@@ -1,15 +1,15 @@
 #![cfg(feature = "surrealkv")]
 
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
+use crate::valueprovider::Columns;
+use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
+use surrealkv::Mode::{ReadOnly, ReadWrite};
 use surrealkv::Options;
 use surrealkv::Store;
-
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
-use crate::valueprovider::Columns;
-use crate::{KeyType, Projection, Scan};
 
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
@@ -19,6 +19,10 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		let _ = std::fs::remove_dir_all("surrealkv");
 		// Configure custom options
 		let mut opts = Options::new();
+		// Disable versioning
+		opts.enable_versions = false;
+		// Enable disk persistence
+		opts.disk_persistence = true;
 		// Set the directory location
 		opts.dir = PathBuf::from("surrealkv");
 		// Create the store
@@ -45,83 +49,86 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		let key = &key.to_ne_bytes();
-		let val = bincode::serialize(&val)?;
-		let mut txn = self.db.begin()?;
-		txn.set(key, &val)?;
-		txn.commit().await?;
-		Ok(())
+		self.create_bytes(&key.to_ne_bytes(), val).await
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let key = key.into_bytes();
-		let val = bincode::serialize(&val)?;
-		let mut txn = self.db.begin()?;
-		txn.set(&key, &val)?;
-		txn.commit().await?;
-		Ok(())
+		self.create_bytes(&key.into_bytes(), val).await
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		let key = &key.to_ne_bytes();
-		let mut txn = self.db.begin()?;
-		let read: Option<Vec<u8>> = txn.get(key)?;
-		assert!(read.is_some());
-		Ok(())
+		self.read_bytes(&key.to_ne_bytes()).await
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		let key = key.into_bytes();
-		let mut txn = self.db.begin()?;
-		let read: Option<Vec<u8>> = txn.get(&key)?;
-		assert!(read.is_some());
-		Ok(())
-	}
-
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
-	}
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+		self.read_bytes(&key.into_bytes()).await
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let key = &key.to_ne_bytes();
+		self.update_bytes(&key.to_ne_bytes(), val).await
+	}
+
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+		self.update_bytes(&key.into_bytes(), val).await
+	}
+
+	async fn delete_u32(&self, key: u32) -> Result<()> {
+		self.delete_bytes(&key.to_ne_bytes()).await
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		self.delete_bytes(&key.into_bytes()).await
+	}
+
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan_bytes(scan).await
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan_bytes(scan).await
+	}
+}
+
+impl SurrealKVClient {
+	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		let mut txn = self.db.begin()?;
+		// Create a new transaction
+		let mut txn = self.db.begin_with_mode(ReadWrite)?;
+		// Process the data
 		txn.set(key, &val)?;
 		txn.commit().await?;
 		Ok(())
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let key = key.into_bytes();
+	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
+		// Create a new transaction
+		let mut txn = self.db.begin_with_mode(ReadOnly)?;
+		// Process the data
+		let res = txn.get(key)?;
+		assert!(res.is_some());
+		Ok(())
+	}
+
+	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		let mut txn = self.db.begin()?;
-		txn.set(&key, &val)?;
+		// Create a new transaction
+		let mut txn = self.db.begin_with_mode(ReadWrite)?;
+		// Process the data
+		txn.set(key, &val)?;
 		txn.commit().await?;
 		Ok(())
 	}
 
-	async fn delete_u32(&self, key: u32) -> Result<()> {
-		let key = &key.to_ne_bytes();
-		let mut txn = self.db.begin()?;
+	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
+		// Create a new transaction
+		let mut txn = self.db.begin_with_mode(ReadWrite)?;
+		// Process the data
 		txn.delete(key)?;
 		txn.commit().await?;
 		Ok(())
 	}
 
-	async fn delete_string(&self, key: String) -> Result<()> {
-		let key = key.into_bytes();
-		let mut txn = self.db.begin()?;
-		txn.delete(&key)?;
-		txn.commit().await?;
-		Ok(())
-	}
-}
-
-impl SurrealKVClient {
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
