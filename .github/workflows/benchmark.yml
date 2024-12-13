@@ -111,7 +111,7 @@ jobs:
           - database: surrealdb
             enabled: true
             endpoint_cfg: -e memory
-            description: SurrealDB memory engine
+            description: SurrealDB embedded with in-memory storage
           # SurrealDB RocksDB Rngine
           - database: surrealdb
             enabled: true
