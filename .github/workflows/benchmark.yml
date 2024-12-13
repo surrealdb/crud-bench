@@ -3,7 +3,7 @@ name: Benchmark
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: "0 6 * * *"
 
 concurrency:
   # Use github.run_id on main branch
@@ -17,10 +17,9 @@ defaults:
     shell: bash
 
 jobs:
-
   build:
     name: Build crud-bench
-    runs-on: [ runner-amd64-2xlarge-private ]
+    runs-on: [runner-amd64-2xlarge-private]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -35,9 +34,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build benchmark
-        run: |
-          cargo build --release --target x86_64-unknown-linux-gnu \
-            --features surrealdb/allocator,surrealdb/kv-mem,surrealdb/kv-rocksdb,surrealdb/kv-surrealkv
+        run: cargo build --release --target x86_64-unknown-linux-gnu
 
       - name: Store artifacts
         run: cp target/x86_64-unknown-linux-gnu/release/crud-bench crud-bench
@@ -51,7 +48,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [ runner-amd64-2xlarge-private ]
+    runs-on: [runner-amd64-2xlarge-private]
     continue-on-error: true
     strategy:
       fail-fast: false
