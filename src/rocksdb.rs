@@ -2,7 +2,7 @@
 
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
 use crate::valueprovider::Columns;
-use crate::{KeyType, Scan};
+use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use rocksdb::{
 	DBCompactionStyle, DBCompressionType, IteratorMode, LogLevel, OptimisticTransactionDB,
@@ -165,10 +165,7 @@ impl RocksDBClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(0);
-		let k = scan.keys_only.unwrap_or(false);
-		if k {
-			bail!(NOT_SUPPORTED_ERROR);
-		}
+		let p = scan.projection()?;
 
 		// Create a new transaction
 		let txn = self.get_transaction();
@@ -176,20 +173,35 @@ impl RocksDBClient {
 		// Create an iterator starting at the beginning
 		let iter = txn.iterator(IteratorMode::Start);
 
-		// Skip `offset` entries, then collect `limit` entries
-		let results: Vec<_> = iter
-			.skip(s) // Skip the first `offset` entries
-			.take(l) // Take the next `limit` entries
-			.collect();
+		match p {
+			Projection::Full => {
+				// Skip `offset` entries, then collect `limit` entries
+				let results: Vec<_> = iter
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.collect();
 
-		// Print the results
-		let mut count = 0;
-		for item in results {
-			let key = item?;
-			black_box(key);
-			count += 1;
+				// Print the results
+				let mut count = 0;
+				for item in results {
+					let key = item?;
+					black_box(key);
+					count += 1;
+				}
+				Ok(count)
+			}
+			Projection::Count => {
+				// Skip `offset` entries, then collect `limit` entries
+				let count = iter
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.count();
+				Ok(count)
+			}
+			Projection::Id => {
+				bail!(NOT_SUPPORTED_ERROR)
+			}
 		}
-		Ok(count)
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {

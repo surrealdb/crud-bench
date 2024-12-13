@@ -2,7 +2,7 @@ use crate::benchmark::Benchmark;
 use crate::database::Database;
 use crate::keyprovider::KeyProvider;
 use crate::valueprovider::ValueProvider;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::io::IsTerminal;
@@ -90,7 +90,7 @@ pub(crate) struct Args {
 		short = 'a',
 		long,
 		env = "CRUD_BENCH_SCANS",
-		default_value = "[{\"name\": \"limit_full\", \"limit\": 100, \"expect\": 100}, {\"name\": \"limit_keys\", \"keys_only\": true, \"limit\": 100, \"expect\": 100}]"
+		default_value = "[{\"name\": \"limit_full\", \"limit\": 100, \"expect\": 100}, {\"name\": \"limit_keys\", \"projection\": \"ID\", \"limit\": 100, \"expect\": 100}, {\"name\": \"limit_count\", \"projection\": \"COUNT\", \"limit\": 100, \"expect\": 100}]"
 	)]
 	pub(crate) scans: String,
 }
@@ -118,7 +118,23 @@ pub(crate) struct Scan {
 	start: Option<usize>,
 	limit: Option<usize>,
 	expect: Option<usize>,
-	keys_only: Option<bool>,
+	projection: Option<String>,
+}
+
+pub(crate) enum Projection {
+	Id,
+	Full,
+	Count,
+}
+impl Scan {
+	fn projection(&self) -> Result<Projection> {
+		match self.projection.as_deref() {
+			Some("ID") => Ok(Projection::Id),
+			Some("COUNT") => Ok(Projection::Count),
+			Some(o) => bail!(format!("Unsupported projection: {}", o)),
+			_ => Ok(Projection::Full),
+		}
+	}
 }
 
 fn main() -> Result<()> {

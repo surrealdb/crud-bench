@@ -11,7 +11,7 @@ use surrealdb::Surreal;
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
 use crate::valueprovider::Columns;
-use crate::{KeyType, Scan};
+use crate::{KeyType, Projection, Scan};
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
@@ -112,14 +112,37 @@ impl BenchmarkClient for SurrealDBClient {
 		let s = scan.start.map(|s| format!("START {}", s)).unwrap_or("".to_string());
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
-		let k = scan.keys_only.unwrap_or(false);
-		let query = if k {
-			format!("SELECT id FROM record {c} {s} {l}")
-		} else {
-			format!("SELECT * FROM record {c} {s} {l}")
+		let p = scan.projection()?;
+		let stm = match p {
+			Projection::Id => format!("SELECT id FROM record {c} {s} {l}"),
+			Projection::Full => format!("SELECT * FROM record {c} {s} {l}"),
+			Projection::Count => {
+				if s.is_empty() && l.is_empty() {
+					format!("SELECT id FROM record {c} {s} {l} GROUP ALL")
+				} else {
+					format!("SELECT COUNT() FROM (SELECT id FROM record {c} {s} {l}) GROUP ALL")
+				}
+			}
 		};
-		let scan: Vec<SurrealRecord> = self.db.query(query).await?.take(0)?;
-		Ok(scan.len())
+		match p {
+			Projection::Id | Projection::Full => {
+				let res: Vec<SurrealRecord> = self.db.query(stm).await?.take(0)?;
+				Ok(res.len())
+			}
+			Projection::Count => {
+				let res: Vec<Value> = self.db.query(stm).await?.take(0)?;
+				Ok(
+					res.first()
+						.unwrap()
+						.as_object()
+						.unwrap()
+						.get("count")
+						.unwrap()
+						.as_i64()
+						.unwrap() as usize,
+				)
+			}
+		}
 	}
 
 	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
