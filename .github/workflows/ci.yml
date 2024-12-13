@@ -266,7 +266,7 @@ jobs:
           - database: surrealdb
             enabled: true
             endpoint_cfg: -e surrealkv:/tmp/surrealkv-engine
-            description: SurrealDB SurrealKV engine
+            description: SurrealDB embedded with SurrealKV storage
           # SurrealKV
           - database: surrealkv
             enabled: true
