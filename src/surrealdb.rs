@@ -116,31 +116,65 @@ impl BenchmarkClient for SurrealDBClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		let created: Option<SurrealRecord> =
+		let res: Option<SurrealRecord> =
 			self.db().create(("record", key as i64)).content(val).await?;
-		assert!(created.is_some());
+		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let created: Option<SurrealRecord> = self.db().create(("record", key)).content(val).await?;
-		assert!(created.is_some());
+		let res: Option<SurrealRecord> = self.db().create(("record", key)).content(val).await?;
+		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		let read: Option<SurrealRecord> = self.db().select(("record", key as i64)).await?;
-		assert!(read.is_some());
+		let res: Option<SurrealRecord> = self.db().select(("record", key as i64)).await?;
+		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		let read: Option<SurrealRecord> = self.db().select(("record", key)).await?;
-		assert!(read.is_some());
+		let res: Option<SurrealRecord> = self.db().select(("record", key)).await?;
+		assert!(res.is_some());
+		Ok(())
+	}
+
+	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+		let _: Option<SurrealRecord> =
+			self.db().update(("record", key as i64)).content(val).await?;
+		Ok(())
+	}
+
+	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+		let res: Option<SurrealRecord> = self.db().update(("record", key)).content(val).await?;
+		assert!(res.is_some());
+		Ok(())
+	}
+
+	async fn delete_u32(&self, key: u32) -> Result<()> {
+		let res: Option<SurrealRecord> = self.db().delete(("record", key as i64)).await?;
+		assert!(res.is_some());
+		Ok(())
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		let res: Option<SurrealRecord> = self.db().delete(("record", key)).await?;
+		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+}
+
+impl SurrealDBClient {
+	async fn scan(&self, scan: &Scan) -> Result<usize> {
 		let s = scan.start.map(|s| format!("START {}", s)).unwrap_or("".to_string());
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
@@ -175,34 +209,5 @@ impl BenchmarkClient for SurrealDBClient {
 				)
 			}
 		}
-	}
-
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan_u32(scan).await
-	}
-
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let updated: Option<SurrealRecord> =
-			self.db().update(("record", key as i64)).content(val).await?;
-		assert!(updated.is_some());
-		Ok(())
-	}
-
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let updated: Option<SurrealRecord> = self.db().update(("record", key)).content(val).await?;
-		assert!(updated.is_some());
-		Ok(())
-	}
-
-	async fn delete_u32(&self, key: u32) -> Result<()> {
-		let deleted: Option<SurrealRecord> = self.db().delete(("record", key as i64)).await?;
-		assert!(deleted.is_some());
-		Ok(())
-	}
-
-	async fn delete_string(&self, key: String) -> Result<()> {
-		let deleted: Option<SurrealRecord> = self.db().delete(("record", key)).await?;
-		assert!(deleted.is_some());
-		Ok(())
 	}
 }
