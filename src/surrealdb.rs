@@ -58,9 +58,8 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 		// Return the client
 		let client = match ep.split_once(':').unwrap().0 {
 			"ws" | "wss" | "http" | "https" => {
-				// Connect to the database
-				let db = connect((ep, config)).await?;
-				SurrealDBClient::Remote(db)
+				// Connect to the database and instantiate the remote client
+				SurrealDBClient::Remote(connect((ep, config)).await?)
 			}
 			_ => {
 				// Connect to the database
