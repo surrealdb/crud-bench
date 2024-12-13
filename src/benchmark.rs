@@ -126,20 +126,18 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		E: BenchmarkEngine<C> + Send + Sync,
 	{
-		// Wait for a small amount of time
-		tokio::time::sleep(TIMEOUT).await;
 		// Get the current system time
 		let time = SystemTime::now();
 		// Check the elapsed time
 		while time.elapsed()? < self.timeout {
+			// Wait for a small amount of time
+			tokio::time::sleep(TIMEOUT).await;
 			// Get the specified endpoint
 			let endpoint = self.endpoint.to_owned();
 			// Attempt to create a client connection
 			if let Ok(v) = engine.create_client(endpoint).await {
 				return Ok(v);
 			}
-			// Wait for a small amount of time
-			tokio::time::sleep(TIMEOUT).await;
 		}
 		bail!("Can't create the client")
 	}
