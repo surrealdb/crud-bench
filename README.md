@@ -418,7 +418,7 @@ cargo run -r -- -d surrealdb-surrealkv -s 100000 -t 3 -r
 Run the benchmark against an embedded SurrealDB memory engine:
 
 ```bash
-cargo run -r -- -d surrealdb -e memory -s 100000 -t 3 -r
+cargo run -F surrealdb/allocator,surrealdb/kv-mem -r -- -d surrealdb -e memory -s 100000 -t 3 -r
 ```
 
 ## Embedded SurrealDB RocksDB Engine benchmark
@@ -426,7 +426,7 @@ cargo run -r -- -d surrealdb -e memory -s 100000 -t 3 -r
 Run the benchmark against an embedded SurreadDB RocksDB engine:
 
 ```bash
-cargo run -r -- -d surrealdb -e rocksdb:/tmp/rocksdb-engine -s 100000 -t 3 -r
+cargo run -F surrealdb/allocator,surrealdb/kv-rocksdb -r -- -d surrealdb -e rocksdb:/tmp/rocksdb-engine -s 100000 -t 3 -r
 ```
 
 ## Embedded SurrealDB SurrealKV Engine benchmark
@@ -434,7 +434,7 @@ cargo run -r -- -d surrealdb -e rocksdb:/tmp/rocksdb-engine -s 100000 -t 3 -r
 Run the benchmark against an embedded SurreadDB SurrealKV engine:
 
 ```bash
-cargo run -r -- -d surrealdb -e surrealkv:/tmp/surrealkv-engine -s 100000 -t 3 -r
+cargo run -F surrealdb/allocator,surrealdb/kv-surrealkv -r -- -d surrealdb -e surrealkv:/tmp/surrealkv-engine -s 100000 -t 3 -r
 ```
 
 ## SurrealDB local benchmark

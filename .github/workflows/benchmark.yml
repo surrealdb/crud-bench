@@ -35,7 +35,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build benchmark
-        run: cargo build --release --target x86_64-unknown-linux-gnu --features surrealdb/kv-mem,surrealdb/kv-rocksdb,surrealdb/kv-surrealkv
+        run: |
+          cargo build --release --target x86_64-unknown-linux-gnu \
+            --features surrealdb/allocator,surrealdb/kv-mem,surrealdb/kv-rocksdb,surrealdb/kv-surrealkv
 
       - name: Store artifacts
         run: cp target/x86_64-unknown-linux-gnu/release/crud-bench crud-bench
