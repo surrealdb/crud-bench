@@ -141,6 +141,7 @@ impl Scan {
 	fn projection(&self) -> Result<Projection> {
 		match self.projection.as_deref() {
 			Some("ID") => Ok(Projection::Id),
+			Some("FULL") => Ok(Projection::Full),
 			Some("COUNT") => Ok(Projection::Count),
 			Some(o) => bail!(format!("Unsupported projection: {}", o)),
 			_ => Ok(Projection::Full),
