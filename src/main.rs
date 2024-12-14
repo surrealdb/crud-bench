@@ -8,26 +8,29 @@ use serde::{Deserialize, Serialize};
 use std::io::IsTerminal;
 use tokio::runtime::Builder;
 
+// Benchmark modules
 mod benchmark;
 mod database;
 mod dialect;
 mod docker;
+mod keyprovider;
+mod result;
+mod valueprovider;
+
+// Datastore modules
 mod dragonfly;
 mod dry;
 mod keydb;
-mod keyprovider;
 mod map;
 mod mongodb;
 mod postgres;
 mod redb;
 mod redis;
-mod result;
 mod rocksdb;
 mod scylladb;
 mod speedb;
 mod surrealdb;
 mod surrealkv;
-mod valueprovider;
 
 #[derive(Parser, Debug)]
 #[command(term_width = 0)]
