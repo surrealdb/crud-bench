@@ -74,10 +74,18 @@ impl Benchmark {
 				self.samples,
 			)
 			.await?;
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
+		}
 		// Run the "reads" benchmark
 		let reads = self
 			.run_operation::<C, D>(&clients, BenchmarkOperation::Read, kp, vp.clone(), self.samples)
 			.await?;
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
+		}
 		// Run the "reads" benchmark
 		let updates = self
 			.run_operation::<C, D>(
@@ -88,6 +96,10 @@ impl Benchmark {
 				self.samples,
 			)
 			.await?;
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
+		}
 		// Run the "scan" benchmarks
 		let mut scan_results = Vec::with_capacity(scans.len());
 		for scan in scans {
@@ -103,6 +115,10 @@ impl Benchmark {
 				)
 				.await?;
 			scan_results.push((name, duration));
+		}
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
 		}
 		// Run the "deletes" benchmark
 		let deletes = self
@@ -367,10 +383,17 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	async fn startup(&self) -> Result<()> {
 		Ok(())
 	}
+
 	/// Cleanup the store at shutdown
 	async fn shutdown(&self) -> Result<()> {
 		Ok(())
 	}
+
+	/// Compact the store for performance
+	async fn compact(&self) -> Result<()> {
+		Ok(())
+	}
+
 	fn create(
 		&self,
 		n: u32,
