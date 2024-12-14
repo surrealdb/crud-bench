@@ -74,10 +74,18 @@ impl Benchmark {
 				self.samples,
 			)
 			.await?;
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
+		}
 		// Run the "reads" benchmark
 		let reads = self
 			.run_operation::<C, D>(&clients, BenchmarkOperation::Read, kp, vp.clone(), self.samples)
 			.await?;
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
+		}
 		// Run the "reads" benchmark
 		let updates = self
 			.run_operation::<C, D>(
@@ -88,6 +96,10 @@ impl Benchmark {
 				self.samples,
 			)
 			.await?;
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
+		}
 		// Run the "scan" benchmarks
 		let mut scan_results = Vec::with_capacity(scans.len());
 		for scan in scans {
@@ -103,6 +115,10 @@ impl Benchmark {
 				)
 				.await?;
 			scan_results.push((name, duration));
+		}
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
 		}
 		// Run the "deletes" benchmark
 		let deletes = self
@@ -367,10 +383,18 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	async fn startup(&self) -> Result<()> {
 		Ok(())
 	}
+
 	/// Cleanup the store at shutdown
 	async fn shutdown(&self) -> Result<()> {
 		Ok(())
 	}
+
+	/// Compact the store for performance
+	async fn compact(&self) -> Result<()> {
+		Ok(())
+	}
+
+	/// Create a single entry with the current client
 	fn create(
 		&self,
 		n: u32,
@@ -387,6 +411,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		}
 	}
 
+	/// Read a single entry with the current client
 	fn read(&self, n: u32, kp: &mut KeyProvider) -> impl Future<Output = Result<()>> + Send {
 		async move {
 			match kp {
@@ -397,6 +422,8 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 			}
 		}
 	}
+
+	/// Update a single entry with the current client
 	fn update(
 		&self,
 		n: u32,
@@ -413,6 +440,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		}
 	}
 
+	/// Delete a single entry with the current client
 	fn delete(&self, n: u32, kp: &mut KeyProvider) -> impl Future<Output = Result<()>> + Send {
 		async move {
 			match kp {
@@ -424,6 +452,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		}
 	}
 
+	/// Scan a range of entries with the current client
 	fn scan(&self, scan: &Scan, kp: &KeyProvider) -> impl Future<Output = Result<()>> + Send {
 		async move {
 			let result = match kp {
@@ -441,33 +470,39 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		}
 	}
 
+	/// Create a single entry with a numeric id
+	fn create_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;
+
+	/// Create a single entry with a string id
+	fn create_string(&self, key: String, val: Value) -> impl Future<Output = Result<()>> + Send;
+
+	/// Read a single entry with a numeric id
+	fn read_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
+
+	/// Read a single entry with a string id
+	fn read_string(&self, key: String) -> impl Future<Output = Result<()>> + Send;
+
+	/// Update a single entry with a numeric id
+	fn update_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;
+
+	/// Update a single entry with a string id
+	fn update_string(&self, key: String, val: Value) -> impl Future<Output = Result<()>> + Send;
+
+	/// Delete a single entry with a numeric id
+	fn delete_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
+
+	/// Delete a single entry with a string id
+	fn delete_string(&self, key: String) -> impl Future<Output = Result<()>> + Send;
+
+	/// Scan a range of entries with numeric ids
 	fn scan_u32(&self, _scan: &Scan) -> impl Future<Output = Result<usize>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
+	/// Scan a range of entries with string ids
 	fn scan_string(&self, _scan: &Scan) -> impl Future<Output = Result<usize>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
-
-	/// Create a record at a key
-	fn create_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;
-
-	fn create_string(&self, key: String, val: Value) -> impl Future<Output = Result<()>> + Send;
-
-	/// Read a record at a key
-	fn read_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
-
-	fn read_string(&self, key: String) -> impl Future<Output = Result<()>> + Send;
-
-	/// Update a record at a key
-	fn update_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;
-
-	fn update_string(&self, key: String, val: Value) -> impl Future<Output = Result<()>> + Send;
-
-	/// Delete a record at a key
-	fn delete_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
-
-	fn delete_string(&self, key: String) -> impl Future<Output = Result<()>> + Send;
 }
 
 pub(crate) struct TerminalOut(Option<Stdout>);

@@ -8,26 +8,29 @@ use serde::{Deserialize, Serialize};
 use std::io::IsTerminal;
 use tokio::runtime::Builder;
 
+// Benchmark modules
 mod benchmark;
 mod database;
 mod dialect;
 mod docker;
+mod keyprovider;
+mod result;
+mod valueprovider;
+
+// Datastore modules
 mod dragonfly;
 mod dry;
 mod keydb;
-mod keyprovider;
 mod map;
 mod mongodb;
 mod postgres;
 mod redb;
 mod redis;
-mod result;
 mod rocksdb;
 mod scylladb;
 mod speedb;
 mod surrealdb;
 mod surrealkv;
-mod valueprovider;
 
 #[derive(Parser, Debug)]
 #[command(term_width = 0)]
@@ -73,7 +76,10 @@ pub(crate) struct Args {
 		short,
 		long,
 		env = "CRUD_BENCH_VALUE",
-		default_value = "{\"text\":\"string:50\", \"integer\":\"int\"}"
+		default_value = r#"{
+			"text": "string:50",
+			"integer": "int"
+		}"#
 	)]
 	pub(crate) value: String,
 
@@ -90,7 +96,12 @@ pub(crate) struct Args {
 		short = 'a',
 		long,
 		env = "CRUD_BENCH_SCANS",
-		default_value = "[{\"name\": \"limit_full\", \"limit\": 100, \"expect\": 100}, {\"name\": \"limit_keys\", \"projection\": \"ID\", \"limit\": 100, \"expect\": 100}, {\"name\": \"limit_count\", \"projection\": \"COUNT\", \"limit\": 100, \"expect\": 100}]"
+		default_value = r#"[
+			{ "name": "count_all", "samples": 10, "projection": "COUNT" },
+			{ "name": "limit_keys", "samples": 10, "projection": "ID", "limit": 100, "expect": 100 },
+			{ "name": "limit_full", "samples": 10, "projection": "FULL", "limit": 100, "expect": 100 },
+			{ "name": "limit_count", "samples": 10, "projection": "COUNT", "limit": 100, "expect": 100 }
+		]"#
 	)]
 	pub(crate) scans: String,
 }
@@ -130,6 +141,7 @@ impl Scan {
 	fn projection(&self) -> Result<Projection> {
 		match self.projection.as_deref() {
 			Some("ID") => Ok(Projection::Id),
+			Some("FULL") => Ok(Projection::Full),
 			Some("COUNT") => Ok(Projection::Count),
 			Some(o) => bail!(format!("Unsupported projection: {}", o)),
 			_ => Ok(Projection::Full),
