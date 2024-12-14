@@ -154,50 +154,151 @@ impl RocksDBClient {
 	}
 
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Serialise the value
-		let val = bincode::serialize(&val)?;
-		// Create a new transaction
-		let txn = self.get_transaction();
-		// Process the data
-		txn.put(key, val)?;
-		txn.commit()?;
-		Ok(())
+		// Check if blocking
+		if std::env::var("BLOCKING").is_ok() {
+			// Serialise the value
+			let val = bincode::serialize(&val)?;
+			// Create a new transaction
+			let txn = self.get_transaction();
+			// Process the data
+			txn.put(key, val)?;
+			txn.commit()?;
+			Ok(())
+		} else {
+			//
+			let db = self.0.clone();
+			let key = key.to_vec();
+			//
+			tokio::task::spawn_blocking(move || -> Result<_> {
+				// Serialise the value
+				let val = bincode::serialize(&val)?;
+				// Set the transaction options
+				let mut to = OptimisticTransactionOptions::default();
+				to.set_snapshot(true);
+				// Set the write options
+				let mut wo = WriteOptions::default();
+				wo.set_sync(false);
+				// Create a new transaction
+				let txn = db.transaction_opt(&wo, &to);
+				// Process the data
+				txn.put(&key, val)?;
+				txn.commit()?;
+				Ok(())
+			})
+			.await?
+		}
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let txn = self.get_transaction();
-		// Configure read options
-		let mut ro = ReadOptions::default();
-		ro.set_snapshot(&txn.snapshot());
-		ro.set_async_io(true);
-		ro.fill_cache(true);
-		// Create a new transaction
-		let txn = self.get_transaction();
-		// Process the data
-		let res = txn.get_pinned_opt(key, &ro)?;
-		assert!(res.is_some());
-		Ok(())
+		// Check if blocking
+		if std::env::var("BLOCKING").is_ok() {
+			// Create a new transaction
+			let txn = self.get_transaction();
+			// Configure read options
+			let mut ro = ReadOptions::default();
+			ro.set_snapshot(&txn.snapshot());
+			ro.set_async_io(true);
+			ro.fill_cache(true);
+			// Create a new transaction
+			let txn = self.get_transaction();
+			// Process the data
+			let res = txn.get_pinned_opt(key, &ro)?;
+			assert!(res.is_some());
+			Ok(())
+		} else {
+			//
+			let db = self.0.clone();
+			let key = key.to_vec();
+			//
+			tokio::task::spawn_blocking(move || -> Result<_> {
+				// Set the transaction options
+				let mut to = OptimisticTransactionOptions::default();
+				to.set_snapshot(true);
+				// Set the write options
+				let mut wo = WriteOptions::default();
+				wo.set_sync(false);
+				// Create a new transaction
+				let txn = db.transaction_opt(&wo, &to);
+				// Configure read options
+				let mut ro = ReadOptions::default();
+				ro.set_snapshot(&txn.snapshot());
+				ro.set_async_io(true);
+				ro.fill_cache(true);
+				// Process the data
+				let res = txn.get_pinned_opt(key, &ro)?;
+				assert!(res.is_some());
+				Ok(())
+			})
+			.await?
+		}
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Serialise the value
-		let val = bincode::serialize(&val)?;
-		// Create a new transaction
-		let txn = self.get_transaction();
-		// Process the data
-		txn.put(key, val)?;
-		txn.commit()?;
-		Ok(())
+		// Check if blocking
+		if std::env::var("BLOCKING").is_ok() {
+			// Serialise the value
+			let val = bincode::serialize(&val)?;
+			// Create a new transaction
+			let txn = self.get_transaction();
+			// Process the data
+			txn.put(key, val)?;
+			txn.commit()?;
+			Ok(())
+		} else {
+			//
+			let db = self.0.clone();
+			let key = key.to_vec();
+			//
+			tokio::task::spawn_blocking(move || -> Result<_> {
+				// Serialise the value
+				let val = bincode::serialize(&val)?;
+				// Set the transaction options
+				let mut to = OptimisticTransactionOptions::default();
+				to.set_snapshot(true);
+				// Set the write options
+				let mut wo = WriteOptions::default();
+				wo.set_sync(false);
+				// Create a new transaction
+				let txn = db.transaction_opt(&wo, &to);
+				// Process the data
+				txn.put(&key, val)?;
+				txn.commit()?;
+				Ok(())
+			})
+			.await?
+		}
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let txn = self.get_transaction();
-		// Process the data
-		txn.delete(key)?;
-		txn.commit()?;
-		Ok(())
+		// Check if blocking
+		if std::env::var("BLOCKING").is_ok() {
+			// Create a new transaction
+			let txn = self.get_transaction();
+			// Process the data
+			txn.delete(key)?;
+			txn.commit()?;
+			Ok(())
+		} else {
+			//
+			let db = self.0.clone();
+			let key = key.to_vec();
+			//
+			tokio::task::spawn_blocking(move || -> Result<_> {
+				// Set the transaction options
+				let mut to = OptimisticTransactionOptions::default();
+				to.set_snapshot(true);
+				// Set the write options
+				let mut wo = WriteOptions::default();
+				wo.set_sync(false);
+				// Create a new transaction
+				let txn = db.transaction_opt(&wo, &to);
+				// Process the data
+				txn.delete(&key)?;
+				txn.commit()?;
+				Ok(())
+			})
+			.await?
+		}
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -208,46 +309,104 @@ impl RocksDBClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
-		// Create a new transaction
-		let txn = self.get_transaction();
-		// Configure read options
-		let mut ro = ReadOptions::default();
-		ro.set_snapshot(&txn.snapshot());
-		ro.set_iterate_lower_bound([0u8]);
-		ro.set_iterate_upper_bound([255u8]);
-		ro.set_async_io(true);
-		ro.fill_cache(true);
-		// Create an iterator starting at the beginning
-		let iter = txn.iterator_opt(IteratorMode::Start, ro);
-		// Perform the relevant projection scan type
-		match scan.projection()? {
-			Projection::Id => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(iter
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
-					.collect::<Result<Vec<_>>>()?
-					.len())
+		// Check if blocking
+		if std::env::var("BLOCKING").is_ok() {
+			// Create a new transaction
+			let txn = self.get_transaction();
+			// Configure read options
+			let mut ro = ReadOptions::default();
+			ro.set_snapshot(&txn.snapshot());
+			ro.set_iterate_lower_bound([0u8]);
+			ro.set_iterate_upper_bound([255u8]);
+			ro.set_async_io(true);
+			ro.fill_cache(true);
+			// Create an iterator starting at the beginning
+			let iter = txn.iterator_opt(IteratorMode::Start, ro);
+			// Perform the relevant projection scan type
+			match scan.projection()? {
+				Projection::Id => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(iter
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
+						.collect::<Result<Vec<_>>>()?
+						.len())
+				}
+				Projection::Full => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(iter
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.map(|v| -> Result<_> { Ok(black_box(v?)) })
+						.collect::<Result<Vec<_>>>()?
+						.len())
+				}
+				Projection::Count => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(iter
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.map(|v| -> Result<_> { Ok(v.map(|_| true)?) })
+						.collect::<Result<Vec<_>>>()?
+						.len())
+				}
 			}
-			Projection::Full => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(iter
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.map(|v| -> Result<_> { Ok(black_box(v?)) })
-					.collect::<Result<Vec<_>>>()?
-					.len())
-			}
-			Projection::Count => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(iter
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.map(|v| -> Result<_> { Ok(v.map(|_| true)?) })
-					.collect::<Result<Vec<_>>>()?
-					.len())
-			}
+		} else {
+			//
+			let db = self.0.clone();
+			let scan = scan.clone();
+			//
+			tokio::task::spawn_blocking(move || -> Result<_> {
+				// Set the transaction options
+				let mut to = OptimisticTransactionOptions::default();
+				to.set_snapshot(true);
+				// Set the write options
+				let mut wo = WriteOptions::default();
+				wo.set_sync(false);
+				// Create a new transaction
+				let txn = db.transaction_opt(&wo, &to);
+				// Configure read options
+				let mut ro = ReadOptions::default();
+				ro.set_snapshot(&txn.snapshot());
+				ro.set_iterate_lower_bound([0u8]);
+				ro.set_iterate_upper_bound([255u8]);
+				ro.set_async_io(true);
+				ro.fill_cache(true);
+				// Create an iterator starting at the beginning
+				let iter = txn.iterator_opt(IteratorMode::Start, ro);
+				// Perform the relevant projection scan type
+				match scan.projection()? {
+					Projection::Id => {
+						// Skip `offset` entries, then collect `limit` entries
+						Ok(iter
+							.skip(s) // Skip the first `offset` entries
+							.take(l) // Take the next `limit` entries
+							.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
+							.collect::<Result<Vec<_>>>()?
+							.len())
+					}
+					Projection::Full => {
+						// Skip `offset` entries, then collect `limit` entries
+						Ok(iter
+							.skip(s) // Skip the first `offset` entries
+							.take(l) // Take the next `limit` entries
+							.map(|v| -> Result<_> { Ok(black_box(v?)) })
+							.collect::<Result<Vec<_>>>()?
+							.len())
+					}
+					Projection::Count => {
+						// Skip `offset` entries, then collect `limit` entries
+						Ok(iter
+							.skip(s) // Skip the first `offset` entries
+							.take(l) // Take the next `limit` entries
+							.map(|v| -> Result<_> { Ok(v.map(|_| true)?) })
+							.collect::<Result<Vec<_>>>()?
+							.len())
+					}
+				}
+			})
+			.await?
 		}
 	}
 }
