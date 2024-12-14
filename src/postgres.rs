@@ -1,15 +1,14 @@
 #![cfg(feature = "postgres")]
 
-use tokio_postgres::{Client, NoTls};
-
 use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{KeyType, Projection, Scan};
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tokio_postgres::types::ToSql;
+use tokio_postgres::{Client, NoTls, Row};
 
 pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "postgres",
@@ -75,7 +74,7 @@ impl BenchmarkClient for PostgresClient {
 			})
 			.collect();
 		let fields = fields.join(",");
-		let stm = format!("CREATE TABLE record ( id {id_type} PRIMARY KEY,{fields});");
+		let stm = format!("CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
 		self.client.batch_execute(&stm).await?;
 		Ok(())
 	}
@@ -96,14 +95,6 @@ impl BenchmarkClient for PostgresClient {
 		self.read(key).await
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
-	}
-
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
-	}
-
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.update(key as i32, val).await
 	}
@@ -119,19 +110,81 @@ impl BenchmarkClient for PostgresClient {
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.delete(key).await
 	}
+
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
 }
 
 impl PostgresClient {
+	fn consume(&self, row: Row, columns: bool) -> Result<Value> {
+		let mut val: Map<String, Value> = Map::new();
+		match self.kt {
+			KeyType::Integer => {
+				let v: i32 = row.try_get("id")?;
+				val.insert("id".into(), Value::from(v));
+			}
+			KeyType::String26 | KeyType::String90 | KeyType::String506 => {
+				let v: String = row.try_get("id")?;
+				val.insert("id".into(), Value::from(v));
+			}
+			KeyType::Uuid => {
+				let v: String = row.try_get("id")?;
+				val.insert("id".into(), Value::from(v));
+			}
+		}
+		if columns {
+			for (n, t) in self.columns.0.iter() {
+				val.insert(
+					n.clone(),
+					match t {
+						ColumnType::String => {
+							let v: String = row.try_get(n.as_str())?;
+							Value::from(v)
+						}
+						ColumnType::Integer => {
+							let v: i32 = row.try_get(n.as_str())?;
+							Value::from(v)
+						}
+						ColumnType::Float => {
+							let v: f64 = row.try_get(n.as_str())?;
+							Value::from(v)
+						}
+						ColumnType::DateTime => {
+							let v: String = row.try_get(n.as_str())?;
+							Value::from(v)
+						}
+						ColumnType::Uuid => {
+							let v: String = row.try_get(n.as_str())?;
+							Value::from(v)
+						}
+						ColumnType::Bool => {
+							let v: bool = row.try_get(n.as_str())?;
+							Value::from(v)
+						}
+						ColumnType::Object => todo!(),
+					},
+				);
+			}
+		}
+		Ok(val.into())
+	}
+
 	async fn create<T>(&self, key: T, val: Value) -> Result<()>
 	where
 		T: ToSql + Sync,
 	{
 		let (fields, values) = self.columns.insert_clauses::<AnsiSqlDialect>(val)?;
-		let stm = format!("INSERT INTO record (id,{fields}) VALUES ($1,{values})");
+		let stm = format!("INSERT INTO record (id, {fields}) VALUES ($1, {values})");
 		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);
 		Ok(())
 	}
+
 	async fn read<T>(&self, key: T) -> Result<()>
 	where
 		T: ToSql + Sync,
@@ -140,31 +193,6 @@ impl PostgresClient {
 		let res = self.client.query(stm, &[&key]).await?;
 		assert_eq!(res.len(), 1);
 		Ok(())
-	}
-
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
-		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or("".to_string());
-		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
-		let p = scan.projection()?;
-		match p {
-			Projection::Id => {
-				let stm = format!("SELECT id FROM record {c} {l} {s}");
-				let res = self.client.query(&stm, &[]).await?;
-				Ok(res.len())
-			}
-			Projection::Full => {
-				let stm = format!("SELECT * FROM record {c} {l} {s}");
-				let res = self.client.query(&stm, &[]).await?;
-				Ok(res.len())
-			}
-			Projection::Count => {
-				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s}) AS t");
-				let res = self.client.query(&stm, &[]).await?;
-				let count: i64 = res.first().unwrap().get(0);
-				Ok(count as usize)
-			}
-		}
 	}
 
 	async fn update<T>(&self, key: T, val: Value) -> Result<()>
@@ -186,5 +214,39 @@ impl PostgresClient {
 		let res = self.client.execute(stm, &[&key]).await?;
 		assert_eq!(res, 1);
 		Ok(())
+	}
+
+	async fn scan(&self, scan: &Scan) -> Result<usize> {
+		// Extract parameters
+		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or("".to_string());
+		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
+		// Perform the relevant projection scan type
+		match scan.projection()? {
+			Projection::Id => {
+				let stm = format!("SELECT id FROM record {c} {l} {s}");
+				let res = self.client.query(&stm, &[]).await?;
+				let res = res
+					.into_iter()
+					.map(|v| -> Result<_> { Ok(self.consume(v, false)?) })
+					.collect::<Result<Vec<_>>>()?;
+				Ok(res.len())
+			}
+			Projection::Full => {
+				let stm = format!("SELECT * FROM record {c} {l} {s}");
+				let res = self.client.query(&stm, &[]).await?;
+				let res = res
+					.into_iter()
+					.map(|v| -> Result<_> { Ok(self.consume(v, true)?) })
+					.collect::<Result<Vec<_>>>()?;
+				Ok(res.len())
+			}
+			Projection::Count => {
+				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s})");
+				let res = self.client.query(&stm, &[]).await?;
+				let count: i64 = res.first().unwrap().get(0);
+				Ok(count as usize)
+			}
+		}
 	}
 }
