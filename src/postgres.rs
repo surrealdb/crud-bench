@@ -170,7 +170,7 @@ impl PostgresClient {
 
 						ColumnType::Object => {
 							let v: Json<Value> = row.try_get(n.as_str())?;
-							Value::from(v.0)
+							v.0
 						}
 					},
 				);
