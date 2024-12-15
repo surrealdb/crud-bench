@@ -5,11 +5,10 @@ use crate::valueprovider::Columns;
 use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use serde_json::Value;
-use serde_json::Value;
 use speedb::{
-	DBCompactionStyle, DBCompressionType, FlushOptions, IteratorMode, LogLevel,
-	OptimisticTransactionDB, OptimisticTransactionOptions, Options, ReadOptions, Transaction,
-	WaitForCompactOptions, WriteOptions,
+	BottommostLevelCompaction, CompactOptions, DBCompactionStyle, DBCompressionType, FlushOptions,
+	IteratorMode, LogLevel, OptimisticTransactionDB, OptimisticTransactionOptions, Options,
+	ReadOptions, Transaction, WaitForCompactOptions, WriteOptions,
 };
 use std::hint::black_box;
 use std::sync::Arc;
@@ -91,11 +90,6 @@ impl BenchmarkClient for SpeeDBClient {
 		opts.set_bottommost_level_compaction(BottommostLevelCompaction::Force);
 		// Compact the entire dataset
 		self.0.compact_range_opt(Some(&[0u8]), Some(&[255u8]), &opts);
-		// Create new wait options
-		let mut opts = WaitForCompactOptions::default();
-		opts.set_flush(true);
-		// Wait for compaction to complete
-		self.0.wait_for_compact(&opts)?;
 		// Ok
 		Ok(())
 	}
