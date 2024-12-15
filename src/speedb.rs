@@ -6,8 +6,9 @@ use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use serde_json::Value;
 use speedb::{
-	DBCompactionStyle, DBCompressionType, IteratorMode, LogLevel, OptimisticTransactionDB,
-	OptimisticTransactionOptions, Options, ReadOptions, Transaction, WriteOptions,
+	BottommostLevelCompaction, CompactOptions, DBCompactionStyle, DBCompressionType, FlushOptions,
+	IteratorMode, LogLevel, OptimisticTransactionDB, OptimisticTransactionOptions, Options,
+	ReadOptions, Transaction, WriteOptions,
 };
 use std::hint::black_box;
 use std::sync::Arc;
@@ -52,9 +53,9 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 		opts.set_compression_per_level(&[
 			DBCompressionType::None,
 			DBCompressionType::None,
-			DBCompressionType::Lz4hc,
-			DBCompressionType::Lz4hc,
-			DBCompressionType::Lz4hc,
+			DBCompressionType::Snappy,
+			DBCompressionType::Snappy,
+			DBCompressionType::Snappy,
 		]);
 		// Create the store
 		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, "speedb")?)))
@@ -70,6 +71,25 @@ impl BenchmarkClient for SpeeDBClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("rocksdb");
+		// Ok
+		Ok(())
+	}
+
+	async fn compact(&self) -> Result<()> {
+		// Create new flush options
+		let mut opts = FlushOptions::default();
+		opts.set_wait(true);
+		// Flush the WAL to storage
+		let _ = self.0.flush_wal(true);
+		// Flush the memtables to SST
+		let _ = self.0.flush_opt(&opts);
+		// Create new wait options
+		let mut opts = CompactOptions::default();
+		opts.set_change_level(true);
+		opts.set_target_level(4);
+		opts.set_bottommost_level_compaction(BottommostLevelCompaction::Force);
+		// Compact the entire dataset
+		self.0.compact_range_opt(Some(&[0u8]), Some(&[255u8]), &opts);
 		// Ok
 		Ok(())
 	}
@@ -139,11 +159,11 @@ impl SpeeDBClient {
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Get the database snapshot
-		let ss = self.0.snapshot();
+		// Create a new transaction
+		let txn = self.get_transaction();
 		// Configure read options
 		let mut ro = ReadOptions::default();
-		ro.set_snapshot(&ss);
+		ro.set_snapshot(&txn.snapshot());
 		ro.set_async_io(true);
 		ro.fill_cache(true);
 		// Create a new transaction
@@ -175,48 +195,52 @@ impl SpeeDBClient {
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
+		// Contional scans are not supported
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
-
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
-		let l = scan.limit.unwrap_or(0);
-		let p = scan.projection()?;
-
+		let l = scan.limit.unwrap_or(usize::MAX);
 		// Create a new transaction
 		let txn = self.get_transaction();
-
+		// Configure read options
+		let mut ro = ReadOptions::default();
+		ro.set_snapshot(&txn.snapshot());
+		ro.set_iterate_lower_bound([0u8]);
+		ro.set_iterate_upper_bound([255u8]);
+		ro.set_async_io(true);
+		ro.fill_cache(true);
 		// Create an iterator starting at the beginning
-		let iter = txn.iterator(IteratorMode::Start);
-
-		match p {
-			Projection::Full => {
+		let iter = txn.iterator_opt(IteratorMode::Start, ro);
+		// Perform the relevant projection scan type
+		match scan.projection()? {
+			Projection::Id => {
 				// Skip `offset` entries, then collect `limit` entries
-				let results: Vec<_> = iter
+				Ok(iter
 					.skip(s) // Skip the first `offset` entries
 					.take(l) // Take the next `limit` entries
-					.collect();
-
-				// Print the results
-				let mut count = 0;
-				for item in results {
-					let key = item?;
-					black_box(key);
-					count += 1;
-				}
-				Ok(count)
+					.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
+					.collect::<Result<Vec<_>>>()?
+					.len())
+			}
+			Projection::Full => {
+				// Skip `offset` entries, then collect `limit` entries
+				Ok(iter
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.map(|v| -> Result<_> { Ok(black_box(v?)) })
+					.collect::<Result<Vec<_>>>()?
+					.len())
 			}
 			Projection::Count => {
 				// Skip `offset` entries, then collect `limit` entries
-				let count = iter
+				Ok(iter
 					.skip(s) // Skip the first `offset` entries
 					.take(l) // Take the next `limit` entries
-					.count();
-				Ok(count)
-			}
-			Projection::Id => {
-				bail!(NOT_SUPPORTED_ERROR)
+					.map(|v| -> Result<_> { Ok(v.map(|_| true)?) })
+					.collect::<Result<Vec<_>>>()?
+					.len())
 			}
 		}
 	}

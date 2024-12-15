@@ -12,7 +12,7 @@ use mongodb::options::DatabaseOptions;
 use mongodb::options::IndexOptions;
 use mongodb::options::ReadConcern;
 use mongodb::options::WriteConcern;
-use mongodb::{bson, Client, Collection, Cursor, IndexModel};
+use mongodb::{bson, Client, Collection, Cursor, Database, IndexModel};
 use serde_json::Value;
 use std::hint::black_box;
 
@@ -34,11 +34,10 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 	}
 }
 
-pub(crate) struct MongoDBClient(Collection<Document>);
+pub(crate) struct MongoDBClient(Database);
 
-async fn create_mongo_client<T>(endpoint: Option<String>) -> Result<Collection<T>>
+async fn create_mongo_client(endpoint: Option<String>) -> Result<Database>
 where
-	T: Send + Sync,
 {
 	let url = endpoint.unwrap_or("mongodb://root:root@localhost:27017".to_owned());
 	let opts = ClientOptions::parse(&url).await?;
@@ -50,22 +49,28 @@ where
 			.read_concern(ReadConcern::majority())
 			.build(),
 	);
-	Ok(db.collection("record"))
-}
-
-async fn mongo_startup<T>(collection: &Collection<T>) -> Result<()>
-where
-	T: Send + Sync,
-{
-	let index_options = IndexOptions::builder().unique(true).build();
-	let index_model = IndexModel::builder().keys(doc! { "id": 1 }).options(index_options).build();
-	collection.create_index(index_model).await?;
-	Ok(())
+	Ok(db)
 }
 
 impl BenchmarkClient for MongoDBClient {
 	async fn startup(&self) -> Result<()> {
-		mongo_startup(&self.0).await
+		let index = IndexOptions::builder().unique(true).build();
+		let model = IndexModel::builder().keys(doc! { "id": 1 }).options(index).build();
+		let _ = self.collection().create_index(model).await?;
+		Ok(())
+	}
+
+	async fn compact(&self) -> Result<()> {
+		// For a database compaction
+		self.0
+			.run_command(doc! {
+				"compact": "record",
+				"dryRun": false,
+				"force": true,
+			})
+			.await?;
+		// Ok
+		Ok(())
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
@@ -88,14 +93,6 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
-	}
-
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
-	}
-
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.update(key, val).await
 	}
@@ -111,9 +108,21 @@ impl BenchmarkClient for MongoDBClient {
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.delete(key).await
 	}
+
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan(scan).await
+	}
 }
 
 impl MongoDBClient {
+	fn collection(&self) -> Collection<Document> {
+		self.0.collection("record")
+	}
+
 	fn to_doc<K>(key: K, mut val: Value) -> Result<Bson>
 	where
 		K: Into<Value> + Into<Bson>,
@@ -122,14 +131,15 @@ impl MongoDBClient {
 		obj.insert("id".to_string(), key.into());
 		Ok(bson::to_bson(&val)?)
 	}
+
 	async fn create<K>(&self, key: K, val: Value) -> Result<()>
 	where
 		K: Into<Value> + Into<Bson>,
 	{
 		let bson = Self::to_doc(key, val)?;
 		let doc = bson.as_document().unwrap();
-		let res = self.0.insert_one(doc).await?;
-		assert_ne!(res.inserted_id, Bson::Null, "create");
+		let res = self.collection().insert_one(doc).await?;
+		assert_ne!(res.inserted_id, Bson::Null);
 		Ok(())
 	}
 
@@ -138,57 +148,9 @@ impl MongoDBClient {
 		K: Into<Bson>,
 	{
 		let filter = doc! { "id": key };
-		let doc = self.0.find_one(filter).await?;
-		assert!(doc.is_some(), "read");
+		let doc = self.collection().find_one(filter).await?;
+		assert!(doc.is_some());
 		Ok(doc)
-	}
-
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
-		if scan.condition.is_some() {
-			bail!(NOT_SUPPORTED_ERROR);
-		}
-		let s = scan.start.unwrap_or(0);
-		let l = scan.limit.unwrap_or(0);
-		let p = scan.projection()?;
-		let consume = |mut cursor: Cursor<Document>| async move {
-			let mut count = 0;
-			while let Some(doc) = cursor.try_next().await? {
-				black_box(doc);
-				count += 1;
-			}
-			Ok(count)
-		};
-		match p {
-			Projection::Id => {
-				let cursor = self
-					.0
-					.find(doc! {})
-					.skip(s as u64)
-					.limit(l as i64)
-					.projection(doc! { "id": 1 })
-					.await?;
-				consume(cursor).await
-			}
-			Projection::Full => {
-				let cursor = self.0.find(doc! {}).skip(s as u64).limit(l as i64).await?;
-				consume(cursor).await
-			}
-			Projection::Count => {
-				let pipeline = vec![
-					doc! { "$skip": s as i64 },
-					doc! { "$limit": l as i64 },
-					doc! { "$count": "count" },
-				];
-				let mut cursor = self.0.aggregate(pipeline).await?;
-				if let Some(result) = cursor.next().await {
-					let doc: Document = result?;
-					let count = doc.get_i32("count").unwrap_or(0);
-					Ok(count as usize)
-				} else {
-					bail!("No row returned");
-				}
-			}
-		}
 	}
 
 	async fn update<K>(&self, key: K, val: Value) -> Result<()>
@@ -198,8 +160,8 @@ impl MongoDBClient {
 		let bson = Self::to_doc(key.clone(), val)?;
 		let doc = bson.as_document().unwrap();
 		let filter = doc! { "id": key };
-		let res = self.0.replace_one(filter, doc).await?;
-		assert_eq!(res.modified_count, 1, "update");
+		let res = self.collection().replace_one(filter, doc).await?;
+		assert_eq!(res.modified_count, 1);
 		Ok(())
 	}
 
@@ -208,8 +170,59 @@ impl MongoDBClient {
 		K: Into<Bson>,
 	{
 		let filter = doc! { "id": key };
-		let res = self.0.delete_one(filter).await?;
-		assert_eq!(res.deleted_count, 1, "delete");
+		let res = self.collection().delete_one(filter).await?;
+		assert_eq!(res.deleted_count, 1);
 		Ok(())
+	}
+
+	async fn scan(&self, scan: &Scan) -> Result<usize> {
+		// Contional scans are not supported
+		if scan.condition.is_some() {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+		// Extract parameters
+		let s = scan.start.unwrap_or(0);
+		let l = scan.limit.unwrap_or(i64::MAX as usize);
+		// Consume documents function
+		let consume = |mut cursor: Cursor<Document>| async move {
+			let mut count = 0;
+			while let Some(doc) = cursor.try_next().await? {
+				black_box(doc);
+				count += 1;
+			}
+			Ok(count)
+		};
+		// Perform the relevant projection scan type
+		match scan.projection()? {
+			Projection::Id => {
+				let cursor = self
+					.collection()
+					.find(doc! {})
+					.skip(s as u64)
+					.limit(l as i64)
+					.projection(doc! { "id": 1 })
+					.await?;
+				consume(cursor).await
+			}
+			Projection::Full => {
+				let cursor = self.collection().find(doc! {}).skip(s as u64).limit(l as i64).await?;
+				consume(cursor).await
+			}
+			Projection::Count => {
+				let pipeline = vec![
+					doc! { "$skip": s as i64 },
+					doc! { "$limit": l as i64 },
+					doc! { "$count": "count" },
+				];
+				let mut cursor = self.collection().aggregate(pipeline).await?;
+				if let Some(result) = cursor.next().await {
+					let doc: Document = result?;
+					let count = doc.get_i32("count").unwrap_or(0);
+					Ok(count as usize)
+				} else {
+					bail!("No row returned");
+				}
+			}
+		}
 	}
 }

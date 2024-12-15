@@ -5,6 +5,8 @@ use crate::valueprovider::Columns;
 use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use serde_json::Value;
+use std::hint::black_box;
+use std::iter::Iterator;
 use std::path::PathBuf;
 use std::sync::Arc;
 use surrealkv::Mode::{ReadOnly, ReadWrite};
@@ -131,22 +133,52 @@ impl SurrealKVClient {
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
+		// Contional scans are not supported
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
-
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
-		let l = scan.limit.unwrap_or(0);
-		let p = scan.projection()?;
-		if matches!(p, Projection::Id | Projection::Count) {
-			bail!(NOT_SUPPORTED_ERROR);
-		}
-
-		let mut txn = self.db.begin()?;
-		let start = [0u8].as_slice();
+		let l = scan.limit.unwrap_or(usize::MAX);
+		// Create a new transaction
+		let mut txn = self.db.begin_with_mode(ReadOnly)?;
+		let beg = [0u8].as_slice();
 		let end = [255u8].as_slice();
-		let res = txn.scan(start..end, Some(s + l))?;
-		Ok(res.len())
+		// Perform the relevant projection scan type
+		match scan.projection()? {
+			Projection::Id => {
+				// Skip `offset` entries, then collect `limit` entries
+				Ok(txn
+					.scan(beg..end, Some(s + l))?
+					.into_iter()
+					.skip(s)
+					.take(l)
+					.map(|v| black_box(v.0))
+					.collect::<Vec<_>>()
+					.len())
+			}
+			Projection::Full => {
+				// Skip `offset` entries, then collect `limit` entries
+				Ok(txn
+					.scan(beg..end, Some(s + l))?
+					.into_iter()
+					.skip(s)
+					.take(l)
+					.map(|v| black_box((v.0, v.1)))
+					.collect::<Vec<_>>()
+					.len())
+			}
+			Projection::Count => {
+				// Skip `offset` entries, then collect `limit` entries
+				Ok(txn
+					.scan(beg..end, None)?
+					.into_iter()
+					.skip(s)
+					.take(l)
+					.map(|_| true)
+					.collect::<Vec<_>>()
+					.len())
+			}
+		}
 	}
 }

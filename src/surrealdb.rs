@@ -1,5 +1,9 @@
 #![cfg(feature = "surrealdb")]
 
+use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::docker::DockerParams;
+use crate::valueprovider::Columns;
+use crate::{KeyType, Projection, Scan};
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
@@ -10,11 +14,6 @@ use surrealdb::opt::auth::Root;
 use surrealdb::opt::Config;
 use surrealdb::Surreal;
 use surrealdb::{Error, RecordId};
-
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
-use crate::docker::DockerParams;
-use crate::valueprovider::Columns;
-use crate::{KeyType, Projection, Scan};
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
@@ -175,28 +174,29 @@ impl BenchmarkClient for SurrealDBClient {
 
 impl SurrealDBClient {
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
+		// Extract parameters
 		let s = scan.start.map(|s| format!("START {}", s)).unwrap_or("".to_string());
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
-		let p = scan.projection()?;
-		let stm = match p {
-			Projection::Id => format!("SELECT id FROM record {c} {s} {l}"),
-			Projection::Full => format!("SELECT * FROM record {c} {s} {l}"),
-			Projection::Count => {
-				if s.is_empty() && l.is_empty() {
-					format!("SELECT id FROM record {c} {s} {l} GROUP ALL")
-				} else {
-					format!("SELECT COUNT() FROM (SELECT id FROM record {c} {s} {l}) GROUP ALL")
-				}
+		// Perform the relevant projection scan type
+		match scan.projection()? {
+			Projection::Id => {
+				let sql = format!("SELECT id FROM record {c} {s} {l}");
+				let res: Vec<SurrealRecord> = self.db().query(sql).await?.take(0)?;
+				Ok(res.len())
 			}
-		};
-		match p {
-			Projection::Id | Projection::Full => {
-				let res: Vec<SurrealRecord> = self.db().query(stm).await?.take(0)?;
+			Projection::Full => {
+				let sql = format!("SELECT * FROM record {c} {s} {l}");
+				let res: Vec<SurrealRecord> = self.db().query(sql).await?.take(0)?;
 				Ok(res.len())
 			}
 			Projection::Count => {
-				let res: Vec<Value> = self.db().query(stm).await?.take(0)?;
+				let sql = if s.is_empty() && l.is_empty() {
+					format!("SELECT count() FROM record {c} GROUP ALL")
+				} else {
+					format!("SELECT count() FROM (SELECT 1 FROM record {c} {s} {l}) GROUP ALL")
+				};
+				let res: Vec<Value> = self.db().query(sql).await?.take(0)?;
 				Ok(
 					res.first()
 						.unwrap()
