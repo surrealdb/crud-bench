@@ -8,7 +8,7 @@ use crate::{KeyType, Projection, Scan};
 use anyhow::Result;
 use serde_json::{Map, Value};
 use std::hint::black_box;
-use tokio_postgres::types::ToSql;
+use tokio_postgres::types::{Json, ToSql};
 use tokio_postgres::{Client, NoTls, Row};
 
 pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
@@ -134,8 +134,8 @@ impl PostgresClient {
 				val.insert("id".into(), Value::from(v));
 			}
 			KeyType::Uuid => {
-				let v: String = row.try_get("id")?;
-				val.insert("id".into(), Value::from(v));
+				let v: uuid::Uuid = row.try_get("id")?;
+				val.insert("id".into(), Value::from(v.to_string()));
 			}
 		}
 		if columns {
@@ -143,16 +143,20 @@ impl PostgresClient {
 				val.insert(
 					n.clone(),
 					match t {
-						ColumnType::String => {
-							let v: String = row.try_get(n.as_str())?;
+						ColumnType::Bool => {
+							let v: bool = row.try_get(n.as_str())?;
+							Value::from(v)
+						}
+						ColumnType::Float => {
+							let v: f64 = row.try_get(n.as_str())?;
 							Value::from(v)
 						}
 						ColumnType::Integer => {
 							let v: i32 = row.try_get(n.as_str())?;
 							Value::from(v)
 						}
-						ColumnType::Float => {
-							let v: f64 = row.try_get(n.as_str())?;
+						ColumnType::String => {
+							let v: String = row.try_get(n.as_str())?;
 							Value::from(v)
 						}
 						ColumnType::DateTime => {
@@ -160,14 +164,14 @@ impl PostgresClient {
 							Value::from(v)
 						}
 						ColumnType::Uuid => {
-							let v: String = row.try_get(n.as_str())?;
-							Value::from(v)
+							let v: uuid::Uuid = row.try_get(n.as_str())?;
+							Value::from(v.to_string())
 						}
-						ColumnType::Bool => {
-							let v: bool = row.try_get(n.as_str())?;
-							Value::from(v)
+
+						ColumnType::Object => {
+							let v: Json<Value> = row.try_get(n.as_str())?;
+							Value::from(v.0)
 						}
-						ColumnType::Object => todo!(),
 					},
 				);
 			}
