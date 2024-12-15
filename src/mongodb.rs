@@ -15,7 +15,6 @@ use mongodb::options::WriteConcern;
 use mongodb::{bson, Client, Collection, Cursor, Database, IndexModel};
 use serde_json::Value;
 use std::hint::black_box;
-use std::usize;
 
 pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "mongo",

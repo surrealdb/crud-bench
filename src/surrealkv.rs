@@ -9,7 +9,6 @@ use std::hint::black_box;
 use std::iter::Iterator;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::usize;
 use surrealkv::Mode::{ReadOnly, ReadWrite};
 use surrealkv::Options;
 use surrealkv::Store;
