@@ -8,7 +8,7 @@ use serde_json::Value;
 use speedb::{
 	BottommostLevelCompaction, CompactOptions, DBCompactionStyle, DBCompressionType, FlushOptions,
 	IteratorMode, LogLevel, OptimisticTransactionDB, OptimisticTransactionOptions, Options,
-	ReadOptions, Transaction, WaitForCompactOptions, WriteOptions,
+	ReadOptions, Transaction, WriteOptions,
 };
 use std::hint::black_box;
 use std::sync::Arc;
