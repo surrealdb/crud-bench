@@ -7,6 +7,7 @@ use crate::valueprovider::{ColumnType, Columns};
 use crate::{KeyType, Projection, Scan};
 use anyhow::Result;
 use serde_json::{Map, Value};
+use std::hint::black_box;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, NoTls, Row};
 
@@ -228,7 +229,7 @@ impl PostgresClient {
 				let res = self.client.query(&stm, &[]).await?;
 				let res = res
 					.into_iter()
-					.map(|v| -> Result<_> { Ok(self.consume(v, false)?) })
+					.map(|v| -> Result<_> { Ok(black_box(self.consume(v, false)?)) })
 					.collect::<Result<Vec<_>>>()?;
 				Ok(res.len())
 			}
@@ -237,7 +238,7 @@ impl PostgresClient {
 				let res = self.client.query(&stm, &[]).await?;
 				let res = res
 					.into_iter()
-					.map(|v| -> Result<_> { Ok(self.consume(v, true)?) })
+					.map(|v| -> Result<_> { Ok(black_box(self.consume(v, true)?)) })
 					.collect::<Result<Vec<_>>>()?;
 				Ok(res.len())
 			}
