@@ -1,4 +1,6 @@
 use bytesize::ByteSize;
+use hdrhistogram::Histogram;
+use humantime::format_duration;
 use std::fmt::{Display, Formatter};
 use std::process;
 use std::time::{Duration, Instant};
@@ -47,6 +49,7 @@ impl OperationMetric {
 }
 
 pub(super) struct OperationResult {
+	histogram: Histogram<u64>,
 	elapsed: Duration,
 	cpu_usage: f32,
 	used_memory: u64,
@@ -57,7 +60,7 @@ pub(super) struct OperationResult {
 }
 
 impl OperationResult {
-	pub(super) fn new(mut metric: OperationMetric) -> Self {
+	pub(super) fn new(mut metric: OperationMetric, histogram: Histogram<u64>) -> Self {
 		let elapsed = metric.start_time.elapsed();
 		let (mut cpu_usage, used_memory, mut disk_usage, process_name) =
 			if let Some(process) = metric.collect_process() {
@@ -76,6 +79,7 @@ impl OperationResult {
 		// Divide the cpu usage by the number of cpus to get a normalized valued
 		cpu_usage /= num_cpus::get() as f32;
 		Self {
+			histogram,
 			elapsed,
 			cpu_usage,
 			used_memory,
@@ -91,8 +95,11 @@ impl Display for OperationResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		write!(
 			f,
-			"{:?} - cpu: {:.2}% - memory: {} - writes: {} - reads: {} - load avg: {:.2}/{:.2}/{:.2} - process: {}/{}",
-			self.elapsed,
+			"total: {} - avg: {:.2} ms - 99%: {:.2} ms - 95%: {:.2} ms - cpu: {:.2}% - memory: {} - writes: {} - reads: {} - load avg: {:.2}/{:.2}/{:.2} - process: {}/{}",
+			format_duration(self.elapsed),
+			self.histogram.mean() / 1000.0,
+			self.histogram.value_at_quantile(0.99) as f64 / 1000.0,
+			self.histogram.value_at_quantile(0.95) as f64 / 1000.0,
 			self.cpu_usage,
 			ByteSize(self.used_memory),
 			ByteSize(self.disk_usage.total_written_bytes),

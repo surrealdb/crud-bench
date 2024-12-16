@@ -7,16 +7,16 @@ readme = "README.md"
 
 [features]
 default = [
-	"dragonfly",
-	"keydb",
-	"mongodb",
-	"postgres",
-	"redb",
-	"redis",
-	"rocksdb",
-	"scylladb",
-	"surrealkv",
-	"surrealdb",
+    "dragonfly",
+    "keydb",
+    "mongodb",
+    "postgres",
+    "redb",
+    "redis",
+    "rocksdb",
+    "scylladb",
+    "surrealkv",
+    "surrealdb",
 ]
 dragonfly = ["dep:redis"]
 keydb = ["dep:redis"]
@@ -46,6 +46,8 @@ clap = { version = "4.5.23", features = ["derive", "string", "env", "color"] }
 dashmap = "6.1.0"
 env_logger = "0.11.5"
 futures = "0.3.31"
+hdrhistogram = "7.5.4"
+humantime = "2.1.0"
 log = "0.4.22"
 mongodb = { version = "3.1.1", optional = true }
 num_cpus = "1.16.0"
