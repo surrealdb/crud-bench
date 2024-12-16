@@ -1,6 +1,5 @@
 use bytesize::ByteSize;
 use hdrhistogram::Histogram;
-use humantime::format_duration;
 use std::fmt::{Display, Formatter};
 use std::process;
 use std::time::{Duration, Instant};
@@ -110,5 +109,36 @@ impl Display for OperationResult {
 			self.process_name,
 			self.process_pid
 		)
+	}
+}
+
+fn format_duration(duration: Duration) -> String {
+	let secs = duration.as_secs();
+	if secs >= 86400 {
+		let days = secs / 86400;
+		let hours = (secs % 86400) / 3600;
+		format!("{}d {}h", days, hours)
+	} else if secs >= 3600 {
+		let hours = secs / 3600;
+		let minutes = (secs % 3600) / 60;
+		format!("{}h {}m", hours, minutes)
+	} else if secs >= 60 {
+		let minutes = secs / 60;
+		let seconds = secs % 60;
+		format!("{}m {}s", minutes, seconds)
+	} else if secs > 0 {
+		let seconds = secs;
+		let millis = duration.subsec_millis();
+		format!("{}s {}ms", seconds, millis)
+	} else if duration.subsec_millis() > 0 {
+		let millis = duration.subsec_millis();
+		let micros = duration.subsec_micros() % 1000;
+		format!("{}ms {}µs", millis, micros)
+	} else if duration.subsec_micros() > 0 {
+		let micros = duration.subsec_micros();
+		let nanos = duration.subsec_nanos() % 1000;
+		format!("{}µs {}ns", micros, nanos)
+	} else {
+		format!("{}ns", duration.subsec_nanos())
 	}
 }
