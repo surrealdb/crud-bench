@@ -94,11 +94,12 @@ impl Display for OperationResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		write!(
 			f,
-			"total: {} - avg: {:.2} ms - 99%: {:.2} ms - 95%: {:.2} ms - cpu: {:.2}% - memory: {} - writes: {} - reads: {} - load avg: {:.2}/{:.2}/{:.2} - process: {}/{}",
+			"total: {} - avg: {:.2} ms - 99%: {:.2} ms - 95%: {:.2} - median: {:.2} ms - cpu: {:.2}% - memory: {} - writes: {} - reads: {} - load avg: {:.2}/{:.2}/{:.2} - process: {}/{}",
 			format_duration(self.elapsed),
 			self.histogram.mean() / 1000.0,
 			self.histogram.value_at_quantile(0.99) as f64 / 1000.0,
 			self.histogram.value_at_quantile(0.95) as f64 / 1000.0,
+			self.histogram.value_at_quantile(0.50) as f64 / 1000.0,
 			self.cpu_usage,
 			ByteSize(self.used_memory),
 			ByteSize(self.disk_usage.total_written_bytes),
