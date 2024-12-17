@@ -5,6 +5,7 @@ use crate::valueprovider::{Columns, ValueProvider};
 use crate::{Args, KeyType, Scan, Scans};
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
+use hdrhistogram::Histogram;
 use log::info;
 use serde_json::Value;
 use std::fmt::{Display, Formatter};
@@ -15,6 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::task;
+use tokio::time::Instant;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -229,28 +231,38 @@ impl Benchmark {
 					{
 						Err(e) if e.to_string().eq(NOT_SUPPORTED_ERROR) => {
 							skip.store(true, Ordering::Relaxed);
-							Ok(())
+							Ok(None)
 						}
 						Err(e) => {
 							eprintln!("{e}");
 							error.store(true, Ordering::Relaxed);
 							Err(e)
 						}
-						Ok(_) => Ok(()),
+						Ok(h) => Ok(Some(h)),
 					}
 				}));
 			}
 		}
 		// Wait for all the threads to complete
-		if let Err(e) = try_join_all(futures).await {
-			error.store(true, Ordering::Relaxed);
-			Err(e)?;
-		}
+		let mut global_histogram = Histogram::new(3)?;
+		match try_join_all(futures).await {
+			Ok(results) => {
+				for res in results {
+					if let Some(histogram) = res? {
+						global_histogram.add(histogram)?;
+					}
+				}
+			}
+			Err(e) => {
+				error.store(true, Ordering::Relaxed);
+				Err(e)?;
+			}
+		};
 		if error.load(Ordering::Relaxed) {
 			bail!("Task failure");
 		}
 		// Calculate runtime information
-		let result = OperationResult::new(metric);
+		let result = OperationResult::new(metric, global_histogram);
 		// Print out the last stage
 		out.map_ln(|| Some(format!("\r{operation} 100%")))?;
 		// Shall we skip the operation? (operation not supported)
@@ -268,11 +280,12 @@ impl Benchmark {
 		current: &AtomicU32,
 		operation: BenchmarkOperation,
 		(mut kp, mut vp, mut out): (KeyProvider, ValueProvider, TerminalOut),
-	) -> Result<()>
+	) -> Result<Histogram<u64>>
 	where
 		C: BenchmarkClient,
 		D: Dialect,
 	{
+		let mut histogram = Histogram::new(3)?;
 		let mut old_percent = 0;
 		// Check if we have encountered an error
 		while !error.load(Ordering::Relaxed) {
@@ -296,6 +309,7 @@ impl Benchmark {
 				}
 			})?;
 			// Perform the benchmark operation
+			let time = Instant::now();
 			match &operation {
 				BenchmarkOperation::Create => {
 					let value = vp.generate_value::<D>();
@@ -309,9 +323,10 @@ impl Benchmark {
 				BenchmarkOperation::Scan(s) => client.scan(s, &kp).await?,
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 			};
+			histogram.record(time.elapsed().as_micros() as u64)?;
 		}
 
-		Ok(())
+		Ok(histogram)
 	}
 }
 
