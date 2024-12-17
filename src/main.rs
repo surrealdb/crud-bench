@@ -167,6 +167,7 @@ fn run(args: Args) -> Result<()> {
 	// Set up the asynchronous runtime
 	let runtime = Builder::new_multi_thread()
 		.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
+		.max_blocking_threads(num_cpus::get() * 2) // Set the number of blocking threads
 		.worker_threads(args.workers as usize) // Set the number of worker threads
 		.enable_all() // Enables all runtime features, including I/O and time
 		.build()
