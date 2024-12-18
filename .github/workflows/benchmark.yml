@@ -74,6 +74,10 @@ jobs:
           - database: mongodb
             enabled: true
             description: MongoDB
+          # MySQL
+          - database: mysql
+            enabled: true
+            description: MySQL
           # Postgres
           - database: postgres
             enabled: true

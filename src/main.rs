@@ -26,6 +26,7 @@ mod dry;
 mod keydb;
 mod map;
 mod mongodb;
+mod mysql;
 mod postgres;
 mod redb;
 mod redis;
