@@ -1,6 +1,6 @@
 #![cfg(feature = "redb")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::KeyType;
 use anyhow::Result;

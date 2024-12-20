@@ -1,8 +1,8 @@
 #![cfg(feature = "postgres")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
+use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{KeyType, Projection, Scan};
 use anyhow::Result;

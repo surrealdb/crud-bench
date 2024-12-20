@@ -1,8 +1,8 @@
 #![cfg(feature = "scylladb")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::dialect::AnsiSqlDialect;
 use crate::docker::DockerParams;
+use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
@@ -48,8 +48,8 @@ impl BenchmarkClient for ScylladbClient {
 		self.session
 			.query_unpaged(
 				"
-					CREATE KEYSPACE bench 
-					WITH replication = { 'class': 'SimpleStrategy', 'replication_factor' : 1 } 
+					CREATE KEYSPACE bench
+					WITH replication = { 'class': 'SimpleStrategy', 'replication_factor' : 1 }
 					AND durable_writes = true
 				",
 				(),

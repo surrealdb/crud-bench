@@ -1,5 +1,6 @@
-use crate::benchmark::{Benchmark, BenchmarkEngine, BenchmarkResult};
+use crate::benchmark::{Benchmark, BenchmarkResult};
 use crate::docker::{DockerContainer, DockerParams};
+use crate::engine::BenchmarkEngine;
 use crate::keyprovider::KeyProvider;
 use crate::map::MapClientProvider;
 
