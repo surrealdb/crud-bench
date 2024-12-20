@@ -1,7 +1,7 @@
 #![cfg(feature = "keydb")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine};
 use crate::docker::DockerParams;
+use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::KeyType;
 use anyhow::Result;

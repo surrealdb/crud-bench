@@ -13,6 +13,7 @@ mod benchmark;
 mod database;
 mod dialect;
 mod docker;
+mod engine;
 mod keyprovider;
 mod result;
 mod valueprovider;

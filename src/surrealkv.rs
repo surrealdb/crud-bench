@@ -1,6 +1,7 @@
 #![cfg(feature = "surrealkv")]
 
-use crate::benchmark::{BenchmarkClient, BenchmarkEngine, NOT_SUPPORTED_ERROR};
+use crate::benchmark::NOT_SUPPORTED_ERROR;
+use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
