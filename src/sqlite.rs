@@ -85,7 +85,12 @@ impl BenchmarkClient for SqliteClient {
 			})
 			.collect();
 		let fields = fields.join(",");
-		let stm = format!("CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
+		let stm = format!(
+			"
+		    DROP TABLE IF EXISTS record;
+		    CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});
+		"
+		);
 		self.execute_batch(Cow::Owned(stm)).await?;
 		Ok(())
 	}
