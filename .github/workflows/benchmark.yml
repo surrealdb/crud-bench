@@ -33,11 +33,6 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get -y update
-          sudo apt-get install sqlite3
-
       - name: Build benchmark
         run: cargo build --release --target x86_64-unknown-linux-gnu
 
