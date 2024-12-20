@@ -48,7 +48,7 @@ Options:
 
   -d, --database <DATABASE>
           Database
-          
+
           [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
 
   -e, --endpoint <ENDPOINT>
@@ -56,17 +56,17 @@ Options:
 
   -w, --workers <WORKERS>
           Number of async runtime workers (default is the number of CPU cores)
-          
+
           [default: 12]
 
   -c, --clients <CLIENTS>
           Number of concurrent clients
-          
+
           [default: 1]
 
   -t, --threads <THREADS>
           Number of concurrent threads per client
-          
+
           [default: 1]
 
   -s, --samples <SAMPLES>
@@ -77,7 +77,7 @@ Options:
 
   -k, --key <KEY>
           The type of the key
-          
+
           [default: integer]
 
           Possible values:
@@ -89,152 +89,9 @@ Options:
 
   -v, --value <VALUE>
           Size of the text value
-          
+
           [env: CRUD_BENCH_VALUE=]
-          [default: "{\"text\":\"string:50\", \"integer\":\"int\"}"]
-
-      --show-sample
-          Print-out an example of value
-
-  -p, --pid <PID>
-          Collect system information for a given pid
-
-  -a, --scans <SCANS>
-          Size of the text value
-          
-          [env: CRUD_BENCH_SCANS=]
-          [default: "[{\"name\": \"limit\", \"limit\": 100, \"expect\": 100}]"]
-
-  -h, --help
-          Print help (see a summary with '-h')
-ekeller@EK-SUR-MBP16 crud-bench % cargo run -- --help
-    Blocking waiting for file lock on build directory
-   Compiling crud-bench v0.1.0 (/Users/ekeller/github/surrealdb/crud-bench)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.32s
-     Running `target/debug/crud-bench --help`
-Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
-
-Options:
-  -i, --image <IMAGE>
-          Docker image
-
-  -d, --database <DATABASE>
-          Database
-          
-          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
-
-  -e, --endpoint <ENDPOINT>
-          Endpoint
-
-  -w, --workers <WORKERS>
-          Number of async runtime workers (default is the number of CPU cores)
-          
-          [default: 12]
-
-  -c, --clients <CLIENTS>
-          Number of concurrent clients
-          
-          [default: 1]
-
-  -t, --threads <THREADS>
-          Number of concurrent threads per client
-          
-          [default: 1]
-
-  -s, --samples <SAMPLES>
-          Number of samples to be created, read, updated, and deleted
-
-  -r, --random
-          Generate the keys in a pseudo-randomized order
-
-  -k, --key <KEY>
-          The type of the key
-          
-          [default: integer]
-
-          Possible values:
-          - integer:   4 bytes integer
-          - string26:  26 ascii bytes
-          - string90:  90 ascii bytes
-          - string506: 506 ascii bytes
-          - uuid:      UUID type 7
-
-  -v, --value <VALUE>
-          Size of the text value
-          
-          [env: CRUD_BENCH_VALUE=]
-          [default: "{\"text\":\"string:50\", \"integer\":\"int\"}"]
-
-      --show-sample
-          Print-out an example of value
-
-  -p, --pid <PID>
-          Collect system information for a given pid
-
-  -a, --scans <SCANS>
-          An array of scan specifications
-          
-          [env: CRUD_BENCH_SCANS=]
-          [default: "[{\"name\": \"limit\", \"limit\": 100, \"expect\": 100}]"]
-
-  -h, --help
-          Print help (see a summary with '-h')
-ekeller@EK-SUR-MBP16 crud-bench % cargo run -- --help
-   Compiling crud-bench v0.1.0 (/Users/ekeller/github/surrealdb/crud-bench)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.03s
-     Running `target/debug/crud-bench --help`
-Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
-
-Options:
-  -i, --image <IMAGE>
-          Docker image
-
-  -d, --database <DATABASE>
-          Database
-          
-          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
-
-  -e, --endpoint <ENDPOINT>
-          Endpoint
-
-  -w, --workers <WORKERS>
-          Number of async runtime workers (default is the number of CPU cores)
-          
-          [default: 12]
-
-  -c, --clients <CLIENTS>
-          Number of concurrent clients
-          
-          [default: 1]
-
-  -t, --threads <THREADS>
-          Number of concurrent threads per client
-          
-          [default: 1]
-
-  -s, --samples <SAMPLES>
-          Number of samples to be created, read, updated, and deleted
-
-  -r, --random
-          Generate the keys in a pseudo-randomized order
-
-  -k, --key <KEY>
-          The type of the key
-          
-          [default: integer]
-
-          Possible values:
-          - integer:   4 bytes integer
-          - string26:  26 ascii bytes
-          - string90:  90 ascii bytes
-          - string506: 506 ascii bytes
-          - uuid:      UUID type 7
-
-  -v, --value <VALUE>
-          Size of the text value
-          
-          [env: CRUD_BENCH_VALUE=]
-          [default: "{\"text\":\"string:50\", \"integer\":\"int\"}"]
+          [default: "{\n\t\t\t\"text\": \"string:50\",\n\t\t\t\"integer\": \"int\"\n\t\t}"]
 
       --show-sample
           Print-out an example of a generated value
@@ -244,9 +101,9 @@ Options:
 
   -a, --scans <SCANS>
           An array of scan specifications
-          
+
           [env: CRUD_BENCH_SCANS=]
-          [default: "[{\"name\": \"limit\", \"limit\": 100, \"expect\": 100}]"]
+          [default: "[\n\t\t\t{ \"name\": \"count_all\", \"samples\": 10, \"projection\": \"COUNT\" },\n\t\t\t{ \"name\": \"limit_keys\", \"samples\": 10, \"projection\": \"ID\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_full\", \"samples\": 10, \"projection\": \"FULL\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_count\", \"samples\": 10, \"projection\": \"COUNT\", \"limit\": 100, \"expect\": 100 }\n\t\t]"]
 
   -h, --help
           Print help (see a summary with '-h')
