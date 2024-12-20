@@ -30,6 +30,7 @@ mod redis;
 mod rocksdb;
 mod scylladb;
 mod speedb;
+mod sqlite;
 mod surrealdb;
 mod surrealkv;
 
