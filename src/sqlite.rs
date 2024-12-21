@@ -85,13 +85,24 @@ impl BenchmarkClient for SqliteClient {
 			})
 			.collect();
 		let fields = fields.join(",");
-		let stm = format!(
+		// SQLite Optimisations
+		// Not recommended in production.
+		// See https://avi.im/blag/2021/fast-sqlite-inserts/
+		let stmt = "
+		    PRAGMA journal_mode = OFF;
+			PRAGMA synchronous = 0;
+			PRAGMA cache_size = 1000000;
+			PRAGMA locking_mode = EXCLUSIVE;
+			PRAGMA temp_store = MEMORY;
+		";
+		self.execute_batch(Cow::Borrowed(stmt)).await?;
+		let stmt = format!(
 			"
 		    DROP TABLE IF EXISTS record;
 		    CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});
 		"
 		);
-		self.execute_batch(Cow::Owned(stm)).await?;
+		self.execute_batch(Cow::Owned(stmt)).await?;
 		Ok(())
 	}
 
@@ -138,13 +149,7 @@ impl BenchmarkClient for SqliteClient {
 
 impl SqliteClient {
 	async fn execute_batch(&self, query: Cow<'static, str>) -> Result<()> {
-		self.conn
-			.call(move |conn| {
-				let tx = conn.transaction()?;
-				tx.execute_batch(query.as_ref())?;
-				tx.commit().map_err(Into::into)
-			})
-			.await?;
+		self.conn.call(move |conn| conn.execute_batch(query.as_ref()).map_err(Into::into)).await?;
 		Ok(())
 	}
 
