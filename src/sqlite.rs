@@ -12,7 +12,7 @@ use tokio_rusqlite::types::ToSqlOutput;
 use tokio_rusqlite::types::Value;
 use tokio_rusqlite::Connection;
 
-const DATABASE_DIR: &str = "sqlite";
+const DATABASE_FILE: &str = "sqlite";
 
 pub(crate) struct SqliteClientProvider {
 	conn: Arc<Connection>,
@@ -23,9 +23,9 @@ pub(crate) struct SqliteClientProvider {
 impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 	async fn setup(kt: KeyType, columns: Columns) -> Result<Self> {
 		// Cleanup the data directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		tokio::fs::remove_file(DATABASE_FILE).await.ok();
 		// Create the connection
-		let conn = Connection::open(DATABASE_DIR).await?;
+		let conn = Connection::open(DATABASE_FILE).await?;
 		// Create the store
 		Ok(Self {
 			conn: Arc::new(conn),
@@ -52,7 +52,7 @@ pub(crate) struct SqliteClient {
 impl BenchmarkClient for SqliteClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		tokio::fs::remove_file(DATABASE_FILE).await.ok();
 		// Ok
 		Ok(())
 	}
