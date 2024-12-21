@@ -138,7 +138,13 @@ impl BenchmarkClient for SqliteClient {
 
 impl SqliteClient {
 	async fn execute_batch(&self, query: Cow<'static, str>) -> Result<()> {
-		self.conn.call(move |conn| conn.execute_batch(query.as_ref()).map_err(Into::into)).await?;
+		self.conn
+			.call(move |conn| {
+				let tx = conn.transaction()?;
+				tx.execute_batch(query.as_ref())?;
+				tx.commit().map_err(Into::into)
+			})
+			.await?;
 		Ok(())
 	}
 
@@ -148,7 +154,12 @@ impl SqliteClient {
 		params: ToSqlOutput<'static>,
 	) -> Result<usize> {
 		self.conn
-			.call(move |conn| conn.execute(query.as_ref(), [&params]).map_err(Into::into))
+			.call(move |conn| {
+				let tx = conn.transaction()?;
+				let num = tx.execute(query.as_ref(), [&params])?;
+				tx.commit()?;
+				Ok(num)
+			})
 			.await
 			.map_err(Into::into)
 	}
@@ -160,15 +171,19 @@ impl SqliteClient {
 	) -> Result<Vec<Value>> {
 		self.conn
 			.call(move |conn| {
-				let mut stmt = conn.prepare(stmt.as_ref())?;
-				let mut rows = match params {
-					Some(params) => stmt.query([&params])?,
-					None => stmt.query(())?,
-				};
+				let tx = conn.transaction()?;
 				let mut vec = Vec::new();
-				while let Some(row) = rows.next()? {
-					vec.push(row.get(0)?);
+				{
+					let mut stmt = tx.prepare(stmt.as_ref())?;
+					let mut rows = match params {
+						Some(params) => stmt.query([&params])?,
+						None => stmt.query(())?,
+					};
+					while let Some(row) = rows.next()? {
+						vec.push(row.get(0)?);
+					}
 				}
+				tx.commit()?;
 				Ok(vec)
 			})
 			.await
