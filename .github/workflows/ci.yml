@@ -239,6 +239,10 @@ jobs:
           - database: scylladb
             enabled: false
             description: ScyllaDB
+          # SQLite
+          - database: sqlite
+            enabled: true
+            description: SQLite
           # SurrealDB + Memory
           - database: surrealdb-memory
             enabled: true

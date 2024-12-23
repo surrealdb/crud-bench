@@ -49,7 +49,7 @@ Options:
   -d, --database <DATABASE>
           Database
 
-          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
+          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
 
   -e, --endpoint <ENDPOINT>
           Endpoint
@@ -236,6 +236,14 @@ Run the benchmark against RocksDB:
 
 ```bash
 cargo run -r -- -d rocksdb -s 100000 -t 3 -r
+```
+
+## SQLite benchmark
+
+Run the benchmark against SQLite:
+
+```bash
+cargo run -r -- -d sqlite -s 100000 -t 3 -r
 ```
 
 ## SurrealKV benchmark
