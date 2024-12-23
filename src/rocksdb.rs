@@ -245,7 +245,7 @@ impl RocksDBClient {
 				Ok(iter
 					.skip(s) // Skip the first `offset` entries
 					.take(l) // Take the next `limit` entries
-				    .count())
+					.count())
 			}
 		}
 	}
