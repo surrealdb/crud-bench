@@ -22,7 +22,7 @@ pub(crate) struct SqliteClientProvider {
 
 impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 	async fn setup(kt: KeyType, columns: Columns) -> Result<Self> {
-		// Cleanup the data directory
+		// Remove the database file if any
 		tokio::fs::remove_file(DATABASE_FILE).await.ok();
 		// Create the connection
 		let conn = Connection::open(DATABASE_FILE).await?;
@@ -51,7 +51,7 @@ pub(crate) struct SqliteClient {
 
 impl BenchmarkClient for SqliteClient {
 	async fn shutdown(&self) -> Result<()> {
-		// Cleanup the data directory
+		// Remove the database file
 		tokio::fs::remove_file(DATABASE_FILE).await.ok();
 		// Ok
 		Ok(())
