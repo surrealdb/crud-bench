@@ -19,16 +19,16 @@ pub(crate) const SCYLLADB_DOCKER_PARAMS: DockerParams = DockerParams {
 	post_args: "",
 };
 
-pub(crate) struct ScyllaDBClientProvider(KeyType, Columns);
+pub(crate) struct ScyllaDBClientProvider(KeyType, Columns, String);
 
 impl BenchmarkEngine<ScylladbClient> for ScyllaDBClientProvider {
-	async fn setup(kt: KeyType, columns: Columns) -> Result<Self> {
-		Ok(ScyllaDBClientProvider(kt, columns))
+	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
+		let node = endpoint.unwrap_or("127.0.0.1:9042").to_owned();
+		Ok(ScyllaDBClientProvider(kt, columns, node))
 	}
 
-	async fn create_client(&self, endpoint: Option<String>) -> Result<ScylladbClient> {
-		let node = endpoint.unwrap_or("127.0.0.1:9042".to_owned());
-		let session = SessionBuilder::new().known_node(node).build().await?;
+	async fn create_client(&self) -> Result<ScylladbClient> {
+		let session = SessionBuilder::new().known_node(&self.2).build().await?;
 		Ok(ScylladbClient {
 			session,
 			kt: self.0,

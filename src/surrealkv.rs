@@ -17,7 +17,7 @@ use surrealkv::Store;
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
 impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
-	async fn setup(_: KeyType, _columns: Columns) -> Result<Self> {
+	async fn setup(_: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("surrealkv");
 		// Configure custom options
@@ -32,7 +32,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		Ok(Self(Arc::new(Store::new(opts)?)))
 	}
 
-	async fn create_client(&self, _: Option<String>) -> Result<SurrealKVClient> {
+	async fn create_client(&self) -> Result<SurrealKVClient> {
 		Ok(SurrealKVClient {
 			db: self.0.clone(),
 		})

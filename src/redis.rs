@@ -16,16 +16,19 @@ pub(crate) const REDIS_DOCKER_PARAMS: DockerParams = DockerParams {
 	post_args: "redis-server --requirepass root",
 };
 
-pub(crate) struct RedisClientProvider {}
+pub(crate) struct RedisClientProvider {
+	url: String,
+}
 
 impl BenchmarkEngine<RedisClient> for RedisClientProvider {
-	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self> {
-		Ok(Self {})
+	async fn setup(_kt: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
+		Ok(Self {
+			url: endpoint.unwrap_or("redis://:root@127.0.0.1:6379/").to_owned(),
+		})
 	}
 
-	async fn create_client(&self, endpoint: Option<String>) -> Result<RedisClient> {
-		let url = endpoint.unwrap_or("redis://:root@127.0.0.1:6379/".to_owned());
-		let client = Client::open(url)?;
+	async fn create_client(&self) -> Result<RedisClient> {
+		let client = Client::open(self.url.as_str())?;
 		let conn = Mutex::new(client.get_multiplexed_async_connection().await?);
 		Ok(RedisClient {
 			conn,

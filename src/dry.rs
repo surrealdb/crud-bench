@@ -8,11 +8,11 @@ use std::hint::black_box;
 pub(crate) struct DryClientProvider {}
 
 impl BenchmarkEngine<DryClient> for DryClientProvider {
-	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		Ok(Self {})
 	}
 
-	async fn create_client(&self, _endpoint: Option<String>) -> Result<DryClient> {
+	async fn create_client(&self) -> Result<DryClient> {
 		Ok(DryClient {})
 	}
 }

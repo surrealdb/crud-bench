@@ -12,8 +12,8 @@ pub(crate) trait BenchmarkEngine<C>: Sized
 where
 	C: BenchmarkClient + Send,
 {
-	async fn setup(kt: KeyType, columns: Columns) -> Result<Self>;
-	async fn create_client(&self, endpoint: Option<String>) -> Result<C>;
+	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self>;
+	async fn create_client(&self) -> Result<C>;
 }
 
 /// A trait for a database benchmark implementation for

@@ -30,11 +30,11 @@ impl From<KeyType> for MapDatabase {
 pub(crate) struct MapClientProvider(MapDatabase);
 
 impl BenchmarkEngine<MapClient> for MapClientProvider {
-	async fn setup(kt: KeyType, _columns: Columns) -> Result<Self> {
+	async fn setup(kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		Ok(Self(kt.into()))
 	}
 
-	async fn create_client(&self, _: Option<String>) -> Result<MapClient> {
+	async fn create_client(&self) -> Result<MapClient> {
 		Ok(MapClient(self.0.clone()))
 	}
 }

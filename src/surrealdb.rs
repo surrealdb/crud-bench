@@ -33,21 +33,21 @@ pub(crate) const SURREALDB_SURREALKV_DOCKER_PARAMS: DockerParams = DockerParams 
 	post_args: "start --user root --pass root surrealkv://tmp/crud-bench.db",
 };
 
-pub(crate) struct SurrealDBClientProvider(Arc<Surreal<Any>>);
-
-impl Default for SurrealDBClientProvider {
-	fn default() -> Self {
-		SurrealDBClientProvider(Arc::new(Surreal::init()))
-	}
+pub(crate) struct SurrealDBClientProvider {
+	client: Arc<Surreal<Any>>,
+	endpoint: String,
 }
 
 impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
-	async fn setup(_: KeyType, _columns: Columns) -> Result<Self> {
-		Ok(Default::default())
-	}
-	async fn create_client(&self, endpoint: Option<String>) -> Result<SurrealDBClient> {
+	async fn setup(_: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		// Get the endpoint if specified
-		let ep = endpoint.unwrap_or("ws://127.0.0.1:8000".to_owned()).replace("memory", "mem://");
+		let endpoint = endpoint.unwrap_or("ws://127.0.0.1:8000").replace("memory", "mem://");
+		Ok(Self {
+			endpoint,
+			client: Arc::new(Surreal::init()),
+		})
+	}
+	async fn create_client(&self) -> Result<SurrealDBClient> {
 		// Define root user details
 		let root = Root {
 			username: "root",
@@ -55,20 +55,20 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 		};
 		let config = Config::new().user(root);
 		// Return the client
-		let client = match ep.split_once(':').unwrap().0 {
+		let client = match self.endpoint.split_once(':').unwrap().0 {
 			"ws" | "wss" | "http" | "https" => {
 				// Connect to the database and instantiate the remote client
-				SurrealDBClient::Remote(connect((ep, config)).await?)
+				SurrealDBClient::Remote(connect((&self.endpoint, config)).await?)
 			}
 			_ => {
 				// Connect to the database
-				match self.0.connect((ep, config)).await {
+				match self.client.connect((&self.endpoint, config)).await {
 					Ok(..) | Err(Error::Api(Api::AlreadyConnected)) => {
 						// We have connected successfully
 					}
 					Err(error) => return Err(error.into()),
 				}
-				SurrealDBClient::Local(self.0.clone())
+				SurrealDBClient::Local(self.client.clone())
 			}
 		};
 		// Signin as a namespace, database, or root user

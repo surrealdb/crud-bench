@@ -24,7 +24,7 @@ pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
 
 pub(crate) struct Benchmark {
 	/// The server endpoint to connect to
-	endpoint: Option<String>,
+	pub(crate) endpoint: Option<String>,
 	/// The timeout for connecting to the server
 	timeout: Duration,
 	/// The number of clients to spawn
@@ -150,10 +150,8 @@ impl Benchmark {
 		while time.elapsed()? < self.timeout {
 			// Wait for a small amount of time
 			tokio::time::sleep(TIMEOUT).await;
-			// Get the specified endpoint
-			let endpoint = self.endpoint.to_owned();
 			// Attempt to create a client connection
-			if let Ok(v) = engine.create_client(endpoint).await {
+			if let Ok(v) = engine.create_client().await {
 				return Ok(v);
 			}
 		}
@@ -171,10 +169,8 @@ impl Benchmark {
 		for i in 0..self.clients {
 			// Log some information
 			info!("Creating client {}", i + 1);
-			// Get the specified endpoint
-			let endpoint = self.endpoint.to_owned();
 			// Create a new client connection
-			clients.push(engine.create_client(endpoint));
+			clients.push(engine.create_client());
 		}
 		// Wait for all the clients to connect
 		Ok(try_join_all(clients).await?.into_iter().map(Arc::new).collect())
