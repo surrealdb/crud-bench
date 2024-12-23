@@ -245,9 +245,7 @@ impl RocksDBClient {
 				Ok(iter
 					.skip(s) // Skip the first `offset` entries
 					.take(l) // Take the next `limit` entries
-					.map(|v| -> Result<_> { Ok(v.map(|_| true)?) })
-					.collect::<Result<Vec<_>>>()?
-					.len())
+					.count())
 			}
 		}
 	}
