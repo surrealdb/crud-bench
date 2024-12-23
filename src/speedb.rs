@@ -17,7 +17,7 @@ use std::sync::Arc;
 pub(crate) struct SpeeDBClientProvider(Arc<OptimisticTransactionDB>);
 
 impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
-	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("speedb");
 		// Configure custom options
@@ -61,7 +61,7 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 		// Create the store
 		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, "speedb")?)))
 	}
-	async fn create_client(&self, _: Option<String>) -> Result<SpeeDBClient> {
+	async fn create_client(&self) -> Result<SpeeDBClient> {
 		Ok(SpeeDBClient(self.0.clone()))
 	}
 }

@@ -17,16 +17,16 @@ pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 	post_args: "postgres -N 1024",
 };
 
-pub(crate) struct PostgresClientProvider(KeyType, Columns);
+pub(crate) struct PostgresClientProvider(KeyType, Columns, String);
 
 impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
-	async fn setup(kt: KeyType, columns: Columns) -> Result<Self> {
-		Ok(Self(kt, columns))
+	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
+		let url = endpoint.unwrap_or("host=localhost user=postgres password=postgres").to_owned();
+		Ok(Self(kt, columns, url))
 	}
 
-	async fn create_client(&self, endpoint: Option<String>) -> Result<PostgresClient> {
-		let url = endpoint.unwrap_or("host=localhost user=postgres password=postgres".to_owned());
-		let (client, connection) = tokio_postgres::connect(&url, NoTls).await?;
+	async fn create_client(&self) -> Result<PostgresClient> {
+		let (client, connection) = tokio_postgres::connect(&self.2, NoTls).await?;
 		tokio::spawn(async move {
 			if let Err(e) = connection.await {
 				eprintln!("connection error: {}", e);

@@ -21,7 +21,7 @@ pub(crate) struct SqliteClientProvider {
 }
 
 impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
-	async fn setup(kt: KeyType, columns: Columns) -> Result<Self> {
+	async fn setup(kt: KeyType, columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Remove the database directory
 		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
 		// Recreate the database directory
@@ -38,7 +38,7 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 		})
 	}
 
-	async fn create_client(&self, _endpoint: Option<String>) -> Result<SqliteClient> {
+	async fn create_client(&self) -> Result<SqliteClient> {
 		Ok(SqliteClient {
 			conn: self.conn.clone(),
 			kt: self.kt,

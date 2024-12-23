@@ -23,25 +23,28 @@ pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 	post_args: "",
 };
 
-pub(crate) struct MongoDBClientProvider {}
+pub(crate) struct MongoDBClientProvider {
+	url: String,
+}
 
 impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
-	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self> {
-		Ok(Self {})
+	async fn setup(_kt: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
+		Ok(Self {
+			url: endpoint.unwrap_or("mongodb://root:root@localhost:27017").to_owned(),
+		})
 	}
 
-	async fn create_client(&self, endpoint: Option<String>) -> Result<MongoDBClient> {
-		Ok(MongoDBClient(create_mongo_client(endpoint).await?))
+	async fn create_client(&self) -> Result<MongoDBClient> {
+		Ok(MongoDBClient(create_mongo_client(&self.url).await?))
 	}
 }
 
 pub(crate) struct MongoDBClient(Database);
 
-async fn create_mongo_client(endpoint: Option<String>) -> Result<Database>
+async fn create_mongo_client(url: &str) -> Result<Database>
 where
 {
-	let url = endpoint.unwrap_or("mongodb://root:root@localhost:27017".to_owned());
-	let opts = ClientOptions::parse(&url).await?;
+	let opts = ClientOptions::parse(url).await?;
 	let client = Client::with_options(opts)?;
 	let db = client.database_with_options(
 		"crud-bench",

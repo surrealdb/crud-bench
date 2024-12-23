@@ -16,16 +16,19 @@ pub(crate) const KEYDB_DOCKER_PARAMS: DockerParams = DockerParams {
 	post_args: "keydb-server --requirepass root",
 };
 
-pub(crate) struct KeydbClientProvider {}
+pub(crate) struct KeydbClientProvider {
+	url: String,
+}
 
 impl BenchmarkEngine<KeydbClient> for KeydbClientProvider {
-	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self> {
-		Ok(KeydbClientProvider {})
+	async fn setup(_kt: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
+		Ok(KeydbClientProvider {
+			url: endpoint.unwrap_or("redis://:root@127.0.0.1:6379/").to_owned(),
+		})
 	}
 
-	async fn create_client(&self, endpoint: Option<String>) -> Result<KeydbClient> {
-		let url = endpoint.unwrap_or("redis://:root@127.0.0.1:6379/".to_owned());
-		let client = Client::open(url)?;
+	async fn create_client(&self) -> Result<KeydbClient> {
+		let client = Client::open(self.url.as_str())?;
 		let conn = Mutex::new(client.get_multiplexed_async_connection().await?);
 		Ok(KeydbClient {
 			conn,

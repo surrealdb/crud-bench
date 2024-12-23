@@ -13,14 +13,14 @@ const TABLE: TableDefinition<&[u8], Vec<u8>> = TableDefinition::new("test");
 pub(crate) struct ReDBClientProvider(Arc<Database>);
 
 impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
-	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("redb");
 		// Create the store
 		Ok(Self(Arc::new(Database::create("redb")?)))
 	}
 
-	async fn create_client(&self, _: Option<String>) -> Result<ReDBClient> {
+	async fn create_client(&self) -> Result<ReDBClient> {
 		Ok(ReDBClient(self.0.clone()))
 	}
 }

@@ -17,7 +17,7 @@ use std::sync::Arc;
 pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
 
 impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
-	async fn setup(_kt: KeyType, _columns: Columns) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all("rocksdb");
 		// Configure custom options
@@ -62,7 +62,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, "rocksdb")?)))
 	}
 
-	async fn create_client(&self, _: Option<String>) -> Result<RocksDBClient> {
+	async fn create_client(&self) -> Result<RocksDBClient> {
 		Ok(RocksDBClient(self.0.clone()))
 	}
 }
