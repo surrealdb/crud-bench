@@ -12,7 +12,7 @@ use tokio_rusqlite::types::ToSqlOutput;
 use tokio_rusqlite::types::Value;
 use tokio_rusqlite::Connection;
 
-const DATABASE_FILE: &str = "sqlite";
+const DATABASE_DIR: &str = "sqlite";
 
 pub(crate) struct SqliteClientProvider {
 	conn: Arc<Connection>,
@@ -22,10 +22,14 @@ pub(crate) struct SqliteClientProvider {
 
 impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 	async fn setup(kt: KeyType, columns: Columns) -> Result<Self> {
-		// Remove the database file if any
-		tokio::fs::remove_file(DATABASE_FILE).await.ok();
+		// Remove the database directory
+		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		// Recreate the database directory
+		tokio::fs::create_dir(DATABASE_DIR).await?;
+		// Switch to the new directory
+		std::env::set_current_dir(DATABASE_DIR)?;
 		// Create the connection
-		let conn = Connection::open(DATABASE_FILE).await?;
+		let conn = Connection::open("db").await?;
 		// Create the store
 		Ok(Self {
 			conn: Arc::new(conn),
@@ -51,13 +55,22 @@ pub(crate) struct SqliteClient {
 
 impl BenchmarkClient for SqliteClient {
 	async fn shutdown(&self) -> Result<()> {
-		// Remove the database file
-		tokio::fs::remove_file(DATABASE_FILE).await.ok();
+		// Remove the database directory
+		tokio::fs::remove_dir_all(format!("../{DATABASE_DIR}")).await.ok();
 		// Ok
 		Ok(())
 	}
 
 	async fn startup(&self) -> Result<()> {
+		// Optimise SQLite
+		let stmt = "
+            PRAGMA synchronous = 0;
+            PRAGMA journal_mode = ON;
+            PRAGMA page_size = 4096;
+            PRAGMA cache_size = 2500;
+            PRAGMA locking_mode = EXCLUSIVE;
+		";
+		self.execute_batch(Cow::Borrowed(stmt)).await?;
 		let id_type = match self.kt {
 			KeyType::Integer => "SERIAL",
 			KeyType::String26 => "VARCHAR(26)",
@@ -85,13 +98,13 @@ impl BenchmarkClient for SqliteClient {
 			})
 			.collect();
 		let fields = fields.join(",");
-		let stm = format!(
+		let stmt = format!(
 			"
 		    DROP TABLE IF EXISTS record;
 		    CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});
 		"
 		);
-		self.execute_batch(Cow::Owned(stm)).await?;
+		self.execute_batch(Cow::Owned(stmt)).await?;
 		Ok(())
 	}
 

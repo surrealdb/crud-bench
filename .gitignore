@@ -15,5 +15,3 @@ Cargo.lock
 
 .idea/
 
-# Ignore database files
-sqlite
