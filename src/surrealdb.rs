@@ -7,13 +7,11 @@ use crate::{KeyType, Projection, Scan};
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::Arc;
 use surrealdb::engine::any::{connect, Any};
-use surrealdb::error::Api;
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::Config;
+use surrealdb::RecordId;
 use surrealdb::Surreal;
-use surrealdb::{Error, RecordId};
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
@@ -34,61 +32,67 @@ pub(crate) const SURREALDB_SURREALKV_DOCKER_PARAMS: DockerParams = DockerParams 
 };
 
 pub(crate) struct SurrealDBClientProvider {
-	client: Arc<Surreal<Any>>,
+	client: Option<Surreal<Any>>,
 	endpoint: String,
+	root: Root<'static>,
+}
+
+async fn initialise_db(endpoint: &str, root: Root<'static>) -> Result<Surreal<Any>> {
+	// Set the root user
+	let config = Config::new().user(root);
+	// Connect to the database
+	let db = connect((endpoint, config)).await?;
+	// Signin as a namespace, database, or root user
+	db.signin(root).await?;
+	// Select a specific namespace / database
+	db.use_ns("test").use_db("test").await?;
+	// Return the client
+	Ok(db)
 }
 
 impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 	async fn setup(_: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		// Get the endpoint if specified
 		let endpoint = endpoint.unwrap_or("ws://127.0.0.1:8000").replace("memory", "mem://");
-		Ok(Self {
-			endpoint,
-			client: Arc::new(Surreal::init()),
-		})
-	}
-	async fn create_client(&self) -> Result<SurrealDBClient> {
 		// Define root user details
 		let root = Root {
 			username: "root",
 			password: "root",
 		};
-		let config = Config::new().user(root);
-		// Return the client
-		let client = match self.endpoint.split_once(':').unwrap().0 {
-			"ws" | "wss" | "http" | "https" => {
-				// Connect to the database and instantiate the remote client
-				SurrealDBClient::Remote(connect((&self.endpoint, config)).await?)
-			}
-			_ => {
-				// Connect to the database
-				match self.client.connect((&self.endpoint, config)).await {
-					Ok(..) | Err(Error::Api(Api::AlreadyConnected)) => {
-						// We have connected successfully
-					}
-					Err(error) => return Err(error.into()),
-				}
-				SurrealDBClient::Local(self.client.clone())
-			}
+		// Setup the optional client
+		let client = match endpoint.split_once(':').unwrap().0 {
+			// We want to be able to create multiple connections
+			// when testing against an external server
+			"ws" | "wss" | "http" | "https" => None,
+			// When the database is embedded, create only
+			// one client to avoid sending queries to the
+			// wrong database
+			_ => Some(initialise_db(&endpoint, root).await?),
 		};
-		// Signin as a namespace, database, or root user
-		client.db().signin(root).await?;
-		// Select a specific namespace / database
-		client.db().use_ns("test").use_db("test").await?;
-		Ok(client)
+		Ok(Self {
+			endpoint,
+			root,
+			client,
+		})
+	}
+
+	async fn create_client(&self) -> Result<SurrealDBClient> {
+		let client = match &self.client {
+			Some(client) => client.clone(),
+			None => initialise_db(&self.endpoint, self.root).await?,
+		};
+		Ok(SurrealDBClient::new(client))
 	}
 }
 
-pub(crate) enum SurrealDBClient {
-	Remote(Surreal<Any>),
-	Local(Arc<Surreal<Any>>),
+pub(crate) struct SurrealDBClient {
+	db: Surreal<Any>,
 }
 
 impl SurrealDBClient {
-	fn db(&self) -> &Surreal<Any> {
-		match self {
-			SurrealDBClient::Remote(client) => client,
-			SurrealDBClient::Local(client) => client,
+	const fn new(db: Surreal<Any>) -> Self {
+		Self {
+			db,
 		}
 	}
 }
@@ -109,56 +113,58 @@ impl BenchmarkClient for SurrealDBClient {
 		// insert/create into the table attempts
 		// to set up the NS+DB+TB, and this causes
 		// 'resource busy' key conflict failures.
-		self.db().query("REMOVE TABLE IF EXISTS record").await?;
-		self.db().query("DEFINE TABLE record").await?;
+		let surql = "
+            REMOVE TABLE IF EXISTS record;
+			DEFINE TABLE record;
+		";
+		self.db.query(surql).await?.check()?;
 		Ok(())
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		let res: Option<SurrealRecord> =
-			self.db().create(("record", key as i64)).content(val).await?;
+			self.db.create(("record", key as i64)).content(val).await?;
 		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db().create(("record", key)).content(val).await?;
+		let res: Option<SurrealRecord> = self.db.create(("record", key)).content(val).await?;
 		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db().select(("record", key as i64)).await?;
+		let res: Option<SurrealRecord> = self.db.select(("record", key as i64)).await?;
 		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db().select(("record", key)).await?;
+		let res: Option<SurrealRecord> = self.db.select(("record", key)).await?;
 		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let _: Option<SurrealRecord> =
-			self.db().update(("record", key as i64)).content(val).await?;
+		let _: Option<SurrealRecord> = self.db.update(("record", key as i64)).content(val).await?;
 		Ok(())
 	}
 
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db().update(("record", key)).content(val).await?;
+		let res: Option<SurrealRecord> = self.db.update(("record", key)).content(val).await?;
 		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db().delete(("record", key as i64)).await?;
+		let res: Option<SurrealRecord> = self.db.delete(("record", key as i64)).await?;
 		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db().delete(("record", key)).await?;
+		let res: Option<SurrealRecord> = self.db.delete(("record", key)).await?;
 		assert!(res.is_some());
 		Ok(())
 	}
@@ -175,19 +181,19 @@ impl BenchmarkClient for SurrealDBClient {
 impl SurrealDBClient {
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
 		// Extract parameters
-		let s = scan.start.map(|s| format!("START {}", s)).unwrap_or("".to_string());
-		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
+		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
+		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {s}")).unwrap_or_default();
 		// Perform the relevant projection scan type
 		match scan.projection()? {
 			Projection::Id => {
 				let sql = format!("SELECT id FROM record {c} {s} {l}");
-				let res: Vec<SurrealRecord> = self.db().query(sql).await?.take(0)?;
+				let res: Vec<SurrealRecord> = self.db.query(sql).await?.take(0)?;
 				Ok(res.len())
 			}
 			Projection::Full => {
 				let sql = format!("SELECT * FROM record {c} {s} {l}");
-				let res: Vec<SurrealRecord> = self.db().query(sql).await?.take(0)?;
+				let res: Vec<SurrealRecord> = self.db.query(sql).await?.take(0)?;
 				Ok(res.len())
 			}
 			Projection::Count => {
@@ -196,17 +202,8 @@ impl SurrealDBClient {
 				} else {
 					format!("SELECT count() FROM (SELECT 1 FROM record {c} {s} {l}) GROUP ALL")
 				};
-				let res: Vec<Value> = self.db().query(sql).await?.take(0)?;
-				Ok(
-					res.first()
-						.unwrap()
-						.as_object()
-						.unwrap()
-						.get("count")
-						.unwrap()
-						.as_i64()
-						.unwrap() as usize,
-				)
+				let res: Option<usize> = self.db.query(sql).await?.take("count")?;
+				Ok(res.unwrap())
 			}
 		}
 	}
