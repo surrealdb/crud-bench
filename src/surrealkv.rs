@@ -14,12 +14,14 @@ use surrealkv::Mode::{ReadOnly, ReadWrite};
 use surrealkv::Options;
 use surrealkv::Store;
 
+const DATABASE_DIR: &str = "surrealkv";
+
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
 impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 	async fn setup(_: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("surrealkv");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Configure custom options
 		let mut opts = Options::new();
 		// Disable versioning
@@ -27,7 +29,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Enable disk persistence
 		opts.disk_persistence = true;
 		// Set the directory location
-		opts.dir = PathBuf::from("surrealkv");
+		opts.dir = PathBuf::from(DATABASE_DIR);
 		// Create the store
 		Ok(Self(Arc::new(Store::new(opts)?)))
 	}
@@ -46,7 +48,7 @@ pub(crate) struct SurrealKVClient {
 impl BenchmarkClient for SurrealKVClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("surrealkv");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Ok
 		Ok(())
 	}
