@@ -1,11 +1,96 @@
 use bytesize::ByteSize;
+use comfy_table::modifiers::UTF8_ROUND_CORNERS;
+use comfy_table::presets::UTF8_FULL;
+use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
 use hdrhistogram::Histogram;
+use serde_json::Value;
 use std::fmt::{Display, Formatter};
 use std::process;
 use std::time::{Duration, Instant};
 use sysinfo::{
 	DiskUsage, LoadAvg, Pid, Process, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
 };
+
+pub(crate) struct BenchmarkResult {
+	pub(crate) creates: Option<OperationResult>,
+	pub(crate) reads: Option<OperationResult>,
+	pub(crate) updates: Option<OperationResult>,
+	pub(crate) scans: Vec<(String, Option<OperationResult>)>,
+	pub(crate) deletes: Option<OperationResult>,
+	pub(crate) sample: Value,
+}
+
+impl Display for BenchmarkResult {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		let mut table = Table::new();
+		table
+			.load_preset(UTF8_FULL)
+			.apply_modifier(UTF8_ROUND_CORNERS)
+			.set_content_arrangement(ContentArrangement::Dynamic);
+		// Set the benchmark table header row
+		table.set_header(vec![
+			Cell::new("Test").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("Total time").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("Mean").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("99th").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("95th").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("50th").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("1st").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("CPU").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("Memory").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("Reads").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("Writes").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("System load").add_attribute(Attribute::Bold).fg(Color::Blue),
+		]);
+		// Add the [C]reate results to the output
+		if let Some(res) = &self.creates {
+			table.add_row(res.output("[C]reate"));
+		}
+		// Add the [R]eads results to the output
+		if let Some(res) = &self.reads {
+			table.add_row(res.output("[R]ead"));
+		}
+		// Add the [U]pdates results to the output
+		if let Some(res) = &self.updates {
+			table.add_row(res.output("[U]pdate"));
+		}
+		for (name, result) in &self.scans {
+			if let Some(res) = &result {
+				table.add_row(res.output(format!("[S]can::{name}")));
+			} else {
+				table.add_row(vec![
+					"[S]can::{name}",
+					"-",
+					"-",
+					"-",
+					"-",
+					"-",
+					"-",
+					"-",
+					"-",
+					"-",
+					"-",
+					"-",
+				]);
+			}
+		}
+		// Add the [D]eletes results to the output
+		if let Some(res) = &self.deletes {
+			table.add_row(res.output("[D]elete"));
+		}
+		//
+		let column = table.column_mut(8).expect("Our table has three columns");
+		column.set_cell_alignment(CellAlignment::Right);
+		//
+		let column = table.column_mut(9).expect("Our table has three columns");
+		column.set_cell_alignment(CellAlignment::Right);
+		//
+		let column = table.column_mut(10).expect("Our table has three columns");
+		column.set_cell_alignment(CellAlignment::Right);
+		// Output the formatted table
+		write!(f, "{table}")
+	}
+}
 
 pub(super) struct OperationMetric {
 	system: System,
@@ -59,7 +144,7 @@ pub(super) struct OperationResult {
 }
 
 impl OperationResult {
-	pub(super) fn new(mut metric: OperationMetric, histogram: Histogram<u64>) -> Self {
+	pub(crate) fn new(mut metric: OperationMetric, histogram: Histogram<u64>) -> Self {
 		let elapsed = metric.start_time.elapsed();
 		let (mut cpu_usage, used_memory, mut disk_usage, process_name) =
 			if let Some(process) = metric.collect_process() {
@@ -88,28 +173,27 @@ impl OperationResult {
 			process_pid: metric.pid,
 		}
 	}
-}
-
-impl Display for OperationResult {
-	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		write!(
-			f,
-			"total: {} - avg: {:.2} ms - 99%: {:.2} ms - 95%: {:.2} - median: {:.2} ms - cpu: {:.2}% - memory: {} - writes: {} - reads: {} - load avg: {:.2}/{:.2}/{:.2} - process: {}/{}",
+	pub(crate) fn output<S>(&self, test: S) -> Vec<String>
+	where
+		S: ToString,
+	{
+		vec![
+			test.to_string(),
 			format_duration(self.elapsed),
-			self.histogram.mean() / 1000.0,
-			self.histogram.value_at_quantile(0.99) as f64 / 1000.0,
-			self.histogram.value_at_quantile(0.95) as f64 / 1000.0,
-			self.histogram.value_at_quantile(0.50) as f64 / 1000.0,
-			self.cpu_usage,
-			ByteSize(self.used_memory),
-			ByteSize(self.disk_usage.total_written_bytes),
-			ByteSize(self.disk_usage.total_read_bytes),
-			self.load_avg.one,
-			self.load_avg.five,
-			self.load_avg.fifteen,
-			self.process_name,
-			self.process_pid
-		)
+			format!("{:.2} ms", self.histogram.mean() / 1000.0),
+			format!("{:.2} ms", self.histogram.value_at_quantile(0.99) as f64 / 1000.0),
+			format!("{:.2} ms", self.histogram.value_at_quantile(0.95) as f64 / 1000.0),
+			format!("{:.2} ms", self.histogram.value_at_quantile(0.50) as f64 / 1000.0),
+			format!("{:.2} ms", self.histogram.value_at_quantile(0.01) as f64 / 1000.0),
+			format!("{:.2}%", self.cpu_usage),
+			format!("{}", ByteSize(self.used_memory)),
+			format!("{}", ByteSize(self.disk_usage.total_written_bytes)),
+			format!("{}", ByteSize(self.disk_usage.total_read_bytes)),
+			format!(
+				"{:.2}/{:.2}/{:.2}",
+				self.load_avg.one, self.load_avg.five, self.load_avg.fifteen
+			),
+		]
 	}
 }
 

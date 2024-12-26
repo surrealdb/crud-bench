@@ -1,14 +1,13 @@
 use crate::dialect::Dialect;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::keyprovider::KeyProvider;
-use crate::result::{OperationMetric, OperationResult};
+use crate::result::{BenchmarkResult, OperationMetric, OperationResult};
 use crate::valueprovider::ValueProvider;
 use crate::{Args, Scan, Scans};
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
 use log::info;
-use serde_json::Value;
 use std::fmt::{Display, Formatter};
 use std::io::Write;
 use std::io::{stdout, IsTerminal, Stdout};
@@ -344,40 +343,6 @@ impl Display for BenchmarkOperation {
 			Self::Update => write!(f, "Update"),
 			Self::Delete => write!(f, "Delete"),
 		}
-	}
-}
-
-pub(crate) struct BenchmarkResult {
-	creates: Option<OperationResult>,
-	reads: Option<OperationResult>,
-	updates: Option<OperationResult>,
-	scans: Vec<(String, Option<OperationResult>)>,
-	deletes: Option<OperationResult>,
-	pub(super) sample: Value,
-}
-
-impl Display for BenchmarkResult {
-	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		if let Some(r) = &self.creates {
-			writeln!(f, "[C]reates: {}", r)?;
-		}
-		if let Some(r) = &self.reads {
-			writeln!(f, "[R]eads: {}", r)?;
-		}
-		if let Some(r) = &self.updates {
-			writeln!(f, "[U]pdates: {}", r)?;
-		}
-		for (name, result) in &self.scans {
-			if let Some(r) = &result {
-				writeln!(f, "[S]can::{name}: {r}")?;
-			} else {
-				writeln!(f, "[S]can::{name}: <Skipped - Not supported>")?;
-			}
-		}
-		if let Some(r) = &self.deletes {
-			writeln!(f, "[D]eletes: {}", r)?;
-		}
-		Ok(())
 	}
 }
 

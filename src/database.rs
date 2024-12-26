@@ -1,8 +1,9 @@
-use crate::benchmark::{Benchmark, BenchmarkResult};
+use crate::benchmark::Benchmark;
 use crate::docker::{DockerContainer, DockerParams};
 use crate::engine::BenchmarkEngine;
 use crate::keyprovider::KeyProvider;
 use crate::map::MapClientProvider;
+use crate::result::BenchmarkResult;
 
 use crate::dialect::{AnsiSqlDialect, DefaultDialect};
 use crate::dry::DryClientProvider;
