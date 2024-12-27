@@ -15,7 +15,7 @@ pub(crate) struct BenchmarkResult {
 	pub(crate) creates: Option<OperationResult>,
 	pub(crate) reads: Option<OperationResult>,
 	pub(crate) updates: Option<OperationResult>,
-	pub(crate) scans: Vec<(String, usize, Option<OperationResult>)>,
+	pub(crate) scans: Vec<(String, u32, Option<OperationResult>)>,
 	pub(crate) deletes: Option<OperationResult>,
 	pub(crate) sample: Value,
 }
