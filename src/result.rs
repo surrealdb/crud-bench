@@ -15,7 +15,7 @@ pub(crate) struct BenchmarkResult {
 	pub(crate) creates: Option<OperationResult>,
 	pub(crate) reads: Option<OperationResult>,
 	pub(crate) updates: Option<OperationResult>,
-	pub(crate) scans: Vec<(String, Option<OperationResult>)>,
+	pub(crate) scans: Vec<(String, usize, Option<OperationResult>)>,
 	pub(crate) deletes: Option<OperationResult>,
 	pub(crate) sample: Value,
 }
@@ -54,23 +54,23 @@ impl Display for BenchmarkResult {
 		if let Some(res) = &self.updates {
 			table.add_row(res.output("[U]pdate"));
 		}
-		for (name, result) in &self.scans {
+		for (name, samples, result) in &self.scans {
 			if let Some(res) = &result {
-				table.add_row(res.output(format!("[S]can::{name}")));
+				table.add_row(res.output(format!("[S]can::{name} ({samples})")));
 			} else {
 				table.add_row(vec![
-					"[S]can::{name}",
-					"-",
-					"-",
-					"-",
-					"-",
-					"-",
-					"-",
-					"-",
-					"-",
-					"-",
-					"-",
-					"-",
+					format!("[S]can::{name} ({samples})"),
+					"-".to_string(),
+					"-".to_string(),
+					"-".to_string(),
+					"-".to_string(),
+					"-".to_string(),
+					"-".to_string(),
+					"-".to_string(),
+					"-".to_string(),
+					"-".to_string(),
+					"-".to_string(),
+					"-".to_string(),
 				]);
 			}
 		}
@@ -78,13 +78,16 @@ impl Display for BenchmarkResult {
 		if let Some(res) = &self.deletes {
 			table.add_row(res.output("[D]elete"));
 		}
-		//
+		// Right align the `CPU` column
+		let column = table.column_mut(7).expect("Our table has three columns");
+		column.set_cell_alignment(CellAlignment::Right);
+		// Right align the `Memory` column
 		let column = table.column_mut(8).expect("Our table has three columns");
 		column.set_cell_alignment(CellAlignment::Right);
-		//
+		// Right align the `Reads` column
 		let column = table.column_mut(9).expect("Our table has three columns");
 		column.set_cell_alignment(CellAlignment::Right);
-		//
+		// Right align the `Writes` column
 		let column = table.column_mut(10).expect("Our table has three columns");
 		column.set_cell_alignment(CellAlignment::Right);
 		// Output the formatted table
@@ -139,23 +142,16 @@ pub(super) struct OperationResult {
 	used_memory: u64,
 	disk_usage: DiskUsage,
 	load_avg: LoadAvg,
-	process_name: String,
-	process_pid: Pid,
 }
 
 impl OperationResult {
 	pub(crate) fn new(mut metric: OperationMetric, histogram: Histogram<u64>) -> Self {
 		let elapsed = metric.start_time.elapsed();
-		let (mut cpu_usage, used_memory, mut disk_usage, process_name) =
+		let (mut cpu_usage, used_memory, mut disk_usage) =
 			if let Some(process) = metric.collect_process() {
-				(
-					process.cpu_usage(),
-					process.memory(),
-					process.disk_usage(),
-					process.name().to_string_lossy().to_string(),
-				)
+				(process.cpu_usage(), process.memory(), process.disk_usage())
 			} else {
-				(0.0, 0, DiskUsage::default(), "-".to_string())
+				(0.0, 0, DiskUsage::default())
 			};
 		// Subtract the initial disk usage
 		disk_usage.total_written_bytes -= metric.initial_disk_usage.total_written_bytes;
@@ -169,16 +165,14 @@ impl OperationResult {
 			used_memory,
 			disk_usage,
 			load_avg: System::load_average(),
-			process_name,
-			process_pid: metric.pid,
 		}
 	}
-	pub(crate) fn output<S>(&self, test: S) -> Vec<String>
+	pub(crate) fn output<S>(&self, name: S) -> Vec<String>
 	where
 		S: ToString,
 	{
 		vec![
-			test.to_string(),
+			name.to_string(),
 			format_duration(self.elapsed),
 			format!("{:.2} ms", self.histogram.mean() / 1000.0),
 			format!("{:.2} ms", self.histogram.value_at_quantile(0.99) as f64 / 1000.0),

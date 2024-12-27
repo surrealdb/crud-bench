@@ -114,7 +114,7 @@ impl Benchmark {
 					samples,
 				)
 				.await?;
-			scan_results.push((name, duration));
+			scan_results.push((name, samples, duration));
 		}
 		// Compact the datastore
 		if std::env::var("COMPACTION").is_ok() {
