@@ -8,6 +8,8 @@ use redb::{Database, TableDefinition};
 use serde_json::Value;
 use std::sync::Arc;
 
+const DATABASE_DIR: &str = "redb";
+
 const TABLE: TableDefinition<&[u8], Vec<u8>> = TableDefinition::new("test");
 
 pub(crate) struct ReDBClientProvider(Arc<Database>);
@@ -15,9 +17,9 @@ pub(crate) struct ReDBClientProvider(Arc<Database>);
 impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("redb");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Create the store
-		Ok(Self(Arc::new(Database::create("redb")?)))
+		Ok(Self(Arc::new(Database::create(DATABASE_DIR)?)))
 	}
 
 	async fn create_client(&self) -> Result<ReDBClient> {
@@ -30,7 +32,7 @@ pub(crate) struct ReDBClient(Arc<Database>);
 impl BenchmarkClient for ReDBClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("redb");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Ok
 		Ok(())
 	}

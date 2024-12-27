@@ -14,12 +14,14 @@ use speedb::{
 use std::hint::black_box;
 use std::sync::Arc;
 
+const DATABASE_DIR: &str = "speedb";
+
 pub(crate) struct SpeeDBClientProvider(Arc<OptimisticTransactionDB>);
 
 impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("speedb");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
@@ -59,7 +61,7 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 			DBCompressionType::Snappy,
 		]);
 		// Create the store
-		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, "speedb")?)))
+		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)))
 	}
 	async fn create_client(&self) -> Result<SpeeDBClient> {
 		Ok(SpeeDBClient(self.0.clone()))
@@ -71,7 +73,7 @@ pub(crate) struct SpeeDBClient(Arc<OptimisticTransactionDB>);
 impl BenchmarkClient for SpeeDBClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("rocksdb");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Ok
 		Ok(())
 	}

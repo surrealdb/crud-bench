@@ -14,12 +14,14 @@ use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
 
+const DATABASE_DIR: &str = "rocksdb";
+
 pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
 
 impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("rocksdb");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
@@ -59,7 +61,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 			DBCompressionType::Snappy,
 		]);
 		// Create the store
-		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, "rocksdb")?)))
+		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)))
 	}
 
 	async fn create_client(&self) -> Result<RocksDBClient> {
@@ -72,7 +74,7 @@ pub(crate) struct RocksDBClient(Arc<OptimisticTransactionDB>);
 impl BenchmarkClient for RocksDBClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("rocksdb");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Ok
 		Ok(())
 	}
