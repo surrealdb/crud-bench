@@ -17,6 +17,7 @@ mod docker;
 mod engine;
 mod keyprovider;
 mod result;
+mod terminal;
 mod valueprovider;
 
 // Datastore modules
