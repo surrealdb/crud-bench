@@ -4,6 +4,7 @@ use crate::keyprovider::KeyProvider;
 use crate::valueprovider::ValueProvider;
 use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
+use docker::DockerContainer;
 use serde::{Deserialize, Serialize};
 use std::io::IsTerminal;
 use tokio::runtime::Builder;
@@ -16,6 +17,7 @@ mod docker;
 mod engine;
 mod keyprovider;
 mod result;
+mod terminal;
 mod valueprovider;
 
 // Datastore modules
@@ -165,7 +167,6 @@ fn run(args: Args) -> Result<()> {
 	let benchmark = Benchmark::new(&args);
 	// If a Docker image is specified, spawn the container
 	let container = args.database.start_docker(args.image);
-	let image = container.as_ref().map(|c| c.image().to_string());
 	// Set up the asynchronous runtime
 	let runtime = Builder::new_multi_thread()
 		.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
@@ -189,7 +190,7 @@ fn run(args: Args) -> Result<()> {
 		// Output the results
 		Ok(res) => {
 			println!("--------------------------------------------------");
-			match image {
+			match container.as_ref().map(DockerContainer::image) {
 				Some(v) => println!("Benchmark result for {:?} on docker {v}", args.database),
 				None => match args.endpoint {
 					Some(endpoint) => {
