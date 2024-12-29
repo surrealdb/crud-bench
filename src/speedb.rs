@@ -7,9 +7,9 @@ use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use serde_json::Value;
 use speedb::{
-	BottommostLevelCompaction, CompactOptions, DBCompactionStyle, DBCompressionType, FlushOptions,
-	IteratorMode, LogLevel, OptimisticTransactionDB, OptimisticTransactionOptions, Options,
-	ReadOptions, Transaction, WriteOptions,
+	BlockBasedOptions, BottommostLevelCompaction, Cache, CompactOptions, DBCompactionStyle,
+	DBCompressionType, FlushOptions, IteratorMode, LogLevel, OptimisticTransactionDB,
+	OptimisticTransactionOptions, Options, ReadOptions, Transaction, WriteOptions,
 };
 use std::hint::black_box;
 use std::sync::Arc;
@@ -60,6 +60,12 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 			DBCompressionType::Snappy,
 			DBCompressionType::Snappy,
 		]);
+		// Set the block cache size in bytes
+		let mut block_opts = BlockBasedOptions::default();
+		let cache = Cache::new_lru_cache(256 * 1024 * 1024);
+		block_opts.set_bloom_filter(10.0, false);
+		block_opts.set_block_cache(&cache);
+		opts.set_block_based_table_factory(&block_opts);
 		// Create the store
 		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)))
 	}
