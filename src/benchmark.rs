@@ -146,12 +146,12 @@ impl Benchmark {
 		let time = SystemTime::now();
 		// Check the elapsed time
 		while time.elapsed()? < self.timeout {
+			// Wait for a small amount of time
+			tokio::time::sleep(TIMEOUT).await;
 			// Attempt to create a client connection
 			if let Ok(v) = engine.create_client().await {
 				return Ok(v);
 			}
-			// Wait for a small amount of time
-			tokio::time::sleep(TIMEOUT).await;
 		}
 		bail!("Can't create the client")
 	}
