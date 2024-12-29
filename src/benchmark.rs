@@ -186,6 +186,8 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
 	{
+		// Create a new terminal display
+		let mut out = Terminal::default();
 		// Get the total concurrent futures
 		let total = (self.clients * self.threads) as usize;
 		// Whether we have experienced an error
@@ -197,8 +199,7 @@ impl Benchmark {
 		// Store the futures in a vector
 		let mut futures = Vec::with_capacity(total);
 		// Print out the first stage
-		let mut out = Terminal::default();
-		out.map(|| Some(format!("\r{operation} 0%")))?;
+		out.write(|| Some(format!("\r{operation} 0%")))?;
 		// Measure the starting time
 		let metric = OperationMetric::new(self.pid);
 		// Loop over the clients
@@ -258,7 +259,7 @@ impl Benchmark {
 		// Calculate runtime information
 		let result = OperationResult::new(metric, global_histogram);
 		// Print out the last stage
-		out.map_ln(|| Some(format!("\r{operation} 100%")))?;
+		out.writeln(|| Some(format!("\r{operation} 100%")))?;
 		// Shall we skip the operation? (operation not supported)
 		if skip.load(Ordering::Relaxed) {
 			return Ok(None);
@@ -288,20 +289,6 @@ impl Benchmark {
 				// We are done
 				break;
 			}
-			// Calculate the completion percent
-			out.map(|| {
-				let new_percent = if sample == 0 {
-					0u8
-				} else {
-					(sample * 20 / samples) as u8
-				};
-				if new_percent != old_percent {
-					old_percent = new_percent;
-					Some(format!("\r{operation} {}%", new_percent * 5))
-				} else {
-					None
-				}
-			})?;
 			// Perform the benchmark operation
 			let time = Instant::now();
 			match &operation {
@@ -317,9 +304,24 @@ impl Benchmark {
 				BenchmarkOperation::Scan(s) => client.scan(s, &kp).await?,
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 			};
+			// Output the percentage completion
+			out.write(|| {
+				// Calculate the percentage completion
+				let new_percent = match sample {
+					0 => 0u8,
+					_ => (sample * 20 / samples) as u8,
+				};
+				// Display the percent if multiple of 5
+				if new_percent != old_percent {
+					old_percent = new_percent;
+					Some(format!("\r{operation} {}%", new_percent * 5))
+				} else {
+					None
+				}
+			})?;
+			//
 			histogram.record(time.elapsed().as_micros() as u64)?;
 		}
-
 		Ok(histogram)
 	}
 }
