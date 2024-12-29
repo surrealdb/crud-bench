@@ -104,7 +104,11 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 				}
 			};
 			if let Some(expect) = scan.expect {
-				assert_eq!(expect, result);
+				assert_eq!(
+					expect, result,
+					"Expected a length of {expect} but found {result} for {}",
+					scan.name
+				);
 			}
 			Ok(())
 		}
