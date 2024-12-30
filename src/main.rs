@@ -165,9 +165,15 @@ fn main() -> Result<()> {
 fn run(args: Args) -> Result<()> {
 	// Prepare the benchmark
 	let benchmark = Benchmark::new(&args);
-	// If a Docker image is specified, spawn the container
-	let container = args.database.start_docker(args.image);
-	// Set up the asynchronous runtime
+	// If a Docker image is specified but the endpoint, spawn the container.
+	let container = if args.endpoint.is_some() {
+		// The endpoint is specified usually when you want the benchmark to run against a remote server.
+		// Not handling this results in crud-bench starting a container never used by the client and the benchmark.
+		None
+	} else {
+		args.database.start_docker(args.image)
+	};
+	// Setup the asynchronous runtime
 	let runtime = Builder::new_multi_thread()
 		.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
 		.worker_threads(args.workers as usize) // Set the number of worker threads
