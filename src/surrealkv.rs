@@ -180,13 +180,11 @@ impl SurrealKVClient {
 			Projection::Count => {
 				// Skip `offset` entries, then collect `limit` entries
 				Ok(txn
-					.scan(beg..end, None)?
+					.scan(beg..end, Some(s + l))?
 					.into_iter()
-					.skip(s)
-					.take(l)
-					.map(|_| true)
-					.collect::<Vec<_>>()
-					.len())
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.count())
 			}
 		}
 	}
