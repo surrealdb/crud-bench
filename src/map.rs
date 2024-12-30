@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::hash::Hash;
 use std::hint::black_box;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub(crate) enum MapDatabase {
@@ -30,10 +31,15 @@ impl From<KeyType> for MapDatabase {
 pub(crate) struct MapClientProvider(MapDatabase);
 
 impl BenchmarkEngine<MapClient> for MapClientProvider {
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		None
+	}
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		Ok(Self(kt.into()))
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<MapClient> {
 		Ok(MapClient(self.0.clone()))
 	}

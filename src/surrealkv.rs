@@ -10,6 +10,7 @@ use std::hint::black_box;
 use std::iter::Iterator;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use surrealkv::Mode::{ReadOnly, ReadWrite};
 use surrealkv::Options;
 use surrealkv::Store;
@@ -19,6 +20,11 @@ const DATABASE_DIR: &str = "surrealkv";
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
 impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		None
+	}
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(_: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all(DATABASE_DIR);
@@ -33,7 +39,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Create the store
 		Ok(Self(Arc::new(Store::new(opts)?)))
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SurrealKVClient> {
 		Ok(SurrealKVClient {
 			db: self.0.clone(),

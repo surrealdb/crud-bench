@@ -14,12 +14,18 @@ use rocksdb::{
 use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
+use std::time::Duration;
 
 const DATABASE_DIR: &str = "rocksdb";
 
 pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
 
 impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		None
+	}
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all(DATABASE_DIR);
@@ -70,7 +76,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Create the store
 		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)))
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<RocksDBClient> {
 		Ok(RocksDBClient(self.0.clone()))
 	}

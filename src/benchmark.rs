@@ -16,15 +16,13 @@ use std::time::{Duration, SystemTime};
 use tokio::task;
 use tokio::time::Instant;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
 
 pub(crate) struct Benchmark {
 	/// The server endpoint to connect to
 	pub(crate) endpoint: Option<String>,
-	/// The timeout for connecting to the server
-	timeout: Duration,
 	/// The number of clients to spawn
 	clients: u32,
 	/// The number of threads to spawn
@@ -38,7 +36,6 @@ impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
 		Self {
 			endpoint: args.endpoint.to_owned(),
-			timeout: Duration::from_secs(60),
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
@@ -144,10 +141,14 @@ impl Benchmark {
 	{
 		// Get the current system time
 		let time = SystemTime::now();
+		//
+		let wait = engine.wait_timeout();
 		// Check the elapsed time
-		while time.elapsed()? < self.timeout {
+		while time.elapsed()? < TIMEOUT {
 			// Wait for a small amount of time
-			tokio::time::sleep(TIMEOUT).await;
+			if let Some(wait) = wait {
+				tokio::time::sleep(wait).await
+			};
 			// Attempt to create a client connection
 			if let Ok(v) = engine.create_client().await {
 				return Ok(v);

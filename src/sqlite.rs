@@ -8,6 +8,7 @@ use anyhow::Result;
 use serde_json::Value as Json;
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_rusqlite::types::ToSqlOutput;
 use tokio_rusqlite::types::Value;
 use tokio_rusqlite::Connection;
@@ -21,6 +22,11 @@ pub(crate) struct SqliteClientProvider {
 }
 
 impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		None
+	}
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Remove the database directory
 		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
@@ -37,7 +43,7 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 			columns,
 		})
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SqliteClient> {
 		Ok(SqliteClient {
 			conn: self.conn.clone(),

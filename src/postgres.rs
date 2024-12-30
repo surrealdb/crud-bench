@@ -20,11 +20,12 @@ pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 pub(crate) struct PostgresClientProvider(KeyType, Columns, String);
 
 impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		let url = endpoint.unwrap_or("host=localhost user=postgres password=postgres").to_owned();
 		Ok(Self(kt, columns, url))
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<PostgresClient> {
 		let (client, connection) = tokio_postgres::connect(&self.2, NoTls).await?;
 		tokio::spawn(async move {

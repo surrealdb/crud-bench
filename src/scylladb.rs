@@ -22,11 +22,12 @@ pub(crate) const SCYLLADB_DOCKER_PARAMS: DockerParams = DockerParams {
 pub(crate) struct ScyllaDBClientProvider(KeyType, Columns, String);
 
 impl BenchmarkEngine<ScylladbClient> for ScyllaDBClientProvider {
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		let node = endpoint.unwrap_or("127.0.0.1:9042").to_owned();
 		Ok(ScyllaDBClientProvider(kt, columns, node))
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ScylladbClient> {
 		let session = SessionBuilder::new().known_node(&self.2).build().await?;
 		Ok(ScylladbClient {

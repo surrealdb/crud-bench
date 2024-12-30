@@ -28,12 +28,13 @@ pub(crate) struct MongoDBClientProvider {
 }
 
 impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		Ok(Self {
 			url: endpoint.unwrap_or("mongodb://root:root@localhost:27017").to_owned(),
 		})
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<MongoDBClient> {
 		Ok(MongoDBClient(create_mongo_client(&self.url).await?))
 	}
