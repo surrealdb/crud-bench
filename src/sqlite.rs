@@ -62,7 +62,7 @@ pub(crate) struct SqliteClient {
 impl BenchmarkClient for SqliteClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Remove the database directory
-		tokio::fs::remove_dir_all(format!("../{DATABASE_DIR}")).await.ok();
+		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
 		// Ok
 		Ok(())
 	}
@@ -86,7 +86,7 @@ impl BenchmarkClient for SqliteClient {
 				todo!()
 			}
 		};
-		let fields: Vec<String> = self
+		let fields = self
 			.columns
 			.0
 			.iter()
@@ -102,8 +102,8 @@ impl BenchmarkClient for SqliteClient {
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 				}
 			})
-			.collect();
-		let fields = fields.join(",");
+			.collect::<Vec<String>>()
+			.join(",");
 		let stmt = format!(
 			"
 		    DROP TABLE IF EXISTS record;
