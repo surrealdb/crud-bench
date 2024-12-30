@@ -5,6 +5,7 @@ use crate::{KeyType, Scan};
 use anyhow::{bail, Result};
 use serde_json::Value;
 use std::future::Future;
+use std::time::Duration;
 
 /// A trait for a database benchmark implementation
 /// setting up a database, and creating clients.
@@ -12,8 +13,14 @@ pub(crate) trait BenchmarkEngine<C>: Sized
 where
 	C: BenchmarkClient + Send,
 {
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self>;
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<C>;
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		Some(Duration::from_secs(5))
+	}
 }
 
 /// A trait for a database benchmark implementation for
@@ -104,7 +111,11 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 				}
 			};
 			if let Some(expect) = scan.expect {
-				assert_eq!(expect, result);
+				assert_eq!(
+					expect, result,
+					"Expected a length of {expect} but found {result} for {}",
+					scan.name
+				);
 			}
 			Ok(())
 		}

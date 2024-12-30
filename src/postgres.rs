@@ -20,11 +20,12 @@ pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 pub(crate) struct PostgresClientProvider(KeyType, Columns, String);
 
 impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		let url = endpoint.unwrap_or("host=localhost user=postgres password=postgres").to_owned();
 		Ok(Self(kt, columns, url))
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<PostgresClient> {
 		let (client, connection) = tokio_postgres::connect(&self.2, NoTls).await?;
 		tokio::spawn(async move {
@@ -223,9 +224,9 @@ impl PostgresClient {
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
 		// Extract parameters
-		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or("".to_string());
-		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
+		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
+		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or_default();
 		// Perform the relevant projection scan type
 		match scan.projection()? {
 			Projection::Id => {

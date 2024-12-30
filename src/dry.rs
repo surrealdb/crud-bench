@@ -4,14 +4,20 @@ use crate::{KeyType, Scan};
 use anyhow::Result;
 use serde_json::Value;
 use std::hint::black_box;
+use std::time::Duration;
 
 pub(crate) struct DryClientProvider {}
 
 impl BenchmarkEngine<DryClient> for DryClientProvider {
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		None
+	}
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		Ok(Self {})
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<DryClient> {
 		Ok(DryClient {})
 	}

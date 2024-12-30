@@ -7,19 +7,27 @@ use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use serde_json::Value;
 use speedb::{
-	BottommostLevelCompaction, CompactOptions, DBCompactionStyle, DBCompressionType, FlushOptions,
-	IteratorMode, LogLevel, OptimisticTransactionDB, OptimisticTransactionOptions, Options,
-	ReadOptions, Transaction, WriteOptions,
+	BlockBasedOptions, BottommostLevelCompaction, Cache, CompactOptions, DBCompactionStyle,
+	DBCompressionType, FlushOptions, IteratorMode, LogLevel, OptimisticTransactionDB,
+	OptimisticTransactionOptions, Options, ReadOptions, Transaction, WriteOptions,
 };
 use std::hint::black_box;
 use std::sync::Arc;
+use std::time::Duration;
+
+const DATABASE_DIR: &str = "speedb";
 
 pub(crate) struct SpeeDBClientProvider(Arc<OptimisticTransactionDB>);
 
 impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		None
+	}
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("speedb");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
@@ -58,9 +66,16 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 			DBCompressionType::Snappy,
 			DBCompressionType::Snappy,
 		]);
+		// Set the block cache size in bytes
+		let mut block_opts = BlockBasedOptions::default();
+		let cache = Cache::new_lru_cache(256 * 1024 * 1024);
+		block_opts.set_bloom_filter(10.0, false);
+		block_opts.set_block_cache(&cache);
+		opts.set_block_based_table_factory(&block_opts);
 		// Create the store
-		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, "speedb")?)))
+		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)))
 	}
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SpeeDBClient> {
 		Ok(SpeeDBClient(self.0.clone()))
 	}
@@ -71,7 +86,7 @@ pub(crate) struct SpeeDBClient(Arc<OptimisticTransactionDB>);
 impl BenchmarkClient for SpeeDBClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("rocksdb");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Ok
 		Ok(())
 	}

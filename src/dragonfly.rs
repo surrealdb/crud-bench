@@ -21,12 +21,13 @@ pub(crate) struct DragonflyClientProvider {
 }
 
 impl BenchmarkEngine<DragonflyClient> for DragonflyClientProvider {
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		Ok(Self {
 			url: endpoint.unwrap_or("redis://:root@127.0.0.1:6379/").to_owned(),
 		})
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<DragonflyClient> {
 		let client = Client::open(self.url.as_str())?;
 		let conn = Mutex::new(client.get_multiplexed_async_connection().await?);

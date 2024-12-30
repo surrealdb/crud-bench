@@ -10,16 +10,24 @@ use std::hint::black_box;
 use std::iter::Iterator;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use surrealkv::Mode::{ReadOnly, ReadWrite};
 use surrealkv::Options;
 use surrealkv::Store;
 
+const DATABASE_DIR: &str = "surrealkv";
+
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
 impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		None
+	}
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(_: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("surrealkv");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Configure custom options
 		let mut opts = Options::new();
 		// Disable versioning
@@ -27,11 +35,11 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Enable disk persistence
 		opts.disk_persistence = true;
 		// Set the directory location
-		opts.dir = PathBuf::from("surrealkv");
+		opts.dir = PathBuf::from(DATABASE_DIR);
 		// Create the store
 		Ok(Self(Arc::new(Store::new(opts)?)))
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SurrealKVClient> {
 		Ok(SurrealKVClient {
 			db: self.0.clone(),
@@ -46,7 +54,7 @@ pub(crate) struct SurrealKVClient {
 impl BenchmarkClient for SurrealKVClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all("surrealkv");
+		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Ok
 		Ok(())
 	}
@@ -172,13 +180,11 @@ impl SurrealKVClient {
 			Projection::Count => {
 				// Skip `offset` entries, then collect `limit` entries
 				Ok(txn
-					.scan(beg..end, None)?
+					.scan(beg..end, Some(s + l))?
 					.into_iter()
-					.skip(s)
-					.take(l)
-					.map(|_| true)
-					.collect::<Vec<_>>()
-					.len())
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.count())
 			}
 		}
 	}

@@ -4,6 +4,7 @@ use crate::keyprovider::KeyProvider;
 use crate::valueprovider::ValueProvider;
 use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
+use docker::DockerContainer;
 use serde::{Deserialize, Serialize};
 use std::io::IsTerminal;
 use tokio::runtime::Builder;
@@ -16,6 +17,7 @@ mod docker;
 mod engine;
 mod keyprovider;
 mod result;
+mod terminal;
 mod valueprovider;
 
 // Datastore modules
@@ -163,10 +165,15 @@ fn main() -> Result<()> {
 fn run(args: Args) -> Result<()> {
 	// Prepare the benchmark
 	let benchmark = Benchmark::new(&args);
-	// If a Docker image is specified, spawn the container
-	let container = args.database.start_docker(args.image);
-	let image = container.as_ref().map(|c| c.image().to_string());
-	// Set up the asynchronous runtime
+	// If a Docker image is specified but the endpoint, spawn the container.
+	let container = if args.endpoint.is_some() {
+		// The endpoint is specified usually when you want the benchmark to run against a remote server.
+		// Not handling this results in crud-bench starting a container never used by the client and the benchmark.
+		None
+	} else {
+		args.database.start_docker(args.image)
+	};
+	// Setup the asynchronous runtime
 	let runtime = Builder::new_multi_thread()
 		.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
 		.worker_threads(args.workers as usize) // Set the number of worker threads
@@ -189,7 +196,7 @@ fn run(args: Args) -> Result<()> {
 		// Output the results
 		Ok(res) => {
 			println!("--------------------------------------------------");
-			match image {
+			match container.as_ref().map(DockerContainer::image) {
 				Some(v) => println!("Benchmark result for {:?} on docker {v}", args.database),
 				None => match args.endpoint {
 					Some(endpoint) => {

@@ -1,8 +1,9 @@
-use crate::benchmark::{Benchmark, BenchmarkResult};
+use crate::benchmark::Benchmark;
 use crate::docker::{DockerContainer, DockerParams};
 use crate::engine::BenchmarkEngine;
 use crate::keyprovider::KeyProvider;
 use crate::map::MapClientProvider;
+use crate::result::BenchmarkResult;
 
 use crate::dialect::{AnsiSqlDialect, DefaultDialect};
 use crate::dry::DryClientProvider;
@@ -50,6 +51,7 @@ pub(crate) enum Database {
 impl Database {
 	/// Start the Docker container if necessary
 	pub(crate) fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
+		// Get any pre-defined Docker configuration
 		let params: DockerParams = match self {
 			#[cfg(feature = "surrealdb")]
 			Self::SurrealdbMemory => crate::surrealdb::SURREALDB_MEMORY_DOCKER_PARAMS,
@@ -72,6 +74,7 @@ impl Database {
 			#[allow(unreachable_patterns)]
 			_ => return None,
 		};
+		// Check if a custom image has been specified
 		let image = image.unwrap_or(params.image.to_string());
 		let container = DockerContainer::start(image, params.pre_args, params.post_args);
 		Some(container)

@@ -1,32 +1,28 @@
 use crate::dialect::Dialect;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::keyprovider::KeyProvider;
-use crate::result::{OperationMetric, OperationResult};
+use crate::result::{BenchmarkResult, OperationMetric, OperationResult};
+use crate::terminal::Terminal;
 use crate::valueprovider::ValueProvider;
 use crate::{Args, Scan, Scans};
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
 use log::info;
-use serde_json::Value;
 use std::fmt::{Display, Formatter};
-use std::io::Write;
-use std::io::{stdout, IsTerminal, Stdout};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::task;
 use tokio::time::Instant;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
 
 pub(crate) struct Benchmark {
 	/// The server endpoint to connect to
 	pub(crate) endpoint: Option<String>,
-	/// The timeout for connecting to the server
-	timeout: Duration,
 	/// The number of clients to spawn
 	clients: u32,
 	/// The number of threads to spawn
@@ -40,7 +36,6 @@ impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
 		Self {
 			endpoint: args.endpoint.to_owned(),
-			timeout: Duration::from_secs(60),
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
@@ -116,7 +111,7 @@ impl Benchmark {
 					samples,
 				)
 				.await?;
-			scan_results.push((name, duration));
+			scan_results.push((name, samples, duration));
 		}
 		// Compact the datastore
 		if std::env::var("COMPACTION").is_ok() {
@@ -146,10 +141,14 @@ impl Benchmark {
 	{
 		// Get the current system time
 		let time = SystemTime::now();
+		//
+		let wait = engine.wait_timeout();
 		// Check the elapsed time
-		while time.elapsed()? < self.timeout {
+		while time.elapsed()? < TIMEOUT {
 			// Wait for a small amount of time
-			tokio::time::sleep(TIMEOUT).await;
+			if let Some(wait) = wait {
+				tokio::time::sleep(wait).await
+			};
 			// Attempt to create a client connection
 			if let Ok(v) = engine.create_client().await {
 				return Ok(v);
@@ -188,6 +187,8 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
 	{
+		// Create a new terminal display
+		let mut out = Terminal::default();
 		// Get the total concurrent futures
 		let total = (self.clients * self.threads) as usize;
 		// Whether we have experienced an error
@@ -199,8 +200,7 @@ impl Benchmark {
 		// Store the futures in a vector
 		let mut futures = Vec::with_capacity(total);
 		// Print out the first stage
-		let mut out = TerminalOut::default();
-		out.map(|| Some(format!("\r{operation} 0%")))?;
+		out.write(|| Some(format!("\r{operation} 0%")))?;
 		// Measure the starting time
 		let metric = OperationMetric::new(self.pid);
 		// Loop over the clients
@@ -260,7 +260,7 @@ impl Benchmark {
 		// Calculate runtime information
 		let result = OperationResult::new(metric, global_histogram);
 		// Print out the last stage
-		out.map_ln(|| Some(format!("\r{operation} 100%")))?;
+		out.writeln(|| Some(format!("\r{operation} 100%")))?;
 		// Shall we skip the operation? (operation not supported)
 		if skip.load(Ordering::Relaxed) {
 			return Ok(None);
@@ -275,7 +275,7 @@ impl Benchmark {
 		error: &AtomicBool,
 		current: &AtomicU32,
 		operation: BenchmarkOperation,
-		(mut kp, mut vp, mut out): (KeyProvider, ValueProvider, TerminalOut),
+		(mut kp, mut vp, mut out): (KeyProvider, ValueProvider, Terminal),
 	) -> Result<Histogram<u64>>
 	where
 		C: BenchmarkClient,
@@ -290,20 +290,6 @@ impl Benchmark {
 				// We are done
 				break;
 			}
-			// Calculate the completion percent
-			out.map(|| {
-				let new_percent = if sample == 0 {
-					0u8
-				} else {
-					(sample * 20 / samples) as u8
-				};
-				if new_percent != old_percent {
-					old_percent = new_percent;
-					Some(format!("\r{operation} {}%", new_percent * 5))
-				} else {
-					None
-				}
-			})?;
 			// Perform the benchmark operation
 			let time = Instant::now();
 			match &operation {
@@ -319,9 +305,24 @@ impl Benchmark {
 				BenchmarkOperation::Scan(s) => client.scan(s, &kp).await?,
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 			};
+			// Output the percentage completion
+			out.write(|| {
+				// Calculate the percentage completion
+				let new_percent = match sample {
+					0 => 0u8,
+					_ => (sample * 20 / samples) as u8,
+				};
+				// Display the percent if multiple of 5
+				if new_percent != old_percent {
+					old_percent = new_percent;
+					Some(format!("\r{operation} {}%", new_percent * 5))
+				} else {
+					None
+				}
+			})?;
+			//
 			histogram.record(time.elapsed().as_micros() as u64)?;
 		}
-
 		Ok(histogram)
 	}
 }
@@ -344,87 +345,5 @@ impl Display for BenchmarkOperation {
 			Self::Update => write!(f, "Update"),
 			Self::Delete => write!(f, "Delete"),
 		}
-	}
-}
-
-pub(crate) struct BenchmarkResult {
-	creates: Option<OperationResult>,
-	reads: Option<OperationResult>,
-	updates: Option<OperationResult>,
-	scans: Vec<(String, Option<OperationResult>)>,
-	deletes: Option<OperationResult>,
-	pub(super) sample: Value,
-}
-
-impl Display for BenchmarkResult {
-	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		if let Some(r) = &self.creates {
-			writeln!(f, "[C]reates: {}", r)?;
-		}
-		if let Some(r) = &self.reads {
-			writeln!(f, "[R]eads: {}", r)?;
-		}
-		if let Some(r) = &self.updates {
-			writeln!(f, "[U]pdates: {}", r)?;
-		}
-		for (name, result) in &self.scans {
-			if let Some(r) = &result {
-				writeln!(f, "[S]can::{name}: {r}")?;
-			} else {
-				writeln!(f, "[S]can::{name}: <Skipped - Not supported>")?;
-			}
-		}
-		if let Some(r) = &self.deletes {
-			writeln!(f, "[D]eletes: {}", r)?;
-		}
-		Ok(())
-	}
-}
-
-pub(crate) struct TerminalOut(Option<Stdout>);
-
-impl Default for TerminalOut {
-	fn default() -> Self {
-		let stdout = stdout();
-		if stdout.is_terminal() {
-			Self(Some(stdout))
-		} else {
-			Self(None)
-		}
-	}
-}
-
-impl Clone for TerminalOut {
-	fn clone(&self) -> Self {
-		Self(self.0.as_ref().map(|_| stdout()))
-	}
-}
-impl TerminalOut {
-	pub(crate) fn map_ln<F, S>(&mut self, mut f: F) -> Result<()>
-	where
-		F: FnMut() -> Option<S>,
-		S: Display,
-	{
-		if let Some(ref mut o) = self.0 {
-			if let Some(s) = f() {
-				writeln!(o, "{}", s)?;
-				o.flush()?;
-			}
-		}
-		Ok(())
-	}
-
-	pub(crate) fn map<F, S>(&mut self, mut f: F) -> Result<()>
-	where
-		F: FnMut() -> Option<S>,
-		S: Display,
-	{
-		if let Some(ref mut o) = self.0 {
-			if let Some(s) = f() {
-				write!(o, "{}", s)?;
-				o.flush()?;
-			}
-		}
-		Ok(())
 	}
 }
