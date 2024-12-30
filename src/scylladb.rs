@@ -156,7 +156,7 @@ impl ScylladbClient {
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
 		let s = scan.start.unwrap_or(0);
 		let l = (scan.start.unwrap_or(0) + scan.limit.unwrap_or(0)) as i32;
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or_default();
 		let p = scan.projection()?;
 		let stm = match p {
 			Projection::Id => {
