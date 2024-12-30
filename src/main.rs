@@ -209,8 +209,6 @@ fn run(args: Args) -> Result<()> {
 				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
 				num_cpus::get(),
 				args.workers,
-
-
 				args.clients,
 				args.threads,
 				args.samples,
