@@ -27,7 +27,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all(DATABASE_DIR);
+		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
 		// Configure custom options
 		let mut opts = Options::new();
 		// Disable versioning
@@ -54,7 +54,7 @@ pub(crate) struct SurrealKVClient {
 impl BenchmarkClient for SurrealKVClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		let _ = std::fs::remove_dir_all(DATABASE_DIR);
+		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
 		// Ok
 		Ok(())
 	}
