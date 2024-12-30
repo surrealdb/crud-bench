@@ -51,6 +51,7 @@ async fn initialise_db(endpoint: &str, root: Root<'static>) -> Result<Surreal<An
 }
 
 impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(_: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		// Get the endpoint if specified
 		let endpoint = endpoint.unwrap_or("ws://127.0.0.1:8000").replace("memory", "mem://");
@@ -75,7 +76,7 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 			client,
 		})
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SurrealDBClient> {
 		let client = match &self.client {
 			Some(client) => client.clone(),

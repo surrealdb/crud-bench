@@ -7,6 +7,7 @@ use anyhow::Result;
 use redb::{Database, TableDefinition};
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
 
 const DATABASE_DIR: &str = "redb";
 
@@ -15,13 +16,18 @@ const TABLE: TableDefinition<&[u8], Vec<u8>> = TableDefinition::new("test");
 pub(crate) struct ReDBClientProvider(Arc<Database>);
 
 impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		None
+	}
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
 		let _ = std::fs::remove_dir_all(DATABASE_DIR);
 		// Create the store
 		Ok(Self(Arc::new(Database::create(DATABASE_DIR)?)))
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ReDBClient> {
 		Ok(ReDBClient(self.0.clone()))
 	}
