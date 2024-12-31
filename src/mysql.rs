@@ -149,7 +149,29 @@ impl MysqlClient {
 						let v: Option<String> = row.take(i);
 						Value::from(v)
 					}
-					_ => todo!(),
+					consts::ColumnType::MYSQL_TYPE_LONG => {
+						let v: Option<i32> = row.take(i);
+						Value::from(v)
+					}
+					consts::ColumnType::MYSQL_TYPE_LONGLONG => {
+						let v: Option<i64> = row.take(i);
+						Value::from(v)
+					}
+					consts::ColumnType::MYSQL_TYPE_FLOAT => {
+						let v: Option<f32> = row.take(i);
+						Value::from(v)
+					}
+					consts::ColumnType::MYSQL_TYPE_DOUBLE => {
+						let v: Option<f64> = row.take(i);
+						Value::from(v)
+					}
+					consts::ColumnType::MYSQL_TYPE_BLOB => {
+						let v: Option<String> = row.take(i);
+						Value::from(v)
+					}
+					c => {
+						todo!("Not yet implemented {c:?}")
+					}
 				},
 			);
 		}
@@ -162,8 +184,7 @@ impl MysqlClient {
 	{
 		let (fields, values) = self.columns.insert_clauses::<MySqlDialect>(val)?;
 		let stm = format!("INSERT INTO record (id, {fields}) VALUES (?, {values})");
-		let res: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
-		assert_eq!(res.len(), 1);
+		let _: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
 		Ok(())
 	}
 
@@ -171,7 +192,7 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		let stm = "SELECT * FROM record WHERE id=$1";
+		let stm = "SELECT * FROM record WHERE id=?";
 		let res: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
 		assert_eq!(res.len(), 1);
 		Ok(())
@@ -182,9 +203,8 @@ impl MysqlClient {
 		T: ToValue + Sync,
 	{
 		let set = self.columns.set_clause::<MySqlDialect>(val)?;
-		let stm = format!("UPDATE record SET {set} WHERE id=$1");
-		let res: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
-		assert_eq!(res.len(), 1);
+		let stm = format!("UPDATE record SET {set} WHERE id=?");
+		let _: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
 		Ok(())
 	}
 
@@ -192,9 +212,8 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		let stm = "DELETE FROM record WHERE id=$1";
-		let res: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
-		assert_eq!(res.len(), 1);
+		let stm = "DELETE FROM record WHERE id=?";
+		let _: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
 		Ok(())
 	}
 
@@ -224,7 +243,7 @@ impl MysqlClient {
 				Ok(res.len())
 			}
 			Projection::Count => {
-				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s})");
+				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s}) AS T");
 				let res: Vec<Row> = self.conn.lock().await.query(&stm).await?;
 				let count: i64 = res.first().unwrap().get(0).unwrap();
 				Ok(count as usize)
