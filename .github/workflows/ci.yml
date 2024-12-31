@@ -211,6 +211,10 @@ jobs:
           - database: keydb
             enabled: true
             description: KeyDB
+          # LMDB
+          - database: lmdb
+            enabled: true
+            description: LMDB
           # Map
           - database: map
             enabled: true
@@ -230,7 +234,7 @@ jobs:
           # Redb
           - database: redb
             enabled: false
-            description: Redb
+            description: ReDB
           # Redis
           - database: redis
             enabled: true

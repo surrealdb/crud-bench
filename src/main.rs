@@ -24,6 +24,7 @@ mod valueprovider;
 mod dragonfly;
 mod dry;
 mod keydb;
+mod lmdb;
 mod map;
 mod mongodb;
 mod mysql;

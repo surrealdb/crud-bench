@@ -19,6 +19,8 @@ pub(crate) enum Database {
 	Dragonfly,
 	#[cfg(feature = "keydb")]
 	Keydb,
+	#[cfg(feature = "lmdb")]
+	Lmdb,
 	#[cfg(feature = "mongodb")]
 	Mongodb,
 	#[cfg(feature = "mysql")]
@@ -121,6 +123,22 @@ impl Database {
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						crate::dragonfly::DragonflyClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark.endpoint.as_deref(),
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "lmdb")]
+			Database::Lmdb => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::lmdb::LmDBClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark.endpoint.as_deref(),

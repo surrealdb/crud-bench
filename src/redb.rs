@@ -97,12 +97,13 @@ impl ReDBClient {
 		// Open the database table
 		let tab = txn.open_table(TABLE)?;
 		// Process the data
-		let read: Option<_> = tab.get(key.as_ref())?;
-		assert!(read.is_some());
+		let res: Option<_> = tab.get(key.as_ref())?;
+		assert!(res.is_some());
 		Ok(())
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
 		let txn = self.0.begin_write()?;
