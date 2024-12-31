@@ -70,6 +70,10 @@ jobs:
           - database: map
             enabled: true
             description: Map
+          # LMDB
+          - database: lmdb
+            enabled: true
+            description: LMDB
           # MongoDB
           - database: mongodb
             enabled: true
@@ -85,7 +89,7 @@ jobs:
           # Redb
           - database: redb
             enabled: false
-            description: Redb
+            description: ReDB
           # Redis
           - database: redis
             enabled: true
