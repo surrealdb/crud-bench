@@ -57,9 +57,14 @@ pub(crate) trait StringKeyProvider {
 
 #[derive(Default, Clone, Copy)]
 pub(crate) struct OrderedInteger();
+
 impl IntegerKeyProvider for OrderedInteger {
 	fn key(&mut self, n: u32) -> u32 {
-		n
+		// We need to increment by 1
+		// because MySQL PRIMARY IDs
+		// can not be 0, resulting in
+		// duplicate ID errors.
+		n + 1
 	}
 }
 #[derive(Default, Clone, Copy)]

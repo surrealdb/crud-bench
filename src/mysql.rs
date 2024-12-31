@@ -81,7 +81,7 @@ impl BenchmarkClient for MysqlClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		self.create(key as i32, val).await
+		self.create(key as u64, val).await
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
@@ -89,7 +89,7 @@ impl BenchmarkClient for MysqlClient {
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		self.read(key as i32).await
+		self.read(key as u64).await
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
@@ -97,7 +97,7 @@ impl BenchmarkClient for MysqlClient {
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		self.update(key as i32, val).await
+		self.update(key as u64, val).await
 	}
 
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
@@ -105,7 +105,7 @@ impl BenchmarkClient for MysqlClient {
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.delete(key as i32).await
+		self.delete(key as u64).await
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {

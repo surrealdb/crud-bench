@@ -170,7 +170,6 @@ impl PostgresClient {
 							let v: uuid::Uuid = row.try_get(n.as_str())?;
 							Value::from(v.to_string())
 						}
-
 						ColumnType::Object => {
 							let v: Json<Value> = row.try_get(n.as_str())?;
 							v.0
