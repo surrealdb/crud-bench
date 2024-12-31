@@ -169,6 +169,10 @@ impl MysqlClient {
 						let v: Option<String> = row.take(i);
 						Value::from(v)
 					}
+					consts::ColumnType::MYSQL_TYPE_JSON => {
+						let v: Option<serde_json::Value> = row.take(i);
+						Value::from(v)
+					}
 					c => {
 						todo!("Not yet implemented {c:?}")
 					}
