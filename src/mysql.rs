@@ -1,6 +1,6 @@
 #![cfg(feature = "mysql")]
 
-use crate::dialect::{AnsiSqlDialect, Dialect};
+use crate::dialect::{Dialect, MySqlDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::{ColumnType, Columns};
@@ -62,7 +62,7 @@ impl BenchmarkClient for MysqlClient {
 			.0
 			.iter()
 			.map(|(n, t)| {
-				let n = AnsiSqlDialect::escape_field(n.clone());
+				let n = MySqlDialect::escape_field(n.clone());
 				match t {
 					ColumnType::String => format!("{n} TEXT NOT NULL"),
 					ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
@@ -160,7 +160,7 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		let (fields, values) = self.columns.insert_clauses::<AnsiSqlDialect>(val)?;
+		let (fields, values) = self.columns.insert_clauses::<MySqlDialect>(val)?;
 		let stm = format!("INSERT INTO record (id, {fields}) VALUES (?, {values})");
 		let res: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
 		assert_eq!(res.len(), 1);
@@ -181,7 +181,7 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		let set = self.columns.set_clause::<AnsiSqlDialect>(val)?;
+		let set = self.columns.set_clause::<MySqlDialect>(val)?;
 		let stm = format!("UPDATE record SET {set} WHERE id=$1");
 		let res: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
 		assert_eq!(res.len(), 1);
