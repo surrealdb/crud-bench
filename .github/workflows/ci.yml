@@ -223,6 +223,10 @@ jobs:
           - database: postgres
             enabled: true
             description: Postgres
+          # MySQL
+          - database: mysql
+            enabled: true
+            description: MySQL
           # Redb
           - database: redb
             enabled: false

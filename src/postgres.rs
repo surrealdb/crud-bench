@@ -27,7 +27,9 @@ impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<PostgresClient> {
+		// Connect to the database with TLS disabled
 		let (client, connection) = tokio_postgres::connect(&self.2, NoTls).await?;
+		// Log any errors when the connection is closed
 		tokio::spawn(async move {
 			if let Err(e) = connection.await {
 				eprintln!("connection error: {}", e);
@@ -58,7 +60,7 @@ impl BenchmarkClient for PostgresClient {
 				todo!()
 			}
 		};
-		let fields: Vec<String> = self
+		let fields = self
 			.columns
 			.0
 			.iter()
@@ -74,8 +76,8 @@ impl BenchmarkClient for PostgresClient {
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 				}
 			})
-			.collect();
-		let fields = fields.join(",");
+			.collect::<Vec<String>>()
+			.join(", ");
 		let stm = format!("CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
 		self.client.batch_execute(&stm).await?;
 		Ok(())
@@ -168,7 +170,6 @@ impl PostgresClient {
 							let v: uuid::Uuid = row.try_get(n.as_str())?;
 							Value::from(v.to_string())
 						}
-
 						ColumnType::Object => {
 							let v: Json<Value> = row.try_get(n.as_str())?;
 							v.0

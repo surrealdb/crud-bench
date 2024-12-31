@@ -37,6 +37,25 @@ impl Dialect for AnsiSqlDialect {
 	}
 }
 
+pub(crate) struct MySqlDialect();
+
+impl Dialect for MySqlDialect {
+	fn escape_field(field: String) -> String {
+		format!("`{field}`")
+	}
+
+	fn arg_string(val: Value) -> String {
+		match val {
+			Value::Null => "null".to_string(),
+			Value::Bool(b) => b.to_string(),
+			Value::Number(n) => n.to_string(),
+			Value::String(s) => format!("'{s}'"),
+			Value::Array(a) => serde_json::to_string(&a).unwrap(),
+			Value::Object(o) => format!("'{}'", serde_json::to_string(&o).unwrap()),
+		}
+	}
+}
+
 pub(crate) struct DefaultDialect();
 
 impl Dialect for DefaultDialect {

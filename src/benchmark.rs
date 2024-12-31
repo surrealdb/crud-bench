@@ -8,7 +8,7 @@ use crate::{Args, Scan, Scans};
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
-use log::info;
+use log::{debug, info};
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -150,8 +150,9 @@ impl Benchmark {
 				tokio::time::sleep(wait).await
 			};
 			// Attempt to create a client connection
-			if let Ok(v) = engine.create_client().await {
-				return Ok(v);
+			match engine.create_client().await {
+				Err(e) => debug!("Received error: {e}"),
+				Ok(c) => return Ok(c),
 			}
 		}
 		bail!("Can't create the client")
