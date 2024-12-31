@@ -184,7 +184,7 @@ impl MysqlClient {
 	{
 		let (fields, values) = self.columns.insert_clauses::<MySqlDialect>(val)?;
 		let stm = format!("INSERT INTO record (id, {fields}) VALUES (?, {values})");
-		let _: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
+		let _: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
 		Ok(())
 	}
 
@@ -193,7 +193,7 @@ impl MysqlClient {
 		T: ToValue + Sync,
 	{
 		let stm = "SELECT * FROM record WHERE id=?";
-		let res: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
+		let res: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
 		assert_eq!(res.len(), 1);
 		Ok(())
 	}
@@ -204,7 +204,7 @@ impl MysqlClient {
 	{
 		let set = self.columns.set_clause::<MySqlDialect>(val)?;
 		let stm = format!("UPDATE record SET {set} WHERE id=?");
-		let _: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
+		let _: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
 		Ok(())
 	}
 
@@ -213,7 +213,7 @@ impl MysqlClient {
 		T: ToValue + Sync,
 	{
 		let stm = "DELETE FROM record WHERE id=?";
-		let _: Vec<Row> = self.conn.lock().await.exec(&stm, (key.to_value(),)).await?;
+		let _: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
 		Ok(())
 	}
 
@@ -226,7 +226,7 @@ impl MysqlClient {
 		match scan.projection()? {
 			Projection::Id => {
 				let stm = format!("SELECT id FROM record {c} {l} {s}");
-				let res: Vec<Row> = self.conn.lock().await.query(&stm).await?;
+				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
 				let res = res
 					.into_iter()
 					.map(|v| -> Result<_> { Ok(black_box(self.consume(v)?)) })
@@ -235,7 +235,7 @@ impl MysqlClient {
 			}
 			Projection::Full => {
 				let stm = format!("SELECT * FROM record {c} {l} {s}");
-				let res: Vec<Row> = self.conn.lock().await.query(&stm).await?;
+				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
 				let res = res
 					.into_iter()
 					.map(|v| -> Result<_> { Ok(black_box(self.consume(v)?)) })
@@ -244,7 +244,7 @@ impl MysqlClient {
 			}
 			Projection::Count => {
 				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s}) AS T");
-				let res: Vec<Row> = self.conn.lock().await.query(&stm).await?;
+				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
 				let count: i64 = res.first().unwrap().get(0).unwrap();
 				Ok(count as usize)
 			}
