@@ -17,8 +17,8 @@ use tokio::sync::Mutex;
 
 pub(crate) const MYSQL_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "mysql",
-	pre_args: "-p 127.0.0.1:3306:3306 -e MYSQL_ROOT_PASSWORD=mysql",
-	post_args: "-u mysql -h localhost",
+	pre_args: "-p 127.0.0.1:3306:3306 -e MYSQL_ROOT_HOST=% -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=bench",
+	post_args: "",
 };
 
 pub(crate) struct MysqlClientProvider(KeyType, Columns, String);
@@ -26,7 +26,7 @@ pub(crate) struct MysqlClientProvider(KeyType, Columns, String);
 impl BenchmarkEngine<MysqlClient> for MysqlClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
-		let url = endpoint.unwrap_or("mysql://mysql:mysql@localhost:3306/bench").to_owned();
+		let url = endpoint.unwrap_or("mysql://root:mysql@127.0.0.1:3306/bench").to_owned();
 		Ok(Self(kt, columns, url))
 	}
 	/// Creates a new client for this benchmarking engine
