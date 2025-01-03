@@ -20,7 +20,7 @@ const DEFAULT_SIZE: usize = 1_073_741_824;
 
 static DATABASE_SIZE: LazyLock<usize> = LazyLock::new(|| {
 	std::env::var("CRUD_BENCH_LMDB_DATABASE_SIZE")
-		.and_then(|s| Ok(s.parse::<usize>().unwrap_or(DEFAULT_SIZE)))
+		.map(|s| s.parse::<usize>().unwrap_or(DEFAULT_SIZE))
 		.unwrap_or(DEFAULT_SIZE)
 });
 
