@@ -37,7 +37,7 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 						| EnvFlags::NO_SYNC
 						| EnvFlags::NO_META_SYNC,
 				)
-				.map_size(1_073_741_824)
+				.map_size(5_368_709_120)
 				.open(DATABASE_DIR)
 		}?;
 		// Creaye the database
