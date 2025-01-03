@@ -126,7 +126,7 @@ You can use the argument `-a` or `--scans` (or the environment variable `CRUD_BE
 Each scan object can make use of the following values:
 
 - `name`: A descriptive name for the test.
-- `projection`:
+- `projection`: The projection type of the scan:
     - `"ID"`: only the ID is returned.
     - `"FULL"`: the whole record is returned.
     - `"COUNT"`: count the number of records.
