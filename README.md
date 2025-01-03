@@ -157,27 +157,119 @@ Each test is defined as a JSON object specifying the scan parameters and the tes
 
 ## Databases
 
-| Database                                                           | Command                                                                                     |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| Dry (no datastore interaction)                                     | `cargo run -r -- -d dry -s 100000 -c 12 -t 24 -r`
-| [Dragonfly](https://www.dragonflydb.io/) (in-memory datastore)     | `cargo run -r -- -d dragonfly -s 100000 -c 12 -t 24 -r`
-| [KeyDB](https://docs.keydb.dev/) (in-memory datastore)             | `cargo run -r -- -d keydb -s 100000 -c 12 -t 24 -r`
-| [LMDB](http://www.lmdb.tech/doc/) (embedded, persisted datastore)  | `cargo run -r -- -d lmdb -s 100000 -c 12 -t 24 -r`
-| Map (concurrent HashMap)                                           | `cargo run -r -- -d map -s 100000 -c 12 -t 24 -r`
-| [MongoDB](https://www.mongodb.com/) (document database)            | `cargo run -r -- -d mongodb -s 100000 -c 12 -t 24 -r`
-| [Postgres](https://www.postgresql.org/) (relational database)      | `cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r`
-| [MySQL](https://www.mysql.com/) (relational database)              | `cargo run -r -- -d mysql -s 100000 -c 12 -t 24 -r`
-| [ReDB](https://www.redb.org/) (embedded, persisted datastore)      | `cargo run -r -- -d redb -s 100000 -c 12 -t 24 -r`
-| [Redis](https://redis.io/) (in-memory datastore)                   | `cargo run -r -- -d redis -s 100000 -c 12 -t 24 -r`
-| [RocksDB](https://rocksdb.org/) (embedded, persisted datastore)    | `cargo run -r -- -d scylladb -s 100000 -c 12 -t 24 -r`
-| [SQLite](https://www.sqlite.org/) (embedded, persisted database)   | `cargo run -r -- -d sqlite -s 100000 -c 12 -t 24 -r`
-| [SurrealDB](https://surrealdb.com) (in-memory)                     | `cargo run -r -- -d surrealdb-memory -s 100000 -c 12 -t 24 -r`
-| [SurrealDB](https://surrealdb.com) (RocksDB)                       | `cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r`
-| [SurrealDB](https://surrealdb.com) (SurrealKV)                     | `cargo run -r -- -d surrealdb-surrealkv -s 100000 -c 12 -t 24 -r`
-| [SurrealDB](https://surrealdb.com) embedded (in-memory)            | `cargo run -r -- -d surrealdb -e memory -s 100000 -c 12 -t 24 -r`
-| [SurrealDB](https://surrealdb.com) embedded (RocksDB)              | `cargo run -r -- -d surrealdb -e rocksdb:/tmp/db -s 100000 -c 12 -t 24 -r`
-| [SurrealDB](https://surrealdb.com) embedded (SurrealKV)            | `cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12 -t 24 -r`
-| [SurrealKV](https://surrealkv.org) (embedded, persisted datastore) | `cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12 -t 24 -r`
+#### Dry (no datastore interaction)
+
+```bash
+cargo run -r -- -d dry -s 100000 -c 12 -t 24 -r
+```
+
+#### [Dragonfly](https://www.dragonflydb.io/) (in-memory datastore)
+
+```bash
+cargo run -r -- -d dragonfly -s 100000 -c 12 -t 24 -r
+```
+
+#### [KeyDB](https://docs.keydb.dev/) (in-memory datastore)
+
+```bash
+cargo run -r -- -d keydb -s 100000 -c 12 -t 24 -r
+```
+
+#### [LMDB](http://www.lmdb.tech/doc/) (embedded, persisted datastore)
+
+```bash
+cargo run -r -- -d lmdb -s 100000 -c 12 -t 24 -r
+```
+
+#### Map (concurrent HashMap)
+
+```bash
+cargo run -r -- -d map -s 100000 -c 12 -t 24 -r
+```
+
+#### [MongoDB](https://www.mongodb.com/) (document database)
+
+```bash
+cargo run -r -- -d mongodb -s 100000 -c 12 -t 24 -r
+```
+
+#### [Postgres](https://www.postgresql.org/) (relational database)
+
+```bash
+cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
+```
+
+#### [MySQL](https://www.mysql.com/) (relational database)
+
+```bash
+cargo run -r -- -d mysql -s 100000 -c 12 -t 24 -r
+```
+
+#### [ReDB](https://www.redb.org/) (embedded, persisted datastore)
+
+```bash
+cargo run -r -- -d redb -s 100000 -c 12 -t 24 -r
+```
+
+#### [Redis](https://redis.io/) (in-memory datastore)
+
+```bash
+cargo run -r -- -d redis -s 100000 -c 12 -t 24 -r
+```
+
+#### [RocksDB](https://rocksdb.org/) (embedded, persisted datastore)
+
+```bash
+cargo run -r -- -d scylladb -s 100000 -c 12 -t 24 -r
+```
+
+#### [SQLite](https://www.sqlite.org/) (embedded, persisted database)
+
+```bash
+cargo run -r -- -d sqlite -s 100000 -c 12 -t 24 -r
+```
+
+#### [SurrealDB](https://surrealdb.com) (in-memory)
+
+```bash
+cargo run -r -- -d surrealdb-memory -s 100000 -c 12 -t 24 -r
+```
+
+#### [SurrealDB](https://surrealdb.com) (RocksDB)
+
+```bash
+cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r
+```
+
+#### [SurrealDB](https://surrealdb.com) (SurrealKV)
+
+```bash
+cargo run -r -- -d surrealdb-surrealkv -s 100000 -c 12 -t 24 -r
+```
+
+#### [SurrealDB](https://surrealdb.com) embedded (in-memory)
+
+```bash
+cargo run -r -- -d surrealdb -e memory -s 100000 -c 12 -t 24 -r
+```
+
+#### [SurrealDB](https://surrealdb.com) embedded (RocksDB)
+
+```bash
+cargo run -r -- -d surrealdb -e rocksdb:/tmp/db -s 100000 -c 12 -t 24 -r
+```
+
+#### [SurrealDB](https://surrealdb.com) embedded (SurrealKV)
+
+```bash
+cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12 -t 24 -r
+```
+
+#### [SurrealKV](https://surrealkv.org) (embedded, persisted datastore)
+
+```bash
+cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12 -t 24 -r
+```
 
 ## SurrealDB local benchmark
 
