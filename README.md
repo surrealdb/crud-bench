@@ -20,7 +20,11 @@ benchmark runtime, and the datastore implementations.
 
 ## How does it work?
 
-The crud-bench benchmarking tool automatically
+When running simple, automated tests, the crud-bench benchmarking tool will automatically start a Docker container for
+the datastore or database which is being benchmarked (when the datastore or database is networked). This configuration
+can be modified so that an optimised, remote environment can be connected to, instead of running a Docker container
+locally. This allows for running crud-bench against remote datastores, and distributed datastores on a local network
+or remotely in the cloud.
 
 In one table, the benchmark will operate 4 main tasks:
 
