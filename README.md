@@ -82,7 +82,7 @@ For more detailed help information run the following command:
 cargo run -r -- --help
 ```
 
-### Customizable value
+### Value
 
 You can use the argument `-v` or `--value` (or the environment variable `CRUD_BENCH_VALUE`) to customize the row, document, or record value which should be used in the benchmark tests. Pass a JSON structure that will serve as a template for generating a randomized value.
 
