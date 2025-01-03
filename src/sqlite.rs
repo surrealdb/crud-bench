@@ -29,9 +29,9 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Remove the database directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Recreate the database directory
-		tokio::fs::create_dir(DATABASE_DIR).await?;
+		std::fs::create_dir(DATABASE_DIR)?;
 		// Switch to the new directory
 		std::env::set_current_dir(DATABASE_DIR)?;
 		// Create the connection
@@ -62,7 +62,7 @@ pub(crate) struct SqliteClient {
 impl BenchmarkClient for SqliteClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Remove the database directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Ok
 		Ok(())
 	}
@@ -71,7 +71,7 @@ impl BenchmarkClient for SqliteClient {
 		// Optimise SQLite
 		let stmt = "
             PRAGMA synchronous = 0;
-            PRAGMA journal_mode = ON;
+            PRAGMA journal_mode = WAL;
             PRAGMA page_size = 4096;
             PRAGMA cache_size = 2500;
             PRAGMA locking_mode = EXCLUSIVE;
