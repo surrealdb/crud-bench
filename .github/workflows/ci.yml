@@ -240,7 +240,7 @@ jobs:
           - database: redb
             enabled: false
             description: ReDB
-            skipped: ReDB benchmark skipped due to excessive benchmarking time
+            skipped: Benchmark skipped due to excessive benchmarking time
           # Redis
           - database: redis
             enabled: true
@@ -299,7 +299,7 @@ jobs:
       - name: Set file permissions
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
 
-      - name: Benchmark skipped
+      - name: ${{ matrix.skipped || 'Benchmark processing' }}
         if: ${{ !matrix.enabled }}
         run: echo "${{ matrix.skipped || 'Benchmark skipped' }}"
 
