@@ -7,7 +7,7 @@ use clap::{Parser, ValueEnum};
 use docker::DockerContainer;
 use serde::{Deserialize, Serialize};
 use std::io::IsTerminal;
-use tokio::runtime::Builder;
+use tokio::runtime;
 
 // Benchmark modules
 mod benchmark;
@@ -18,6 +18,7 @@ mod engine;
 mod keyprovider;
 mod result;
 mod terminal;
+mod threadpool;
 mod valueprovider;
 
 // Datastore modules
@@ -181,13 +182,21 @@ fn run(args: Args) -> Result<()> {
 		args.database.start_docker(args.image)
 	};
 	// Setup the asynchronous runtime
-	let runtime = Builder::new_multi_thread()
-		.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
+	let runtime = runtime::Builder::new_multi_thread()
+		.thread_stack_size(5 * 1024 * 1024) // Set stack size to 5MiB
 		.max_blocking_threads(args.blocking as usize) // Set the number of blocking threads
 		.worker_threads(args.workers as usize) // Set the number of worker threads
+		.thread_name("crud-bench-runtime") // Set the name of the runtime threads
 		.enable_all() // Enables all runtime features, including I/O and time
 		.build()
 		.expect("Failed to create a runtime");
+	// Setup the blocking thread pool
+	threadpool::Builder::new()
+		.thread_stack_size(5 * 1024 * 1024) // Set stack size to 5MiB
+		.worker_threads(args.blocking as usize) // Set the number of worker threads
+		.thread_name("crud-bench-threadpool") // Set the name of the threadpool threads
+		.build()
+		.build_global();
 	// Display formatting
 	if std::io::stdout().is_terminal() {
 		println!("--------------------------------------------------");
