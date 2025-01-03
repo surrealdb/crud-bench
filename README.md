@@ -157,7 +157,7 @@ Each test is defined as a JSON object specifying the scan parameters and the tes
 
 ## Databases
 
-#### Dry
+### Dry
 
 This benchmark does not interact with any datastore, allowing the overhead of the benchmark code to be measured.
 
@@ -189,7 +189,7 @@ LMDB is a transactional, ACID-compliant, embedded, key-value datastore, based on
 cargo run -r -- -d lmdb -s 100000 -c 12 -t 24 -r
 ```
 
-#### [Map](https://github.com/xacrimon/dashmap)
+### [Map](https://github.com/xacrimon/dashmap)
 
 An in-memory concurrent, associative HashMap in Rust.
 
