@@ -26,16 +26,6 @@ impl BenchmarkEngine<DryClient> for DryClientProvider {
 pub(crate) struct DryClient {}
 
 impl BenchmarkClient for DryClient {
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		black_box(scan);
-		Ok(scan.expect.unwrap_or(0))
-	}
-
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		black_box(scan);
-		Ok(scan.expect.unwrap_or(0))
-	}
-
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		black_box((key, val));
 		Ok(())
@@ -74,5 +64,15 @@ impl BenchmarkClient for DryClient {
 	async fn delete_string(&self, key: String) -> Result<()> {
 		black_box(key);
 		Ok(())
+	}
+
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		black_box(scan);
+		Ok(scan.expect.unwrap_or(0))
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		black_box(scan);
+		Ok(scan.expect.unwrap_or(0))
 	}
 }
