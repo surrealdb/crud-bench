@@ -240,7 +240,6 @@ jobs:
           - database: redb
             enabled: true
             description: ReDB
-            skipped: Benchmark skipped due to excessive benchmarking time
           # Redis
           - database: redis
             enabled: true

@@ -93,7 +93,7 @@ jobs:
             description: Postgres
           # Redb
           - database: redb
-            enabled: true
+            enabled: false
             description: ReDB
             skipped: ReDB benchmark skipped due to excessive benchmarking time
           # Redis
