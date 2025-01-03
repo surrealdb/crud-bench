@@ -54,6 +54,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Cassandra
+          - database: cassandra
+            enabled: false
+            description: Cassandra
+            skipped: Cassandra benchmark not yet implemented
           # Dragonfly
           - database: dragonfly
             enabled: true
@@ -88,8 +93,9 @@ jobs:
             description: Postgres
           # Redb
           - database: redb
-            enabled: true
+            enabled: false
             description: ReDB
+            skipped: ReDB benchmark skipped due to excessive benchmark time
           # Redis
           - database: redis
             enabled: true
@@ -102,6 +108,7 @@ jobs:
           - database: scylladb
             enabled: false
             description: ScyllaDB
+            skipped: ScyllaDB benchmark not yet implemented
           # SQLite
           - database: sqlite
             enabled: true
@@ -146,6 +153,10 @@ jobs:
 
       - name: Set file permissions
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
+
+      - name: ${{ matrix.skipped || 'Benchmark processing' }}
+        if: ${{ !matrix.enabled }}
+        run: echo "${{ matrix.skipped }}"
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 30
