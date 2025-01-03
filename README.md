@@ -205,7 +205,7 @@ cargo run -r -- -d mongodb -s 100000 -c 12 -t 24 -r
 
 ### [Postgres](https://www.postgresql.org/)
 
-Postgres is an networked, object-relational, ACID-compliant, SQL-based database.
+Postgres is a networked, object-relational, ACID-compliant, SQL-based database.
 
 ```bash
 cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
@@ -213,7 +213,7 @@ cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
 
 ### [MySQL](https://www.mysql.com/)
 
-MySQL is an networked, relational, ACID-compliant, SQL-based database.
+MySQL is a networked, relational, ACID-compliant, SQL-based database.
 
 ```bash
 cargo run -r -- -d mysql -s 100000 -c 12 -t 24 -r
