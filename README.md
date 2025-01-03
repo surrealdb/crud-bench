@@ -73,8 +73,6 @@ You can use the argument `-v` or `--value` (or the environment variable `CRUD_BE
 > [!NOTE]
 > For tabular, or column-oriented databases (e.g. Postgres, MySQL, ScyllaDB), the first-level fields of the JSON structure are translated as columns, and any nested structures will be stored in a JSON column where possible.
 
-Eg.:
-
 ```json
 {
   "text": "text:30",
