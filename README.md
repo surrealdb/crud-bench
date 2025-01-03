@@ -68,8 +68,10 @@ cargo run -r -- --help
 
 ### Customizable value
 
-You can use the argument `--value` (or the environment variable `CRUD_BENCH_VALUE`) to customize the value
-Pass a JSON structure that will serve as a template for generating a randomized value.
+You can use the argument `-v` or `--value` (or the environment variable `CRUD_BENCH_VALUE`) to customize the row, document, or record value which should be used in the benchmark tests. Pass a JSON structure that will serve as a template for generating a randomized value.
+
+> [!NOTE]
+> For tabular, or column-oriented databases (e.g. Postgres, MySQL, ScyllaDB), the first-level fields of the JSON structure are translated as columns, and any nested structures will be stored in a JSON column where possible.
 
 Eg.:
 
@@ -97,6 +99,8 @@ Eg.:
 }
 ```
 
+#### Options
+
 - Every occurrence of `string:XX` will be replaced by a random string with XX characters.
 - Every occurrence of `text:XX` will be replaced by a random string made of words of 2 to 10 characters, for a total of
   XX characters.
@@ -120,9 +124,10 @@ Nested structures will be stored in a JSON column.
 
 ### Scans
 
-Scans can be tested using the `-a` parameter or the environment variable `CRUD_BENCH_SCANS`.
-This parameter accepts a JSON array, where each item represents a different scan test.
-Each test is defined as a JSON object specifying the scan parameters and the test name.
+You can use the argument `-a` or `--scans` (or the environment variable `CRUD_BENCH_SCANS`) to customise the range, table, or scan queries that are performed in the benchmark. This parameter accepts a JSON array, where each item represents a different scan test. Each test is defined as a JSON object specifying the scan parameters and the test name.
+
+> [!NOTE]
+> Not every database benchmark adapter supports scans or range queries. In such cases, the benchmark will not fail but the associated tests will indicate that the benchmark was `skipped`.
 
 ```json
 [
@@ -143,6 +148,8 @@ Each test is defined as a JSON object specifying the scan parameters and the tes
 ]
 ```
 
+#### Options
+
 - name: A descriptive name for the test.
 - projection
     - `"ID"`: only the ID is returned.
@@ -151,9 +158,6 @@ Each test is defined as a JSON object specifying the scan parameters and the tes
 - start: Skips the specified number of rows before starting to return rows.
 - limit: Specifies the maximum number of rows to return.
 - expect: Asserts the expected number of rows returned.
-
-> [!NOTE]
-> Not every database adapter supports scans. In such cases, the log will not fail but will instead indicate `skipped`.
 
 ## Databases
 
