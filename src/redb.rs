@@ -25,7 +25,7 @@ impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		tokio::fs::remove_file(DATABASE_DIR).await.ok();
+		std::fs::remove_file(DATABASE_DIR).ok();
 		// Create the store
 		Ok(Self(Arc::new(Database::create(DATABASE_DIR)?)))
 	}
@@ -40,7 +40,7 @@ pub(crate) struct ReDBClient(Arc<Database>);
 impl BenchmarkClient for ReDBClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		tokio::fs::remove_file(DATABASE_DIR).await.ok();
+		std::fs::remove_file(DATABASE_DIR).ok();
 		// Ok
 		Ok(())
 	}

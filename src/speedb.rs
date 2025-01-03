@@ -27,7 +27,7 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
@@ -86,7 +86,7 @@ pub(crate) struct SpeeDBClient(Arc<OptimisticTransactionDB>);
 impl BenchmarkClient for SpeeDBClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Ok
 		Ok(())
 	}

@@ -34,11 +34,10 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Recreate the database directory
-		tokio::fs::create_dir(DATABASE_DIR).await?;
+		std::fs::create_dir(DATABASE_DIR)?;
 		// Create a new environment
-		println!("{}", *DATABASE_SIZE);
 		let env = unsafe {
 			EnvOpenOptions::new()
 				.flags(
@@ -71,7 +70,7 @@ pub(crate) struct LmDBClient(Arc<(Env, Database<Bytes, Bytes>)>);
 impl BenchmarkClient for LmDBClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Ok
 		Ok(())
 	}
