@@ -36,77 +36,34 @@ parameters.
 ## Usage
 
 ```bash
-cargo run -r -- --help
+cargo run -r -- -h
 ```
 
 ```bash
 Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
-  -i, --image <IMAGE>
-          Docker image
+  -i, --image <IMAGE>        Docker image
+  -d, --database <DATABASE>  Database [possible values: dry, map, dragonfly, keydb, lmdb, mongodb, mysql, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealkv]
+  -e, --endpoint <ENDPOINT>  Endpoint
+  -b, --blocking <BLOCKING>  Maximum number of blocking threads (default is the number of CPU cores) [default: 12]
+  -w, --workers <WORKERS>    Number of async runtime workers (default is the number of CPU cores) [default: 12]
+  -c, --clients <CLIENTS>    Number of concurrent clients [default: 1]
+  -t, --threads <THREADS>    Number of concurrent threads per client [default: 1]
+  -s, --samples <SAMPLES>    Number of samples to be created, read, updated, and deleted
+  -r, --random               Generate the keys in a pseudo-randomized order
+  -k, --key <KEY>            The type of the key [default: integer] [possible values: integer, string26, string90, string506, uuid]
+  -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=]
+      --show-sample          Print-out an example of a generated value
+  -p, --pid <PID>            Collect system information for a given pid
+  -a, --scans <SCANS>        An array of scan specifications [env: CRUD_BENCH_SCANS=]
+  -h, --help                 Print help (see more with '--help')
+```
 
-  -d, --database <DATABASE>
-          Database
+For more detailed help information run the following command:
 
-          [possible values: dry, map, dragonfly, keydb, mongodb, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
-
-  -e, --endpoint <ENDPOINT>
-          Endpoint
-
-  -w, --workers <WORKERS>
-          Number of async runtime workers (default is the number of CPU cores)
-
-          [default: 12]
-
-  -c, --clients <CLIENTS>
-          Number of concurrent clients
-
-          [default: 1]
-
-  -t, --threads <THREADS>
-          Number of concurrent threads per client
-
-          [default: 1]
-
-  -s, --samples <SAMPLES>
-          Number of samples to be created, read, updated, and deleted
-
-  -r, --random
-          Generate the keys in a pseudo-randomized order
-
-  -k, --key <KEY>
-          The type of the key
-
-          [default: integer]
-
-          Possible values:
-          - integer:   4 bytes integer
-          - string26:  26 ascii bytes
-          - string90:  90 ascii bytes
-          - string506: 506 ascii bytes
-          - uuid:      UUID type 7
-
-  -v, --value <VALUE>
-          Size of the text value
-
-          [env: CRUD_BENCH_VALUE=]
-          [default: "{\n\t\t\t\"text\": \"string:50\",\n\t\t\t\"integer\": \"int\"\n\t\t}"]
-
-      --show-sample
-          Print-out an example of a generated value
-
-  -p, --pid <PID>
-          Collect system information for a given pid
-
-  -a, --scans <SCANS>
-          An array of scan specifications
-
-          [env: CRUD_BENCH_SCANS=]
-          [default: "[\n\t\t\t{ \"name\": \"count_all\", \"samples\": 10, \"projection\": \"COUNT\" },\n\t\t\t{ \"name\": \"limit_keys\", \"samples\": 10, \"projection\": \"ID\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_full\", \"samples\": 10, \"projection\": \"FULL\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_count\", \"samples\": 10, \"projection\": \"COUNT\", \"limit\": 100, \"expect\": 100 }\n\t\t]"]
-
-  -h, --help
-          Print help (see a summary with '-h')
+```bash
+cargo run -r -- --help
 ```
 
 ### Customizable value
@@ -195,112 +152,32 @@ Each test is defined as a JSON object specifying the scan parameters and the tes
 - limit: Specifies the maximum number of rows to return.
 - expect: Asserts the expected number of rows returned.
 
-Note: Not every database adapter supports scans.
-In such cases, the log will not fail but will instead indicate `skipped`.
+> [!NOTE]
+> Not every database adapter supports scans. In such cases, the log will not fail but will instead indicate `skipped`.
 
-## Dry run
+## Databases
 
-Run the benchmark without interaction with any database:
-
-```bash
-cargo run -r -- -d dry -s 100000 -t 3 -r
-```
-
-## PostgreSQL benchmark
-
-Run the benchmark against PostgreSQL:
-
-```bash
-cargo run -r -- -d postgresql -s 100000 -t 3 -r
-```
-
-## MongoDB benchmark
-
-Run the benchmark against MongoDB:
-
-```bash
-cargo run -r -- -d mongodb -s 100000 -t 3 -r
-```
-
-## Redis benchmark
-
-Run the benchmark against Redis:
-
-```bash
-cargo run -r -- -d redis -s 100000 -t 3 -r
-```
-
-## RocksDB benchmark
-
-Run the benchmark against RocksDB:
-
-```bash
-cargo run -r -- -d rocksdb -s 100000 -t 3 -r
-```
-
-## SQLite benchmark
-
-Run the benchmark against SQLite:
-
-```bash
-cargo run -r -- -d sqlite -s 100000 -t 3 -r
-```
-
-## SurrealKV benchmark
-
-Run the benchmark against SurrealKV:
-
-```bash
-cargo run -r -- -d surrealkv -s 100000 -t 3 -r
-```
-
-## SurrealDB+Memory benchmark
-
-Run the benchmark against SurrealDB in memory:
-
-```bash
-cargo run -r -- -d surrealdb-memory -s 100000 -t 3 -r
-```
-
-## SurrealDB+RocksDB benchmark
-
-Run the benchmark against SurreadDB with RocksDB:
-
-```bash
-cargo run -r -- -d surrealdb-rocksdb -s 100000 -t 3 -r
-```
-
-## SurrealDB+SurrealKV benchmark
-
-Run the benchmark against SurreadDB with SurrealKV:
-
-```bash
-cargo run -r -- -d surrealdb-surrealkv -s 100000 -t 3 -r
-```
-
-## Embedded SurrealDB Memory Engine benchmark
-
-Run the benchmark against an embedded SurrealDB memory engine:
-
-```bash
-cargo run -F surrealdb/allocator,surrealdb/kv-mem -r -- -d surrealdb -e memory -s 100000 -t 3 -r
-```
-
-## Embedded SurrealDB RocksDB Engine benchmark
-
-Run the benchmark against an embedded SurreadDB RocksDB engine:
-
-```bash
-cargo run -F surrealdb/allocator,surrealdb/kv-rocksdb -r -- -d surrealdb -e rocksdb:/tmp/rocksdb-engine -s 100000 -t 3 -r
-```
-
-## Embedded SurrealDB SurrealKV Engine benchmark
-
-Run the benchmark against an embedded SurreadDB SurrealKV engine:
-
-```bash
-cargo run -F surrealdb/allocator,surrealdb/kv-surrealkv -r -- -d surrealdb -e surrealkv:/tmp/surrealkv-engine -s 100000 -t 3 -r
-```
+| Database                                                           | Command                                                                                     |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| Dry (no datastore interaction)                                     | `cargo run -r -- -d dry -s 100000 -c 12 -t 24 -r`
+| [Dragonfly](https://www.dragonflydb.io/) (in-memory datastore)     | `cargo run -r -- -d dragonfly -s 100000 -c 12 -t 24 -r`
+| [KeyDB](https://docs.keydb.dev/) (in-memory datastore)             | `cargo run -r -- -d keydb -s 100000 -c 12 -t 24 -r`
+| [LMDB](http://www.lmdb.tech/doc/) (embedded, persisted datastore)  | `cargo run -r -- -d lmdb -s 100000 -c 12 -t 24 -r`
+| Map (concurrent HashMap)                                           | `cargo run -r -- -d map -s 100000 -c 12 -t 24 -r`
+| [MongoDB](https://www.mongodb.com/) (document database)            | `cargo run -r -- -d mongodb -s 100000 -c 12 -t 24 -r`
+| [Postgres](https://www.postgresql.org/) (relational database)      | `cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r`
+| [MySQL](https://www.mysql.com/) (relational database)              | `cargo run -r -- -d mysql -s 100000 -c 12 -t 24 -r`
+| [ReDB](https://www.redb.org/) (embedded, persisted datastore)      | `cargo run -r -- -d redb -s 100000 -c 12 -t 24 -r`
+| [Redis](https://redis.io/) (in-memory datastore)                   | `cargo run -r -- -d redis -s 100000 -c 12 -t 24 -r`
+| [RocksDB](https://rocksdb.org/) (embedded, persisted datastore)    | `cargo run -r -- -d scylladb -s 100000 -c 12 -t 24 -r`
+| [SQLite](https://www.sqlite.org/) (embedded, persisted database)   | `cargo run -r -- -d sqlite -s 100000 -c 12 -t 24 -r`
+| [SurrealDB](https://surrealdb.com) (in-memory)                     | `cargo run -r -- -d surrealdb-memory -s 100000 -c 12 -t 24 -r`
+| [SurrealDB](https://surrealdb.com) (RocksDB)                       | `cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r`
+| [SurrealDB](https://surrealdb.com) (SurrealKV)                     | `cargo run -r -- -d surrealdb-surrealkv -s 100000 -c 12 -t 24 -r`
+| [SurrealDB](https://surrealdb.com) embedded (in-memory)            | `cargo run -r -- -d surrealdb -e memory -s 100000 -c 12 -t 24 -r`
+| [SurrealDB](https://surrealdb.com) embedded (RocksDB)              | `cargo run -r -- -d surrealdb -e rocksdb:/tmp/db -s 100000 -c 12 -t 24 -r`
+| [SurrealDB](https://surrealdb.com) embedded (SurrealKV)            | `cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12 -t 24 -r`
+| [SurrealKV](https://surrealkv.org) (embedded, persisted datastore) | `cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12 -t 24 -r`
 
 ## SurrealDB local benchmark
 
