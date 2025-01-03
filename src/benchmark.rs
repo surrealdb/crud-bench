@@ -198,6 +198,8 @@ impl Benchmark {
 		let skip = Arc::new(AtomicBool::new(false));
 		// The total records processed so far
 		let current = Arc::new(AtomicU32::new(0));
+		// The total records processed so far
+		let complete = Arc::new(AtomicU32::new(0));
 		// Store the futures in a vector
 		let mut futures = Vec::with_capacity(total);
 		// Print out the first stage
@@ -211,6 +213,7 @@ impl Benchmark {
 				let error = error.clone();
 				let skip = skip.clone();
 				let current = current.clone();
+				let complete = complete.clone();
 				let client = client.clone();
 				let out = out.clone();
 				let vp = vp.clone();
@@ -221,6 +224,7 @@ impl Benchmark {
 						samples,
 						&error,
 						&current,
+						&complete,
 						operation,
 						(kp, vp, out),
 					)
@@ -275,6 +279,7 @@ impl Benchmark {
 		samples: u32,
 		error: &AtomicBool,
 		current: &AtomicU32,
+		complete: &AtomicU32,
 		operation: BenchmarkOperation,
 		(mut kp, mut vp, mut out): (KeyProvider, ValueProvider, Terminal),
 	) -> Result<Histogram<u64>>
@@ -286,7 +291,9 @@ impl Benchmark {
 		let mut old_percent = 0;
 		// Check if we have encountered an error
 		while !error.load(Ordering::Relaxed) {
+			// Get the current sample number
 			let sample = current.fetch_add(1, Ordering::Relaxed);
+			// Have we produced enough samples
 			if sample >= samples {
 				// We are done
 				break;
@@ -306,6 +313,8 @@ impl Benchmark {
 				BenchmarkOperation::Scan(s) => client.scan(s, &kp).await?,
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 			};
+			// Get the completed sample number
+			let sample = complete.fetch_add(1, Ordering::Relaxed);
 			// Output the percentage completion
 			out.write(|| {
 				// Calculate the percentage completion
