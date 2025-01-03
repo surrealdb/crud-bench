@@ -1,3 +1,5 @@
+<img width="100%" src="./img/hero.png" alt="CRUD-bench hero">
+
 # crud-bench
 
 The crud-bench benchmarking tool is an open-source benchmarking tool for testing and comparing the performance of a
@@ -11,27 +13,41 @@ queries and performance.
 
 The crud-bench benchmarking tool is being actively developed with new features and functionality being added regularly.
 
-## Purpose
+## Contributing
 
-The goal of this benchmark is for developers working on features in SurrealDB to assess their impact on CRUD
-performance.
+The crud-bench benchmarking tool is open-source, and we encourage additions, modifications, and improvements to the
+benchmark runtime, and the datastore implementations.
 
 ## How does it work?
 
+The crud-bench benchmarking tool automatically
+
 In one table, the benchmark will operate 4 main tasks:
 
-- Create: inserting N unique records.
-- Read: read N unique records.
-- Update: update N unique records.
-- Delete: delete N unique records.
+- Create: inserting N unique records, with the specified concurrency.
+- Read: read N unique records, with the specified concurrency.
+- Update: update N unique records, with the specified concurrency.
+- Scans: perform a number of range and table scans, with the specified concurrency.
+- Delete: delete N unique records, with the specified concurrency.
+
+With crud-bench almost all aspects of the benchmark engine are configurable:
+
+- The number of rows or records (samples).
+- The number of concurrent clients or connections.
+- The number of concurrent threads (concurrent messages per client).
+- Whether rows or records are modified sequentially or randomly.
+- The primary id or key type for the records.
+- The row or record content including support for nested objects and arrays.
+- The scan specifications for range or table queries.
 
 The number of records (samples), the number of concurrent clients, and the number of concurrent threads are configurable
-parameters.
+parameters
 
 ## Requirements
 
-- Docker
-- Rust and Cargo
+- [Docker](https://www.docker.com/) - required when running automated tests
+- [Rust](https://www.rust-lang.org/) - required when building crud-bench from source
+- [Cargo](https://github.com/rust-lang/cargo) - required when building crud-bench from source
 
 ## Usage
 
