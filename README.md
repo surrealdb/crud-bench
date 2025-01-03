@@ -305,13 +305,13 @@ cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12
 
 Run the benchmark against an already running SurrealDB instance:
 
-Eg.: Start a SurrealKV based SurrealDB instance:
+Start a SurrealDB server:
 
 ```bash
-cargo run --features=storage-surrealkv -r -- start --user root --pass root surrealkv:/tmp/sur-bench.db
+surreal start --allow-all -u root -p root surrealkv:/tmp/crud-bench.db
 ```
 
-Then run the bench:
+Then run crud-bench:
 
 ```bash
 cargo run -r -- -d surrealdb -s 100000 -t 3 -r
