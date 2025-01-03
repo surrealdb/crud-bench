@@ -157,115 +157,139 @@ Each test is defined as a JSON object specifying the scan parameters and the tes
 
 ## Databases
 
-#### Dry (no datastore interaction)
+#### Dry
+
+This benchmark does not interact with any datastore, allowing the overhead of the benchmark code to be measured.
 
 ```bash
 cargo run -r -- -d dry -s 100000 -c 12 -t 24 -r
 ```
 
-#### [Dragonfly](https://www.dragonflydb.io/) (in-memory datastore)
+### [Dragonfly](https://www.dragonflydb.io/)
+
+Dragonfly is an in-memory, networked, datastore which is fully-compatible with Redis and Memcached APIs.
 
 ```bash
 cargo run -r -- -d dragonfly -s 100000 -c 12 -t 24 -r
 ```
 
-#### [KeyDB](https://docs.keydb.dev/) (in-memory datastore)
+### [KeyDB](https://docs.keydb.dev/)
+
+KeyDB is an in-memory, networked, datastore which is a high-performance fork of Redis with a focus on multithreading.
 
 ```bash
 cargo run -r -- -d keydb -s 100000 -c 12 -t 24 -r
 ```
 
-#### [LMDB](http://www.lmdb.tech/doc/) (embedded, persisted datastore)
+### [LMDB](http://www.lmdb.tech/doc/)
+
+LMDB is a transactional, ACID-compliant, embedded, key-value datastore, based on B-trees.
 
 ```bash
 cargo run -r -- -d lmdb -s 100000 -c 12 -t 24 -r
 ```
 
-#### Map (concurrent HashMap)
+#### [Map](https://github.com/xacrimon/dashmap)
+
+An in-memory concurrent, associative HashMap in Rust.
 
 ```bash
 cargo run -r -- -d map -s 100000 -c 12 -t 24 -r
 ```
 
-#### [MongoDB](https://www.mongodb.com/) (document database)
+### [MongoDB](https://www.mongodb.com/)
+
+MongoDB is a NoSQL, networked, ACID-compliant, document-oriented database, with support for unstructured data storage.
 
 ```bash
 cargo run -r -- -d mongodb -s 100000 -c 12 -t 24 -r
 ```
 
-#### [Postgres](https://www.postgresql.org/) (relational database)
+### [Postgres](https://www.postgresql.org/)
+
+Postgres is an networked, object-relational, ACID-compliant, SQL-based database
 
 ```bash
 cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
 ```
 
-#### [MySQL](https://www.mysql.com/) (relational database)
+### [MySQL](https://www.mysql.com/)
+
+Postgres is an networked, relational, ACID-compliant, SQL-based database.
 
 ```bash
 cargo run -r -- -d mysql -s 100000 -c 12 -t 24 -r
 ```
 
-#### [ReDB](https://www.redb.org/) (embedded, persisted datastore)
+### [ReDB](https://www.redb.org/)
+
+ReDB is a transactional, ACID-compliant, embedded, key-value datastore, written in Rust, and based on B-trees.
 
 ```bash
 cargo run -r -- -d redb -s 100000 -c 12 -t 24 -r
 ```
 
-#### [Redis](https://redis.io/) (in-memory datastore)
+### [Redis](https://redis.io/)
 
 ```bash
 cargo run -r -- -d redis -s 100000 -c 12 -t 24 -r
 ```
 
-#### [RocksDB](https://rocksdb.org/) (embedded, persisted datastore)
+### [RocksDB](https://rocksdb.org/)
+
+RocksDB is a transactional, ACID-compliant, embedded, key-value datastore, based on LSM-trees.
 
 ```bash
 cargo run -r -- -d scylladb -s 100000 -c 12 -t 24 -r
 ```
 
-#### [SQLite](https://www.sqlite.org/) (embedded, persisted database)
+### [SQLite](https://www.sqlite.org/)
+
+SQLite is an embedded, relational, ACID-compliant, SQL-based database.
 
 ```bash
 cargo run -r -- -d sqlite -s 100000 -c 12 -t 24 -r
 ```
 
-#### [SurrealDB](https://surrealdb.com) (in-memory)
+### [SurrealDB](https://surrealdb.com) running in-memory
 
 ```bash
 cargo run -r -- -d surrealdb-memory -s 100000 -c 12 -t 24 -r
 ```
 
-#### [SurrealDB](https://surrealdb.com) (RocksDB)
+### [SurrealDB](https://surrealdb.com) running with RocksDB
 
 ```bash
 cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r
 ```
 
-#### [SurrealDB](https://surrealdb.com) (SurrealKV)
+### [SurrealDB](https://surrealdb.com) running with SurrealKV
 
 ```bash
 cargo run -r -- -d surrealdb-surrealkv -s 100000 -c 12 -t 24 -r
 ```
 
-#### [SurrealDB](https://surrealdb.com) embedded (in-memory)
+### [SurrealDB](https://surrealdb.com) embedded in-memory
 
 ```bash
 cargo run -r -- -d surrealdb -e memory -s 100000 -c 12 -t 24 -r
 ```
 
-#### [SurrealDB](https://surrealdb.com) embedded (RocksDB)
+### [SurrealDB](https://surrealdb.com) embedded RocksDB
 
 ```bash
 cargo run -r -- -d surrealdb -e rocksdb:/tmp/db -s 100000 -c 12 -t 24 -r
 ```
 
-#### [SurrealDB](https://surrealdb.com) embedded (SurrealKV)
+### [SurrealDB](https://surrealdb.com) embedded SurrealKV
 
 ```bash
 cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12 -t 24 -r
 ```
 
-#### [SurrealKV](https://surrealkv.org) (embedded, persisted datastore)
+### [SurrealKV](https://surrealkv.org)
+
+SurrealKV is a transactional, ACID-compliant, embedded, key-value datastore, written in Rust, and based on concurrent adaptive radix trees.
 
 ```bash
 cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12 -t 24 -r
