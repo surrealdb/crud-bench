@@ -1,11 +1,13 @@
 #![cfg(feature = "redb")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::KeyType;
-use anyhow::Result;
-use redb::{Database, Durability, TableDefinition};
+use crate::{KeyType, Projection, Scan};
+use anyhow::{bail, Result};
+use redb::{Database, Durability, ReadableTable, TableDefinition};
 use serde_json::Value;
+use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -74,6 +76,14 @@ impl BenchmarkClient for ReDBClient {
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.delete_bytes(&key.into_bytes()).await
 	}
+
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan_bytes(scan).await
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan_bytes(scan).await
+	}
 }
 
 impl ReDBClient {
@@ -132,5 +142,49 @@ impl ReDBClient {
 		drop(tab);
 		txn.commit()?;
 		Ok(())
+	}
+
+	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
+		// Contional scans are not supported
+		if scan.condition.is_some() {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+		// Extract parameters
+		let s = scan.start.unwrap_or(0);
+		let l = scan.limit.unwrap_or(usize::MAX);
+		// Create a new transaction
+		let txn = self.0.begin_read()?;
+		// Open the database table
+		let tab = txn.open_table(TABLE)?;
+		// Create an iterator starting at the beginning
+		let iter = tab.iter()?;
+		// Perform the relevant projection scan type
+		match scan.projection()? {
+			Projection::Id => {
+				// Skip `offset` entries, then collect `limit` entries
+				Ok(iter
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
+					.collect::<Result<Vec<_>>>()?
+					.len())
+			}
+			Projection::Full => {
+				// Skip `offset` entries, then collect `limit` entries
+				Ok(iter
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.map(|v| -> Result<_> { Ok(black_box(v?)) })
+					.collect::<Result<Vec<_>>>()?
+					.len())
+			}
+			Projection::Count => {
+				// Skip `offset` entries, then collect `limit` entries
+				Ok(iter
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.count())
+			}
+		}
 	}
 }
