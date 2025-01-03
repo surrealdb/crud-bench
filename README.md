@@ -97,7 +97,8 @@ You can use the argument `-v` or `--value` (or the environment variable `CRUD_BE
 }
 ```
 
-#### Options
+<details>
+<summary>View configuration options for the benchmark record value</summary>
 
 - Every occurrence of `string:XX` will be replaced by a random string with XX characters.
 - Every occurrence of `text:XX` will be replaced by a random string made of words of 2 to 10 characters, for a total of
@@ -116,9 +117,9 @@ You can use the argument `-v` or `--value` (or the environment variable `CRUD_BE
 - Every `float_enum:A,B,C` will be replaced by a f32 from  `A` `B` or `C`.
 - Every `datetime` will be replaced by a datetime (ISO 8601).
 
-For column-oriented databases (e.g., PostgreSQL, ScyllaDB), the first-level fields of the JSON structure are translated
-as columns.
-Nested structures will be stored in a JSON column.
+</details>
+
+<br>
 
 ### Scans
 
