@@ -97,9 +97,6 @@ You can use the argument `-v` or `--value` (or the environment variable `CRUD_BE
 }
 ```
 
-<details>
-<summary>View configuration options for the benchmark record value</summary>
-
 - Every occurrence of `string:XX` will be replaced by a random string with XX characters.
 - Every occurrence of `text:XX` will be replaced by a random string made of words of 2 to 10 characters, for a total of
   XX characters.
@@ -117,13 +114,20 @@ You can use the argument `-v` or `--value` (or the environment variable `CRUD_BE
 - Every `float_enum:A,B,C` will be replaced by a f32 from  `A` `B` or `C`.
 - Every `datetime` will be replaced by a datetime (ISO 8601).
 
-</details>
-
-<br>
-
 ### Scans
 
 You can use the argument `-a` or `--scans` (or the environment variable `CRUD_BENCH_SCANS`) to customise the range, table, or scan queries that are performed in the benchmark. This parameter accepts a JSON array, where each item represents a different scan test. Each test is defined as a JSON object specifying the scan parameters and the test name.
+
+Each scan object can make use of the following values:
+
+- `name`: A descriptive name for the test.
+- `projection`:
+    - `"ID"`: only the ID is returned.
+    - `"FULL"`: the whole record is returned.
+    - `"COUNT"`: count the number of records.
+- `start`: Skips the specified number of rows before starting to return rows.
+- `limit`: Specifies the maximum number of rows to return.
+- `expect`: (optional) Asserts the expected number of rows returned.
 
 > [!NOTE]
 > Not every database benchmark adapter supports scans or range queries. In such cases, the benchmark will not fail but the associated tests will indicate that the benchmark was `skipped`.
@@ -146,17 +150,6 @@ You can use the argument `-a` or `--scans` (or the environment variable `CRUD_BE
   }
 ]
 ```
-
-#### Options
-
-- name: A descriptive name for the test.
-- projection
-    - `"ID"`: only the ID is returned.
-    - `"FULL"`: (default) the whole record is returned.
-    - `"COUNT"`: count the number of records.
-- start: Skips the specified number of rows before starting to return rows.
-- limit: Specifies the maximum number of rows to return.
-- expect: Asserts the expected number of rows returned.
 
 ## Databases
 
