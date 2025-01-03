@@ -238,6 +238,14 @@ cargo run -r -- -d redis -s 100000 -c 12 -t 24 -r
 RocksDB is a transactional, ACID-compliant, embedded, key-value datastore, based on LSM-trees.
 
 ```bash
+cargo run -r -- -d rocksdb -s 100000 -c 12 -t 24 -r
+```
+
+### [ScyllaDB](https://www.scylladb.com/)
+
+ScyllaDB is a distributed, NoSQL, wide-column datastore, designed to be compatible with Cassandra.
+
+```bash
 cargo run -r -- -d scylladb -s 100000 -c 12 -t 24 -r
 ```
 
