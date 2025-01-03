@@ -53,6 +53,10 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
 
+	/// Maximum number of blocking threads (default is the number of CPU cores)
+	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) blocking: u32,
+
 	/// Number of async runtime workers (default is the number of CPU cores)
 	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) workers: u32,
@@ -138,6 +142,7 @@ pub(crate) struct Scan {
 	projection: Option<String>,
 }
 
+#[derive(Debug)]
 pub(crate) enum Projection {
 	Id,
 	Full,
@@ -178,6 +183,7 @@ fn run(args: Args) -> Result<()> {
 	// Setup the asynchronous runtime
 	let runtime = Builder::new_multi_thread()
 		.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
+		.max_blocking_threads(args.blocking as usize) // Set the number of blocking threads
 		.worker_threads(args.workers as usize) // Set the number of worker threads
 		.enable_all() // Enables all runtime features, including I/O and time
 		.build()
@@ -208,8 +214,9 @@ fn run(args: Args) -> Result<()> {
 				},
 			}
 			println!(
-				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
+				"CPUs: {} - Blocking threads: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
 				num_cpus::get(),
+				args.blocking,
 				args.workers,
 				args.clients,
 				args.threads,
@@ -251,6 +258,7 @@ mod test {
 			image: None,
 			database,
 			endpoint: None,
+			blocking: 5,
 			workers: 5,
 			clients: 2,
 			threads: 2,
