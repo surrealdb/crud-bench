@@ -199,6 +199,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Cassandra
+          - database: cassandra
+            enabled: false
+            description: Cassandra
+            skipped: Benchmark not yet implemented
           # Dragonfly
           - database: dragonfly
             enabled: true
@@ -247,6 +252,7 @@ jobs:
           - database: scylladb
             enabled: false
             description: ScyllaDB
+            skipped: Benchmark not yet implemented
           # SQLite
           - database: sqlite
             enabled: true
@@ -292,7 +298,9 @@ jobs:
       - name: Set file permissions
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
 
-      # 100,000 records
+      - name: Benchmark skipped
+        if: ${{ !matrix.enabled }}
+        run: echo "${{ matrix.skipped || 'Benchmark skipped' }}"
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 10
