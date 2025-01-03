@@ -40,9 +40,6 @@ With crud-bench almost all aspects of the benchmark engine are configurable:
 - The row or record content including support for nested objects and arrays.
 - The scan specifications for range or table queries.
 
-The number of records (samples), the number of concurrent clients, and the number of concurrent threads are configurable
-parameters
-
 ## Requirements
 
 - [Docker](https://www.docker.com/) - required when running automated tests
