@@ -11,9 +11,18 @@ use heed::{Env, EnvFlags};
 use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 const DATABASE_DIR: &str = "lmdb";
+
+const DEFAULT_SIZE: usize = 1_073_741_824;
+
+static DATABASE_SIZE: LazyLock<usize> = LazyLock::new(|| {
+	std::env::var("CRUD_BENCH_LMDB_DATABASE_SIZE")
+		.and_then(|s| Ok(s.parse::<usize>().unwrap_or(DEFAULT_SIZE)))
+		.unwrap_or(DEFAULT_SIZE)
+});
 
 pub(crate) struct LmDBClientProvider(Arc<(Env, Database<Bytes, Bytes>)>);
 
@@ -29,6 +38,7 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 		// Recreate the database directory
 		tokio::fs::create_dir(DATABASE_DIR).await?;
 		// Create a new environment
+		println!("{}", *DATABASE_SIZE);
 		let env = unsafe {
 			EnvOpenOptions::new()
 				.flags(
@@ -37,7 +47,7 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 						| EnvFlags::NO_SYNC
 						| EnvFlags::NO_META_SYNC,
 				)
-				.map_size(5_368_709_120)
+				.map_size(*DATABASE_SIZE)
 				.open(DATABASE_DIR)
 		}?;
 		// Creaye the database
