@@ -157,7 +157,7 @@ Each scan object can make use of the following values:
 
 ### Dry
 
-This benchmark does not interact with any datastore, allowing the overhead of the benchmark code to be measured.
+This benchmark does not interact with any datastore, allowing the overhead of the benchmark implementation, written in Rust, to be measured.
 
 ```bash
 cargo run -r -- -d dry -s 100000 -c 12 -t 24 -r
@@ -173,7 +173,7 @@ cargo run -r -- -d dragonfly -s 100000 -c 12 -t 24 -r
 
 ### [KeyDB](https://docs.keydb.dev/)
 
-KeyDB is an in-memory, networked, datastore which is a high-performance fork of Redis with a focus on multithreading.
+KeyDB is an in-memory, networked, datastore which is a high-performance fork of Redis, with a focus on multithreading.
 
 ```bash
 cargo run -r -- -d keydb -s 100000 -c 12 -t 24 -r
@@ -205,7 +205,7 @@ cargo run -r -- -d mongodb -s 100000 -c 12 -t 24 -r
 
 ### [Postgres](https://www.postgresql.org/)
 
-Postgres is an networked, object-relational, ACID-compliant, SQL-based database
+Postgres is an networked, object-relational, ACID-compliant, SQL-based database.
 
 ```bash
 cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
@@ -213,7 +213,7 @@ cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
 
 ### [MySQL](https://www.mysql.com/)
 
-Postgres is an networked, relational, ACID-compliant, SQL-based database.
+MySQL is an networked, relational, ACID-compliant, SQL-based database.
 
 ```bash
 cargo run -r -- -d mysql -s 100000 -c 12 -t 24 -r
@@ -228,6 +228,8 @@ cargo run -r -- -d redb -s 100000 -c 12 -t 24 -r
 ```
 
 ### [Redis](https://redis.io/)
+
+Redis is an in-memory, networked, datastore that can be used as a cache, message broker, or datastore.
 
 ```bash
 cargo run -r -- -d redis -s 100000 -c 12 -t 24 -r
@@ -290,7 +292,7 @@ cargo run -r -- -d surrealdb -e rocksdb:/tmp/db -s 100000 -c 12 -t 24 -r
 ### [SurrealDB](https://surrealdb.com) embedded SurrealKV
 
 ```bash
-cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12 -t 24 -r
+cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r
 ```
 
 ### [SurrealKV](https://surrealkv.org)
@@ -298,12 +300,12 @@ cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12
 SurrealKV is a transactional, ACID-compliant, embedded, key-value datastore, written in Rust, and based on concurrent adaptive radix trees.
 
 ```bash
-cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r -c 12 -t 24 -r
+cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r
 ```
 
 ## SurrealDB local benchmark
 
-Run the benchmark against an already running SurrealDB instance:
+To run the benchmark against an already running SurrealDB instance, follow the steps below.
 
 Start a SurrealDB server:
 
@@ -311,8 +313,8 @@ Start a SurrealDB server:
 surreal start --allow-all -u root -p root surrealkv:/tmp/crud-bench.db
 ```
 
-Then run crud-bench:
+Then run crud-bench with the `surrealdb` database option:
 
 ```bash
-cargo run -r -- -d surrealdb -s 100000 -t 3 -r
+cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 -r
 ```
