@@ -4,7 +4,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::KeyType;
 use anyhow::Result;
-use redb::{Database, TableDefinition};
+use redb::{Database, Durability, TableDefinition};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,7 +23,7 @@ impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		tokio::fs::remove_file(DATABASE_DIR).await.ok();
 		// Create the store
 		Ok(Self(Arc::new(Database::create(DATABASE_DIR)?)))
 	}
@@ -38,7 +38,7 @@ pub(crate) struct ReDBClient(Arc<Database>);
 impl BenchmarkClient for ReDBClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		tokio::fs::remove_file(DATABASE_DIR).await.ok();
 		// Ok
 		Ok(())
 	}
@@ -81,7 +81,9 @@ impl ReDBClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let txn = self.0.begin_write()?;
+		let mut txn = self.0.begin_write()?;
+		// Let the OS handle syncing to disk
+		txn.set_durability(Durability::Eventual);
 		// Open the database table
 		let mut tab = txn.open_table(TABLE)?;
 		// Process the data
@@ -106,7 +108,9 @@ impl ReDBClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let txn = self.0.begin_write()?;
+		let mut txn = self.0.begin_write()?;
+		// Let the OS handle syncing to disk
+		txn.set_durability(Durability::Eventual);
 		// Open the database table
 		let mut tab = txn.open_table(TABLE)?;
 		// Process the data
@@ -118,7 +122,9 @@ impl ReDBClient {
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let txn = self.0.begin_write()?;
+		let mut txn = self.0.begin_write()?;
+		// Let the OS handle syncing to disk
+		txn.set_durability(Durability::Eventual);
 		// Open the database table
 		let mut tab = txn.open_table(TABLE)?;
 		// Process the data

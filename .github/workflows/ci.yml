@@ -233,7 +233,7 @@ jobs:
             description: MySQL
           # Redb
           - database: redb
-            enabled: false
+            enabled: true
             description: ReDB
           # Redis
           - database: redis

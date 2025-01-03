@@ -88,7 +88,7 @@ jobs:
             description: Postgres
           # Redb
           - database: redb
-            enabled: false
+            enabled: true
             description: ReDB
           # Redis
           - database: redis
