@@ -73,6 +73,25 @@ You can use the argument `-v` or `--value` (or the environment variable `CRUD_BE
 > [!NOTE]
 > For tabular, or column-oriented databases (e.g. Postgres, MySQL, ScyllaDB), the first-level fields of the JSON structure are translated as columns, and any nested structures will be stored in a JSON column where possible.
 
+Within the JSON structure, the following values are replaced by randomly generated data:
+
+- Every occurrence of `string:XX` will be replaced by a random string with XX characters.
+- Every occurrence of `text:XX` will be replaced by a random string made of words of 2 to 10 characters, for a total of
+  XX characters.
+- Every occurrence of `string:X..Y` will be replaced by a random string between X and Y characters.
+- Every occurrence of `text:X..Y` will be replaced by a random string made of words of 2 to 10 characters, for a total
+  between X and Y characters.
+- Every `int` will be replaced by a random integer (i32).
+- Every `int:X..Y` will be replaced by a random integer (i32) between X and Y.
+- Every `float` will be replaced by a random float (f32).
+- Every `float:X..Y` will be replaced by a random float (f32) between X and Y.
+- Every `uuid` will be replaced by a random UUID (v4).
+- Every `bool` will be replaced by a `true` or `false` (v4).
+- Every `string_enum:A,B,C` will be replaced by a string from `A` `B` or `C`.
+- Every `int_enum:A,B,C` will be replaced by a i32 from  `A` `B` or `C`.
+- Every `float_enum:A,B,C` will be replaced by a f32 from  `A` `B` or `C`.
+- Every `datetime` will be replaced by a datetime (ISO 8601).
+
 ```json
 {
   "text": "text:30",
@@ -97,26 +116,12 @@ You can use the argument `-v` or `--value` (or the environment variable `CRUD_BE
 }
 ```
 
-- Every occurrence of `string:XX` will be replaced by a random string with XX characters.
-- Every occurrence of `text:XX` will be replaced by a random string made of words of 2 to 10 characters, for a total of
-  XX characters.
-- Every occurrence of `string:X..Y` will be replaced by a random string between X and Y characters.
-- Every occurrence of `text:X..Y` will be replaced by a random string made of words of 2 to 10 characters, for a total
-  between X and Y characters.
-- Every `int` will be replaced by a random integer (i32).
-- Every `int:X..Y` will be replaced by a random integer (i32) between X and Y.
-- Every `float` will be replaced by a random float (f32).
-- Every `float:X..Y` will be replaced by a random float (f32) between X and Y.
-- Every `uuid` will be replaced by a random UUID (v4).
-- Every `bool` will be replaced by a `true` or `false` (v4).
-- Every `string_enum:A,B,C` will be replaced by a string from `A` `B` or `C`.
-- Every `int_enum:A,B,C` will be replaced by a i32 from  `A` `B` or `C`.
-- Every `float_enum:A,B,C` will be replaced by a f32 from  `A` `B` or `C`.
-- Every `datetime` will be replaced by a datetime (ISO 8601).
-
 ### Scans
 
 You can use the argument `-a` or `--scans` (or the environment variable `CRUD_BENCH_SCANS`) to customise the range, table, or scan queries that are performed in the benchmark. This parameter accepts a JSON array, where each item represents a different scan test. Each test is defined as a JSON object specifying the scan parameters and the test name.
+
+> [!NOTE]
+> Not every database benchmark adapter supports scans or range queries. In such cases, the benchmark will not fail but the associated tests will indicate that the benchmark was `skipped`.
 
 Each scan object can make use of the following values:
 
@@ -128,9 +133,6 @@ Each scan object can make use of the following values:
 - `start`: Skips the specified number of rows before starting to return rows.
 - `limit`: Specifies the maximum number of rows to return.
 - `expect`: (optional) Asserts the expected number of rows returned.
-
-> [!NOTE]
-> Not every database benchmark adapter supports scans or range queries. In such cases, the benchmark will not fail but the associated tests will indicate that the benchmark was `skipped`.
 
 ```json
 [
