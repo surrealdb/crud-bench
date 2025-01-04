@@ -235,21 +235,7 @@ cargo run -r -- -d mongodb -s 100000 -c 12 -t 24 -r
 The above command starts a Docker container automatically. To connect to an already-running MongoDB instance use the following command:
 
 ```bash
-cargo run -r -- -d mongodb -e mongodb://root:root@localhost:27017 -s 100000 -c 12 -t 24 -r
-```
-
-### [Postgres](https://www.postgresql.org/)
-
-Postgres is a networked, object-relational, ACID-compliant, SQL-based database.
-
-```bash
-cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
-```
-
-The above command starts a Docker container automatically. To connect to an already-running Postgres instance use the following command:
-
-```bash
-cargo run -r -- -d postgres -e 'host=127.0.0.1 user=postgres password=postgres' -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d mongodb -e mongodb://root:root@127.0.0.1:27017 -s 100000 -c 12 -t 24 -r
 ```
 
 ### [MySQL](https://www.mysql.com/)
@@ -264,6 +250,20 @@ The above command starts a Docker container automatically. To connect to an alre
 
 ```bash
 cargo run -r -- -d mysql -e mysql://root:mysql@127.0.0.1:3306/bench -s 100000 -c 12 -t 24 -r
+```
+
+### [Postgres](https://www.postgresql.org/)
+
+Postgres is a networked, object-relational, ACID-compliant, SQL-based database.
+
+```bash
+cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
+```
+
+The above command starts a Docker container automatically. To connect to an already-running Postgres instance use the following command:
+
+```bash
+cargo run -r -- -d postgres -e 'host=127.0.0.1 user=postgres password=postgres' -s 100000 -c 12 -t 24 -r
 ```
 
 ### [ReDB](https://www.redb.org/)
