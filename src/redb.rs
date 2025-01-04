@@ -1,5 +1,6 @@
 #![cfg(feature = "redb")]
 
+use super::threadpool;
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
@@ -31,11 +32,15 @@ impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ReDBClient> {
-		Ok(ReDBClient(self.0.clone()))
+		Ok(ReDBClient {
+			db: self.0.clone(),
+		})
 	}
 }
 
-pub(crate) struct ReDBClient(Arc<Database>);
+pub(crate) struct ReDBClient {
+	db: Arc<Database>,
+}
 
 impl BenchmarkClient for ReDBClient {
 	async fn shutdown(&self) -> Result<()> {
@@ -88,60 +93,88 @@ impl BenchmarkClient for ReDBClient {
 
 impl ReDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Serialise the value
-		let val = bincode::serialize(&val)?;
-		// Create a new transaction
-		let mut txn = self.0.begin_write()?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
-		// Open the database table
-		let mut tab = txn.open_table(TABLE)?;
-		// Process the data
-		tab.insert(key.as_ref(), val)?;
-		drop(tab);
-		txn.commit()?;
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		threadpool::execute(move || -> Result<_> {
+			// Serialise the value
+			let val = bincode::serialize(&val)?;
+			// Create a new transaction
+			let mut txn = db.begin_write()?;
+			// Let the OS handle syncing to disk
+			txn.set_durability(Durability::Eventual);
+			// Open the database table
+			let mut tab = txn.open_table(TABLE)?;
+			// Process the data
+			tab.insert(key.as_ref(), val)?;
+			drop(tab);
+			txn.commit()?;
+			Ok(())
+		})
+		.await?
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let txn = self.0.begin_read()?;
-		// Open the database table
-		let tab = txn.open_table(TABLE)?;
-		// Process the data
-		let res: Option<_> = tab.get(key.as_ref())?;
-		assert!(res.is_some());
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		threadpool::execute(move || -> Result<_> {
+			// Create a new transaction
+			let txn = db.begin_read()?;
+			// Open the database table
+			let tab = txn.open_table(TABLE)?;
+			// Process the data
+			let res: Option<_> = tab.get(key.as_ref())?;
+			assert!(res.is_some());
+			Ok(())
+		})
+		.await?
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Serialise the value
-		let val = bincode::serialize(&val)?;
-		// Create a new transaction
-		let mut txn = self.0.begin_write()?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
-		// Open the database table
-		let mut tab = txn.open_table(TABLE)?;
-		// Process the data
-		tab.insert(key.as_ref(), val)?;
-		drop(tab);
-		txn.commit()?;
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		threadpool::execute(move || -> Result<_> {
+			// Serialise the value
+			let val = bincode::serialize(&val)?;
+			// Create a new transaction
+			let mut txn = db.begin_write()?;
+			// Let the OS handle syncing to disk
+			txn.set_durability(Durability::Eventual);
+			// Open the database table
+			let mut tab = txn.open_table(TABLE)?;
+			// Process the data
+			tab.insert(key.as_ref(), val)?;
+			drop(tab);
+			txn.commit()?;
+			Ok(())
+		})
+		.await?
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let mut txn = self.0.begin_write()?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
-		// Open the database table
-		let mut tab = txn.open_table(TABLE)?;
-		// Process the data
-		tab.remove(key.as_ref())?;
-		drop(tab);
-		txn.commit()?;
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		threadpool::execute(move || -> Result<_> {
+			// Create a new transaction
+			let mut txn = db.begin_write()?;
+			// Let the OS handle syncing to disk
+			txn.set_durability(Durability::Eventual);
+			// Open the database table
+			let mut tab = txn.open_table(TABLE)?;
+			// Process the data
+			tab.remove(key.as_ref())?;
+			drop(tab);
+			txn.commit()?;
+			Ok(())
+		})
+		.await?
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -152,39 +185,46 @@ impl ReDBClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
-		// Create a new transaction
-		let txn = self.0.begin_read()?;
-		// Open the database table
-		let tab = txn.open_table(TABLE)?;
-		// Create an iterator starting at the beginning
-		let iter = tab.iter()?;
-		// Perform the relevant projection scan type
-		match scan.projection()? {
-			Projection::Id => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(iter
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
-					.collect::<Result<Vec<_>>>()?
-					.len())
+		let p = scan.projection()?;
+		// Clone the datastore
+		let db = self.db.clone();
+		// Execute on the blocking threadpool
+		threadpool::execute(move || -> Result<_> {
+			// Create a new transaction
+			let txn = db.begin_read()?;
+			// Open the database table
+			let tab = txn.open_table(TABLE)?;
+			// Create an iterator starting at the beginning
+			let iter = tab.iter()?;
+			// Perform the relevant projection scan type
+			match p {
+				Projection::Id => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(iter
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
+						.collect::<Result<Vec<_>>>()?
+						.len())
+				}
+				Projection::Full => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(iter
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.map(|v| -> Result<_> { Ok(black_box(v?)) })
+						.collect::<Result<Vec<_>>>()?
+						.len())
+				}
+				Projection::Count => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(iter
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.count())
+				}
 			}
-			Projection::Full => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(iter
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.map(|v| -> Result<_> { Ok(black_box(v?)) })
-					.collect::<Result<Vec<_>>>()?
-					.len())
-			}
-			Projection::Count => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(iter
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.count())
-			}
-		}
+		})
+		.await?
 	}
 }
