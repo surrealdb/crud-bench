@@ -188,12 +188,24 @@ Dragonfly is an in-memory, networked, datastore which is fully-compatible with R
 cargo run -r -- -d dragonfly -s 100000 -c 12 -t 24 -r
 ```
 
+The above command starts a Docker container automatically. To connect to an already-running Dragonfly instance use the following command:
+
+```bash
+cargo run -r -- -d dragonfly -e redis://:root@127.0.0.1:6379 -s 100000 -c 12 -t 24 -r
+```
+
 ### [KeyDB](https://docs.keydb.dev/)
 
 KeyDB is an in-memory, networked, datastore which is a high-performance fork of Redis, with a focus on multithreading.
 
 ```bash
 cargo run -r -- -d keydb -s 100000 -c 12 -t 24 -r
+```
+
+The above command starts a Docker container automatically. To connect to an already-running KeyDB instance use the following command:
+
+```bash
+cargo run -r -- -d keydb -e redis://:root@127.0.0.1:6379 -s 100000 -c 12 -t 24 -r
 ```
 
 ### [LMDB](http://www.lmdb.tech/doc/)
@@ -220,12 +232,10 @@ MongoDB is a NoSQL, networked, ACID-compliant, document-oriented database, with 
 cargo run -r -- -d mongodb -s 100000 -c 12 -t 24 -r
 ```
 
-### [Postgres](https://www.postgresql.org/)
-
-Postgres is a networked, object-relational, ACID-compliant, SQL-based database.
+The above command starts a Docker container automatically. To connect to an already-running MongoDB instance use the following command:
 
 ```bash
-cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d mongodb -e mongodb://root:root@127.0.0.1:27017 -s 100000 -c 12 -t 24 -r
 ```
 
 ### [MySQL](https://www.mysql.com/)
@@ -234,6 +244,26 @@ MySQL is a networked, relational, ACID-compliant, SQL-based database.
 
 ```bash
 cargo run -r -- -d mysql -s 100000 -c 12 -t 24 -r
+```
+
+The above command starts a Docker container automatically. To connect to an already-running MySQL instance use the following command:
+
+```bash
+cargo run -r -- -d mysql -e mysql://root:mysql@127.0.0.1:3306/bench -s 100000 -c 12 -t 24 -r
+```
+
+### [Postgres](https://www.postgresql.org/)
+
+Postgres is a networked, object-relational, ACID-compliant, SQL-based database.
+
+```bash
+cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
+```
+
+The above command starts a Docker container automatically. To connect to an already-running Postgres instance use the following command:
+
+```bash
+cargo run -r -- -d postgres -e 'host=127.0.0.1 user=postgres password=postgres' -s 100000 -c 12 -t 24 -r
 ```
 
 ### [ReDB](https://www.redb.org/)
@@ -252,6 +282,12 @@ Redis is an in-memory, networked, datastore that can be used as a cache, message
 cargo run -r -- -d redis -s 100000 -c 12 -t 24 -r
 ```
 
+The above command starts a Docker container automatically. To connect to an already-running Redis instance use the following command:
+
+```bash
+cargo run -r -- -d redis -e redis://:root@127.0.0.1:6379 -s 100000 -c 12 -t 24 -r
+```
+
 ### [RocksDB](https://rocksdb.org/)
 
 RocksDB is a transactional, ACID-compliant, embedded, key-value datastore, based on LSM-trees.
@@ -268,6 +304,12 @@ ScyllaDB is a distributed, NoSQL, wide-column datastore, designed to be compatib
 cargo run -r -- -d scylladb -s 100000 -c 12 -t 24 -r
 ```
 
+The above command starts a Docker container automatically. To connect to a already-running ScyllaDB cluster use the following command:
+
+```bash
+cargo run -r -- -d scylladb -e 127.0.0.1:9042 -s 100000 -c 12 -t 24 -r
+```
+
 ### [SQLite](https://www.sqlite.org/)
 
 SQLite is an embedded, relational, ACID-compliant, SQL-based database.
@@ -276,37 +318,37 @@ SQLite is an embedded, relational, ACID-compliant, SQL-based database.
 cargo run -r -- -d sqlite -s 100000 -c 12 -t 24 -r
 ```
 
-### [SurrealDB](https://surrealdb.com) running in-memory
+### [SurrealDB](https://surrealdb.com) (in-memory storage engine)
 
 ```bash
 cargo run -r -- -d surrealdb-memory -s 100000 -c 12 -t 24 -r
 ```
 
-### [SurrealDB](https://surrealdb.com) running with RocksDB
+### [SurrealDB](https://surrealdb.com) (RocksDB storage engine)
 
 ```bash
 cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r
 ```
 
-### [SurrealDB](https://surrealdb.com) running with SurrealKV
+### [SurrealDB](https://surrealdb.com) (SurrealKV storage engine)
 
 ```bash
 cargo run -r -- -d surrealdb-surrealkv -s 100000 -c 12 -t 24 -r
 ```
 
-### [SurrealDB](https://surrealdb.com) embedded in-memory
+### [SurrealDB](https://surrealdb.com) embedded (in-memory storage engine)
 
 ```bash
 cargo run -r -- -d surrealdb -e memory -s 100000 -c 12 -t 24 -r
 ```
 
-### [SurrealDB](https://surrealdb.com) embedded RocksDB
+### [SurrealDB](https://surrealdb.com) embedded (RocksDB storage engine)
 
 ```bash
 cargo run -r -- -d surrealdb -e rocksdb:/tmp/db -s 100000 -c 12 -t 24 -r
 ```
 
-### [SurrealDB](https://surrealdb.com) embedded SurrealKV
+### [SurrealDB](https://surrealdb.com) embedded (SurrealKV storage engine)
 
 ```bash
 cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r
@@ -317,7 +359,7 @@ cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r
 SurrealKV is a transactional, ACID-compliant, embedded, key-value datastore, written in Rust, and based on concurrent adaptive radix trees.
 
 ```bash
-cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d surrealkv -s 100000 -c 12 -t 24 -r
 ```
 
 ## SurrealDB local benchmark
@@ -327,11 +369,11 @@ To run the benchmark against an already running SurrealDB instance, follow the s
 Start a SurrealDB server:
 
 ```bash
-surreal start --allow-all -u root -p root surrealkv:/tmp/crud-bench.db
+surreal start --allow-all -u root -p root rocksdb:/tmp/db
 ```
 
 Then run crud-bench with the `surrealdb` database option:
 
 ```bash
-cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 -s 100000 -c 12 -t 24 -r
 ```
