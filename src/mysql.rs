@@ -75,7 +75,8 @@ impl BenchmarkClient for MysqlClient {
 			})
 			.collect::<Vec<String>>()
 			.join(", ");
-		let stm = format!("CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
+		let stm =
+			format!("CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields}) ENGINE=InnoDB;");
 		self.conn.lock().await.query_drop(&stm).await?;
 		Ok(())
 	}
