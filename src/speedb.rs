@@ -79,7 +79,7 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SpeeDBClient> {
 		Ok(SpeeDBClient {
-			db: self.db.clone(),
+			db: self.0.clone(),
 		})
 	}
 }
