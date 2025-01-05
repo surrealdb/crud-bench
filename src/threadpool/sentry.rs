@@ -22,7 +22,7 @@ impl<'a> Sentry<'a> {
 	}
 }
 
-impl<'a> Drop for Sentry<'a> {
+impl Drop for Sentry<'_> {
 	fn drop(&mut self) {
 		// If this sentry was still active,
 		// then the task panicked without
