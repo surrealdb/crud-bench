@@ -107,8 +107,6 @@ impl Threadpool {
 
 	/// Set this threadpool as the global threadpool
 	pub fn build_global(self) {
-		// Check that the global pool has not been set
-		assert!(THREADPOOL.get().is_none());
 		// Set this threadpool as the global threadpool
 		THREADPOOL.get_or_init(|| self);
 	}
