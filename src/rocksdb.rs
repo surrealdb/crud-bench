@@ -55,7 +55,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Allow multiple writers to update memtables
 		opts.set_allow_concurrent_memtable_write(true);
 		// Avoid unnecessary blocking IO
-		// opts.set_avoid_unnecessary_blocking_io(true);
+		opts.set_avoid_unnecessary_blocking_io(true);
 		// Use separate write thread queues
 		opts.set_enable_pipelined_write(true);
 		// Enable separation of keys and values
@@ -76,7 +76,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		block_opts.set_hybrid_ribbon_filter(10.0, 2);
 		block_opts.set_block_cache(&cache);
 		opts.set_block_based_table_factory(&block_opts);
-		// opts.set_blob_cache(&cache);
+		opts.set_blob_cache(&cache);
 		opts.set_row_cache(&cache);
 		// Create the store
 		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)))
