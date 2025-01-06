@@ -78,7 +78,7 @@ impl BenchmarkClient for PostgresClient {
 			})
 			.collect::<Vec<String>>()
 			.join(", ");
-		let stm = format!("CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
+		let stm = format!("DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
 		self.client.batch_execute(&stm).await?;
 		Ok(())
 	}
