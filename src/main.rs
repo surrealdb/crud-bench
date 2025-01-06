@@ -196,8 +196,7 @@ fn run(args: Args) -> Result<()> {
 		.thread_name("crud-bench-threadpool") // Set the name of the threadpool threads
 		.thread_per_core(true) // Try to set a thread per core
 		.build()
-		.build_global()
-		.expect("Failed to create a threadpool");
+		.build_global();
 	// Display formatting
 	if std::io::stdout().is_terminal() {
 		println!("--------------------------------------------------");
