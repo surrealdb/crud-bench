@@ -11,6 +11,7 @@ use std::iter::Iterator;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use surrealkv::Durability;
 use surrealkv::Mode::{ReadOnly, ReadWrite};
 use surrealkv::Options;
 use surrealkv::Store;
@@ -106,6 +107,8 @@ impl SurrealKVClient {
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
 		let mut txn = self.db.begin_with_mode(ReadWrite)?;
+		// Let the OS handle syncing to disk
+		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.set(key, &val)?;
 		txn.commit().await?;
@@ -113,12 +116,19 @@ impl SurrealKVClient {
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadOnly)?;
-		// Process the data
-		let res = txn.get(key)?;
-		assert!(res.is_some());
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		affinitypool::execute(move || -> Result<_> {
+			// Create a new transaction
+			let mut txn = db.begin_with_mode(ReadOnly)?;
+			// Process the data
+			let res = txn.get(key.as_ref())?;
+			assert!(res.is_some());
+			Ok(())
+		})
+		.await
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
@@ -126,6 +136,8 @@ impl SurrealKVClient {
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
 		let mut txn = self.db.begin_with_mode(ReadWrite)?;
+		// Let the OS handle syncing to disk
+		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.set(key, &val)?;
 		txn.commit().await?;
@@ -135,6 +147,8 @@ impl SurrealKVClient {
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
 		let mut txn = self.db.begin_with_mode(ReadWrite)?;
+		// Let the OS handle syncing to disk
+		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.delete(key)?;
 		txn.commit().await?;
@@ -149,43 +163,50 @@ impl SurrealKVClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
-		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadOnly)?;
-		let beg = [0u8].as_slice();
-		let end = [255u8].as_slice();
-		// Perform the relevant projection scan type
-		match scan.projection()? {
-			Projection::Id => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(txn
-					.scan(beg..end, Some(s + l))?
-					.into_iter()
-					.skip(s)
-					.take(l)
-					.map(|v| black_box(v.0))
-					.collect::<Vec<_>>()
-					.len())
+		let p = scan.projection()?;
+		// Clone the datastore
+		let db = self.db.clone();
+		// Execute on the blocking threadpool
+		affinitypool::execute(move || -> Result<_> {
+			// Create a new transaction
+			let mut txn = db.begin_with_mode(ReadOnly)?;
+			let beg = [0u8].as_slice();
+			let end = [255u8].as_slice();
+			// Perform the relevant projection scan type
+			match p {
+				Projection::Id => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(txn
+						.scan(beg..end, Some(s + l))?
+						.into_iter()
+						.skip(s)
+						.take(l)
+						.map(|v| black_box(v.0))
+						.collect::<Vec<_>>()
+						.len())
+				}
+				Projection::Full => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(txn
+						.scan(beg..end, Some(s + l))?
+						.into_iter()
+						.skip(s)
+						.take(l)
+						.map(|v| black_box((v.0, v.1)))
+						.collect::<Vec<_>>()
+						.len())
+				}
+				Projection::Count => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(txn
+						.scan(beg..end, Some(s + l))?
+						.into_iter()
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.count())
+				}
 			}
-			Projection::Full => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(txn
-					.scan(beg..end, Some(s + l))?
-					.into_iter()
-					.skip(s)
-					.take(l)
-					.map(|v| black_box((v.0, v.1)))
-					.collect::<Vec<_>>()
-					.len())
-			}
-			Projection::Count => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(txn
-					.scan(beg..end, Some(s + l))?
-					.into_iter()
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.count())
-			}
-		}
+		})
+		.await
 	}
 }

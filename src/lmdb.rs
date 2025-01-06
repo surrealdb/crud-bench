@@ -61,11 +61,15 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<LmDBClient> {
-		Ok(LmDBClient(self.0.clone()))
+		Ok(LmDBClient {
+			db: self.0.clone(),
+		})
 	}
 }
 
-pub(crate) struct LmDBClient(Arc<(Env, Database<Bytes, Bytes>)>);
+pub(crate) struct LmDBClient {
+	db: Arc<(Env, Database<Bytes, Bytes>)>,
+}
 
 impl BenchmarkClient for LmDBClient {
 	async fn shutdown(&self) -> Result<()> {
@@ -118,43 +122,71 @@ impl BenchmarkClient for LmDBClient {
 
 impl LmDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Serialise the value
-		let val = bincode::serialize(&val)?;
-		// Create a new transaction
-		let mut txn = self.0 .0.write_txn()?;
-		// Process the data
-		self.0 .1.put(&mut txn, key, val.as_ref())?;
-		txn.commit()?;
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		affinitypool::execute(move || -> Result<_> {
+			// Serialise the value
+			let val = bincode::serialize(&val)?;
+			// Create a new transaction
+			let mut txn = db.0.write_txn()?;
+			// Process the data
+			db.1.put(&mut txn, key.as_ref(), val.as_ref())?;
+			txn.commit()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let txn = self.0 .0.read_txn()?;
-		// Process the data
-		let res: Option<_> = self.0 .1.get(&txn, key.as_ref())?;
-		assert!(res.is_some());
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		affinitypool::execute(move || -> Result<_> {
+			// Create a new transaction
+			let txn = db.0.read_txn()?;
+			// Process the data
+			let res: Option<_> = db.1.get(&txn, key.as_ref())?;
+			assert!(res.is_some());
+			Ok(())
+		})
+		.await
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Serialise the value
-		let val = bincode::serialize(&val)?;
-		// Create a new transaction
-		let mut txn = self.0 .0.write_txn()?;
-		// Process the data
-		self.0 .1.put(&mut txn, key.as_ref(), &val)?;
-		txn.commit()?;
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		affinitypool::execute(move || -> Result<_> {
+			// Serialise the value
+			let val = bincode::serialize(&val)?;
+			// Create a new transaction
+			let mut txn = db.0.write_txn()?;
+			// Process the data
+			db.1.put(&mut txn, key.as_ref(), &val)?;
+			txn.commit()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let mut txn = self.0 .0.write_txn()?;
-		// Process the data
-		self.0 .1.delete(&mut txn, key.as_ref())?;
-		txn.commit()?;
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		affinitypool::execute(move || -> Result<_> {
+			// Create a new transaction
+			let mut txn = db.0.write_txn()?;
+			// Process the data
+			db.1.delete(&mut txn, key.as_ref())?;
+			txn.commit()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -165,37 +197,44 @@ impl LmDBClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
-		// Create a new transaction
-		let txn = self.0 .0.read_txn()?;
-		// Create an iterator starting at the beginning
-		let iter = self.0 .1.iter(&txn)?;
-		// Perform the relevant projection scan type
-		match scan.projection()? {
-			Projection::Id => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(iter
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
-					.collect::<Result<Vec<_>>>()?
-					.len())
+		let p = scan.projection()?;
+		// Clone the datastore
+		let db = self.db.clone();
+		// Execute on the blocking threadpool
+		affinitypool::execute(move || -> Result<_> {
+			// Create a new transaction
+			let txn = db.0.read_txn()?;
+			// Create an iterator starting at the beginning
+			let iter = db.1.iter(&txn)?;
+			// Perform the relevant projection scan type
+			match p {
+				Projection::Id => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(iter
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
+						.collect::<Result<Vec<_>>>()?
+						.len())
+				}
+				Projection::Full => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(iter
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.map(|v| -> Result<_> { Ok(black_box(v?)) })
+						.collect::<Result<Vec<_>>>()?
+						.len())
+				}
+				Projection::Count => {
+					// Skip `offset` entries, then collect `limit` entries
+					Ok(iter
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.count())
+				}
 			}
-			Projection::Full => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(iter
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.map(|v| -> Result<_> { Ok(black_box(v?)) })
-					.collect::<Result<Vec<_>>>()?
-					.len())
-			}
-			Projection::Count => {
-				// Skip `offset` entries, then collect `limit` entries
-				Ok(iter
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.count())
-			}
-		}
+		})
+		.await
 	}
 }
