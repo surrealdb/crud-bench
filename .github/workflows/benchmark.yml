@@ -85,8 +85,9 @@ jobs:
             description: MongoDB
           # MySQL
           - database: mysql
-            enabled: true
+            enabled: false
             description: MySQL
+            skipped: MySQL benchmark skipped due to excessive benchmark time
           # Postgres
           - database: postgres
             enabled: true
