@@ -1,6 +1,5 @@
 #![cfg(feature = "redb")]
 
-use super::threadpool;
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
@@ -97,7 +96,7 @@ impl ReDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Create a new transaction
@@ -112,7 +111,7 @@ impl ReDBClient {
 			txn.commit()?;
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
@@ -120,7 +119,7 @@ impl ReDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Create a new transaction
 			let txn = db.begin_read()?;
 			// Open the database table
@@ -130,7 +129,7 @@ impl ReDBClient {
 			assert!(res.is_some());
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
@@ -138,7 +137,7 @@ impl ReDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Create a new transaction
@@ -153,7 +152,7 @@ impl ReDBClient {
 			txn.commit()?;
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
@@ -161,7 +160,7 @@ impl ReDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Let the OS handle syncing to disk
@@ -174,7 +173,7 @@ impl ReDBClient {
 			txn.commit()?;
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -189,7 +188,7 @@ impl ReDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Create a new transaction
 			let txn = db.begin_read()?;
 			// Open the database table
@@ -225,6 +224,6 @@ impl ReDBClient {
 				}
 			}
 		})
-		.await?
+		.await
 	}
 }

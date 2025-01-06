@@ -2,7 +2,6 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
-use crate::threadpool;
 use crate::valueprovider::Columns;
 use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
@@ -121,7 +120,7 @@ impl SurrealKVClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_with_mode(ReadOnly)?;
 			// Process the data
@@ -129,7 +128,7 @@ impl SurrealKVClient {
 			assert!(res.is_some());
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
@@ -168,7 +167,7 @@ impl SurrealKVClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_with_mode(ReadOnly)?;
 			let beg = [0u8].as_slice();
@@ -208,6 +207,6 @@ impl SurrealKVClient {
 				}
 			}
 		})
-		.await?
+		.await
 	}
 }

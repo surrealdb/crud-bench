@@ -2,7 +2,6 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
-use crate::threadpool;
 use crate::valueprovider::Columns;
 use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
@@ -127,7 +126,7 @@ impl LmDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Create a new transaction
@@ -137,7 +136,7 @@ impl LmDBClient {
 			txn.commit()?;
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
@@ -145,7 +144,7 @@ impl LmDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Create a new transaction
 			let txn = db.0.read_txn()?;
 			// Process the data
@@ -153,7 +152,7 @@ impl LmDBClient {
 			assert!(res.is_some());
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
@@ -161,7 +160,7 @@ impl LmDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Create a new transaction
@@ -171,7 +170,7 @@ impl LmDBClient {
 			txn.commit()?;
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
@@ -179,7 +178,7 @@ impl LmDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.0.write_txn()?;
 			// Process the data
@@ -187,7 +186,7 @@ impl LmDBClient {
 			txn.commit()?;
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -202,7 +201,7 @@ impl LmDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Create a new transaction
 			let txn = db.0.read_txn()?;
 			// Create an iterator starting at the beginning
@@ -236,6 +235,6 @@ impl LmDBClient {
 				}
 			}
 		})
-		.await?
+		.await
 	}
 }

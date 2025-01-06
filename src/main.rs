@@ -18,7 +18,6 @@ mod engine;
 mod keyprovider;
 mod result;
 mod terminal;
-mod threadpool;
 mod valueprovider;
 
 // Datastore modules
@@ -191,12 +190,14 @@ fn run(args: Args) -> Result<()> {
 		.build()
 		.expect("Failed to create a runtime");
 	// Setup the blocking thread pool
-	threadpool::Builder::new()
+	affinitypool::Builder::new()
 		.thread_stack_size(5 * 1024 * 1024) // Set stack size to 5MiB
 		.worker_threads(args.blocking as usize) // Set the number of worker threads
 		.thread_name("crud-bench-threadpool") // Set the name of the threadpool threads
+		.thread_per_core(true) // Try to set a thread per core
 		.build()
-		.build_global();
+		.build_global()
+		.expect("Failed to create a threadpool");
 	// Display formatting
 	if std::io::stdout().is_terminal() {
 		println!("--------------------------------------------------");

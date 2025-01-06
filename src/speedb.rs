@@ -2,7 +2,6 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
-use crate::threadpool;
 use crate::valueprovider::Columns;
 use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
@@ -162,7 +161,7 @@ impl SpeeDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Set the transaction options
@@ -178,7 +177,7 @@ impl SpeeDBClient {
 			txn.commit()?;
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
@@ -186,7 +185,7 @@ impl SpeeDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Set the transaction options
 			let mut to = OptimisticTransactionOptions::default();
 			to.set_snapshot(true);
@@ -205,7 +204,7 @@ impl SpeeDBClient {
 			assert!(res.is_some());
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
@@ -213,7 +212,7 @@ impl SpeeDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Set the transaction options
@@ -229,7 +228,7 @@ impl SpeeDBClient {
 			txn.commit()?;
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
@@ -237,7 +236,7 @@ impl SpeeDBClient {
 		let db = self.db.clone();
 		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Set the transaction options
 			let mut to = OptimisticTransactionOptions::default();
 			to.set_snapshot(true);
@@ -251,7 +250,7 @@ impl SpeeDBClient {
 			txn.commit()?;
 			Ok(())
 		})
-		.await?
+		.await
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -266,7 +265,7 @@ impl SpeeDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		threadpool::execute(move || -> Result<_> {
+		affinitypool::execute(move || -> Result<_> {
 			// Set the transaction options
 			let mut to = OptimisticTransactionOptions::default();
 			to.set_snapshot(true);
@@ -313,6 +312,6 @@ impl SpeeDBClient {
 				}
 			}
 		})
-		.await?
+		.await
 	}
 }
