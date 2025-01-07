@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::hash::Hash;
 use std::hint::black_box;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub(crate) enum MapDatabase {
@@ -30,10 +31,15 @@ impl From<KeyType> for MapDatabase {
 pub(crate) struct MapClientProvider(MapDatabase);
 
 impl BenchmarkEngine<MapClient> for MapClientProvider {
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		None
+	}
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		Ok(Self(kt.into()))
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<MapClient> {
 		Ok(MapClient(self.0.clone()))
 	}
@@ -136,53 +142,45 @@ impl MapClient {
 	where
 		T: Eq + Hash,
 	{
-		let projection = scan.projection()?;
+		// Contional scans are not supported
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
-		match projection {
-			Projection::Id => bail!(NOT_SUPPORTED_ERROR),
-			Projection::Full => {
+		// Extract parameters
+		let s = scan.start.unwrap_or(0);
+		let l = scan.limit.unwrap_or(usize::MAX);
+		let p = scan.projection()?;
+		// Perform the relevant projection scan type
+		match p {
+			Projection::Id => {
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				if let Some(start) = scan.start {
-					if let Some(limit) = scan.limit {
-						m.iter().skip(start).take(limit).for_each(|e| {
-							black_box(e);
-							count += 1;
-						})
-					} else {
-						m.iter().skip(start).for_each(|e| {
-							black_box(e);
-							count += 1;
-						})
-					}
-				} else if let Some(limit) = scan.limit {
-					m.iter().take(limit).for_each(|e| {
-						black_box(e);
-						count += 1;
-					})
-				} else {
-					m.iter().for_each(|e| {
-						black_box(e);
-						count += 1;
-					})
-				};
+				for v in m.iter().skip(s).take(l) {
+					black_box(v);
+					count += 1;
+				}
 				Ok(count)
 			}
-			Projection::Count => {
-				let c = if let Some(start) = scan.start {
-					if let Some(limit) = scan.limit {
-						m.iter().skip(start).take(limit).count()
-					} else {
-						m.iter().skip(start).count()
-					}
-				} else if let Some(limit) = scan.limit {
-					m.iter().take(limit).count()
-				} else {
-					m.iter().count()
-				};
-				Ok(c)
+			Projection::Full => {
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in m.iter().skip(s).take(l) {
+					black_box(v);
+					count += 1;
+				}
+				Ok(count)
 			}
+			Projection::Count => Ok(m
+				.iter()
+				.skip(s) // Skip the first `offset` entries
+				.take(l) // Take the next `limit` entries
+				.count()),
 		}
 	}
 }

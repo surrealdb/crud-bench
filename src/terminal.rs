@@ -23,21 +23,8 @@ impl Clone for Terminal {
 }
 
 impl Terminal {
-	pub(crate) fn map_ln<F, S>(&mut self, mut f: F) -> Result<()>
-	where
-		F: FnMut() -> Option<S>,
-		S: Display,
-	{
-		if let Some(ref mut o) = self.0 {
-			if let Some(s) = f() {
-				writeln!(o, "{s}")?;
-				o.flush()?;
-			}
-		}
-		Ok(())
-	}
-
-	pub(crate) fn map<F, S>(&mut self, mut f: F) -> Result<()>
+	/// Write a line to this Terminal via a callback
+	pub(crate) fn write<F, S>(&mut self, mut f: F) -> Result<()>
 	where
 		F: FnMut() -> Option<S>,
 		S: Display,
@@ -45,6 +32,20 @@ impl Terminal {
 		if let Some(ref mut o) = self.0 {
 			if let Some(s) = f() {
 				write!(o, "{s}")?;
+				o.flush()?;
+			}
+		}
+		Ok(())
+	}
+	/// Write a new line to this Terminal via a callback
+	pub(crate) fn writeln<F, S>(&mut self, mut f: F) -> Result<()>
+	where
+		F: FnMut() -> Option<S>,
+		S: Display,
+	{
+		if let Some(ref mut o) = self.0 {
+			if let Some(s) = f() {
+				writeln!(o, "{s}")?;
 				o.flush()?;
 			}
 		}

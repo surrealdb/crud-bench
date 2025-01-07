@@ -1,58 +1,77 @@
-#![cfg(feature = "surrealkv")]
+#![cfg(feature = "lmdb")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
+use heed::types::Bytes;
+use heed::{Database, EnvOpenOptions};
+use heed::{Env, EnvFlags};
 use serde_json::Value;
 use std::hint::black_box;
-use std::iter::Iterator;
-use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::Duration;
-use surrealkv::Durability;
-use surrealkv::Mode::{ReadOnly, ReadWrite};
-use surrealkv::Options;
-use surrealkv::Store;
 
-const DATABASE_DIR: &str = "surrealkv";
+const DATABASE_DIR: &str = "lmdb";
 
-pub(crate) struct SurrealKVClientProvider(Arc<Store>);
+const DEFAULT_SIZE: usize = 1_073_741_824;
 
-impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
+static DATABASE_SIZE: LazyLock<usize> = LazyLock::new(|| {
+	std::env::var("CRUD_BENCH_LMDB_DATABASE_SIZE")
+		.map(|s| s.parse::<usize>().unwrap_or(DEFAULT_SIZE))
+		.unwrap_or(DEFAULT_SIZE)
+});
+
+pub(crate) struct LmDBClientProvider(Arc<(Env, Database<Bytes, Bytes>)>);
+
+impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 	/// The number of seconds to wait before connecting
 	fn wait_timeout(&self) -> Option<Duration> {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
-		// Configure custom options
-		let mut opts = Options::new();
-		// Disable versioning
-		opts.enable_versions = false;
-		// Enable disk persistence
-		opts.disk_persistence = true;
-		// Set the directory location
-		opts.dir = PathBuf::from(DATABASE_DIR);
+		// Recreate the database directory
+		std::fs::create_dir(DATABASE_DIR)?;
+		// Create a new environment
+		let env = unsafe {
+			EnvOpenOptions::new()
+				.flags(
+					EnvFlags::NO_TLS
+						| EnvFlags::MAP_ASYNC
+						| EnvFlags::NO_SYNC
+						| EnvFlags::NO_META_SYNC,
+				)
+				.map_size(*DATABASE_SIZE)
+				.open(DATABASE_DIR)
+		}?;
+		// Creaye the database
+		let db = {
+			// Open a new transaction
+			let mut txn = env.write_txn()?;
+			// Initiate the database
+			env.create_database::<Bytes, Bytes>(&mut txn, None)?
+		};
 		// Create the store
-		Ok(Self(Arc::new(Store::new(opts)?)))
+		Ok(Self(Arc::new((env, db))))
 	}
 	/// Creates a new client for this benchmarking engine
-	async fn create_client(&self) -> Result<SurrealKVClient> {
-		Ok(SurrealKVClient {
+	async fn create_client(&self) -> Result<LmDBClient> {
+		Ok(LmDBClient {
 			db: self.0.clone(),
 		})
 	}
 }
 
-pub(crate) struct SurrealKVClient {
-	db: Arc<Store>,
+pub(crate) struct LmDBClient {
+	db: Arc<(Env, Database<Bytes, Bytes>)>,
 }
 
-impl BenchmarkClient for SurrealKVClient {
+impl BenchmarkClient for LmDBClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
@@ -101,18 +120,23 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 }
 
-impl SurrealKVClient {
+impl LmDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Serialise the value
-		let val = bincode::serialize(&val)?;
-		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
-		// Process the data
-		txn.set(key, &val)?;
-		txn.commit().await?;
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		affinitypool::execute(move || -> Result<_> {
+			// Serialise the value
+			let val = bincode::serialize(&val)?;
+			// Create a new transaction
+			let mut txn = db.0.write_txn()?;
+			// Process the data
+			db.1.put(&mut txn, key.as_ref(), val.as_ref())?;
+			txn.commit()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
@@ -122,9 +146,9 @@ impl SurrealKVClient {
 		// Execute on the blocking threadpool
 		affinitypool::execute(move || -> Result<_> {
 			// Create a new transaction
-			let mut txn = db.begin_with_mode(ReadOnly)?;
+			let txn = db.0.read_txn()?;
 			// Process the data
-			let res = txn.get(key.as_ref())?;
+			let res: Option<_> = db.1.get(&txn, key.as_ref())?;
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
@@ -136,27 +160,37 @@ impl SurrealKVClient {
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Serialise the value
-		let val = bincode::serialize(&val)?;
-		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
-		// Process the data
-		txn.set(key, &val)?;
-		txn.commit().await?;
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		affinitypool::execute(move || -> Result<_> {
+			// Serialise the value
+			let val = bincode::serialize(&val)?;
+			// Create a new transaction
+			let mut txn = db.0.write_txn()?;
+			// Process the data
+			db.1.put(&mut txn, key.as_ref(), &val)?;
+			txn.commit()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
-		// Process the data
-		txn.delete(key)?;
-		txn.commit().await?;
-		Ok(())
+		// Clone the datastore
+		let db = self.db.clone();
+		let key: Box<[u8]> = key.into();
+		// Execute on the blocking threadpool
+		affinitypool::execute(move || -> Result<_> {
+			// Create a new transaction
+			let mut txn = db.0.write_txn()?;
+			// Process the data
+			db.1.delete(&mut txn, key.as_ref())?;
+			txn.commit()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -173,10 +207,9 @@ impl SurrealKVClient {
 		// Execute on the blocking threadpool
 		affinitypool::execute(move || -> Result<_> {
 			// Create a new transaction
-			let mut txn = db.begin_with_mode(ReadOnly)?;
-			let beg = [0u8].as_slice();
-			let end = [255u8].as_slice();
-			let iter = txn.scan(beg..end, Some(s + l))?;
+			let txn = db.0.read_txn()?;
+			// Create an iterator starting at the beginning
+			let iter = db.1.iter(&txn)?;
 			// Perform the relevant projection scan type
 			match p {
 				Projection::Id => {
@@ -185,8 +218,8 @@ impl SurrealKVClient {
 					// an iterator with `filter_map` or `map` is optimised
 					// out by the compiler when calling `count` at the end.
 					let mut count = 0;
-					for v in iter.into_iter().skip(s).take(l) {
-						black_box(v.0);
+					for v in iter.skip(s).take(l) {
+						black_box(v.unwrap().0);
 						count += 1;
 					}
 					Ok(count)
@@ -197,15 +230,14 @@ impl SurrealKVClient {
 					// an iterator with `filter_map` or `map` is optimised
 					// out by the compiler when calling `count` at the end.
 					let mut count = 0;
-					for v in iter.into_iter().skip(s).take(l) {
-						black_box(v.1);
+					for v in iter.skip(s).take(l) {
+						black_box(v.unwrap().1);
 						count += 1;
 					}
 					Ok(count)
 				}
 				Projection::Count => {
 					Ok(iter
-						.into_iter()
 						.skip(s) // Skip the first `offset` entries
 						.take(l) // Take the next `limit` entries
 						.count())

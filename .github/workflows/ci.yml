@@ -199,6 +199,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Cassandra
+          - database: cassandra
+            enabled: false
+            description: Cassandra
+            skipped: Cassandra benchmark not yet implemented
           # Dragonfly
           - database: dragonfly
             enabled: true
@@ -211,6 +216,10 @@ jobs:
           - database: keydb
             enabled: true
             description: KeyDB
+          # LMDB
+          - database: lmdb
+            enabled: true
+            description: LMDB
           # Map
           - database: map
             enabled: true
@@ -223,10 +232,14 @@ jobs:
           - database: postgres
             enabled: true
             description: Postgres
+          # MySQL
+          - database: mysql
+            enabled: true
+            description: MySQL
           # Redb
           - database: redb
-            enabled: false
-            description: Redb
+            enabled: true
+            description: ReDB
           # Redis
           - database: redis
             enabled: true
@@ -239,6 +252,7 @@ jobs:
           - database: scylladb
             enabled: false
             description: ScyllaDB
+            skipped: SycllaDB benchmark not yet implemented
           # SQLite
           - database: sqlite
             enabled: true
@@ -284,30 +298,32 @@ jobs:
       - name: Set file permissions
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
 
-      # 100,000 records
+      - name: ${{ matrix.skipped || 'Benchmark processing' }}
+        if: ${{ !matrix.enabled }}
+        run: echo "${{ matrix.skipped }}"
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key integer / random)
-        timeout-minutes: 5
+        timeout-minutes: 15
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random)
-        timeout-minutes: 5
+        timeout-minutes: 15
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string90 / random)
-        timeout-minutes: 5
+        timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random)
-        timeout-minutes: 5
+        timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
-        timeout-minutes: 5
+        timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r
         env:

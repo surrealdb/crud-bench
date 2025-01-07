@@ -1,12 +1,11 @@
 use crate::benchmark::Benchmark;
+use crate::dialect::{AnsiSqlDialect, DefaultDialect};
 use crate::docker::{DockerContainer, DockerParams};
+use crate::dry::DryClientProvider;
 use crate::engine::BenchmarkEngine;
 use crate::keyprovider::KeyProvider;
 use crate::map::MapClientProvider;
 use crate::result::BenchmarkResult;
-
-use crate::dialect::{AnsiSqlDialect, DefaultDialect};
-use crate::dry::DryClientProvider;
 use crate::valueprovider::ValueProvider;
 use crate::KeyType;
 use anyhow::Result;
@@ -20,8 +19,12 @@ pub(crate) enum Database {
 	Dragonfly,
 	#[cfg(feature = "keydb")]
 	Keydb,
+	#[cfg(feature = "lmdb")]
+	Lmdb,
 	#[cfg(feature = "mongodb")]
 	Mongodb,
+	#[cfg(feature = "mysql")]
+	Mysql,
 	#[cfg(feature = "postgres")]
 	Postgres,
 	#[cfg(feature = "redb")]
@@ -63,6 +66,8 @@ impl Database {
 			Self::Scylladb => crate::scylladb::SCYLLADB_DOCKER_PARAMS,
 			#[cfg(feature = "mongodb")]
 			Self::Mongodb => crate::mongodb::MONGODB_DOCKER_PARAMS,
+			#[cfg(feature = "mysql")]
+			Self::Mysql => crate::mysql::MYSQL_DOCKER_PARAMS,
 			#[cfg(feature = "postgres")]
 			Self::Postgres => crate::postgres::POSTGRES_DOCKER_PARAMS,
 			#[cfg(feature = "dragonfly")]
@@ -118,6 +123,22 @@ impl Database {
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						crate::dragonfly::DragonflyClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark.endpoint.as_deref(),
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "lmdb")]
+			Database::Lmdb => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::lmdb::LmDBClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark.endpoint.as_deref(),
@@ -294,6 +315,22 @@ impl Database {
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						crate::mongodb::MongoDBClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark.endpoint.as_deref(),
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "mysql")]
+			Database::Mysql => {
+				benchmark
+					.run::<_, AnsiSqlDialect, _>(
+						crate::mysql::MysqlClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark.endpoint.as_deref(),

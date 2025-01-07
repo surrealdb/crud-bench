@@ -20,13 +20,16 @@ pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 pub(crate) struct PostgresClientProvider(KeyType, Columns, String);
 
 impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		let url = endpoint.unwrap_or("host=localhost user=postgres password=postgres").to_owned();
 		Ok(Self(kt, columns, url))
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<PostgresClient> {
+		// Connect to the database with TLS disabled
 		let (client, connection) = tokio_postgres::connect(&self.2, NoTls).await?;
+		// Log any errors when the connection is closed
 		tokio::spawn(async move {
 			if let Err(e) = connection.await {
 				eprintln!("connection error: {}", e);
@@ -57,7 +60,7 @@ impl BenchmarkClient for PostgresClient {
 				todo!()
 			}
 		};
-		let fields: Vec<String> = self
+		let fields = self
 			.columns
 			.0
 			.iter()
@@ -73,9 +76,9 @@ impl BenchmarkClient for PostgresClient {
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 				}
 			})
-			.collect();
-		let fields = fields.join(",");
-		let stm = format!("CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
+			.collect::<Vec<String>>()
+			.join(", ");
+		let stm = format!("DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
 		self.client.batch_execute(&stm).await?;
 		Ok(())
 	}
@@ -167,7 +170,6 @@ impl PostgresClient {
 							let v: uuid::Uuid = row.try_get(n.as_str())?;
 							Value::from(v.to_string())
 						}
-
 						ColumnType::Object => {
 							let v: Json<Value> = row.try_get(n.as_str())?;
 							v.0
@@ -197,6 +199,7 @@ impl PostgresClient {
 		let stm = "SELECT * FROM record WHERE id=$1";
 		let res = self.client.query(stm, &[&key]).await?;
 		assert_eq!(res.len(), 1);
+		black_box(self.consume(res.into_iter().next().unwrap(), true)?);
 		Ok(())
 	}
 
@@ -223,28 +226,39 @@ impl PostgresClient {
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
 		// Extract parameters
-		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or("".to_string());
-		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
+		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
+		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or_default();
+		let p = scan.projection()?;
 		// Perform the relevant projection scan type
-		match scan.projection()? {
+		match p {
 			Projection::Id => {
 				let stm = format!("SELECT id FROM record {c} {l} {s}");
 				let res = self.client.query(&stm, &[]).await?;
-				let res = res
-					.into_iter()
-					.map(|v| -> Result<_> { Ok(black_box(self.consume(v, false)?)) })
-					.collect::<Result<Vec<_>>>()?;
-				Ok(res.len())
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in res {
+					black_box(self.consume(v, false).unwrap());
+					count += 1;
+				}
+				Ok(count)
 			}
 			Projection::Full => {
 				let stm = format!("SELECT * FROM record {c} {l} {s}");
 				let res = self.client.query(&stm, &[]).await?;
-				let res = res
-					.into_iter()
-					.map(|v| -> Result<_> { Ok(black_box(self.consume(v, true)?)) })
-					.collect::<Result<Vec<_>>>()?;
-				Ok(res.len())
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in res {
+					black_box(self.consume(v, true).unwrap());
+					count += 1;
+				}
+				Ok(count)
 			}
 			Projection::Count => {
 				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s})");

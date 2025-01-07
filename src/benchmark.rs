@@ -8,7 +8,7 @@ use crate::{Args, Scan, Scans};
 use anyhow::{bail, Result};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
-use log::info;
+use log::{debug, info};
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -16,15 +16,13 @@ use std::time::{Duration, SystemTime};
 use tokio::task;
 use tokio::time::Instant;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
 
 pub(crate) struct Benchmark {
 	/// The server endpoint to connect to
 	pub(crate) endpoint: Option<String>,
-	/// The timeout for connecting to the server
-	timeout: Duration,
 	/// The number of clients to spawn
 	clients: u32,
 	/// The number of threads to spawn
@@ -38,7 +36,6 @@ impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
 		Self {
 			endpoint: args.endpoint.to_owned(),
-			timeout: Duration::from_secs(60),
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
@@ -144,13 +141,18 @@ impl Benchmark {
 	{
 		// Get the current system time
 		let time = SystemTime::now();
+		//
+		let wait = engine.wait_timeout();
 		// Check the elapsed time
-		while time.elapsed()? < self.timeout {
+		while time.elapsed()? < TIMEOUT {
 			// Wait for a small amount of time
-			tokio::time::sleep(TIMEOUT).await;
+			if let Some(wait) = wait {
+				tokio::time::sleep(wait).await
+			};
 			// Attempt to create a client connection
-			if let Ok(v) = engine.create_client().await {
-				return Ok(v);
+			match engine.create_client().await {
+				Err(e) => debug!("Received error: {e}"),
+				Ok(c) => return Ok(c),
 			}
 		}
 		bail!("Can't create the client")
@@ -186,6 +188,8 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
 	{
+		// Create a new terminal display
+		let mut out = Terminal::default();
 		// Get the total concurrent futures
 		let total = (self.clients * self.threads) as usize;
 		// Whether we have experienced an error
@@ -194,11 +198,12 @@ impl Benchmark {
 		let skip = Arc::new(AtomicBool::new(false));
 		// The total records processed so far
 		let current = Arc::new(AtomicU32::new(0));
+		// The total records processed so far
+		let complete = Arc::new(AtomicU32::new(0));
 		// Store the futures in a vector
 		let mut futures = Vec::with_capacity(total);
 		// Print out the first stage
-		let mut out = Terminal::default();
-		out.map(|| Some(format!("\r{operation} 0%")))?;
+		out.write(|| Some(format!("\r{operation} 0%")))?;
 		// Measure the starting time
 		let metric = OperationMetric::new(self.pid);
 		// Loop over the clients
@@ -208,6 +213,7 @@ impl Benchmark {
 				let error = error.clone();
 				let skip = skip.clone();
 				let current = current.clone();
+				let complete = complete.clone();
 				let client = client.clone();
 				let out = out.clone();
 				let vp = vp.clone();
@@ -218,6 +224,7 @@ impl Benchmark {
 						samples,
 						&error,
 						&current,
+						&complete,
 						operation,
 						(kp, vp, out),
 					)
@@ -258,7 +265,7 @@ impl Benchmark {
 		// Calculate runtime information
 		let result = OperationResult::new(metric, global_histogram);
 		// Print out the last stage
-		out.map_ln(|| Some(format!("\r{operation} 100%")))?;
+		out.writeln(|| Some(format!("\r{operation} 100%")))?;
 		// Shall we skip the operation? (operation not supported)
 		if skip.load(Ordering::Relaxed) {
 			return Ok(None);
@@ -272,6 +279,7 @@ impl Benchmark {
 		samples: u32,
 		error: &AtomicBool,
 		current: &AtomicU32,
+		complete: &AtomicU32,
 		operation: BenchmarkOperation,
 		(mut kp, mut vp, mut out): (KeyProvider, ValueProvider, Terminal),
 	) -> Result<Histogram<u64>>
@@ -283,25 +291,13 @@ impl Benchmark {
 		let mut old_percent = 0;
 		// Check if we have encountered an error
 		while !error.load(Ordering::Relaxed) {
+			// Get the current sample number
 			let sample = current.fetch_add(1, Ordering::Relaxed);
+			// Have we produced enough samples
 			if sample >= samples {
 				// We are done
 				break;
 			}
-			// Calculate the completion percent
-			out.map(|| {
-				let new_percent = if sample == 0 {
-					0u8
-				} else {
-					(sample * 20 / samples) as u8
-				};
-				if new_percent != old_percent {
-					old_percent = new_percent;
-					Some(format!("\r{operation} {}%", new_percent * 5))
-				} else {
-					None
-				}
-			})?;
 			// Perform the benchmark operation
 			let time = Instant::now();
 			match &operation {
@@ -317,9 +313,26 @@ impl Benchmark {
 				BenchmarkOperation::Scan(s) => client.scan(s, &kp).await?,
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 			};
+			// Get the completed sample number
+			let sample = complete.fetch_add(1, Ordering::Relaxed);
+			// Output the percentage completion
+			out.write(|| {
+				// Calculate the percentage completion
+				let new_percent = match sample {
+					0 => 0u8,
+					_ => (sample * 20 / samples) as u8,
+				};
+				// Display the percent if multiple of 5
+				if new_percent != old_percent {
+					old_percent = new_percent;
+					Some(format!("\r{operation} {}%", new_percent * 5))
+				} else {
+					None
+				}
+			})?;
+			//
 			histogram.record(time.elapsed().as_micros() as u64)?;
 		}
-
 		Ok(histogram)
 	}
 }

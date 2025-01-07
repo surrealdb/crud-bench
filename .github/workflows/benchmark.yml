@@ -19,7 +19,7 @@ defaults:
 jobs:
   build:
     name: Build crud-bench
-    runs-on: [runner-amd64-2xlarge-private]
+    runs-on: [runner-amd64-2xlarge]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -48,12 +48,17 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-amd64-2xlarge-private]
+    runs-on: [runner-amd64-4xlarge]
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Cassandra
+          - database: cassandra
+            enabled: false
+            description: Cassandra
+            skipped: Cassandra benchmark not yet implemented
           # Dragonfly
           - database: dragonfly
             enabled: true
@@ -70,10 +75,19 @@ jobs:
           - database: map
             enabled: true
             description: Map
+          # LMDB
+          - database: lmdb
+            enabled: true
+            description: LMDB
           # MongoDB
           - database: mongodb
             enabled: true
             description: MongoDB
+          # MySQL
+          - database: mysql
+            enabled: false
+            description: MySQL
+            skipped: MySQL benchmark skipped due to excessive benchmark time
           # Postgres
           - database: postgres
             enabled: true
@@ -81,7 +95,8 @@ jobs:
           # Redb
           - database: redb
             enabled: false
-            description: Redb
+            description: ReDB
+            skipped: ReDB benchmark skipped due to excessive benchmark time
           # Redis
           - database: redis
             enabled: true
@@ -94,6 +109,7 @@ jobs:
           - database: scylladb
             enabled: false
             description: ScyllaDB
+            skipped: ScyllaDB benchmark not yet implemented
           # SQLite
           - database: sqlite
             enabled: true
@@ -139,33 +155,44 @@ jobs:
       - name: Set file permissions
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
 
-      # 5,000,000 records
+      - name: ${{ matrix.skipped || 'Benchmark processing' }}
+        if: ${{ !matrix.enabled }}
+        run: echo "${{ matrix.skipped }}"
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k integer -r
+        env:
+          CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string26 -r
+        env:
+          CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string90 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string90 -r
+        env:
+          CRUD_BENCH_LMDB_DATABASE_SIZE: 3221225472 # 3 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string506 -r
+        env:
+          CRUD_BENCH_LMDB_DATABASE_SIZE: 16106127360 # 15 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string26 -r
         env:
+          CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
 
       - name: Finish benchmarking

@@ -32,10 +32,12 @@ impl Display for BenchmarkResult {
 			Cell::new("Test").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("Total time").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("Mean").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("Max").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("99th").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("95th").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("50th").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("1st").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("Min").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("CPU").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("Memory").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("Reads").add_attribute(Attribute::Bold).fg(Color::Blue),
@@ -71,6 +73,8 @@ impl Display for BenchmarkResult {
 					"-".to_string(),
 					"-".to_string(),
 					"-".to_string(),
+					"-".to_string(),
+					"-".to_string(),
 				]);
 			}
 		}
@@ -79,16 +83,16 @@ impl Display for BenchmarkResult {
 			table.add_row(res.output("[D]elete"));
 		}
 		// Right align the `CPU` column
-		let column = table.column_mut(7).expect("Our table has three columns");
+		let column = table.column_mut(9).expect("The table needs at least 10 columns");
 		column.set_cell_alignment(CellAlignment::Right);
 		// Right align the `Memory` column
-		let column = table.column_mut(8).expect("Our table has three columns");
+		let column = table.column_mut(10).expect("The table needs at least 11 columns");
 		column.set_cell_alignment(CellAlignment::Right);
 		// Right align the `Reads` column
-		let column = table.column_mut(9).expect("Our table has three columns");
+		let column = table.column_mut(11).expect("The table needs at least 12 columns");
 		column.set_cell_alignment(CellAlignment::Right);
 		// Right align the `Writes` column
-		let column = table.column_mut(10).expect("Our table has three columns");
+		let column = table.column_mut(12).expect("The table needs at least 13 columns");
 		column.set_cell_alignment(CellAlignment::Right);
 		// Output the formatted table
 		write!(f, "{table}")
@@ -175,10 +179,12 @@ impl OperationResult {
 			name.to_string(),
 			format_duration(self.elapsed),
 			format!("{:.2} ms", self.histogram.mean() / 1000.0),
+			format!("{:.2} ms", self.histogram.max() as f64 / 1000.0),
 			format!("{:.2} ms", self.histogram.value_at_quantile(0.99) as f64 / 1000.0),
 			format!("{:.2} ms", self.histogram.value_at_quantile(0.95) as f64 / 1000.0),
 			format!("{:.2} ms", self.histogram.value_at_quantile(0.50) as f64 / 1000.0),
 			format!("{:.2} ms", self.histogram.value_at_quantile(0.01) as f64 / 1000.0),
+			format!("{:.2} ms", self.histogram.min() as f64 / 1000.0),
 			format!("{:.2}%", self.cpu_usage),
 			format!("{}", ByteSize(self.used_memory)),
 			format!("{}", ByteSize(self.disk_usage.total_written_bytes)),

@@ -7,7 +7,7 @@ use clap::{Parser, ValueEnum};
 use docker::DockerContainer;
 use serde::{Deserialize, Serialize};
 use std::io::IsTerminal;
-use tokio::runtime::Builder;
+use tokio::runtime;
 
 // Benchmark modules
 mod benchmark;
@@ -24,8 +24,10 @@ mod valueprovider;
 mod dragonfly;
 mod dry;
 mod keydb;
+mod lmdb;
 mod map;
 mod mongodb;
+mod mysql;
 mod postgres;
 mod redb;
 mod redis;
@@ -50,6 +52,10 @@ pub(crate) struct Args {
 	/// Endpoint
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
+
+	/// Maximum number of blocking threads (default is the number of CPU cores)
+	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) blocking: u32,
 
 	/// Number of async runtime workers (default is the number of CPU cores)
 	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
@@ -141,6 +147,7 @@ pub(crate) struct Scan {
 	projection: Option<String>,
 }
 
+#[derive(Debug)]
 pub(crate) enum Projection {
 	Id,
 	Full,
@@ -170,15 +177,31 @@ fn main() -> Result<()> {
 fn run(args: Args) -> Result<()> {
 	// Prepare the benchmark
 	let benchmark = Benchmark::new(&args);
-	// If a Docker image is specified, spawn the container
-	let container = args.database.start_docker(args.image);
-	// Set up the asynchronous runtime
-	let runtime = Builder::new_multi_thread()
-		.thread_stack_size(10 * 1024 * 1024) // Set stack size to 10MiB
+	// If a Docker image is specified but the endpoint, spawn the container.
+	let container = if args.endpoint.is_some() {
+		// The endpoint is specified usually when you want the benchmark to run against a remote server.
+		// Not handling this results in crud-bench starting a container never used by the client and the benchmark.
+		None
+	} else {
+		args.database.start_docker(args.image)
+	};
+	// Setup the asynchronous runtime
+	let runtime = runtime::Builder::new_multi_thread()
+		.thread_stack_size(5 * 1024 * 1024) // Set stack size to 5MiB
+		.max_blocking_threads(args.blocking as usize) // Set the number of blocking threads
 		.worker_threads(args.workers as usize) // Set the number of worker threads
+		.thread_name("crud-bench-runtime") // Set the name of the runtime threads
 		.enable_all() // Enables all runtime features, including I/O and time
 		.build()
 		.expect("Failed to create a runtime");
+	// Setup the blocking thread pool
+	let _ = affinitypool::Builder::new()
+		.thread_stack_size(5 * 1024 * 1024) // Set stack size to 5MiB
+		.worker_threads(args.blocking as usize) // Set the number of worker threads
+		.thread_name("crud-bench-threadpool") // Set the name of the threadpool threads
+		.thread_per_core(true) // Try to set a thread per core
+		.build()
+		.build_global();
 	// Display formatting
 	if std::io::stdout().is_terminal() {
 		println!("--------------------------------------------------");
@@ -205,8 +228,9 @@ fn run(args: Args) -> Result<()> {
 				},
 			}
 			println!(
-				"CPUs: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
+				"CPUs: {} - Blocking threads: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
 				num_cpus::get(),
+				args.blocking,
 				args.workers,
 				args.clients,
 				args.threads,
@@ -248,6 +272,7 @@ mod test {
 			image: None,
 			database,
 			endpoint: None,
+			blocking: 5,
 			workers: 5,
 			clients: 2,
 			threads: 2,

@@ -8,6 +8,7 @@ use anyhow::Result;
 use serde_json::Value as Json;
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_rusqlite::types::ToSqlOutput;
 use tokio_rusqlite::types::Value;
 use tokio_rusqlite::Connection;
@@ -21,11 +22,16 @@ pub(crate) struct SqliteClientProvider {
 }
 
 impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
+	/// The number of seconds to wait before connecting
+	fn wait_timeout(&self) -> Option<Duration> {
+		None
+	}
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
 		// Remove the database directory
-		tokio::fs::remove_dir_all(DATABASE_DIR).await.ok();
+		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Recreate the database directory
-		tokio::fs::create_dir(DATABASE_DIR).await?;
+		std::fs::create_dir(DATABASE_DIR)?;
 		// Switch to the new directory
 		std::env::set_current_dir(DATABASE_DIR)?;
 		// Create the connection
@@ -37,7 +43,7 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 			columns,
 		})
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SqliteClient> {
 		Ok(SqliteClient {
 			conn: self.conn.clone(),
@@ -56,7 +62,7 @@ pub(crate) struct SqliteClient {
 impl BenchmarkClient for SqliteClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Remove the database directory
-		tokio::fs::remove_dir_all(format!("../{DATABASE_DIR}")).await.ok();
+		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Ok
 		Ok(())
 	}
@@ -64,8 +70,8 @@ impl BenchmarkClient for SqliteClient {
 	async fn startup(&self) -> Result<()> {
 		// Optimise SQLite
 		let stmt = "
-            PRAGMA synchronous = 0;
-            PRAGMA journal_mode = ON;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA journal_mode = WAL;
             PRAGMA page_size = 4096;
             PRAGMA cache_size = 2500;
             PRAGMA locking_mode = EXCLUSIVE;
@@ -80,7 +86,7 @@ impl BenchmarkClient for SqliteClient {
 				todo!()
 			}
 		};
-		let fields: Vec<String> = self
+		let fields = self
 			.columns
 			.0
 			.iter()
@@ -96,8 +102,8 @@ impl BenchmarkClient for SqliteClient {
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 				}
 			})
-			.collect();
-		let fields = fields.join(",");
+			.collect::<Vec<String>>()
+			.join(",");
 		let stmt = format!(
 			"
 		    DROP TABLE IF EXISTS record;
@@ -223,8 +229,9 @@ impl SqliteClient {
 		let s = scan.start.map(|s| format!("OFFSET {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {s}")).unwrap_or_default();
+		let p = scan.projection()?;
 		// Perform the relevant projection scan type
-		match scan.projection()? {
+		match p {
 			Projection::Id => {
 				let stmt = format!("SELECT id FROM record {c} {l} {s}");
 				let res = self.query(Cow::Owned(stmt), None).await?;

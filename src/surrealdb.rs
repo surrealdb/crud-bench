@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
-use surrealdb::opt::Config;
+use surrealdb::opt::{Config, Resource};
 use surrealdb::RecordId;
 use surrealdb::Surreal;
 
@@ -51,6 +51,7 @@ async fn initialise_db(endpoint: &str, root: Root<'static>) -> Result<Surreal<An
 }
 
 impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(_: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		// Get the endpoint if specified
 		let endpoint = endpoint.unwrap_or("ws://127.0.0.1:8000").replace("memory", "mem://");
@@ -75,7 +76,7 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 			client,
 		})
 	}
-
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SurrealDBClient> {
 		let client = match &self.client {
 			Some(client) => client.clone(),
@@ -122,50 +123,50 @@ impl BenchmarkClient for SurrealDBClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		let res: Option<SurrealRecord> =
-			self.db.create(("record", key as i64)).content(val).await?;
-		assert!(res.is_some());
+		let res = self.db.create(Resource::from(("record", key as i64))).content(val).await?;
+		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db.create(("record", key)).content(val).await?;
-		assert!(res.is_some());
+		let res = self.db.create(Resource::from(("record", key))).content(val).await?;
+		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db.select(("record", key as i64)).await?;
-		assert!(res.is_some());
+		let res = self.db.select(Resource::from(("record", key as i64))).await?;
+		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db.select(("record", key)).await?;
-		assert!(res.is_some());
+		let res = self.db.select(Resource::from(("record", key))).await?;
+		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let _: Option<SurrealRecord> = self.db.update(("record", key as i64)).content(val).await?;
+		let res = self.db.update(Resource::from(("record", key as i64))).content(val).await?;
+		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db.update(("record", key)).content(val).await?;
-		assert!(res.is_some());
+		let res = self.db.update(Resource::from(("record", key))).content(val).await?;
+		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db.delete(("record", key as i64)).await?;
-		assert!(res.is_some());
+		let res = self.db.delete(Resource::from(("record", key as i64))).await?;
+		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
-		let res: Option<SurrealRecord> = self.db.delete(("record", key)).await?;
-		assert!(res.is_some());
+		let res = self.db.delete(Resource::from(("record", key))).await?;
+		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
@@ -184,17 +185,24 @@ impl SurrealDBClient {
 		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {s}")).unwrap_or_default();
+		let p = scan.projection()?;
 		// Perform the relevant projection scan type
-		match scan.projection()? {
+		match p {
 			Projection::Id => {
 				let sql = format!("SELECT id FROM record {c} {s} {l}");
-				let res: Vec<SurrealRecord> = self.db.query(sql).await?.take(0)?;
-				Ok(res.len())
+				let res: surrealdb::Value = self.db.query(sql).await?.take(0)?;
+				let surrealdb::sql::Value::Array(arr) = res.into_inner() else {
+					panic!("Unexpected response type");
+				};
+				Ok(arr.len())
 			}
 			Projection::Full => {
 				let sql = format!("SELECT * FROM record {c} {s} {l}");
-				let res: Vec<SurrealRecord> = self.db.query(sql).await?.take(0)?;
-				Ok(res.len())
+				let res: surrealdb::Value = self.db.query(sql).await?.take(0)?;
+				let surrealdb::sql::Value::Array(arr) = res.into_inner() else {
+					panic!("Unexpected response type");
+				};
+				Ok(arr.len())
 			}
 			Projection::Count => {
 				let sql = if s.is_empty() && l.is_empty() {
