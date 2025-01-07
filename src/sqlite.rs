@@ -5,8 +5,9 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{KeyType, Projection, Scan};
 use anyhow::Result;
-use serde_json::Value as Json;
+use serde_json::{Map, Value as Json};
 use std::borrow::Cow;
+use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_rusqlite::types::ToSqlOutput;
@@ -14,6 +15,9 @@ use tokio_rusqlite::types::Value;
 use tokio_rusqlite::Connection;
 
 const DATABASE_DIR: &str = "sqlite";
+
+// We can't just return `tokio_rusqlite::Row` because it's not Send/Sync
+type Row = Vec<(String, Value)>;
 
 pub(crate) struct SqliteClientProvider {
 	conn: Arc<Connection>,
@@ -176,7 +180,7 @@ impl SqliteClient {
 		&self,
 		stmt: Cow<'static, str>,
 		params: Option<ToSqlOutput<'static>>,
-	) -> Result<Vec<Value>> {
+	) -> Result<Vec<Row>> {
 		self.conn
 			.call(move |conn| {
 				let mut stmt = conn.prepare(stmt.as_ref())?;
@@ -186,7 +190,12 @@ impl SqliteClient {
 				};
 				let mut vec = Vec::new();
 				while let Some(row) = rows.next()? {
-					vec.push(row.get(0)?);
+					let names = row.as_ref().column_names();
+					let mut map = Vec::with_capacity(names.len());
+					for (i, name) in names.into_iter().enumerate() {
+						map.push((name.to_owned(), row.get(i)?));
+					}
+					vec.push(map);
 				}
 				Ok(vec)
 			})
@@ -224,6 +233,23 @@ impl SqliteClient {
 		Ok(())
 	}
 
+	fn consume(&self, row: Row) -> Json {
+		let mut val = Map::new();
+		for (key, value) in row {
+			val.insert(
+				key,
+				match value {
+					Value::Null => Json::Null,
+					Value::Integer(int) => int.into(),
+					Value::Real(float) => float.into(),
+					Value::Text(text) => text.into(),
+					Value::Blob(vec) => vec.into(),
+				},
+			);
+		}
+		val.into()
+	}
+
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
 		// Extract parameters
 		let s = scan.start.map(|s| format!("OFFSET {s}")).unwrap_or_default();
@@ -235,20 +261,38 @@ impl SqliteClient {
 			Projection::Id => {
 				let stmt = format!("SELECT id FROM record {c} {l} {s}");
 				let res = self.query(Cow::Owned(stmt), None).await?;
-				Ok(res.len())
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in res {
+					black_box(self.consume(v));
+					count += 1;
+				}
+				Ok(count)
 			}
 			Projection::Full => {
 				let stmt = format!("SELECT * FROM record {c} {l} {s}");
 				let res = self.query(Cow::Owned(stmt), None).await?;
-				Ok(res.len())
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in res {
+					black_box(self.consume(v));
+					count += 1;
+				}
+				Ok(count)
 			}
 			Projection::Count => {
 				let stmt = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s})");
 				let res = self.query(Cow::Owned(stmt), None).await?;
-				let Value::Integer(count) = res.first().unwrap() else {
+				let Value::Integer(count) = res.first().unwrap().first().unwrap().1 else {
 					panic!("Unexpected response type `{res:?}`");
 				};
-				Ok(*count as usize)
+				Ok(count as usize)
 			}
 		}
 	}
