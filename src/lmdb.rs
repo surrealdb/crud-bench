@@ -149,7 +149,11 @@ impl LmDBClient {
 			let txn = db.0.read_txn()?;
 			// Process the data
 			let res: Option<_> = db.1.get(&txn, key.as_ref())?;
+			// Check the value exists
 			assert!(res.is_some());
+			// Deserialise the value
+			black_box(res.unwrap());
+			// All ok
 			Ok(())
 		})
 		.await
@@ -209,25 +213,30 @@ impl LmDBClient {
 			// Perform the relevant projection scan type
 			match p {
 				Projection::Id => {
-					// Skip `offset` entries, then collect `limit` entries
-					Ok(iter
-						.skip(s) // Skip the first `offset` entries
-						.take(l) // Take the next `limit` entries
-						.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
-						.collect::<Result<Vec<_>>>()?
-						.len())
+					// We use a for loop to iterate over the results, while
+					// calling black_box internally. This is necessary as
+					// an iterator with `filter_map` or `map` is optimised
+					// out by the compiler when calling `count` at the end.
+					let mut count = 0;
+					for v in iter.skip(s).take(l) {
+						black_box(v.unwrap().0);
+						count += 1;
+					}
+					Ok(count)
 				}
 				Projection::Full => {
-					// Skip `offset` entries, then collect `limit` entries
-					Ok(iter
-						.skip(s) // Skip the first `offset` entries
-						.take(l) // Take the next `limit` entries
-						.map(|v| -> Result<_> { Ok(black_box(v?)) })
-						.collect::<Result<Vec<_>>>()?
-						.len())
+					// We use a for loop to iterate over the results, while
+					// calling black_box internally. This is necessary as
+					// an iterator with `filter_map` or `map` is optimised
+					// out by the compiler when calling `count` at the end.
+					let mut count = 0;
+					for v in iter.skip(s).take(l) {
+						black_box(v.unwrap().1);
+						count += 1;
+					}
+					Ok(count)
 				}
 				Projection::Count => {
-					// Skip `offset` entries, then collect `limit` entries
 					Ok(iter
 						.skip(s) // Skip the first `offset` entries
 						.take(l) // Take the next `limit` entries

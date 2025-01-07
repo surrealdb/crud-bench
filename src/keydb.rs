@@ -8,6 +8,7 @@ use anyhow::Result;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client};
 use serde_json::Value;
+use std::hint::black_box;
 use tokio::sync::Mutex;
 
 pub(crate) const KEYDB_DOCKER_PARAMS: DockerParams = DockerParams {
@@ -60,6 +61,7 @@ impl BenchmarkClient for KeydbClient {
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let val: Vec<u8> = self.conn.lock().await.get(key).await?;
 		assert!(!val.is_empty());
+		black_box(val);
 		Ok(())
 	}
 
@@ -67,6 +69,7 @@ impl BenchmarkClient for KeydbClient {
 	async fn read_string(&self, key: String) -> Result<()> {
 		let val: Vec<u8> = self.conn.lock().await.get(key).await?;
 		assert!(!val.is_empty());
+		black_box(val);
 		Ok(())
 	}
 

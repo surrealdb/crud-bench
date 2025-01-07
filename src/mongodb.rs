@@ -188,6 +188,7 @@ impl MongoDBClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(i64::MAX as usize);
+		let p = scan.projection()?;
 		// Consume documents function
 		let consume = |mut cursor: Cursor<Document>| async move {
 			let mut count = 0;
@@ -198,7 +199,7 @@ impl MongoDBClient {
 			Ok(count)
 		};
 		// Perform the relevant projection scan type
-		match scan.projection()? {
+		match p {
 			Projection::Id => {
 				let cursor = self
 					.collection()

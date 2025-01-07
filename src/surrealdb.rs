@@ -185,8 +185,9 @@ impl SurrealDBClient {
 		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {s}")).unwrap_or_default();
+		let p = scan.projection()?;
 		// Perform the relevant projection scan type
-		match scan.projection()? {
+		match p {
 			Projection::Id => {
 				let sql = format!("SELECT id FROM record {c} {s} {l}");
 				let res: Vec<SurrealRecord> = self.db.query(sql).await?.take(0)?;
