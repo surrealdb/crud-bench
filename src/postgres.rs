@@ -235,20 +235,30 @@ impl PostgresClient {
 			Projection::Id => {
 				let stm = format!("SELECT id FROM record {c} {l} {s}");
 				let res = self.client.query(&stm, &[]).await?;
-				#[allow(clippy::unnecessary_filter_map)]
-				Ok(res
-					.into_iter()
-					.filter_map(|v| Some(black_box(self.consume(v, false).unwrap())))
-					.count())
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in res {
+					black_box(self.consume(v, false).unwrap());
+					count += 1;
+				}
+				Ok(count)
 			}
 			Projection::Full => {
 				let stm = format!("SELECT * FROM record {c} {l} {s}");
 				let res = self.client.query(&stm, &[]).await?;
-				#[allow(clippy::unnecessary_filter_map)]
-				Ok(res
-					.into_iter()
-					.filter_map(|v| Some(black_box(self.consume(v, true).unwrap())))
-					.count())
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in res {
+					black_box(self.consume(v, true).unwrap());
+					count += 1;
+				}
+				Ok(count)
 			}
 			Projection::Count => {
 				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s})");

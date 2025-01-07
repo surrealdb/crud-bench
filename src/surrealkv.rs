@@ -176,34 +176,35 @@ impl SurrealKVClient {
 			let mut txn = db.begin_with_mode(ReadOnly)?;
 			let beg = [0u8].as_slice();
 			let end = [255u8].as_slice();
+			let iter = txn.scan(beg..end, Some(s + l))?;
 			// Perform the relevant projection scan type
 			match p {
 				Projection::Id => {
-					// Skip `offset` entries, then collect `limit` entries
-					#[allow(clippy::unnecessary_filter_map)]
-					Ok(txn
-						.scan(beg..end, Some(s + l))?
-						.into_iter()
-						.skip(s)
-						.take(l)
-						.filter_map(|v| Some(black_box(v.0)))
-						.count())
+					// We use a for loop to iterate over the results, while
+					// calling black_box internally. This is necessary as
+					// an iterator with `filter_map` or `map` is optimised
+					// out by the compiler when calling `count` at the end.
+					let mut count = 0;
+					for v in iter.into_iter().skip(s).take(l) {
+						black_box(v.0);
+						count += 1;
+					}
+					Ok(count)
 				}
 				Projection::Full => {
-					// Skip `offset` entries, then collect `limit` entries
-					#[allow(clippy::unnecessary_filter_map)]
-					Ok(txn
-						.scan(beg..end, Some(s + l))?
-						.into_iter()
-						.skip(s)
-						.take(l)
-						.filter_map(|v| Some(black_box(v.1)))
-						.count())
+					// We use a for loop to iterate over the results, while
+					// calling black_box internally. This is necessary as
+					// an iterator with `filter_map` or `map` is optimised
+					// out by the compiler when calling `count` at the end.
+					let mut count = 0;
+					for v in iter.into_iter().skip(s).take(l) {
+						black_box(v.1);
+						count += 1;
+					}
+					Ok(count)
 				}
 				Projection::Count => {
-					// Skip `offset` entries, then collect `limit` entries
-					Ok(txn
-						.scan(beg..end, Some(s + l))?
+					Ok(iter
 						.into_iter()
 						.skip(s) // Skip the first `offset` entries
 						.take(l) // Take the next `limit` entries

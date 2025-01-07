@@ -153,20 +153,28 @@ impl MapClient {
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				#[allow(clippy::unnecessary_filter_map)]
-				Ok(m.iter()
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.filter_map(|v| Some(black_box(v)))
-					.count())
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in m.iter().skip(s).take(l) {
+					black_box(v);
+					count += 1;
+				}
+				Ok(count)
 			}
 			Projection::Full => {
-				#[allow(clippy::unnecessary_filter_map)]
-				Ok(m.iter()
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.filter_map(|v| Some(black_box(v)))
-					.count())
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in m.iter().skip(s).take(l) {
+					black_box(v);
+					count += 1;
+				}
+				Ok(count)
 			}
 			Projection::Count => Ok(m
 				.iter()
