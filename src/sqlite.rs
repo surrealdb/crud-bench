@@ -261,20 +261,30 @@ impl SqliteClient {
 			Projection::Id => {
 				let stmt = format!("SELECT id FROM record {c} {l} {s}");
 				let res = self.query(Cow::Owned(stmt), None).await?;
-				let res = res
-					.into_iter()
-					.map(|v| -> Result<_> { Ok(black_box(self.consume(v))) })
-					.collect::<Result<Vec<_>>>()?;
-				Ok(res.len())
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in res {
+					black_box(self.consume(v));
+					count += 1;
+				}
+				Ok(count)
 			}
 			Projection::Full => {
 				let stmt = format!("SELECT * FROM record {c} {l} {s}");
 				let res = self.query(Cow::Owned(stmt), None).await?;
-				let res = res
-					.into_iter()
-					.map(|v| -> Result<_> { Ok(black_box(self.consume(v))) })
-					.collect::<Result<Vec<_>>>()?;
-				Ok(res.len())
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in res {
+					black_box(self.consume(v));
+					count += 1;
+				}
+				Ok(count)
 			}
 			Projection::Count => {
 				let stmt = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s})");
