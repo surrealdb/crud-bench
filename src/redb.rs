@@ -129,7 +129,7 @@ impl ReDBClient {
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
-			black_box(bincode::deserialize::<Value>(&res.unwrap().value())?);
+			black_box(res.unwrap().value());
 			// All ok
 			Ok(())
 		})
@@ -203,28 +203,20 @@ impl ReDBClient {
 			match p {
 				Projection::Id => {
 					// Skip `offset` entries, then collect `limit` entries
+					#[allow(clippy::unnecessary_filter_map)]
 					Ok(iter
 						.skip(s) // Skip the first `offset` entries
 						.take(l) // Take the next `limit` entries
-						.map(|v| -> Result<_> {
-							// Deserialise the value
-							black_box(v?.0);
-							// All ok
-							Ok(())
-						})
+						.filter_map(|v| Some(black_box(v.unwrap().1.value())))
 						.count())
 				}
 				Projection::Full => {
 					// Skip `offset` entries, then collect `limit` entries
+					#[allow(clippy::unnecessary_filter_map)]
 					Ok(iter
 						.skip(s) // Skip the first `offset` entries
 						.take(l) // Take the next `limit` entries
-						.map(|v| -> Result<_> {
-							// Deserialise the value
-							black_box(bincode::deserialize::<Value>(&v?.1.value())?);
-							// All ok
-							Ok(())
-						})
+						.filter_map(|v| Some(black_box(v.unwrap().1.value())))
 						.count())
 				}
 				Projection::Count => {

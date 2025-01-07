@@ -152,24 +152,22 @@ impl MapClient {
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
-			Projection::Id => Ok(m
-				.iter()
-				.skip(s) // Skip the first `offset` entries
-				.take(l) // Take the next `limit` entries
-				.map(|v| -> Result<_> {
-					black_box(v);
-					Ok(())
-				})
-				.count()),
-			Projection::Full => Ok(m
-				.iter()
-				.skip(s) // Skip the first `offset` entries
-				.take(l) // Take the next `limit` entries
-				.map(|v| -> Result<_> {
-					black_box(v);
-					Ok(())
-				})
-				.count()),
+			Projection::Id => {
+				#[allow(clippy::unnecessary_filter_map)]
+				Ok(m.iter()
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.filter_map(|v| Some(black_box(v)))
+					.count())
+			}
+			Projection::Full => {
+				#[allow(clippy::unnecessary_filter_map)]
+				Ok(m.iter()
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.filter_map(|v| Some(black_box(v)))
+					.count())
+			}
 			Projection::Count => Ok(m
 				.iter()
 				.skip(s) // Skip the first `offset` entries

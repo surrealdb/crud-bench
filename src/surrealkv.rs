@@ -128,7 +128,7 @@ impl SurrealKVClient {
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
-			black_box(bincode::deserialize::<Value>(&res.unwrap())?);
+			black_box(res.unwrap());
 			// All ok
 			Ok(())
 		})
@@ -180,32 +180,24 @@ impl SurrealKVClient {
 			match p {
 				Projection::Id => {
 					// Skip `offset` entries, then collect `limit` entries
+					#[allow(clippy::unnecessary_filter_map)]
 					Ok(txn
 						.scan(beg..end, Some(s + l))?
 						.into_iter()
 						.skip(s)
 						.take(l)
-						.map(|v| -> Result<_> {
-							// Deserialise the value
-							black_box(v.0);
-							// All ok
-							Ok(())
-						})
+						.filter_map(|v| Some(black_box(v.0)))
 						.count())
 				}
 				Projection::Full => {
 					// Skip `offset` entries, then collect `limit` entries
+					#[allow(clippy::unnecessary_filter_map)]
 					Ok(txn
 						.scan(beg..end, Some(s + l))?
 						.into_iter()
 						.skip(s)
 						.take(l)
-						.map(|v| -> Result<_> {
-							// Deserialise the value
-							black_box(bincode::deserialize::<Value>(&v.1)?);
-							// All ok
-							Ok(())
-						})
+						.filter_map(|v| Some(black_box(v.1)))
 						.count())
 				}
 				Projection::Count => {

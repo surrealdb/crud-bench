@@ -235,27 +235,19 @@ impl PostgresClient {
 			Projection::Id => {
 				let stm = format!("SELECT id FROM record {c} {l} {s}");
 				let res = self.client.query(&stm, &[]).await?;
+				#[allow(clippy::unnecessary_filter_map)]
 				Ok(res
 					.into_iter()
-					.map(|v| -> Result<_> {
-						// Deserialise the row
-						black_box(self.consume(v, false)?);
-						// All ok
-						Ok(())
-					})
+					.filter_map(|v| Some(black_box(self.consume(v, false).unwrap())))
 					.count())
 			}
 			Projection::Full => {
 				let stm = format!("SELECT * FROM record {c} {l} {s}");
 				let res = self.client.query(&stm, &[]).await?;
+				#[allow(clippy::unnecessary_filter_map)]
 				Ok(res
 					.into_iter()
-					.map(|v| -> Result<_> {
-						// Deserialise the row
-						black_box(self.consume(v, true)?);
-						// All ok
-						Ok(())
-					})
+					.filter_map(|v| Some(black_box(self.consume(v, true).unwrap())))
 					.count())
 			}
 			Projection::Count => {

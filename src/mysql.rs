@@ -234,27 +234,19 @@ impl MysqlClient {
 			Projection::Id => {
 				let stm = format!("SELECT id FROM record {c} {l} {s}");
 				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
+				#[allow(clippy::unnecessary_filter_map)]
 				Ok(res
 					.into_iter()
-					.map(|v| -> Result<_> {
-						// Deserialise the row
-						black_box(self.consume(v)?);
-						// All ok
-						Ok(())
-					})
+					.filter_map(|v| Some(black_box(self.consume(v).unwrap())))
 					.count())
 			}
 			Projection::Full => {
 				let stm = format!("SELECT * FROM record {c} {l} {s}");
 				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
+				#[allow(clippy::unnecessary_filter_map)]
 				Ok(res
 					.into_iter()
-					.map(|v| -> Result<_> {
-						// Deserialise the row
-						black_box(self.consume(v)?);
-						// All ok
-						Ok(())
-					})
+					.filter_map(|v| Some(black_box(self.consume(v).unwrap())))
 					.count())
 			}
 			Projection::Count => {

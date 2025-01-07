@@ -60,7 +60,7 @@ impl BenchmarkClient for RedisClient {
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let val: Vec<u8> = self.conn.lock().await.get(key).await?;
 		assert!(!val.is_empty());
-		black_box(bincode::deserialize::<Value>(&val)?);
+		black_box(val);
 		Ok(())
 	}
 
@@ -68,7 +68,7 @@ impl BenchmarkClient for RedisClient {
 	async fn read_string(&self, key: String) -> Result<()> {
 		let val: Vec<u8> = self.conn.lock().await.get(key).await?;
 		assert!(!val.is_empty());
-		black_box(bincode::deserialize::<Value>(&val)?);
+		black_box(val);
 		Ok(())
 	}
 
