@@ -199,6 +199,7 @@ impl PostgresClient {
 		let stm = "SELECT * FROM record WHERE id=$1";
 		let res = self.client.query(stm, &[&key]).await?;
 		assert_eq!(res.len(), 1);
+		black_box(self.consume(res.into_iter().next().unwrap(), true)?);
 		Ok(())
 	}
 
@@ -228,25 +229,34 @@ impl PostgresClient {
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or_default();
+		let p = scan.projection()?;
 		// Perform the relevant projection scan type
-		match scan.projection()? {
+		match p {
 			Projection::Id => {
 				let stm = format!("SELECT id FROM record {c} {l} {s}");
 				let res = self.client.query(&stm, &[]).await?;
-				let res = res
+				Ok(res
 					.into_iter()
-					.map(|v| -> Result<_> { Ok(black_box(self.consume(v, false)?)) })
-					.collect::<Result<Vec<_>>>()?;
-				Ok(res.len())
+					.map(|v| -> Result<_> {
+						// Deserialise the row
+						black_box(self.consume(v, false)?);
+						// All ok
+						Ok(())
+					})
+					.count())
 			}
 			Projection::Full => {
 				let stm = format!("SELECT * FROM record {c} {l} {s}");
 				let res = self.client.query(&stm, &[]).await?;
-				let res = res
+				Ok(res
 					.into_iter()
-					.map(|v| -> Result<_> { Ok(black_box(self.consume(v, true)?)) })
-					.collect::<Result<Vec<_>>>()?;
-				Ok(res.len())
+					.map(|v| -> Result<_> {
+						// Deserialise the row
+						black_box(self.consume(v, true)?);
+						// All ok
+						Ok(())
+					})
+					.count())
 			}
 			Projection::Count => {
 				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s})");

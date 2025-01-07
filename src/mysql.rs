@@ -200,6 +200,7 @@ impl MysqlClient {
 		let stm = "SELECT * FROM record WHERE id=?";
 		let res: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
 		assert_eq!(res.len(), 1);
+		black_box(self.consume(res.into_iter().next().unwrap())?);
 		Ok(())
 	}
 
@@ -227,25 +228,34 @@ impl MysqlClient {
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or("".to_string());
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or("".to_string());
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or("".to_string());
+		let p = scan.projection()?;
 		// Perform the relevant projection scan type
-		match scan.projection()? {
+		match p {
 			Projection::Id => {
 				let stm = format!("SELECT id FROM record {c} {l} {s}");
 				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
-				let res = res
+				Ok(res
 					.into_iter()
-					.map(|v| -> Result<_> { Ok(black_box(self.consume(v)?)) })
-					.collect::<Result<Vec<_>>>()?;
-				Ok(res.len())
+					.map(|v| -> Result<_> {
+						// Deserialise the row
+						black_box(self.consume(v)?);
+						// All ok
+						Ok(())
+					})
+					.count())
 			}
 			Projection::Full => {
 				let stm = format!("SELECT * FROM record {c} {l} {s}");
 				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
-				let res = res
+				Ok(res
 					.into_iter()
-					.map(|v| -> Result<_> { Ok(black_box(self.consume(v)?)) })
-					.collect::<Result<Vec<_>>>()?;
-				Ok(res.len())
+					.map(|v| -> Result<_> {
+						// Deserialise the row
+						black_box(self.consume(v)?);
+						// All ok
+						Ok(())
+					})
+					.count())
 			}
 			Projection::Count => {
 				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s}) AS T");

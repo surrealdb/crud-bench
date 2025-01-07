@@ -142,53 +142,39 @@ impl MapClient {
 	where
 		T: Eq + Hash,
 	{
-		let projection = scan.projection()?;
+		// Contional scans are not supported
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
-		match projection {
-			Projection::Id => bail!(NOT_SUPPORTED_ERROR),
-			Projection::Full => {
-				let mut count = 0;
-				if let Some(start) = scan.start {
-					if let Some(limit) = scan.limit {
-						m.iter().skip(start).take(limit).for_each(|e| {
-							black_box(e);
-							count += 1;
-						})
-					} else {
-						m.iter().skip(start).for_each(|e| {
-							black_box(e);
-							count += 1;
-						})
-					}
-				} else if let Some(limit) = scan.limit {
-					m.iter().take(limit).for_each(|e| {
-						black_box(e);
-						count += 1;
-					})
-				} else {
-					m.iter().for_each(|e| {
-						black_box(e);
-						count += 1;
-					})
-				};
-				Ok(count)
-			}
-			Projection::Count => {
-				let c = if let Some(start) = scan.start {
-					if let Some(limit) = scan.limit {
-						m.iter().skip(start).take(limit).count()
-					} else {
-						m.iter().skip(start).count()
-					}
-				} else if let Some(limit) = scan.limit {
-					m.iter().take(limit).count()
-				} else {
-					m.iter().count()
-				};
-				Ok(c)
-			}
+		// Extract parameters
+		let s = scan.start.unwrap_or(0);
+		let l = scan.limit.unwrap_or(usize::MAX);
+		let p = scan.projection()?;
+		// Perform the relevant projection scan type
+		match p {
+			Projection::Id => Ok(m
+				.iter()
+				.skip(s) // Skip the first `offset` entries
+				.take(l) // Take the next `limit` entries
+				.map(|v| -> Result<_> {
+					black_box(v);
+					Ok(())
+				})
+				.count()),
+			Projection::Full => Ok(m
+				.iter()
+				.skip(s) // Skip the first `offset` entries
+				.take(l) // Take the next `limit` entries
+				.map(|v| -> Result<_> {
+					black_box(v);
+					Ok(())
+				})
+				.count()),
+			Projection::Count => Ok(m
+				.iter()
+				.skip(s) // Skip the first `offset` entries
+				.take(l) // Take the next `limit` entries
+				.count()),
 		}
 	}
 }

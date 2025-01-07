@@ -125,7 +125,11 @@ impl SurrealKVClient {
 			let mut txn = db.begin_with_mode(ReadOnly)?;
 			// Process the data
 			let res = txn.get(key.as_ref())?;
+			// Check the value exists
 			assert!(res.is_some());
+			// Deserialise the value
+			black_box(bincode::deserialize::<Value>(&res.unwrap())?);
+			// All ok
 			Ok(())
 		})
 		.await
@@ -181,9 +185,13 @@ impl SurrealKVClient {
 						.into_iter()
 						.skip(s)
 						.take(l)
-						.map(|v| black_box(v.0))
-						.collect::<Vec<_>>()
-						.len())
+						.map(|v| -> Result<_> {
+							// Deserialise the value
+							black_box(v.0);
+							// All ok
+							Ok(())
+						})
+						.count())
 				}
 				Projection::Full => {
 					// Skip `offset` entries, then collect `limit` entries
@@ -192,9 +200,13 @@ impl SurrealKVClient {
 						.into_iter()
 						.skip(s)
 						.take(l)
-						.map(|v| black_box((v.0, v.1)))
-						.collect::<Vec<_>>()
-						.len())
+						.map(|v| -> Result<_> {
+							// Deserialise the value
+							black_box(bincode::deserialize::<Value>(&v.1)?);
+							// All ok
+							Ok(())
+						})
+						.count())
 				}
 				Projection::Count => {
 					// Skip `offset` entries, then collect `limit` entries

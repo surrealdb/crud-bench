@@ -201,7 +201,11 @@ impl SpeeDBClient {
 			ro.fill_cache(true);
 			// Process the data
 			let res = txn.get_pinned_opt(key, &ro)?;
+			// Check the value exists
 			assert!(res.is_some());
+			// Deserialise the value
+			black_box(bincode::deserialize::<Value>(&res.unwrap())?);
+			// All ok
 			Ok(())
 		})
 		.await
@@ -290,18 +294,26 @@ impl SpeeDBClient {
 					Ok(iter
 						.skip(s) // Skip the first `offset` entries
 						.take(l) // Take the next `limit` entries
-						.map(|v| -> Result<_> { Ok(black_box(v?.0)) })
-						.collect::<Result<Vec<_>>>()?
-						.len())
+						.map(|v| -> Result<_> {
+							// Deserialise the value
+							black_box(v?.0);
+							// All ok
+							Ok(())
+						})
+						.count())
 				}
 				Projection::Full => {
 					// Skip `offset` entries, then collect `limit` entries
 					Ok(iter
 						.skip(s) // Skip the first `offset` entries
 						.take(l) // Take the next `limit` entries
-						.map(|v| -> Result<_> { Ok(black_box(v?)) })
-						.collect::<Result<Vec<_>>>()?
-						.len())
+						.map(|v| -> Result<_> {
+							// Deserialise the value
+							black_box(bincode::deserialize::<Value>(&v?.1)?);
+							// All ok
+							Ok(())
+						})
+						.count())
 				}
 				Projection::Count => {
 					// Skip `offset` entries, then collect `limit` entries

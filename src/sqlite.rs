@@ -229,8 +229,9 @@ impl SqliteClient {
 		let s = scan.start.map(|s| format!("OFFSET {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
 		let c = scan.condition.as_ref().map(|s| format!("WHERE {s}")).unwrap_or_default();
+		let p = scan.projection()?;
 		// Perform the relevant projection scan type
-		match scan.projection()? {
+		match p {
 			Projection::Id => {
 				let stmt = format!("SELECT id FROM record {c} {l} {s}");
 				let res = self.query(Cow::Owned(stmt), None).await?;
