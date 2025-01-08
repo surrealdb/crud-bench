@@ -134,11 +134,75 @@ impl Database {
 					)
 					.await
 			}
+			#[cfg(feature = "keydb")]
+			Database::Keydb => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::keydb::KeydbClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark.endpoint.as_deref(),
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
 			#[cfg(feature = "lmdb")]
 			Database::Lmdb => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						crate::lmdb::LmDBClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark.endpoint.as_deref(),
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "mongodb")]
+			Database::Mongodb => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::mongodb::MongoDBClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark.endpoint.as_deref(),
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "mysql")]
+			Database::Mysql => {
+				benchmark
+					.run::<_, AnsiSqlDialect, _>(
+						crate::mysql::MysqlClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark.endpoint.as_deref(),
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "postgres")]
+			Database::Postgres => {
+				benchmark
+					.run::<_, AnsiSqlDialect, _>(
+						crate::postgres::PostgresClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark.endpoint.as_deref(),
@@ -166,11 +230,11 @@ impl Database {
 					)
 					.await
 			}
-			#[cfg(feature = "speedb")]
-			Database::Speedb => {
+			#[cfg(feature = "redis")]
+			Database::Redis => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::speedb::SpeeDBClientProvider::setup(
+						crate::redis::RedisClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark.endpoint.as_deref(),
@@ -198,11 +262,11 @@ impl Database {
 					)
 					.await
 			}
-			#[cfg(feature = "sqlite")]
-			Database::Sqlite => {
+			#[cfg(feature = "scylladb")]
+			Database::Scylladb => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
-						crate::sqlite::SqliteClientProvider::setup(
+					.run::<_, AnsiSqlDialect, _>(
+						crate::scylladb::ScyllaDBClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark.endpoint.as_deref(),
@@ -214,11 +278,27 @@ impl Database {
 					)
 					.await
 			}
-			#[cfg(feature = "surrealkv")]
-			Database::Surrealkv => {
+			#[cfg(feature = "speedb")]
+			Database::Speedb => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::surrealkv::SurrealKVClientProvider::setup(
+						crate::speedb::SpeeDBClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark.endpoint.as_deref(),
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "sqlite")]
+			Database::Sqlite => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::sqlite::SqliteClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark.endpoint.as_deref(),
@@ -294,91 +374,11 @@ impl Database {
 					)
 					.await
 			}
-			#[cfg(feature = "scylladb")]
-			Database::Scylladb => {
-				benchmark
-					.run::<_, AnsiSqlDialect, _>(
-						crate::scylladb::ScyllaDBClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
-						kp,
-						vp,
-						scans,
-					)
-					.await
-			}
-			#[cfg(feature = "mongodb")]
-			Database::Mongodb => {
+			#[cfg(feature = "surrealkv")]
+			Database::Surrealkv => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::mongodb::MongoDBClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
-						kp,
-						vp,
-						scans,
-					)
-					.await
-			}
-			#[cfg(feature = "mysql")]
-			Database::Mysql => {
-				benchmark
-					.run::<_, AnsiSqlDialect, _>(
-						crate::mysql::MysqlClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
-						kp,
-						vp,
-						scans,
-					)
-					.await
-			}
-			#[cfg(feature = "postgres")]
-			Database::Postgres => {
-				benchmark
-					.run::<_, AnsiSqlDialect, _>(
-						crate::postgres::PostgresClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
-						kp,
-						vp,
-						scans,
-					)
-					.await
-			}
-			#[cfg(feature = "redis")]
-			Database::Redis => {
-				benchmark
-					.run::<_, DefaultDialect, _>(
-						crate::redis::RedisClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
-						kp,
-						vp,
-						scans,
-					)
-					.await
-			}
-			#[cfg(feature = "keydb")]
-			Database::Keydb => {
-				benchmark
-					.run::<_, DefaultDialect, _>(
-						crate::keydb::KeydbClientProvider::setup(
+						crate::surrealkv::SurrealKVClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark.endpoint.as_deref(),
