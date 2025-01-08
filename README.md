@@ -44,6 +44,56 @@ With crud-bench almost all aspects of the benchmark engine are configurable:
 - The row or record content including support for nested objects and arrays.
 - The scan specifications for range or table queries.
 
+## Benchmarks
+
+As crud-bench is in active development, some benchmarking workloads are already implemented, while others will be
+implemented in future releases. The list below details which benchmarks are implemented for the supporting datastores
+and lists those which are planned in the future.
+
+**CRUD**
+
+- [x] Creating single records in individual transactions
+- [x] Reading single records in individual transactions
+- [x] Updating single records in individual transactions
+- [x] Deleting single records in individual transactions
+- [ ] Batch creating multiple records in a transaction
+- [ ] Batch reading multiple records in a transactions
+- [ ] Batch updating multiple records in a transactions
+- [ ] Batch deleting multiple records in a transactions
+
+**Scans**
+
+- [x] Full table scans, projecting all fields
+- [x] Full table scans, projecting id field
+- [x] Full table count queries
+- [x] Scans with a limit, projecting all fields
+- [x] Scans with a limit, projecting id field
+- [x] Scans with a limit, counting results
+- [x] Scans with a limit and offset, projecting all fields
+- [x] Scans with a limit and offset, projecting id field
+- [x] Scans with a limit and offset, counting results
+
+**Filters**
+
+- [ ] Full table query, using filter condition, projecting all fields
+- [ ] Full table query, using filter condition, projecting id field
+- [ ] Full table query, using filter condition, counting rows
+
+**Indexes**
+
+- [ ] Indexed table query, using filter condition, projecting all fields
+- [ ] Indexed table query, using filter condition, projecting id field
+- [ ] Indexed table query, using filter condition, counting rows
+
+**Relationships**
+
+- [ ] Fetching or traversing 1-level, one-to-one relationships or joins
+- [ ] Fetching or traversing 1-level, one-to-many relationships or joins
+- [ ] Fetching or traversing 1-level, many-to-many relationships or joins
+- [ ] Fetching or traversing n-level, one-to-one relationships or joins
+- [ ] Fetching or traversing n-level, one-to-many relationships or joins
+- [ ] Fetching or traversing n-level, many-to-many relationships or joins
+
 ## Requirements
 
 - [Docker](https://www.docker.com/) - required when running automated tests
