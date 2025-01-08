@@ -18,6 +18,19 @@ pub(crate) trait Dialect {
 	fn arg_string(val: Value) -> String;
 }
 
+pub(crate) struct DefaultDialect();
+
+impl Dialect for DefaultDialect {
+	/// By default, we don't escape
+	fn escape_field(field: String) -> String {
+		field
+	}
+
+	fn arg_string(val: Value) -> String {
+		val.to_string()
+	}
+}
+
 pub(crate) struct AnsiSqlDialect();
 
 impl Dialect for AnsiSqlDialect {
@@ -53,18 +66,5 @@ impl Dialect for MySqlDialect {
 			Value::Array(a) => serde_json::to_string(&a).unwrap(),
 			Value::Object(o) => format!("'{}'", serde_json::to_string(&o).unwrap()),
 		}
-	}
-}
-
-pub(crate) struct DefaultDialect();
-
-impl Dialect for DefaultDialect {
-	/// By default, we don't escape
-	fn escape_field(field: String) -> String {
-		field
-	}
-
-	fn arg_string(val: Value) -> String {
-		val.to_string()
 	}
 }
