@@ -56,26 +56,26 @@ impl Database {
 	pub(crate) fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
 		// Get any pre-defined Docker configuration
 		let params: DockerParams = match self {
-			#[cfg(feature = "surrealdb")]
-			Self::SurrealdbMemory => crate::surrealdb::SURREALDB_MEMORY_DOCKER_PARAMS,
-			#[cfg(feature = "surrealdb")]
-			Self::SurrealdbRocksdb => crate::surrealdb::SURREALDB_ROCKSDB_DOCKER_PARAMS,
-			#[cfg(feature = "surrealdb")]
-			Self::SurrealdbSurrealkv => crate::surrealdb::SURREALDB_SURREALKV_DOCKER_PARAMS,
-			#[cfg(feature = "scylladb")]
-			Self::Scylladb => crate::scylladb::SCYLLADB_DOCKER_PARAMS,
+			#[cfg(feature = "dragonfly")]
+			Self::Dragonfly => crate::dragonfly::DRAGONFLY_DOCKER_PARAMS,
+			#[cfg(feature = "keydb")]
+			Self::Keydb => crate::keydb::KEYDB_DOCKER_PARAMS,
 			#[cfg(feature = "mongodb")]
 			Self::Mongodb => crate::mongodb::MONGODB_DOCKER_PARAMS,
 			#[cfg(feature = "mysql")]
 			Self::Mysql => crate::mysql::MYSQL_DOCKER_PARAMS,
 			#[cfg(feature = "postgres")]
 			Self::Postgres => crate::postgres::POSTGRES_DOCKER_PARAMS,
-			#[cfg(feature = "dragonfly")]
-			Self::Dragonfly => crate::dragonfly::DRAGONFLY_DOCKER_PARAMS,
 			#[cfg(feature = "redis")]
 			Self::Redis => crate::redis::REDIS_DOCKER_PARAMS,
-			#[cfg(feature = "keydb")]
-			Self::Keydb => crate::keydb::KEYDB_DOCKER_PARAMS,
+			#[cfg(feature = "scylladb")]
+			Self::Scylladb => crate::scylladb::SCYLLADB_DOCKER_PARAMS,
+			#[cfg(feature = "surrealdb")]
+			Self::SurrealdbMemory => crate::surrealdb::SURREALDB_MEMORY_DOCKER_PARAMS,
+			#[cfg(feature = "surrealdb")]
+			Self::SurrealdbRocksdb => crate::surrealdb::SURREALDB_ROCKSDB_DOCKER_PARAMS,
+			#[cfg(feature = "surrealdb")]
+			Self::SurrealdbSurrealkv => crate::surrealdb::SURREALDB_SURREALKV_DOCKER_PARAMS,
 			#[allow(unreachable_patterns)]
 			_ => return None,
 		};
