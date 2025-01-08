@@ -18,8 +18,8 @@ default = [
 	"rocksdb",
 	"scylladb",
 	"sqlite",
-	"surrealkv",
 	"surrealdb",
+	"surrealkv",
 ]
 dragonfly = ["dep:redis"]
 keydb = ["dep:redis"]
