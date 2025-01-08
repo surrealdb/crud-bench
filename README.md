@@ -50,7 +50,7 @@ As crud-bench is in active development, some benchmarking workloads are already 
 implemented in future releases. The list below details which benchmarks are implemented for the supporting datastores
 and lists those which are planned in the future.
 
-##### CRUD
+**CRUD**
 
 - [x] Creating single records in individual transactions
 - [x] Reading single records in individual transactions
@@ -61,7 +61,7 @@ and lists those which are planned in the future.
 - [ ] Batch updating multiple records in a transactions
 - [ ] Batch deleting multiple records in a transactions
 
-##### Scans
+**Scans**
 
 - [x] Full table scans, projecting all fields
 - [x] Full table scans, projecting id field
@@ -73,19 +73,19 @@ and lists those which are planned in the future.
 - [x] Scans with a limit and offset, projecting id field
 - [x] Scans with a limit and offset, counting results
 
-##### Filters
+**Filters**
 
 - [ ] Full table query, using filter condition, projecting all fields
 - [ ] Full table query, using filter condition, projecting id field
 - [ ] Full table query, using filter condition, counting rows
 
-##### Indexes
+**Indexes**
 
 - [ ] Indexed table query, using filter condition, projecting all fields
 - [ ] Indexed table query, using filter condition, projecting id field
 - [ ] Indexed table query, using filter condition, counting rows
 
-##### Relationships
+**Relationships**
 
 - [ ] Fetching or traversing 1-level, one-to-one relationships or joins
 - [ ] Fetching or traversing 1-level, one-to-many relationships or joins
