@@ -205,7 +205,7 @@ impl Benchmark {
 		// Print out the first stage
 		out.write(|| Some(format!("\r{operation} 0%")))?;
 		// Measure the starting time
-		let metric = OperationMetric::new(self.pid);
+		let metric = OperationMetric::new(self.pid, samples);
 		// Loop over the clients
 		for (client, _) in clients.iter().cloned().zip(1..) {
 			// Loop over the threads

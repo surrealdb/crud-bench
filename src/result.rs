@@ -41,6 +41,7 @@ impl Display for BenchmarkResult {
 			Cell::new("1st").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("Min").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("IQR").add_attribute(Attribute::Bold).fg(Color::Blue),
+			Cell::new("OPS").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("CPU").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("Memory").add_attribute(Attribute::Bold).fg(Color::Blue),
 			Cell::new("Reads").add_attribute(Attribute::Bold).fg(Color::Blue),
@@ -81,6 +82,7 @@ impl Display for BenchmarkResult {
 					"-".to_string(),
 					"-".to_string(),
 					"-".to_string(),
+					"-".to_string(),
 				]);
 			}
 		}
@@ -89,16 +91,16 @@ impl Display for BenchmarkResult {
 			table.add_row(res.output("[D]elete"));
 		}
 		// Right align the `CPU` column
-		let column = table.column_mut(12).expect("The table needs at least 13 columns");
-		column.set_cell_alignment(CellAlignment::Right);
-		// Right align the `Memory` column
 		let column = table.column_mut(13).expect("The table needs at least 14 columns");
 		column.set_cell_alignment(CellAlignment::Right);
-		// Right align the `Reads` column
+		// Right align the `Memory` column
 		let column = table.column_mut(14).expect("The table needs at least 15 columns");
 		column.set_cell_alignment(CellAlignment::Right);
-		// Right align the `Writes` column
+		// Right align the `Reads` column
 		let column = table.column_mut(15).expect("The table needs at least 16 columns");
+		column.set_cell_alignment(CellAlignment::Right);
+		// Right align the `Writes` column
+		let column = table.column_mut(16).expect("The table needs at least 17 columns");
 		column.set_cell_alignment(CellAlignment::Right);
 		// Output the formatted table
 		write!(f, "{table}")
@@ -108,13 +110,14 @@ impl Display for BenchmarkResult {
 pub(super) struct OperationMetric {
 	system: System,
 	pid: Pid,
+	samples: u32,
 	start_time: Instant,
 	initial_disk_usage: DiskUsage,
 	refresh_kind: ProcessRefreshKind,
 }
 
 impl OperationMetric {
-	pub(super) fn new(pid: Option<u32>) -> Self {
+	pub(super) fn new(pid: Option<u32>, samples: u32) -> Self {
 		// We collect the PID
 		let pid = Pid::from(pid.unwrap_or_else(process::id) as usize);
 		let refresh_kind = ProcessRefreshKind::nothing().with_memory().with_cpu().with_disk_usage();
@@ -122,6 +125,7 @@ impl OperationMetric {
 			System::new_with_specifics(RefreshKind::nothing().with_processes(refresh_kind));
 		let mut metric = Self {
 			pid,
+			samples,
 			system,
 			start_time: Instant::now(),
 			initial_disk_usage: DiskUsage::default(),
@@ -148,6 +152,7 @@ impl OperationMetric {
 pub(super) struct OperationResult {
 	histogram: Histogram<u64>,
 	elapsed: Duration,
+	samples: u32,
 	cpu_usage: f32,
 	used_memory: u64,
 	disk_usage: DiskUsage,
@@ -169,6 +174,7 @@ impl OperationResult {
 		// Divide the cpu usage by the number of cpus to get a normalized valued
 		cpu_usage /= num_cpus::get() as f32;
 		Self {
+			samples: metric.samples,
 			histogram,
 			elapsed,
 			cpu_usage,
@@ -197,6 +203,10 @@ impl OperationResult {
 				"{:.2} ms",
 				(self.histogram.value_at_quantile(0.75) - self.histogram.value_at_quantile(0.25))
 					as f64 / 1000.0
+			),
+			format!(
+				"{:.2}",
+				self.samples as f64 / ((self.elapsed.as_nanos() as f64 / 1_000_000_000.0) as f64)
 			),
 			format!("{:.2}%", self.cpu_usage),
 			format!("{}", ByteSize(self.used_memory)),
