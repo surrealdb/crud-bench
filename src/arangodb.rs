@@ -17,7 +17,7 @@ use std::time::Duration;
 pub(crate) const ARANGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "arangodb",
 	pre_args: "-p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1",
-	post_args: "",
+	post_args: "--server.scheduler-queue-size 8192",
 };
 
 pub(crate) struct ArangoDBClientProvider {
