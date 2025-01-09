@@ -7,20 +7,20 @@ readme = "README.md"
 
 [features]
 default = [
-	"arangodb",
-	"dragonfly",
-	"keydb",
-	"lmdb",
-	"mongodb",
-	"mysql",
-	"postgres",
-	"redb",
-	"redis",
-	"rocksdb",
-	"scylladb",
-	"sqlite",
-	"surrealdb",
-	"surrealkv",
+    "arangodb",
+    "dragonfly",
+    "keydb",
+    "lmdb",
+    "mongodb",
+    "mysql",
+    "postgres",
+    "redb",
+    "redis",
+    "rocksdb",
+    "scylladb",
+    "sqlite",
+    "surrealkv",
+    "surrealdb",
 ]
 arangodb = ["dep:arangors"]
 dragonfly = ["dep:redis"]
@@ -47,36 +47,36 @@ codegen-units = 1
 
 [dependencies]
 affinitypool = "0.1.1"
-anyhow = "1.0.94"
+anyhow = "1.0.95"
 arangors = { version = "0.6.0", optional = true }
 async-channel = "2.3.1"
 bincode = "1.3.3"
 bytesize = "1.3.0"
 comfy-table = "7.1.3"
 chrono = "0.4.39"
-clap = { version = "4.5.23", features = ["derive", "string", "env", "color"] }
+clap = { version = "4.5.24", features = ["derive", "string", "env", "color"] }
 dashmap = "6.1.0"
-env_logger = "0.11.5"
+env_logger = "0.11.6"
 futures = "0.3.31"
 hdrhistogram = "7.5.4"
 heed = { version = "0.21.0", optional = true }
 log = "0.4.22"
 mongodb = { version = "3.1.1", optional = true }
-mysql_async = { version = "0.34.2", default-features = false, features = ["bigdecimal", "binlog", "derive", "frunk", "rust_decimal", "time"], optional = true }
+mysql_async = { version = "0.35.0", default-features = false, features = ["bigdecimal", "binlog", "derive", "frunk", "rust_decimal", "time"], optional = true }
 num_cpus = "1.16.0"
 rand = { version = "0.8.5", features = ["small_rng"] }
-redb = { version = "2.3.0", optional = true }
-redis = { version = "0.27.6", features = ["tokio-comp"], optional = true }
+redb = { version = "2.4.0", optional = true }
+redis = { version = "0.28.0", features = ["tokio-comp"], optional = true }
 rocksdb = { version = "0.23.0", features = ["lz4", "snappy", "io-uring"], optional = true }
 scylla = { version = "0.15.1", optional = true }
-serde = { version = "1.0.216", features = ["derive"] }
-serde_json = "1.0.133"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.135"
 serial_test = "3.2.0"
 speedb = { version = "0.0.5", features = ["lz4", "snappy", "io-uring"], optional = true }
 surrealdb = { version = "2", package = "surrealdb-nightly", optional = true }
 surrealkv = { version = "0.7.0", optional = true }
-sysinfo = { version = "0.33.0" }
-tokio = { version = "1.42.0", features = ["macros", "time", "rt-multi-thread"] }
+sysinfo = { version = "0.33.1", features = ["serde"] }
+tokio = { version = "1.43.0", features = ["macros", "time", "rt-multi-thread"] }
 tokio-postgres = { version = "0.7.12", optional = true, features = ["with-serde_json-1", "with-uuid-1"] }
 tokio-rusqlite = { version = "0.6.0", optional = true, features = ["bundled"] }
 twox-hash = "2.1.0"

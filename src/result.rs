@@ -3,6 +3,7 @@ use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_FULL;
 use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
 use hdrhistogram::Histogram;
+use serde::Serialize;
 use serde_json::Value;
 use std::fmt::{Display, Formatter};
 use std::process;
@@ -11,6 +12,7 @@ use sysinfo::{
 	DiskUsage, LoadAvg, Pid, Process, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
 };
 
+#[derive(Serialize)]
 pub(crate) struct BenchmarkResult {
 	pub(crate) creates: Option<OperationResult>,
 	pub(crate) reads: Option<OperationResult>,
@@ -149,8 +151,19 @@ impl OperationMetric {
 	}
 }
 
+#[derive(Serialize)]
 pub(super) struct OperationResult {
-	histogram: Histogram<u64>,
+	mean: f64,
+	min: u64,
+	max: u64,
+	q99: u64,
+	q95: u64,
+	q75: u64,
+	q50: u64,
+	q25: u64,
+	q01: u64,
+	iqr: u64,
+	ops: f64,
 	elapsed: Duration,
 	samples: u32,
 	cpu_usage: f32,
@@ -173,9 +186,23 @@ impl OperationResult {
 		disk_usage.total_read_bytes -= metric.initial_disk_usage.total_read_bytes;
 		// Divide the cpu usage by the number of cpus to get a normalized valued
 		cpu_usage /= num_cpus::get() as f32;
+		// Metrics
+		let q75 = histogram.value_at_quantile(0.75);
+		let q25 = histogram.value_at_quantile(0.25);
+		let ops = metric.samples as f64 / (elapsed.as_nanos() as f64 / 1_000_000_000.0);
 		Self {
 			samples: metric.samples,
-			histogram,
+			mean: histogram.mean(),
+			min: histogram.min(),
+			max: histogram.max(),
+			q99: histogram.value_at_quantile(0.99),
+			q95: histogram.value_at_quantile(0.95),
+			q75,
+			q50: histogram.value_at_quantile(0.50),
+			q25,
+			q01: histogram.value_at_quantile(0.01),
+			iqr: q75 - q25,
+			ops,
 			elapsed,
 			cpu_usage,
 			used_memory,
@@ -190,24 +217,17 @@ impl OperationResult {
 		vec![
 			name.to_string(),
 			format_duration(self.elapsed),
-			format!("{:.2} ms", self.histogram.mean() / 1000.0),
-			format!("{:.2} ms", self.histogram.max() as f64 / 1000.0),
-			format!("{:.2} ms", self.histogram.value_at_quantile(0.99) as f64 / 1000.0),
-			format!("{:.2} ms", self.histogram.value_at_quantile(0.95) as f64 / 1000.0),
-			format!("{:.2} ms", self.histogram.value_at_quantile(0.75) as f64 / 1000.0),
-			format!("{:.2} ms", self.histogram.value_at_quantile(0.50) as f64 / 1000.0),
-			format!("{:.2} ms", self.histogram.value_at_quantile(0.25) as f64 / 1000.0),
-			format!("{:.2} ms", self.histogram.value_at_quantile(0.01) as f64 / 1000.0),
-			format!("{:.2} ms", self.histogram.min() as f64 / 1000.0),
-			format!(
-				"{:.2} ms",
-				(self.histogram.value_at_quantile(0.75) - self.histogram.value_at_quantile(0.25))
-					as f64 / 1000.0
-			),
-			format!(
-				"{:.2}",
-				self.samples as f64 / (self.elapsed.as_nanos() as f64 / 1_000_000_000.0)
-			),
+			format!("{:.2} ms", self.mean / 1000.0),
+			format!("{:.2} ms", self.max as f64 / 1000.0),
+			format!("{:.2} ms", self.q99 as f64 / 1000.0),
+			format!("{:.2} ms", self.q95 as f64 / 1000.0),
+			format!("{:.2} ms", self.q75 as f64 / 1000.0),
+			format!("{:.2} ms", self.q50 as f64 / 1000.0),
+			format!("{:.2} ms", self.q25 as f64 / 1000.0),
+			format!("{:.2} ms", self.q01 as f64 / 1000.0),
+			format!("{:.2} ms", self.min as f64 / 1000.0),
+			format!("{:.2} ms", self.iqr as f64 / 1000.0),
+			format!("{:.2}", self.ops),
 			format!("{:.2}%", self.cpu_usage),
 			format!("{}", ByteSize(self.used_memory)),
 			format!("{}", ByteSize(self.disk_usage.total_written_bytes)),

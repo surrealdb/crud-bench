@@ -111,6 +111,7 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
   -i, --image <IMAGE>        Docker image
+  -n, --name <NAME>          An optional name for the test, used as a suffix for the JSON result file name
   -d, --database <DATABASE>  Database [possible values: dry, map, dragonfly, keydb, lmdb, mongodb, mysql, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealkv]
   -e, --endpoint <ENDPOINT>  Endpoint
   -b, --blocking <BLOCKING>  Maximum number of blocking threads (default is the number of CPU cores) [default: 12]
@@ -135,10 +136,13 @@ cargo run -r -- --help
 
 ### Value
 
-You can use the argument `-v` or `--value` (or the environment variable `CRUD_BENCH_VALUE`) to customize the row, document, or record value which should be used in the benchmark tests. Pass a JSON structure that will serve as a template for generating a randomized value.
+You can use the argument `-v` or `--value` (or the environment variable `CRUD_BENCH_VALUE`) to customize the row,
+document, or record value which should be used in the benchmark tests. Pass a JSON structure that will serve as a
+template for generating a randomized value.
 
 > [!NOTE]
-> For tabular, or column-oriented databases (e.g. Postgres, MySQL, ScyllaDB), the first-level fields of the JSON structure are translated as columns, and any nested structures will be stored in a JSON column where possible.
+> For tabular, or column-oriented databases (e.g. Postgres, MySQL, ScyllaDB), the first-level fields of the JSON
+> structure are translated as columns, and any nested structures will be stored in a JSON column where possible.
 
 Within the JSON structure, the following values are replaced by randomly generated data:
 
@@ -185,10 +189,14 @@ Within the JSON structure, the following values are replaced by randomly generat
 
 ### Scans
 
-You can use the argument `-a` or `--scans` (or the environment variable `CRUD_BENCH_SCANS`) to customise the range, table, or scan queries that are performed in the benchmark. This parameter accepts a JSON array, where each item represents a different scan test. Each test is defined as a JSON object specifying the scan parameters and the test name.
+You can use the argument `-a` or `--scans` (or the environment variable `CRUD_BENCH_SCANS`) to customise the range,
+table, or scan queries that are performed in the benchmark. This parameter accepts a JSON array, where each item
+represents a different scan test. Each test is defined as a JSON object specifying the scan parameters and the test
+name.
 
 > [!NOTE]
-> Not every database benchmark adapter supports scans or range queries. In such cases, the benchmark will not fail but the associated tests will indicate that the benchmark was `skipped`.
+> Not every database benchmark adapter supports scans or range queries. In such cases, the benchmark will not fail but
+> the associated tests will indicate that the benchmark was `skipped`.
 
 Each scan object can make use of the following values:
 
@@ -224,7 +232,8 @@ Each scan object can make use of the following values:
 
 ### Dry
 
-This benchmark does not interact with any datastore, allowing the overhead of the benchmark implementation, written in Rust, to be measured.
+This benchmark does not interact with any datastore, allowing the overhead of the benchmark implementation, written in
+Rust, to be measured.
 
 ```bash
 cargo run -r -- -d dry -s 100000 -c 12 -t 24 -r
@@ -252,7 +261,8 @@ Dragonfly is an in-memory, networked, datastore which is fully-compatible with R
 cargo run -r -- -d dragonfly -s 100000 -c 12 -t 24 -r
 ```
 
-The above command starts a Docker container automatically. To connect to an already-running Dragonfly instance use the following command:
+The above command starts a Docker container automatically. To connect to an already-running Dragonfly instance use the
+following command:
 
 ```bash
 cargo run -r -- -d dragonfly -e redis://:root@127.0.0.1:6379 -s 100000 -c 12 -t 24 -r
@@ -266,7 +276,8 @@ KeyDB is an in-memory, networked, datastore which is a high-performance fork of 
 cargo run -r -- -d keydb -s 100000 -c 12 -t 24 -r
 ```
 
-The above command starts a Docker container automatically. To connect to an already-running KeyDB instance use the following command:
+The above command starts a Docker container automatically. To connect to an already-running KeyDB instance use the
+following command:
 
 ```bash
 cargo run -r -- -d keydb -e redis://:root@127.0.0.1:6379 -s 100000 -c 12 -t 24 -r
@@ -296,7 +307,8 @@ MongoDB is a NoSQL, networked, ACID-compliant, document-oriented database, with 
 cargo run -r -- -d mongodb -s 100000 -c 12 -t 24 -r
 ```
 
-The above command starts a Docker container automatically. To connect to an already-running MongoDB instance use the following command:
+The above command starts a Docker container automatically. To connect to an already-running MongoDB instance use the
+following command:
 
 ```bash
 cargo run -r -- -d mongodb -e mongodb://root:root@127.0.0.1:27017 -s 100000 -c 12 -t 24 -r
@@ -310,7 +322,8 @@ MySQL is a networked, relational, ACID-compliant, SQL-based database.
 cargo run -r -- -d mysql -s 100000 -c 12 -t 24 -r
 ```
 
-The above command starts a Docker container automatically. To connect to an already-running MySQL instance use the following command:
+The above command starts a Docker container automatically. To connect to an already-running MySQL instance use the
+following command:
 
 ```bash
 cargo run -r -- -d mysql -e mysql://root:mysql@127.0.0.1:3306/bench -s 100000 -c 12 -t 24 -r
@@ -324,7 +337,8 @@ Postgres is a networked, object-relational, ACID-compliant, SQL-based database.
 cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
 ```
 
-The above command starts a Docker container automatically. To connect to an already-running Postgres instance use the following command:
+The above command starts a Docker container automatically. To connect to an already-running Postgres instance use the
+following command:
 
 ```bash
 cargo run -r -- -d postgres -e 'host=127.0.0.1 user=postgres password=postgres' -s 100000 -c 12 -t 24 -r
@@ -346,7 +360,8 @@ Redis is an in-memory, networked, datastore that can be used as a cache, message
 cargo run -r -- -d redis -s 100000 -c 12 -t 24 -r
 ```
 
-The above command starts a Docker container automatically. To connect to an already-running Redis instance use the following command:
+The above command starts a Docker container automatically. To connect to an already-running Redis instance use the
+following command:
 
 ```bash
 cargo run -r -- -d redis -e redis://:root@127.0.0.1:6379 -s 100000 -c 12 -t 24 -r
@@ -368,7 +383,8 @@ ScyllaDB is a distributed, NoSQL, wide-column datastore, designed to be compatib
 cargo run -r -- -d scylladb -s 100000 -c 12 -t 24 -r
 ```
 
-The above command starts a Docker container automatically. To connect to a already-running ScyllaDB cluster use the following command:
+The above command starts a Docker container automatically. To connect to a already-running ScyllaDB cluster use the
+following command:
 
 ```bash
 cargo run -r -- -d scylladb -e 127.0.0.1:9042 -s 100000 -c 12 -t 24 -r
@@ -420,7 +436,8 @@ cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r
 
 ### [SurrealKV](https://surrealkv.org)
 
-SurrealKV is a transactional, ACID-compliant, embedded, key-value datastore, written in Rust, and based on concurrent adaptive radix trees.
+SurrealKV is a transactional, ACID-compliant, embedded, key-value datastore, written in Rust, and based on concurrent
+adaptive radix trees.
 
 ```bash
 cargo run -r -- -d surrealkv -s 100000 -c 12 -t 24 -r

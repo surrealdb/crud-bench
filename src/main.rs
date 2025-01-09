@@ -6,7 +6,8 @@ use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use docker::DockerContainer;
 use serde::{Deserialize, Serialize};
-use std::io::IsTerminal;
+use std::fs::File;
+use std::io::{IsTerminal, Write};
 use tokio::runtime;
 
 // Benchmark modules
@@ -45,6 +46,10 @@ pub(crate) struct Args {
 	/// Docker image
 	#[arg(short, long)]
 	pub(crate) image: Option<String>,
+
+	/// An optional name for the test, used as a suffix for the JSON result file name
+	#[arg(short, long)]
+	pub(crate) name: Option<String>,
 
 	/// Database
 	#[arg(short, long)]
@@ -215,14 +220,17 @@ fn run(args: Args) -> Result<()> {
 		Ok(res) => {
 			println!("--------------------------------------------------");
 			match container.as_ref().map(DockerContainer::image) {
-				Some(v) => println!("Benchmark result for {:?} on docker {v}", args.database),
+				Some(v) => {
+					print!("Benchmark result for {:?} on docker {v}", args.database)
+				}
 				None => match args.endpoint {
 					Some(endpoint) => {
-						println!("Benchmark result for {:?}; endpoint => {endpoint}", args.database)
+						print!("Benchmark result for {:?}; endpoint => {endpoint}", args.database)
 					}
-					None => println!("Benchmark result for {:?}", args.database),
+					None => print!("Benchmark result for {:?}", args.database),
 				},
 			}
+			println!("{}", args.name.as_ref().map(|s| format!(" - {}", s)).unwrap_or_default());
 			println!(
 				"CPUs: {} - Blocking threads: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
 				num_cpus::get(),
@@ -241,6 +249,18 @@ fn run(args: Args) -> Result<()> {
 				println!("Value sample: {:#}", res.sample);
 				println!("--------------------------------------------------");
 			}
+
+			// Serialize the struct to a JSON string
+			let json_string = serde_json::to_string_pretty(&res)?;
+
+			// Write the JSON string to a file
+			let result_name = args
+				.name
+				.map(|s| format!("result-{}.json", s))
+				.unwrap_or_else(|| "result.json".to_string());
+			let mut file = File::create(result_name)?;
+			file.write_all(json_string.as_bytes())?;
+
 			Ok(())
 		}
 		// Output the errors
@@ -266,6 +286,7 @@ mod test {
 	fn test(database: Database, key: KeyType, random: bool) -> Result<()> {
 		run(Args {
 			image: None,
+			name: None,
 			database,
 			endpoint: None,
 			blocking: 5,
