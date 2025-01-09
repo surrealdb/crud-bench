@@ -51,3 +51,4 @@ Cargo.lock
 /.direnv/
 
 result.json
+result-*.json

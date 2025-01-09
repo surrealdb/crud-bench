@@ -23,7 +23,7 @@ defaults:
 jobs:
   format:
     name: Check format
-    runs-on: [runner-amd64-large]
+    runs-on: [ runner-amd64-large ]
     continue-on-error: true
     steps:
       - name: Install stable toolchain
@@ -45,7 +45,7 @@ jobs:
 
   clippy:
     name: Check clippy
-    runs-on: [runner-amd64-large]
+    runs-on: [ runner-amd64-large ]
     continue-on-error: true
     steps:
       - name: Install stable toolchain
@@ -67,7 +67,7 @@ jobs:
 
   test:
     name: Check tests
-    runs-on: [runner-amd64-large]
+    runs-on: [ runner-amd64-large ]
     continue-on-error: true
     steps:
       - name: Install stable toolchain
@@ -122,7 +122,7 @@ jobs:
 
   docker-build:
     name: Build Docker image
-    runs-on: [runner-amd64-large-private]
+    runs-on: [ runner-amd64-large-private ]
     needs: build
     continue-on-error: true
     steps:
@@ -193,7 +193,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-amd64-large]
+    runs-on: [ runner-amd64-large ]
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -305,29 +305,59 @@ jobs:
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 15
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r -n integer-random
+
+      - name: Upload result.json as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-integer-random.json
+          path: result.json
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random)
         timeout-minutes: 15
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random
+
+      - name: Upload result.json as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-string26-random
+          path: result-string26-random.json
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string90 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r -n string90-random
+
+      - name: Upload result.json as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-string90-random
+          path: result-string90-random.json
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r -n string506-random
+
+      - name: Upload result.json as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-string506-random
+          path: result-string506-random.json
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random-1k
         env:
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+
+      - name: Upload result.json as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-string26-random-1k
+          path: result-string26-random-1k.json
 
       - name: Finish benchmarking
         run: echo "Complete"

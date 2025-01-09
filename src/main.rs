@@ -46,6 +46,10 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) image: Option<String>,
 
+	/// The name of the test (used as a suffix to the JSON result file name).
+	#[arg(short, long)]
+	pub(crate) name: Option<String>,
+
 	/// Database
 	#[arg(short, long)]
 	pub(crate) database: Database,
@@ -215,14 +219,17 @@ fn run(args: Args) -> Result<()> {
 		Ok(res) => {
 			println!("--------------------------------------------------");
 			match container.as_ref().map(DockerContainer::image) {
-				Some(v) => println!("Benchmark result for {:?} on docker {v}", args.database),
+				Some(v) => {
+					print!("Benchmark result for {:?} on docker {v}", args.database)
+				}
 				None => match args.endpoint {
 					Some(endpoint) => {
-						println!("Benchmark result for {:?}; endpoint => {endpoint}", args.database)
+						print!("Benchmark result for {:?}; endpoint => {endpoint}", args.database)
 					}
-					None => println!("Benchmark result for {:?}", args.database),
+					None => print!("Benchmark result for {:?}", args.database),
 				},
 			}
+			println!("{}", args.name.as_ref().map(|s| format!(" - {}", s)).unwrap_or_default());
 			println!(
 				"CPUs: {} - Blocking threads: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
 				num_cpus::get(),
@@ -246,7 +253,11 @@ fn run(args: Args) -> Result<()> {
 			let json_string = serde_json::to_string_pretty(&res)?;
 
 			// Write the JSON string to a file
-			let mut file = File::create("result.json")?;
+			let result_name = args
+				.name
+				.map(|s| format!("result-{}.json", s))
+				.unwrap_or_else(|| "result.json".to_string());
+			let mut file = File::create(result_name)?;
 			file.write_all(json_string.as_bytes())?;
 
 			Ok(())
@@ -274,6 +285,7 @@ mod test {
 	fn test(database: Database, key: KeyType, random: bool) -> Result<()> {
 		run(Args {
 			image: None,
+			name: None,
 			database,
 			endpoint: None,
 			blocking: 5,
