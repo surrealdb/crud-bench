@@ -19,7 +19,7 @@ defaults:
 jobs:
   build:
     name: Build crud-bench
-    runs-on: [runner-amd64-2xlarge]
+    runs-on: [ runner-amd64-2xlarge ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -48,101 +48,122 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-amd64-4xlarge]
+    runs-on: [ runner-amd64-4xlarge ]
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         include:
           # Cassandra
-          - database: cassandra
+          - name: cassandra
+            database: cassandra
             enabled: false
             description: Cassandra
             skipped: Cassandra benchmark not yet implemented
           # Dragonfly
-          - database: dragonfly
+          - name: dragonfly
+            database: dragonfly
             enabled: true
             description: Dragonfly
           # Dry
-          - database: dry
+          - name: dry
+            database: dry
             enabled: true
             description: Dry
           # KeyDB
-          - database: keydb
+          - name: keydb
+            database: keydb
             enabled: true
             description: KeyDB
           # Map
-          - database: map
+          - name: map
+            database: map
             enabled: true
             description: Map
           # LMDB
-          - database: lmdb
+          - name: lmdb
+            database: lmdb
             enabled: true
             description: LMDB
           # MongoDB
-          - database: mongodb
+          - name: mongodb
+            database: mongodb
             enabled: true
             description: MongoDB
           # MySQL
-          - database: mysql
+          - name: mysql
+            database: mysql
             enabled: false
             description: MySQL
             skipped: MySQL benchmark skipped due to excessive benchmark time
           # Postgres
-          - database: postgres
+          - name: postgres
+            database: postgres
             enabled: true
             description: Postgres
           # Redb
-          - database: redb
+          - name: redb
+            database: redb
             enabled: false
             description: ReDB
             skipped: ReDB benchmark skipped due to excessive benchmark time
           # Redis
-          - database: redis
+          - name: redis
+            database: redis
             enabled: true
             description: Redis
           # RocksDB
-          - database: rocksdb
+          - name: rocksdb
+            database: rocksdb
             enabled: true
             description: RocksDB
           # Scylladb
-          - database: scylladb
+          - name: scylladb
+            database: scylladb
             enabled: false
             description: ScyllaDB
             skipped: ScyllaDB benchmark not yet implemented
           # SQLite
-          - database: sqlite
+          - name: sqlite
+            database: sqlite
             enabled: true
             description: SQLite
           # SurrealDB + Memory
-          - database: surrealdb-memory
+          - name: surrealdb-memory
+            database: surrealdb-memory
             enabled: true
             description: SurrealDB with in-memory storage
           # SurrealDB + RocksDB
-          - database: surrealdb-rocksdb
+          - name: surrealdb-rocksdb
+            database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
           # SurrealDB + SurrealKV
-          - database: surrealdb-surrealkv
+          - name: surrealdb-surrealkv
+            database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
           # SurrealDB Memory Engine
-          - database: surrealdb
+          - name: surrealdb-embedded-memory
+            database: surrealdb
             enabled: true
             endpoint: -e memory
             description: SurrealDB embedded with in-memory storage
-          # SurrealDB RocksDB Rngine
-          - database: surrealdb
+          # SurrealDB RocksDB Engine
+          - name: surrealdb-embedded-rocksdb
+            database: surrealdb
             enabled: true
             endpoint: -e rocksdb:/tmp/rocksdb-engine
             description: SurrealDB embedded with RocksDB storage
           # SurrealDB SurrealKV Engine
-          - database: surrealdb
+          - name: surrealdb-embedded-surrealkv
+            database: surrealdb
             enabled: true
             endpoint: -e surrealkv:/tmp/surrealkv-engine
             description: SurrealDB embedded with in-SurrealKV storage
           # SurrealKV
-          - database: surrealkv
+          - name: surrealkv
+            database: surrealkv
             enabled: true
             description: SurrealKV
     steps:
@@ -162,38 +183,51 @@ jobs:
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k integer -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k integer -r -n integer-random
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string26 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string26 -r -n string26-random
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
+
+      - name: Upload artifact result-string26-random.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-string26-random
+          path: result-string26-random.json
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string90 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string90 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string90 -r -n string90-random
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 3221225472 # 3 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string506 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string506 -r -n string506-random
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 16106127360 # 15 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string26 -r
+        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string26 -r -n string26-random-1k
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+
+      - name: Upload result artifacts
+        uses: actions/upload-artifact@v4
+        if: ${{ matrix.enabled }}
+        with:
+          name: results ${{ matrix.name }}
+          path: result*.json
 
       - name: Finish benchmarking
         run: echo "Complete"
