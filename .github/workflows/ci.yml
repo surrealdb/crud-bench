@@ -307,7 +307,7 @@ jobs:
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r -n integer-random
 
-      - name: Upload result.json as artifact
+      - name: Upload artifact result-integer-random.json
         uses: actions/upload-artifact@v4
         with:
           name: result-integer-random.json
@@ -318,7 +318,7 @@ jobs:
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random
 
-      - name: Upload result.json as artifact
+      - name: Upload artifact result-string26-random.json
         uses: actions/upload-artifact@v4
         with:
           name: result-string26-random
@@ -329,7 +329,7 @@ jobs:
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r -n string90-random
 
-      - name: Upload result.json as artifact
+      - name: Upload artifact result-string90-random.json
         uses: actions/upload-artifact@v4
         with:
           name: result-string90-random
@@ -340,7 +340,7 @@ jobs:
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r -n string506-random
 
-      - name: Upload result.json as artifact
+      - name: Upload artifact result-string506-random.json
         uses: actions/upload-artifact@v4
         with:
           name: result-string506-random
@@ -353,7 +353,7 @@ jobs:
         env:
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
 
-      - name: Upload result.json as artifact
+      - name: Upload artifact result-string26-random-1k.json
         uses: actions/upload-artifact@v4
         with:
           name: result-string26-random-1k

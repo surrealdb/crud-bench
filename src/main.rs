@@ -46,7 +46,7 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) image: Option<String>,
 
-	/// The name of the test (used as a suffix to the JSON result file name).
+	/// An optional name for the test, used as a suffix for the JSON result file name
 	#[arg(short, long)]
 	pub(crate) name: Option<String>,
 
