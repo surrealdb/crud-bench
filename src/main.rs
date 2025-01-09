@@ -21,6 +21,7 @@ mod terminal;
 mod valueprovider;
 
 // Datastore modules
+mod arangodb;
 mod dragonfly;
 mod dry;
 mod keydb;

@@ -15,6 +15,8 @@ use clap::ValueEnum;
 pub(crate) enum Database {
 	Dry,
 	Map,
+	#[cfg(feature = "arangodb")]
+	Arangodb,
 	#[cfg(feature = "dragonfly")]
 	Dragonfly,
 	#[cfg(feature = "keydb")]
@@ -56,6 +58,8 @@ impl Database {
 	pub(crate) fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
 		// Get any pre-defined Docker configuration
 		let params: DockerParams = match self {
+			#[cfg(feature = "arangodb")]
+			Self::Arangodb => crate::arangodb::ARANGODB_DOCKER_PARAMS,
 			#[cfg(feature = "dragonfly")]
 			Self::Dragonfly => crate::dragonfly::DRAGONFLY_DOCKER_PARAMS,
 			#[cfg(feature = "keydb")]
@@ -112,6 +116,22 @@ impl Database {
 					.run::<_, DefaultDialect, _>(
 						MapClientProvider::setup(kt, vp.columns(), benchmark.endpoint.as_deref())
 							.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "arangodb")]
+			Database::Arangodb => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::arangodb::ArangoDBClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark.endpoint.as_deref(),
+						)
+						.await?,
 						kp,
 						vp,
 						scans,
