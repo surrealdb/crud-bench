@@ -54,6 +54,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # ArangoDB
+          - database: arangodb
+            enabled: true
+            description: ArangoDB
           # Cassandra
           - database: cassandra
             enabled: false
