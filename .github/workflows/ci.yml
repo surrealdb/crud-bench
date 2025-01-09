@@ -200,92 +200,113 @@ jobs:
       matrix:
         include:
           # Cassandra
-          - database: cassandra
+          - name: cassandra
+            database: cassandra
             enabled: false
             description: Cassandra
             skipped: Cassandra benchmark not yet implemented
           # Dragonfly
-          - database: dragonfly
+          - name: dragonfly
+            database: dragonfly
             enabled: true
             description: Dragonfly
           # Dry
-          - database: dry
+          - name: dry
+            database: dry
             enabled: true
             description: Dry
           # KeyDB
-          - database: keydb
+          - name: keydb
+            database: keydb
             enabled: true
             description: KeyDB
           # LMDB
-          - database: lmdb
+          - name: lmdb
+            database: lmdb
             enabled: true
             description: LMDB
           # Map
-          - database: map
+          - name: map
+            database: map
             enabled: true
             description: Map
           # MongoDB
-          - database: mongodb
+          - name: mongodb
+            database: mongodb
             enabled: true
             description: MongoDB
           # Postgres
-          - database: postgres
+          - name: postgres
+            database: postgres
             enabled: true
             description: Postgres
           # MySQL
-          - database: mysql
+          - name: mysql
+            database: mysql
             enabled: true
             description: MySQL
           # Redb
-          - database: redb
+          - name: redb
+            database: redb
             enabled: true
             description: ReDB
           # Redis
-          - database: redis
+          - name: redis
+            database: redis
             enabled: true
             description: Redis
           # RocksDB
-          - database: rocksdb
+          - name: rocksdb
+            database: rocksdb
             enabled: true
             description: RocksDB
           # Scylladb
-          - database: scylladb
+          - name: scylladb
+            database: scylladb
             enabled: false
             description: ScyllaDB
             skipped: SycllaDB benchmark not yet implemented
           # SQLite
-          - database: sqlite
+          - name: sqlite
+            database: sqlite
             enabled: true
             description: SQLite
           # SurrealDB + Memory
-          - database: surrealdb-memory
+          - name: surrealdb-memory
+            database: surrealdb-memory
             enabled: true
             description: SurrealDB with in-memory storage
           # SurrealDB + RocksDB
-          - database: surrealdb-rocksdb
+          - name: surrealdb-rocksdb
+            database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
           # SurrealDB + SurrealKV
-          - database: surrealdb-surrealkv
+          - name: surrealdb-surrealkv
+            database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
           # SurrealDB Memory Engine
-          - database: surrealdb
+          - name: surrealdb-embedded-memory
+            database: surrealdb
             enabled: true
             endpoint: -e memory
             description: SurrealDB embedded with in-memory storage
           # SurrealDB RocksDB Engine
-          - database: surrealdb
+          - name: surrealdb-embedded-rocksdb
+            database: surrealdb
             enabled: true
             endpoint: -e rocksdb:/tmp/rocksdb-engine
             description: SurrealDB embedded with RocksDB storage
           # SurrealDB SurrealKV Engine
-          - database: surrealdb
+          - name: surrealdb-embedded-surrealkv
+            database: surrealdb
             enabled: true
             endpoint: -e surrealkv:/tmp/surrealkv-engine
             description: SurrealDB embedded with SurrealKV storage
           # SurrealKV
-          - database: surrealkv
+          - name: surrealkv
+            database: surrealkv
             enabled: true
             description: SurrealKV
     steps:
@@ -331,8 +352,9 @@ jobs:
 
       - name: Upload result artifacts
         uses: actions/upload-artifact@v4
+        if: ${{ matrix.enabled }}
         with:
-          name: results ${{ matrix.database }}
+          name: results ${{ matrix.name }}
           path: result*.json
 
       - name: Finish benchmarking
