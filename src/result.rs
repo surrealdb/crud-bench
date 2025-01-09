@@ -206,7 +206,7 @@ impl OperationResult {
 			),
 			format!(
 				"{:.2}",
-				self.samples as f64 / ((self.elapsed.as_nanos() as f64 / 1_000_000_000.0) as f64)
+				self.samples as f64 / (self.elapsed.as_nanos() as f64 / 1_000_000_000.0)
 			),
 			format!("{:.2}%", self.cpu_usage),
 			format!("{}", ByteSize(self.used_memory)),
