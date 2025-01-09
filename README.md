@@ -230,6 +230,20 @@ This benchmark does not interact with any datastore, allowing the overhead of th
 cargo run -r -- -d dry -s 100000 -c 12 -t 24 -r
 ```
 
+### [ArangoDB](https://arangodb.com/)
+
+ArangoDB is a multi-model database with flexible data modeling and efficient querying.
+
+```bash
+cargo run -r -- -d arangodb -s 100000 -c 12 -t 24 -r
+```
+
+The above command starts a Docker container automatically. To connect to an already-running ArangoDB instance use the following command:
+
+```bash
+cargo run -r -- -d arangodb -e http://127.0.0.1:8529 -s 100000 -c 12 -t 24 -r
+```
+
 ### [Dragonfly](https://www.dragonflydb.io/)
 
 Dragonfly is an in-memory, networked, datastore which is fully-compatible with Redis and Memcached APIs.
