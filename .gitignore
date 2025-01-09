@@ -49,3 +49,5 @@ Cargo.lock
 /result
 /bin/
 /.direnv/
+
+result.json

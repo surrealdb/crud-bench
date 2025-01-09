@@ -6,7 +6,8 @@ use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use docker::DockerContainer;
 use serde::{Deserialize, Serialize};
-use std::io::IsTerminal;
+use std::fs::File;
+use std::io::{IsTerminal, Write};
 use tokio::runtime;
 
 // Benchmark modules
@@ -240,6 +241,14 @@ fn run(args: Args) -> Result<()> {
 				println!("Value sample: {:#}", res.sample);
 				println!("--------------------------------------------------");
 			}
+
+			// Serialize the struct to a JSON string
+			let json_string = serde_json::to_string_pretty(&res)?;
+
+			// Write the JSON string to a file
+			let mut file = File::create("result.json")?;
+			file.write_all(json_string.as_bytes())?;
+
 			Ok(())
 		}
 		// Output the errors
