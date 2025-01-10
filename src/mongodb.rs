@@ -86,7 +86,7 @@ impl BenchmarkClient for MongoDBClient {
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		let doc = self.read(key.clone()).await?;
+		let doc = self.read(&key).await?;
 		assert_eq!(doc.unwrap().get_str("_id")?, key);
 		Ok(())
 	}
