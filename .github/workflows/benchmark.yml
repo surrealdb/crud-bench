@@ -198,12 +198,6 @@ jobs:
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
-      - name: Upload artifact result-string26-random.json
-        uses: actions/upload-artifact@v4
-        with:
-          name: result-string26-random
-          path: result-string26-random.json
-
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string90 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
