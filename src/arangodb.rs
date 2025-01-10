@@ -6,7 +6,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{KeyType, Projection, Scan};
 use anyhow::{bail, Result};
-use arangors::client::reqwest::ReqwestClient;
+use arangors::client::surf::SurfClient;
 use arangors::document::options::InsertOptions;
 use arangors::document::options::RemoveOptions;
 use arangors::{Collection, Connection, Database};
@@ -46,13 +46,11 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 }
 
 pub(crate) struct ArangoDBClient {
-	database: Database<ReqwestClient>,
-	collection: Collection<ReqwestClient>,
+	database: Database<SurfClient>,
+	collection: Collection<SurfClient>,
 }
 
-async fn create_arango_client(
-	url: &str,
-) -> Result<(Database<ReqwestClient>, Collection<ReqwestClient>)> {
+async fn create_arango_client(url: &str) -> Result<(Database<SurfClient>, Collection<SurfClient>)> {
 	let conn = Connection::establish_without_auth(url).await.unwrap();
 	let db = match conn.create_database("crud-bench").await {
 		Err(_) => conn.db("crud-bench").await.unwrap(),
