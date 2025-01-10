@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 
 pub(crate) const MYSQL_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "mysql",
-	pre_args: "-p 127.0.0.1:3306:3306 -e MYSQL_ROOT_HOST=% -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=bench",
+	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_HOST=% -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=bench",
 	post_args: "",
 };
 
