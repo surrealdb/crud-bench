@@ -10,10 +10,9 @@ use futures::{StreamExt, TryStreamExt};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
-use mongodb::options::IndexOptions;
 use mongodb::options::ReadConcern;
 use mongodb::options::WriteConcern;
-use mongodb::{bson, Client, Collection, Cursor, Database, IndexModel};
+use mongodb::{bson, Client, Collection, Cursor, Database};
 use serde_json::Value;
 use std::hint::black_box;
 
