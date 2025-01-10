@@ -18,7 +18,7 @@ use std::hint::black_box;
 
 pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "mongo",
-	pre_args: "-p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root",
+	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root",
 	post_args: "",
 };
 

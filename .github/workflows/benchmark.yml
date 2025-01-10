@@ -186,35 +186,35 @@ jobs:
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 30
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k integer -r -n integer-random
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random)
         timeout-minutes: 30
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string26 -r -n string26-random
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string90 / random)
         timeout-minutes: 30
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string90 -r -n string90-random
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 3221225472 # 3 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string506 / random)
         timeout-minutes: 30
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string506 -r -n string506-random
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 16106127360 # 15 GiB
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 30
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string26 -r -n string26-random-1k
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
@@ -222,7 +222,7 @@ jobs:
 
       - name: Upload result artifacts
         uses: actions/upload-artifact@v4
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.enabled && (success() || failure()) }}
         with:
           name: results ${{ matrix.name }}
           path: result*.json

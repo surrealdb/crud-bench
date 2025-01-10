@@ -15,7 +15,7 @@ use surrealdb::Surreal;
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 8000:8000",
+	pre_args: "--ulimit nofile=65536:65536 -p 8000:8000",
 	post_args: "start --user root --pass root memory",
 };
 
