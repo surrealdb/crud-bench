@@ -58,7 +58,9 @@ impl BenchmarkClient for ScylladbClient {
 			.await?;
 		let id_type = match self.kt {
 			KeyType::Integer => "int",
-			KeyType::String26 | KeyType::String90 | KeyType::String506 => "TEXT",
+			KeyType::String26 | KeyType::String90 | KeyType::String250 | KeyType::String506 => {
+				"TEXT"
+			}
 			KeyType::Uuid => {
 				todo!()
 			}

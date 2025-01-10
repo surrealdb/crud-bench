@@ -55,6 +55,7 @@ impl BenchmarkClient for PostgresClient {
 			KeyType::Integer => "SERIAL",
 			KeyType::String26 => "VARCHAR(26)",
 			KeyType::String90 => "VARCHAR(90)",
+			KeyType::String250 => "VARCHAR(250)",
 			KeyType::String506 => "VARCHAR(506)",
 			KeyType::Uuid => {
 				todo!()
@@ -132,7 +133,7 @@ impl PostgresClient {
 				let v: i32 = row.try_get("id")?;
 				val.insert("id".into(), Value::from(v));
 			}
-			KeyType::String26 | KeyType::String90 | KeyType::String506 => {
+			KeyType::String26 | KeyType::String90 | KeyType::String250 | KeyType::String506 => {
 				let v: String = row.try_get("id")?;
 				val.insert("id".into(), Value::from(v));
 			}

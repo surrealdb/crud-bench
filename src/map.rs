@@ -20,7 +20,7 @@ impl From<KeyType> for MapDatabase {
 	fn from(t: KeyType) -> Self {
 		match t {
 			KeyType::Integer => Self::Integer(DashMap::new().into()),
-			KeyType::String26 | KeyType::String90 | KeyType::String506 => {
+			KeyType::String26 | KeyType::String90 | KeyType::String250 | KeyType::String506 => {
 				Self::String(DashMap::new().into())
 			}
 			KeyType::Uuid => todo!(),

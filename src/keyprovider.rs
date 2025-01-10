@@ -33,6 +33,13 @@ impl KeyProvider {
 					Self::OrderedString(OrderedString::new(5))
 				}
 			}
+			KeyType::String250 => {
+				if random {
+					Self::UnorderedString(UnorderedString::new(15))
+				} else {
+					Self::OrderedString(OrderedString::new(15))
+				}
+			}
 			KeyType::String506 => {
 				if random {
 					Self::UnorderedString(UnorderedString::new(31))
@@ -182,6 +189,22 @@ mod test {
 		let s = o.key(12345678);
 		assert_eq!(s.len(), 90);
 		assert_eq!(s, "d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d30012345678");
+	}
+
+	#[test]
+	fn ordered_string_250() {
+		let mut o = OrderedString::new(15);
+		let s = o.key(12345678);
+		assert_eq!(s.len(), 250);
+		assert_eq!(s, "0012345678d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d31bc0feb2815d5c908f5a4633b8a9d5d6ec1c074d5d64ab296c6495f784f8294ac42b828a9c4ef45d3decc0a8dff00062adfb547fea6132f38afda36acf629cc15413acfe35a50fecbec285e9ee42b136");
+	}
+
+	#[test]
+	fn unordered_string_250() {
+		let mut o = UnorderedString::new(15);
+		let s = o.key(12345678);
+		assert_eq!(s.len(), 250);
+		assert_eq!(s, "d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d31bc0feb2815d5c908f5a4633b8a9d5d6ec1c074d5d64ab296c6495f784f8294ac42b828a9c4ef45d3decc0a8dff00062adfb547fea6132f38afda36acf629cc15413acfe35a50fecbec285e9ee42b1360012345678");
 	}
 
 	#[test]

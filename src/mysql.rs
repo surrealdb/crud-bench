@@ -52,6 +52,7 @@ impl BenchmarkClient for MysqlClient {
 			KeyType::Integer => "SERIAL",
 			KeyType::String26 => "VARCHAR(26)",
 			KeyType::String90 => "VARCHAR(90)",
+			KeyType::String250 => "VARCHAR(250)",
 			KeyType::String506 => "VARCHAR(506)",
 			KeyType::Uuid => {
 				todo!()

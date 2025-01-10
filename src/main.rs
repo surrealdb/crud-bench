@@ -130,6 +130,8 @@ pub(crate) enum KeyType {
 	String26,
 	/// 90 ascii bytes
 	String90,
+	/// 250 ascii bytes
+	String250,
 	/// 506 ascii bytes
 	String506,
 	/// UUID type 7
@@ -343,6 +345,18 @@ mod test {
 	#[serial]
 	fn test_string90_unordered() -> Result<()> {
 		test(Database::Map, KeyType::String90, true)
+	}
+
+	#[test]
+	#[serial]
+	fn test_string250_ordered() -> Result<()> {
+		test(Database::Map, KeyType::String250, false)
+	}
+
+	#[test]
+	#[serial]
+	fn test_string250_unordered() -> Result<()> {
+		test(Database::Map, KeyType::String250, true)
 	}
 
 	#[test]
