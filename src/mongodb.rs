@@ -10,10 +10,9 @@ use futures::{StreamExt, TryStreamExt};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
-use mongodb::options::IndexOptions;
 use mongodb::options::ReadConcern;
 use mongodb::options::WriteConcern;
-use mongodb::{bson, Client, Collection, Cursor, Database, IndexModel};
+use mongodb::{bson, Client, Collection, Cursor, Database};
 use serde_json::Value;
 use std::hint::black_box;
 
@@ -58,13 +57,6 @@ where
 }
 
 impl BenchmarkClient for MongoDBClient {
-	async fn startup(&self) -> Result<()> {
-		let index = IndexOptions::builder().unique(true).build();
-		let model = IndexModel::builder().keys(doc! { "id": 1 }).options(index).build();
-		let _ = self.collection().create_index(model).await?;
-		Ok(())
-	}
-
 	async fn compact(&self) -> Result<()> {
 		// For a database compaction
 		self.0
@@ -88,13 +80,13 @@ impl BenchmarkClient for MongoDBClient {
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let doc = self.read(key).await?;
-		assert_eq!(doc.unwrap().get("id").unwrap().as_i64().unwrap() as u32, key);
+		assert_eq!(doc.unwrap().get("_id").unwrap().as_i64().unwrap() as u32, key);
 		Ok(())
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
 		let doc = self.read(&key).await?;
-		assert_eq!(doc.unwrap().get_str("id")?, key);
+		assert_eq!(doc.unwrap().get_str("_id")?, key);
 		Ok(())
 	}
 
@@ -133,7 +125,7 @@ impl MongoDBClient {
 		K: Into<Value> + Into<Bson>,
 	{
 		let obj = val.as_object_mut().unwrap();
-		obj.insert("id".to_string(), key.into());
+		obj.insert("_id".to_string(), key.into());
 		Ok(bson::to_bson(&val)?)
 	}
 
@@ -152,7 +144,7 @@ impl MongoDBClient {
 	where
 		K: Into<Bson>,
 	{
-		let filter = doc! { "id": key };
+		let filter = doc! { "_id": key };
 		let doc = self.collection().find_one(filter).await?;
 		assert!(doc.is_some());
 		Ok(doc)
@@ -164,7 +156,7 @@ impl MongoDBClient {
 	{
 		let bson = Self::to_doc(key.clone(), val)?;
 		let doc = bson.as_document().unwrap();
-		let filter = doc! { "id": key };
+		let filter = doc! { "_id": key };
 		let res = self.collection().replace_one(filter, doc).await?;
 		assert_eq!(res.modified_count, 1);
 		Ok(())
@@ -174,7 +166,7 @@ impl MongoDBClient {
 	where
 		K: Into<Bson>,
 	{
-		let filter = doc! { "id": key };
+		let filter = doc! { "_id": key };
 		let res = self.collection().delete_one(filter).await?;
 		assert_eq!(res.deleted_count, 1);
 		Ok(())
@@ -206,7 +198,7 @@ impl MongoDBClient {
 					.find(doc! {})
 					.skip(s as u64)
 					.limit(l as i64)
-					.projection(doc! { "id": 1 })
+					.projection(doc! { "_id": 1 })
 					.await?;
 				consume(cursor).await
 			}
