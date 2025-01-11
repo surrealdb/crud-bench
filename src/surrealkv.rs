@@ -176,10 +176,10 @@ impl SurrealKVClient {
 			let mut txn = db.begin_with_mode(ReadOnly)?;
 			let beg = [0u8].as_slice();
 			let end = [255u8].as_slice();
-			let iter = txn.scan(beg..end, Some(s + l))?;
 			// Perform the relevant projection scan type
 			match p {
 				Projection::Id => {
+					let iter = txn.scan(beg..end, Some(s + l))?;
 					// We use a for loop to iterate over the results, while
 					// calling black_box internally. This is necessary as
 					// an iterator with `filter_map` or `map` is optimised
@@ -192,6 +192,7 @@ impl SurrealKVClient {
 					Ok(count)
 				}
 				Projection::Full => {
+					let iter = txn.scan(beg..end, Some(s + l))?;
 					// We use a for loop to iterate over the results, while
 					// calling black_box internally. This is necessary as
 					// an iterator with `filter_map` or `map` is optimised
@@ -204,7 +205,8 @@ impl SurrealKVClient {
 					Ok(count)
 				}
 				Projection::Count => {
-					Ok(iter
+					Ok(txn
+						.scan(beg..end, Some(s + l))?
 						.into_iter()
 						.skip(s) // Skip the first `offset` entries
 						.take(l) // Take the next `limit` entries

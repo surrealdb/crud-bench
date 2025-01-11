@@ -260,8 +260,8 @@ impl SqliteClient {
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stmt = format!("SELECT id FROM record {c} {l} {s}");
-				let res = self.query(Cow::Owned(stmt), None).await?;
+				let stm = format!("SELECT id FROM record {c} {l} {s}");
+				let res = self.query(Cow::Owned(stm), None).await?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -274,8 +274,8 @@ impl SqliteClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stmt = format!("SELECT * FROM record {c} {l} {s}");
-				let res = self.query(Cow::Owned(stmt), None).await?;
+				let stm = format!("SELECT * FROM record {c} {l} {s}");
+				let res = self.query(Cow::Owned(stm), None).await?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -288,8 +288,8 @@ impl SqliteClient {
 				Ok(count)
 			}
 			Projection::Count => {
-				let stmt = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s})");
-				let res = self.query(Cow::Owned(stmt), None).await?;
+				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s})");
+				let res = self.query(Cow::Owned(stm), None).await?;
 				let Value::Integer(count) = res.first().unwrap().first().unwrap().1 else {
 					panic!("Unexpected response type `{res:?}`");
 				};
