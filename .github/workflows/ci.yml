@@ -239,16 +239,21 @@ jobs:
             database: mongodb
             enabled: true
             description: MongoDB
-          # Postgres
-          - name: postgres
-            database: postgres
+          # Neo4j
+          - name: neo4j
+            database: neo4j
             enabled: true
-            description: Postgres
+            description: Neo4j
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
+          # Postgres
+          - name: postgres
+            database: postgres
+            enabled: true
+            description: Postgres
           # Redb
           - name: redb
             database: redb

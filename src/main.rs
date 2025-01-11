@@ -30,6 +30,7 @@ mod lmdb;
 mod map;
 mod mongodb;
 mod mysql;
+mod neo4j;
 mod postgres;
 mod redb;
 mod redis;

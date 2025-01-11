@@ -348,37 +348,3 @@ impl ColumnType {
 		Ok(r)
 	}
 }
-
-impl Columns {
-	pub(crate) fn insert_clauses<D>(&self, val: Value) -> Result<(String, String)>
-	where
-		D: Dialect,
-	{
-		let mut fields = Vec::with_capacity(self.0.len());
-		let mut values = Vec::with_capacity(self.0.len());
-		if let Value::Object(map) = val {
-			for (f, v) in map {
-				fields.push(D::escape_field(f));
-				values.push(D::arg_string(v));
-			}
-		}
-		let fields = fields.join(",");
-		let values = values.join(",");
-		Ok((fields, values))
-	}
-
-	pub(crate) fn set_clause<D>(&self, val: Value) -> Result<String>
-	where
-		D: Dialect,
-	{
-		let mut updates = Vec::with_capacity(self.0.len());
-		if let Value::Object(map) = val {
-			for (f, v) in map {
-				let field = D::escape_field(f);
-				let value = D::arg_string(v);
-				updates.push(format!("{field}={value}"));
-			}
-		}
-		Ok(updates.join(","))
-	}
-}

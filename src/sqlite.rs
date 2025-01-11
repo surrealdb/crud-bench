@@ -205,7 +205,7 @@ impl SqliteClient {
 	}
 
 	async fn create(&self, key: ToSqlOutput<'static>, val: Json) -> Result<()> {
-		let (fields, values) = self.columns.insert_clauses::<AnsiSqlDialect>(val)?;
+		let (fields, values) = AnsiSqlDialect::create_clause(&self.columns, val);
 		let stmt = format!("INSERT INTO record (id, {fields}) VALUES ($1, {values})");
 		let res = self.execute(Cow::Owned(stmt), key).await?;
 		assert_eq!(res, 1);
@@ -220,8 +220,8 @@ impl SqliteClient {
 	}
 
 	async fn update(&self, key: ToSqlOutput<'static>, val: Json) -> Result<()> {
-		let set = self.columns.set_clause::<AnsiSqlDialect>(val)?;
-		let stmt = format!("UPDATE record SET {set} WHERE id=$1");
+		let fields = AnsiSqlDialect::update_clause(&self.columns, val);
+		let stmt = format!("UPDATE record SET {fields} WHERE id=$1");
 		let res = self.execute(Cow::Owned(stmt), key).await?;
 		assert_eq!(res, 1);
 		Ok(())

@@ -5,13 +5,14 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::Result;
 use futures::StreamExt;
-use scylla::_macro_internal::{SerializeRow, SerializeValue};
-use scylla::transport::iterator::TypedRowStream;
+use scylla::_macro_internal::SerializeValue;
+use scylla::transport::session::PoolSize;
 use scylla::{Session, SessionBuilder};
 use serde_json::Value;
-use std::fmt::Display;
+use std::hint::black_box;
+use std::num::NonZeroUsize;
 
 pub(crate) const SCYLLADB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "scylladb/scylla",
@@ -29,7 +30,12 @@ impl BenchmarkEngine<ScylladbClient> for ScyllaDBClientProvider {
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ScylladbClient> {
-		let session = SessionBuilder::new().known_node(&self.2).build().await?;
+		let session = SessionBuilder::new()
+			.pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
+			.known_node(&self.2)
+			.tcp_nodelay(true)
+			.build()
+			.await?;
 		Ok(ScylladbClient {
 			session,
 			kt: self.0,
@@ -57,7 +63,7 @@ impl BenchmarkClient for ScylladbClient {
 			)
 			.await?;
 		let id_type = match self.kt {
-			KeyType::Integer => "int",
+			KeyType::Integer => "INT",
 			KeyType::String26 | KeyType::String90 | KeyType::String250 | KeyType::String506 => {
 				"TEXT"
 			}
@@ -134,15 +140,11 @@ impl BenchmarkClient for ScylladbClient {
 impl ScylladbClient {
 	async fn create<T>(&self, key: T, val: Value) -> Result<()>
 	where
-		T: Display,
+		T: SerializeValue,
 	{
-		let (fields, values) = self.columns.insert_clauses::<AnsiSqlDialect>(val)?;
-		self.session
-			.query_unpaged(
-				format!("INSERT INTO bench.record (id, {fields}) VALUES ({key}, {values})"),
-				(),
-			)
-			.await?;
+		let (fields, values) = AnsiSqlDialect::create_clause(&self.columns, val);
+		let stm = format!("INSERT INTO bench.record (id, {fields}) VALUES (?, {values})");
+		self.session.query_unpaged(stm, (&key,)).await?;
 		Ok(())
 	}
 
@@ -150,62 +152,19 @@ impl ScylladbClient {
 	where
 		T: SerializeValue,
 	{
-		let res =
-			self.session.query_unpaged("SELECT * FROM bench.record WHERE id=?", (&key,)).await?;
+		let stm = "SELECT * FROM bench.record WHERE id=?";
+		let res = self.session.query_unpaged(stm, (&key,)).await?;
 		assert_eq!(res.into_rows_result()?.rows_num(), 1);
 		Ok(())
 	}
 
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
-		let s = scan.start.unwrap_or(0);
-		let l = (scan.start.unwrap_or(0) + scan.limit.unwrap_or(0)) as i32;
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or_default();
-		let p = scan.projection()?;
-		let stm = match p {
-			Projection::Id => {
-				format!("SELECT id FROM record {c} LIMIT ?")
-			}
-			Projection::Full => {
-				format!("SELECT * FROM record {c} LIMIT ?")
-			}
-			Projection::Count => {
-				format!("SELECT count(*) FROM record {c} LIMIT ?")
-			}
-		};
-		let mut rows_stream: TypedRowStream<(String,)> =
-			self.session.query_iter(stm, (&l,)).await?.rows_stream()?;
-		if s > 0 {
-			let _ = (&mut rows_stream).skip(s);
-		}
-		match p {
-			Projection::Id | Projection::Full => {
-				let mut count = 0;
-				while let Some(next_row_res) = rows_stream.next().await {
-					let id: (String,) = next_row_res?;
-					assert!(!id.is_empty());
-					count += 1;
-				}
-				Ok(count)
-			}
-			Projection::Count => {
-				if let Some(next_row_res) = rows_stream.next().await {
-					let count: (String,) = next_row_res?;
-					let count: usize = count.0.parse()?;
-					Ok(count)
-				} else {
-					bail!("No row returned");
-				}
-			}
-		}
-	}
 	async fn update<T>(&self, key: T, val: Value) -> Result<()>
 	where
-		T: Display,
+		T: SerializeValue,
 	{
-		let set = self.columns.set_clause::<AnsiSqlDialect>(val)?;
-		self.session
-			.query_unpaged(format!("UPDATE bench.record SET {set} WHERE id={key}"), ())
-			.await?;
+		let fields = AnsiSqlDialect::update_clause(&self.columns, val);
+		let stm = format!("UPDATE bench.record SET {fields} WHERE id=?");
+		self.session.query_unpaged(stm, (&key,)).await?;
 		Ok(())
 	}
 
@@ -213,7 +172,48 @@ impl ScylladbClient {
 	where
 		T: SerializeValue,
 	{
-		self.session.query_unpaged("DELETE FROM bench.record WHERE id=?", (&key,)).await?;
+		let stm = format!("DELETE FROM bench.record WHERE id=?");
+		self.session.query_unpaged(stm, (&key,)).await?;
 		Ok(())
+	}
+
+	async fn scan(&self, scan: &Scan) -> Result<usize> {
+		// Extract parameters
+		let s = scan.start.unwrap_or_default();
+		let l = scan.limit.map(|l| format!("LIMIT {}", l + s)).unwrap_or_default();
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or_default();
+		let p = scan.projection()?;
+		// Perform the relevant projection scan type
+		match p {
+			Projection::Id => {
+				let stm = format!("SELECT id FROM bench.record {c} {l}");
+				let mut res = self.session.query_iter(stm, ()).await?.rows_stream()?.skip(s);
+				let mut count = 0;
+				while let Some(v) = res.next().await {
+					let v: (String,) = v?;
+					black_box(v);
+					count += 1;
+				}
+				Ok(count)
+			}
+			Projection::Full => {
+				let stm = format!("SELECT id FROM bench.record {c} {l}");
+				let mut res = self.session.query_iter(stm, ()).await?.rows_stream()?.skip(s);
+				let mut count = 0;
+				while let Some(v) = res.next().await {
+					let v: (String,) = v?;
+					black_box(v);
+					count += 1;
+				}
+				Ok(count)
+			}
+			Projection::Count => {
+				let stm = format!("SELECT count(*) FROM bench.record {c} {l}");
+				let mut res = self.session.query_iter(stm, ()).await?.rows_stream()?.skip(s);
+				let count: (String,) = res.next().await.unwrap()?;
+				let count: usize = count.0.parse()?;
+				Ok(count)
+			}
+		}
 	}
 }
