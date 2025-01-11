@@ -207,7 +207,7 @@ jobs:
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string250 / random)
         timeout-minutes: 30
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string250 -r -n string250-random
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 10737418240 # 10 GiB
