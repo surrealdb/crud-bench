@@ -268,7 +268,11 @@ impl Benchmark {
 		// Calculate runtime information
 		let result = OperationResult::new(metric, global_histogram);
 		// Print out the last stage
-		out.writeln(|| Some(format!("\r{operation} 100%")))?;
+		out.write(|| Some(format!("\r{operation} 100%")))?;
+		// Print out a separator
+		out.write(|| Some(" - "))?;
+		// Output the total stage time
+		println!("{operation} took {}", result.total_time());
 		// Shall we skip the operation? (operation not supported)
 		if skip.load(Ordering::Relaxed) {
 			return Ok(None);
