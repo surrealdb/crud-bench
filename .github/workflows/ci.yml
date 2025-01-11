@@ -342,7 +342,7 @@ jobs:
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r -n string90-random
 
-      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string250 / random)
+      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string250 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string250 -r -n string250-random
