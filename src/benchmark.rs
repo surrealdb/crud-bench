@@ -100,8 +100,10 @@ impl Benchmark {
 		// Run the "scan" benchmarks
 		let mut scan_results = Vec::with_capacity(scans.len());
 		for scan in scans {
+			// Get the name of the scan
 			let name = scan.name.clone();
 			let samples = scan.samples.map(|s| s as u32).unwrap_or(self.samples);
+			// Execute the scan benchmark
 			let duration = self
 				.run_operation::<C, D>(
 					&clients,
@@ -111,6 +113,7 @@ impl Benchmark {
 					samples,
 				)
 				.await?;
+			// Store the scan benchmark result
 			scan_results.push((name, samples, duration));
 		}
 		// Compact the datastore
