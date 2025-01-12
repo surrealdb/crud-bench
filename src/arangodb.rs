@@ -54,11 +54,16 @@ pub(crate) struct ArangoDBClient {
 async fn create_arango_client(
 	url: &str,
 ) -> Result<(Database<ReqwestClient>, Collection<ReqwestClient>)> {
+	// Create the connection to the database
 	let conn = Connection::establish_without_auth(url).await.unwrap();
+	// Ensure we drop the database first
+	let _ = conn.drop_database("crud-bench").await;
+	// Create the benchmarking database
 	let db = match conn.create_database("crud-bench").await {
 		Err(_) => conn.db("crud-bench").await.unwrap(),
 		Ok(db) => db,
 	};
+	// Create the becnhmark record collection
 	let co = match db.create_collection("record").await {
 		Err(_) => db.collection("record").await.unwrap(),
 		Ok(db) => db,
