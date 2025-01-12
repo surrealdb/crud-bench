@@ -172,7 +172,7 @@ impl ScylladbClient {
 	where
 		T: SerializeValue,
 	{
-		let stm = format!("DELETE FROM bench.record WHERE id=?");
+		let stm = "DELETE FROM bench.record WHERE id=?";
 		self.session.query_unpaged(stm, (&key,)).await?;
 		Ok(())
 	}

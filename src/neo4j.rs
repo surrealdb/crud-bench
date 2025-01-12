@@ -121,8 +121,8 @@ impl Neo4jClient {
 	where
 		T: Into<BoltType> + Sync,
 	{
-		let stm = format!("MATCH (r:Record {{ id: $id }}) RETURN r");
-		let stm = query(&stm).param("id", key);
+		let stm = "MATCH (r:Record { id: $id }) RETURN r";
+		let stm = query(stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
 		assert!(matches!(black_box(res.next().await), Ok(Some(_))));
 		assert!(matches!(res.next().await, Ok(None)));
@@ -146,8 +146,8 @@ impl Neo4jClient {
 	where
 		T: Into<BoltType> + Sync,
 	{
-		let stm = format!("MATCH (r:Record {{ id: $id }}) DETACH DELETE r RETURN r");
-		let stm = query(&stm).param("id", key);
+		let stm = "MATCH (r:Record { id: $id }) DETACH DELETE r RETURN r";
+		let stm = query(stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
 		assert!(matches!(res.next().await, Ok(Some(_))));
 		assert!(matches!(res.next().await, Ok(None)));
