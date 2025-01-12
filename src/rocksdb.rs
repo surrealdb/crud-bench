@@ -95,6 +95,8 @@ pub(crate) struct RocksDBClient {
 
 impl BenchmarkClient for RocksDBClient {
 	async fn shutdown(&self) -> Result<()> {
+		// No need to run background jobs
+		self.db.cancel_all_background_work(true);
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Ok
