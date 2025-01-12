@@ -16,7 +16,7 @@ use std::hint::black_box;
 
 pub(crate) const NEO4J_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "neo4j",
-	pre_args: "-p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none",
+	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none",
 	post_args: "",
 };
 
@@ -62,6 +62,12 @@ where
 }
 
 impl BenchmarkClient for Neo4jClient {
+	async fn startup(&self) -> Result<()> {
+		let stm = "CREATE INDEX FOR (r:Record) ON (r.id);";
+		self.graph.execute(query(stm)).await?.next().await.ok();
+		Ok(())
+	}
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.create(key, val).await
 	}
@@ -109,7 +115,7 @@ impl Neo4jClient {
 		T: Into<BoltType> + Sync,
 	{
 		let fields = Neo4jDialect::create_clause(&self.columns, val)?;
-		let stm = format!("CREATE (r:Record {{ id: $id, {fields} }}) RETURN r");
+		let stm = format!("CREATE (r:Record {{ id: $id, {fields} }}) RETURN r.id");
 		let stm = query(&stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
 		assert!(matches!(res.next().await, Ok(Some(_))));
@@ -134,7 +140,7 @@ impl Neo4jClient {
 		T: Into<BoltType> + Sync,
 	{
 		let fields = Neo4jDialect::update_clause(&self.columns, val)?;
-		let stm = format!("MATCH (r:Record {{ id: $id }}) SET {fields} RETURN r");
+		let stm = format!("MATCH (r:Record {{ id: $id }}) SET {fields} RETURN r.id");
 		let stm = query(&stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
 		assert!(matches!(res.next().await, Ok(Some(_))));
@@ -146,7 +152,7 @@ impl Neo4jClient {
 	where
 		T: Into<BoltType> + Sync,
 	{
-		let stm = "MATCH (r:Record { id: $id }) DETACH DELETE r RETURN r";
+		let stm = "MATCH (r:Record { id: $id }) WITH r, r.id AS id DETACH DELETE r RETURN id";
 		let stm = query(stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
 		assert!(matches!(res.next().await, Ok(Some(_))));
