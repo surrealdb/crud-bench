@@ -64,7 +64,7 @@ where
 impl BenchmarkClient for Neo4jClient {
 	async fn startup(&self) -> Result<()> {
 		let stm = "CREATE INDEX FOR (r:Record) ON (r.id);";
-		self.graph.execute(query(&stm)).await?.next().await.ok();
+		self.graph.execute(query(stm)).await?.next().await.ok();
 		Ok(())
 	}
 
