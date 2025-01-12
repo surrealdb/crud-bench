@@ -76,7 +76,7 @@ impl BenchmarkClient for SqliteClient {
 		let stmt = "
             PRAGMA synchronous = NORMAL;
             PRAGMA journal_mode = WAL;
-            PRAGMA page_size = 4096;
+            PRAGMA page_size = 16384;
             PRAGMA cache_size = 2500;
             PRAGMA locking_mode = EXCLUSIVE;
 		";
