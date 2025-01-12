@@ -95,6 +95,8 @@ pub(crate) struct RocksDBClient {
 
 impl BenchmarkClient for RocksDBClient {
 	async fn shutdown(&self) -> Result<()> {
+		// No need to run background jobs
+		self.db.cancel_all_background_work(true);
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Ok
@@ -295,7 +297,7 @@ impl RocksDBClient {
 			ro.set_iterate_lower_bound([0u8]);
 			ro.set_iterate_upper_bound([255u8]);
 			ro.set_async_io(true);
-			ro.fill_cache(true);
+			ro.fill_cache(false);
 			// Create an iterator starting at the beginning
 			let iter = txn.iterator_opt(IteratorMode::Start, ro);
 			// Perform the relevant projection scan type
