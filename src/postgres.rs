@@ -70,7 +70,7 @@ impl BenchmarkClient for PostgresClient {
 				match t {
 					ColumnType::String => format!("{n} TEXT NOT NULL"),
 					ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
-					ColumnType::Object => format!("{n} JSON NOT NULL"),
+					ColumnType::Object => format!("{n} JSONB NOT NULL"),
 					ColumnType::Float => format!("{n} REAL NOT NULL"),
 					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
 					ColumnType::Uuid => format!("{n} UUID NOT NULL"),
