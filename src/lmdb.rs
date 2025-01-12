@@ -124,15 +124,14 @@ impl LmDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Create a new transaction
 			let mut txn = db.0.write_txn()?;
 			// Process the data
-			db.1.put(&mut txn, key.as_ref(), val.as_ref())?;
+			db.1.put(&mut txn, key, val.as_ref())?;
 			txn.commit()?;
 			Ok(())
 		})
@@ -142,13 +141,12 @@ impl LmDBClient {
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Create a new transaction
 			let txn = db.0.read_txn()?;
 			// Process the data
-			let res: Option<_> = db.1.get(&txn, key.as_ref())?;
+			let res: Option<_> = db.1.get(&txn, key)?;
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
@@ -162,15 +160,14 @@ impl LmDBClient {
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Create a new transaction
 			let mut txn = db.0.write_txn()?;
 			// Process the data
-			db.1.put(&mut txn, key.as_ref(), &val)?;
+			db.1.put(&mut txn, key, &val)?;
 			txn.commit()?;
 			Ok(())
 		})
@@ -180,13 +177,12 @@ impl LmDBClient {
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.0.write_txn()?;
 			// Process the data
-			db.1.delete(&mut txn, key.as_ref())?;
+			db.1.delete(&mut txn, key)?;
 			txn.commit()?;
 			Ok(())
 		})
@@ -205,7 +201,7 @@ impl LmDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Create a new transaction
 			let txn = db.0.read_txn()?;
 			// Create an iterator starting at the beginning
