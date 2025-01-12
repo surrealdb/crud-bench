@@ -9,7 +9,7 @@ use anyhow::{bail, Result};
 use arangors::client::reqwest::ReqwestClient;
 use arangors::document::options::InsertOptions;
 use arangors::document::options::RemoveOptions;
-use arangors::{Collection, Connection, Database};
+use arangors::{Collection, Connection, Database, GenericConnection};
 use serde_json::Value;
 use std::hint::black_box;
 use std::time::Duration;
@@ -22,20 +22,24 @@ pub(crate) const ARANGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 };
 
 pub(crate) struct ArangoDBClientProvider {
+	key: KeyType,
 	url: String,
 }
 
 impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
+	async fn setup(kt: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
 		Ok(Self {
+			key: kt,
 			url: endpoint.unwrap_or("http://127.0.0.1:8529").to_owned(),
 		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ArangoDBClient> {
-		let (db, co) = create_arango_client(&self.url).await?;
+		let (conn, db, co) = create_arango_client(&self.url).await?;
 		Ok(ArangoDBClient {
+			keytype: self.key,
+			connection: conn,
 			database: Mutex::new(db),
 			collection: Mutex::new(co),
 		})
@@ -47,64 +51,111 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 }
 
 pub(crate) struct ArangoDBClient {
+	keytype: KeyType,
+	connection: GenericConnection<ReqwestClient>,
 	database: Mutex<Database<ReqwestClient>>,
 	collection: Mutex<Collection<ReqwestClient>>,
 }
 
 async fn create_arango_client(
 	url: &str,
-) -> Result<(Database<ReqwestClient>, Collection<ReqwestClient>)> {
+) -> Result<(GenericConnection<ReqwestClient>, Database<ReqwestClient>, Collection<ReqwestClient>)>
+{
+	// Create the connection to the database
 	let conn = Connection::establish_without_auth(url).await.unwrap();
+	// Create the benchmarking database
 	let db = match conn.create_database("crud-bench").await {
 		Err(_) => conn.db("crud-bench").await.unwrap(),
 		Ok(db) => db,
 	};
+	// Create the becnhmark record collection
 	let co = match db.create_collection("record").await {
 		Err(_) => db.collection("record").await.unwrap(),
 		Ok(db) => db,
 	};
-	Ok((db, co))
+	Ok((conn, db, co))
 }
 
 impl BenchmarkClient for ArangoDBClient {
+	async fn startup(&self) -> Result<()> {
+		// Ensure we drop the database first.
+		// We can drop the database initially
+		// because the other clients will be
+		// created subsequently, and will then
+		// create the database as necessary.
+		self.connection.drop_database("crud-bench").await?;
+		// Everything ok
+		Ok(())
+	}
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		self.create(key.to_string(), val).await
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.create(key.to_string(), val).await,
+		}
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		self.create(key, val).await
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.create(key, val).await,
+		}
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		self.read(key.to_string()).await
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.read(key.to_string()).await,
+		}
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		self.read(key).await
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.read(key).await,
+		}
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		self.update(key.to_string(), val).await
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.update(key.to_string(), val).await,
+		}
 	}
 
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		self.update(key, val).await
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.update(key, val).await,
+		}
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.delete(key.to_string()).await
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.delete(key.to_string()).await,
+		}
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
-		self.delete(key).await
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.delete(key).await,
+		}
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.scan(scan).await,
+		}
 	}
 
 	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.scan(scan).await,
+		}
 	}
 }
 
