@@ -118,13 +118,12 @@ impl SurrealKVClient {
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_with_mode(ReadOnly)?;
 			// Process the data
-			let res = txn.get(key.as_ref())?;
+			let res = txn.get(key)?;
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
@@ -171,7 +170,7 @@ impl SurrealKVClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_with_mode(ReadOnly)?;
 			let beg = [0u8].as_slice();

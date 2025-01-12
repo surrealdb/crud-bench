@@ -172,9 +172,8 @@ impl RocksDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Set the transaction options
@@ -186,7 +185,7 @@ impl RocksDBClient {
 			// Create a new transaction
 			let txn = db.transaction_opt(&wo, &to);
 			// Process the data
-			txn.put(&key, val)?;
+			txn.put(key, val)?;
 			txn.commit()?;
 			Ok(())
 		})
@@ -196,9 +195,8 @@ impl RocksDBClient {
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Set the transaction options
 			let mut to = OptimisticTransactionOptions::default();
 			to.set_snapshot(true);
@@ -227,9 +225,8 @@ impl RocksDBClient {
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Set the transaction options
@@ -241,7 +238,7 @@ impl RocksDBClient {
 			// Create a new transaction
 			let txn = db.transaction_opt(&wo, &to);
 			// Process the data
-			txn.put(&key, val)?;
+			txn.put(key, val)?;
 			txn.commit()?;
 			Ok(())
 		})
@@ -251,9 +248,8 @@ impl RocksDBClient {
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Set the transaction options
 			let mut to = OptimisticTransactionOptions::default();
 			to.set_snapshot(true);
@@ -263,7 +259,7 @@ impl RocksDBClient {
 			// Create a new transaction
 			let txn = db.transaction_opt(&wo, &to);
 			// Process the data
-			txn.delete(&key)?;
+			txn.delete(key)?;
 			txn.commit()?;
 			Ok(())
 		})
@@ -282,7 +278,7 @@ impl RocksDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Set the transaction options
 			let mut to = OptimisticTransactionOptions::default();
 			to.set_snapshot(true);
