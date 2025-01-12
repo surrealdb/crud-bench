@@ -67,10 +67,6 @@ async fn create_arango_client(
 }
 
 impl BenchmarkClient for ArangoDBClient {
-	async fn startup(&self) -> Result<()> {
-		Ok(())
-	}
-
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.create(key.to_string(), val).await
 	}

@@ -173,6 +173,7 @@ pub(super) struct OperationResult {
 }
 
 impl OperationResult {
+	/// Create a new operataion result
 	pub(crate) fn new(mut metric: OperationMetric, histogram: Histogram<u64>) -> Self {
 		let elapsed = metric.start_time.elapsed();
 		let (mut cpu_usage, used_memory, mut disk_usage) =
@@ -210,6 +211,11 @@ impl OperationResult {
 			load_avg: System::load_average(),
 		}
 	}
+	/// Output the total time for this operation
+	pub(crate) fn total_time(&self) -> String {
+		format_duration(self.elapsed)
+	}
+	/// Output this operation as a table row
 	pub(crate) fn output<S>(&self, name: S) -> Vec<String>
 	where
 		S: ToString,

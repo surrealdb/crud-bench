@@ -100,8 +100,10 @@ impl Benchmark {
 		// Run the "scan" benchmarks
 		let mut scan_results = Vec::with_capacity(scans.len());
 		for scan in scans {
+			// Get the name of the scan
 			let name = scan.name.clone();
 			let samples = scan.samples.map(|s| s as u32).unwrap_or(self.samples);
+			// Execute the scan benchmark
 			let duration = self
 				.run_operation::<C, D>(
 					&clients,
@@ -111,6 +113,7 @@ impl Benchmark {
 					samples,
 				)
 				.await?;
+			// Store the scan benchmark result
 			scan_results.push((name, samples, duration));
 		}
 		// Compact the datastore
@@ -265,7 +268,11 @@ impl Benchmark {
 		// Calculate runtime information
 		let result = OperationResult::new(metric, global_histogram);
 		// Print out the last stage
-		out.writeln(|| Some(format!("\r{operation} 100%")))?;
+		out.write(|| Some(format!("\r{operation} 100%")))?;
+		// Print out a separator
+		out.write(|| Some(" - "))?;
+		// Output the total stage time
+		println!("{operation} took {}", result.total_time());
 		// Shall we skip the operation? (operation not supported)
 		if skip.load(Ordering::Relaxed) {
 			return Ok(None);
