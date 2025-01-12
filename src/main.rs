@@ -6,6 +6,7 @@ use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use docker::DockerContainer;
 use serde::{Deserialize, Serialize};
+use std::cmp::max;
 use std::fs::File;
 use std::io::{IsTerminal, Write};
 use tokio::runtime;
@@ -60,13 +61,13 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
 
-	/// Maximum number of blocking threads (default is the number of CPU cores)
-	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
-	pub(crate) blocking: u32,
+	/// Maximum number of blocking threads (based on the number of CPU cores)
+	#[arg(short, long, value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) blocking: Option<u32>,
 
-	/// Number of async runtime workers (default is the number of CPU cores)
-	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
-	pub(crate) workers: u32,
+	/// Number of async runtime workers (based on the number of CPU cores)
+	#[arg(short, long, value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) workers: Option<u32>,
 
 	/// Number of concurrent clients
 	#[arg(short, long, default_value = "1", value_parser=clap::value_parser!(u32).range(1..))]
@@ -189,19 +190,29 @@ fn run(args: Args) -> Result<()> {
 	} else {
 		args.database.start_docker(args.image)
 	};
+	// The default blocking size is 512 (aligned with SurrealDB's main)
+	let blocking = args.blocking.map_or(512, |v| v as usize);
+	// The number of CPUs (aligned with SurrealDB's main)
+	let base_cpus = max(4, num_cpus::get());
+	// The default size of the worker thread pool is set to base_cpus.
+	// It is multiplied by 2 if we are using an embedded async engine.
+	let workers =
+		args.workers.map_or(base_cpus, |v| v as usize) * args.endpoint.as_ref().map_or(1, |_| 2);
+	// The stack size (aligned with SurrealDB main: 10MiB)
+	let stack_size = 10 * 1024 * 1024;
 	// Setup the asynchronous runtime
 	let runtime = runtime::Builder::new_multi_thread()
-		.thread_stack_size(5 * 1024 * 1024) // Set stack size to 5MiB
-		.max_blocking_threads(args.blocking as usize) // Set the number of blocking threads
-		.worker_threads(args.workers as usize) // Set the number of worker threads
+		.thread_stack_size(stack_size) // Set stack size to 10MiB
+		.max_blocking_threads(blocking) // Set the number of blocking threads
+		.worker_threads(workers) // Set the number of worker threads
 		.thread_name("crud-bench-runtime") // Set the name of the runtime threads
 		.enable_all() // Enables all runtime features, including I/O and time
 		.build()
 		.expect("Failed to create a runtime");
 	// Setup the blocking thread pool
 	let _ = affinitypool::Builder::new()
-		.thread_stack_size(5 * 1024 * 1024) // Set stack size to 5MiB
-		.worker_threads(args.blocking as usize) // Set the number of worker threads
+		.thread_stack_size(stack_size) // Set stack size to 5MiB
+		.worker_threads(blocking) // Set the number of worker threads
 		.thread_name("crud-bench-threadpool") // Set the name of the threadpool threads
 		.thread_per_core(true) // Try to set a thread per core
 		.build()
@@ -237,8 +248,8 @@ fn run(args: Args) -> Result<()> {
 			println!(
 				"CPUs: {} - Blocking threads: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
 				num_cpus::get(),
-				args.blocking,
-				args.workers,
+				blocking,
+				workers,
 				args.clients,
 				args.threads,
 				args.samples,
@@ -292,8 +303,8 @@ mod test {
 			name: None,
 			database,
 			endpoint: None,
-			blocking: 5,
-			workers: 5,
+			blocking: Some(5),
+			workers: Some(5),
 			clients: 2,
 			threads: 2,
 			samples: 10000,
