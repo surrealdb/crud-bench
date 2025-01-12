@@ -152,7 +152,8 @@ impl Neo4jClient {
 	where
 		T: Into<BoltType> + Sync,
 	{
-		let stm = "MATCH (r:Record { id: $id }) DETACH DELETE r RETURN r";
+		let stm =
+			"MATCH (r:Record { id: $id }) WITH r, properties(r) AS p DETACH DELETE r RETURN p";
 		let stm = query(stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
 		assert!(matches!(res.next().await, Ok(Some(_))));
