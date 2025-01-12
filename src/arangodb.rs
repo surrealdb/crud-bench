@@ -9,7 +9,7 @@ use anyhow::{bail, Result};
 use arangors::client::reqwest::ReqwestClient;
 use arangors::document::options::InsertOptions;
 use arangors::document::options::RemoveOptions;
-use arangors::{Collection, Connection, Database};
+use arangors::{Collection, Connection, Database, GenericConnection};
 use serde_json::Value;
 use std::hint::black_box;
 use std::time::Duration;
@@ -34,8 +34,9 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ArangoDBClient> {
-		let (db, co) = create_arango_client(&self.url).await?;
+		let (conn, db, co) = create_arango_client(&self.url).await?;
 		Ok(ArangoDBClient {
+			connection: conn,
 			database: Mutex::new(db),
 			collection: Mutex::new(co),
 		})
@@ -47,17 +48,17 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 }
 
 pub(crate) struct ArangoDBClient {
+	connection: GenericConnection<ReqwestClient>,
 	database: Mutex<Database<ReqwestClient>>,
 	collection: Mutex<Collection<ReqwestClient>>,
 }
 
 async fn create_arango_client(
 	url: &str,
-) -> Result<(Database<ReqwestClient>, Collection<ReqwestClient>)> {
+) -> Result<(GenericConnection<ReqwestClient>, Database<ReqwestClient>, Collection<ReqwestClient>)>
+{
 	// Create the connection to the database
 	let conn = Connection::establish_without_auth(url).await.unwrap();
-	// Ensure we drop the database first
-	let _ = conn.drop_database("crud-bench").await;
 	// Create the benchmarking database
 	let db = match conn.create_database("crud-bench").await {
 		Err(_) => conn.db("crud-bench").await.unwrap(),
@@ -68,10 +69,21 @@ async fn create_arango_client(
 		Err(_) => db.collection("record").await.unwrap(),
 		Ok(db) => db,
 	};
-	Ok((db, co))
+	Ok((conn, db, co))
 }
 
 impl BenchmarkClient for ArangoDBClient {
+	async fn startup(&self) -> Result<()> {
+		// Ensure we drop the database first.
+		// We can drop the database initially
+		// because the other clients will be
+		// created subsequently, and will then
+		// create the database as necessary.
+		let _ = self.connection.drop_database("crud-bench").await?;
+		// Everything ok
+		Ok(())
+	}
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.create(key.to_string(), val).await
 	}
