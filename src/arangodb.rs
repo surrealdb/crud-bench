@@ -79,7 +79,7 @@ impl BenchmarkClient for ArangoDBClient {
 		// because the other clients will be
 		// created subsequently, and will then
 		// create the database as necessary.
-		let _ = self.connection.drop_database("crud-bench").await?;
+		self.connection.drop_database("crud-bench").await?;
 		// Everything ok
 		Ok(())
 	}
