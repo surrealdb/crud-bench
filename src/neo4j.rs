@@ -115,7 +115,7 @@ impl Neo4jClient {
 		T: Into<BoltType> + Sync,
 	{
 		let fields = Neo4jDialect::create_clause(&self.columns, val)?;
-		let stm = format!("CREATE (r:Record {{ id: $id, {fields} }}) RETURN r");
+		let stm = format!("CREATE (r:Record {{ id: $id, {fields} }}) RETURN r.id");
 		let stm = query(&stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
 		assert!(matches!(res.next().await, Ok(Some(_))));
@@ -140,7 +140,7 @@ impl Neo4jClient {
 		T: Into<BoltType> + Sync,
 	{
 		let fields = Neo4jDialect::update_clause(&self.columns, val)?;
-		let stm = format!("MATCH (r:Record {{ id: $id }}) SET {fields} RETURN r");
+		let stm = format!("MATCH (r:Record {{ id: $id }}) SET {fields} RETURN r.id");
 		let stm = query(&stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
 		assert!(matches!(res.next().await, Ok(Some(_))));
@@ -152,8 +152,7 @@ impl Neo4jClient {
 	where
 		T: Into<BoltType> + Sync,
 	{
-		let stm =
-			"MATCH (r:Record { id: $id }) WITH r, properties(r) AS p DETACH DELETE r RETURN p";
+		let stm = "MATCH (r:Record { id: $id }) WITH r, r.id AS id DETACH DELETE r RETURN id";
 		let stm = query(stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
 		assert!(matches!(res.next().await, Ok(Some(_))));
