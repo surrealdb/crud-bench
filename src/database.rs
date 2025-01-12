@@ -1,5 +1,5 @@
 use crate::benchmark::Benchmark;
-use crate::dialect::{AnsiSqlDialect, DefaultDialect};
+use crate::dialect::{AnsiSqlDialect, DefaultDialect, MySqlDialect, Neo4jDialect};
 use crate::docker::{DockerContainer, DockerParams};
 use crate::dry::DryClientProvider;
 use crate::engine::BenchmarkEngine;
@@ -27,6 +27,8 @@ pub(crate) enum Database {
 	Mongodb,
 	#[cfg(feature = "mysql")]
 	Mysql,
+	#[cfg(feature = "neo4j")]
+	Neo4j,
 	#[cfg(feature = "postgres")]
 	Postgres,
 	#[cfg(feature = "redb")]
@@ -68,6 +70,8 @@ impl Database {
 			Self::Mongodb => crate::mongodb::MONGODB_DOCKER_PARAMS,
 			#[cfg(feature = "mysql")]
 			Self::Mysql => crate::mysql::MYSQL_DOCKER_PARAMS,
+			#[cfg(feature = "mysql")]
+			Self::Neo4j => crate::neo4j::NEO4J_DOCKER_PARAMS,
 			#[cfg(feature = "postgres")]
 			Self::Postgres => crate::postgres::POSTGRES_DOCKER_PARAMS,
 			#[cfg(feature = "redis")]
@@ -205,8 +209,24 @@ impl Database {
 			#[cfg(feature = "mysql")]
 			Database::Mysql => {
 				benchmark
-					.run::<_, AnsiSqlDialect, _>(
+					.run::<_, MySqlDialect, _>(
 						crate::mysql::MysqlClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark.endpoint.as_deref(),
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "neo4j")]
+			Database::Neo4j => {
+				benchmark
+					.run::<_, Neo4jDialect, _>(
+						crate::neo4j::Neo4jClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark.endpoint.as_deref(),

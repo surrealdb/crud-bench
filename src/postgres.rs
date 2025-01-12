@@ -186,7 +186,7 @@ impl PostgresClient {
 	where
 		T: ToSql + Sync,
 	{
-		let (fields, values) = self.columns.insert_clauses::<AnsiSqlDialect>(val)?;
+		let (fields, values) = AnsiSqlDialect::create_clause(&self.columns, val);
 		let stm = format!("INSERT INTO record (id, {fields}) VALUES ($1, {values})");
 		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);
@@ -208,8 +208,8 @@ impl PostgresClient {
 	where
 		T: ToSql + Sync,
 	{
-		let set = self.columns.set_clause::<AnsiSqlDialect>(val)?;
-		let stm = format!("UPDATE record SET {set} WHERE id=$1");
+		let fields = AnsiSqlDialect::update_clause(&self.columns, val);
+		let stm = format!("UPDATE record SET {fields} WHERE id=$1");
 		let res = self.client.execute(&stm, &[&key]).await?;
 		assert_eq!(res, 1);
 		Ok(())

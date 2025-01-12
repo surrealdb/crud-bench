@@ -188,7 +188,7 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		let (fields, values) = self.columns.insert_clauses::<MySqlDialect>(val)?;
+		let (fields, values) = MySqlDialect::create_clause(&self.columns, val);
 		let stm = format!("INSERT INTO record (id, {fields}) VALUES (?, {values})");
 		let _: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
 		Ok(())
@@ -209,8 +209,8 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		let set = self.columns.set_clause::<MySqlDialect>(val)?;
-		let stm = format!("UPDATE record SET {set} WHERE id=?");
+		let fields = MySqlDialect::update_clause(&self.columns, val);
+		let stm = format!("UPDATE record SET {fields} WHERE id=?");
 		let _: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
 		Ok(())
 	}
