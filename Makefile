@@ -29,6 +29,8 @@ define CRUD_BENCH_VALUE
 }
 endef
 
+database ?= surrealdb
+
 .PHONY: default
 default:
 	@echo "Choose a Makefile target:"
@@ -42,10 +44,10 @@ export CRUD_BENCH_SCANS
 export CRUD_BENCH_VALUE
 .PHONY: dev
 dev:
-	cargo run -- -d surrealdb -s 100000 -c 128 -t 48 -k string26 -r
+	cargo run -- -d $(database) -s 100000 -c 128 -t 48 -k string26 -r
 
 export CRUD_BENCH_SCANS
 export CRUD_BENCH_VALUE
 .PHONY: test
 test:
-	target/release/crud-bench -d surrealdb -s 5000000 -c 128 -t 48 -k string26 -r
+	target/release/crud-bench -d $(database) -s 5000000 -c 128 -t 48 -k string26 -r

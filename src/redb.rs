@@ -94,9 +94,8 @@ impl ReDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Create a new transaction
@@ -106,7 +105,7 @@ impl ReDBClient {
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;
 			// Process the data
-			tab.insert(key.as_ref(), val)?;
+			tab.insert(key, val)?;
 			drop(tab);
 			txn.commit()?;
 			Ok(())
@@ -117,15 +116,14 @@ impl ReDBClient {
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Create a new transaction
 			let txn = db.begin_read()?;
 			// Open the database table
 			let tab = txn.open_table(TABLE)?;
 			// Process the data
-			let res: Option<_> = tab.get(key.as_ref())?;
+			let res: Option<_> = tab.get(key)?;
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
@@ -139,9 +137,8 @@ impl ReDBClient {
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Create a new transaction
@@ -151,7 +148,7 @@ impl ReDBClient {
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;
 			// Process the data
-			tab.insert(key.as_ref(), val)?;
+			tab.insert(key, val)?;
 			drop(tab);
 			txn.commit()?;
 			Ok(())
@@ -162,9 +159,8 @@ impl ReDBClient {
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
-		let key: Box<[u8]> = key.into();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Let the OS handle syncing to disk
@@ -172,7 +168,7 @@ impl ReDBClient {
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;
 			// Process the data
-			tab.remove(key.as_ref())?;
+			tab.remove(key)?;
 			drop(tab);
 			txn.commit()?;
 			Ok(())
@@ -192,7 +188,7 @@ impl ReDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		affinitypool::execute(move || -> Result<_> {
+		affinitypool::execute(|| -> Result<_> {
 			// Create a new transaction
 			let txn = db.begin_read()?;
 			// Open the database table
