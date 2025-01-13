@@ -4,7 +4,7 @@ use crate::keyprovider::KeyProvider;
 use crate::valueprovider::ValueProvider;
 use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
-use docker::DockerContainer;
+use docker::Container;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{IsTerminal, Write};
@@ -222,7 +222,7 @@ fn run(args: Args) -> Result<()> {
 		// Output the results
 		Ok(res) => {
 			println!("--------------------------------------------------");
-			match container.as_ref().map(DockerContainer::image) {
+			match container.as_ref().map(Container::image) {
 				Some(v) => {
 					print!("Benchmark result for {:?} on docker {v}", args.database)
 				}

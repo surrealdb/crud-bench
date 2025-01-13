@@ -1,6 +1,6 @@
 use crate::benchmark::Benchmark;
 use crate::dialect::{AnsiSqlDialect, DefaultDialect, MySqlDialect, Neo4jDialect};
-use crate::docker::{DockerContainer, DockerParams};
+use crate::docker::{Container, DockerParams};
 use crate::dry::DryClientProvider;
 use crate::engine::BenchmarkEngine;
 use crate::keyprovider::KeyProvider;
@@ -57,7 +57,7 @@ pub(crate) enum Database {
 
 impl Database {
 	/// Start the Docker container if necessary
-	pub(crate) fn start_docker(&self, image: Option<String>) -> Option<DockerContainer> {
+	pub(crate) fn start_docker(&self, image: Option<String>) -> Option<Container> {
 		// Get any pre-defined Docker configuration
 		let params: DockerParams = match self {
 			#[cfg(feature = "arangodb")]
@@ -89,7 +89,8 @@ impl Database {
 		};
 		// Check if a custom image has been specified
 		let image = image.unwrap_or(params.image.to_string());
-		let container = DockerContainer::start(image, params.pre_args, params.post_args);
+		// Start the specified container with arguments
+		let container = Container::start(image, params.pre_args, params.post_args);
 		Some(container)
 	}
 
