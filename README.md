@@ -329,6 +329,21 @@ following command:
 cargo run -r -- -d mysql -e mysql://root:mysql@127.0.0.1:3306/bench -s 100000 -c 12 -t 24 -r
 ```
 
+### [Neo4j](https://neo4j.com/)
+
+Neo4j is a graph database management system for connected data.
+
+```bash
+cargo run -r -- -d neo4j -s 100000 -c 12 -t 24 -r
+```
+
+The above command starts a Docker container automatically. To connect to an already-running Neo4j instance use the
+following command:
+
+```bash
+cargo run -r -- -d neo4j -e '127.0.0.1:7687' -s 100000 -c 12 -t 24 -r
+```
+
 ### [Postgres](https://www.postgresql.org/)
 
 Postgres is a networked, object-relational, ACID-compliant, SQL-based database.
