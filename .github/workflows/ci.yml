@@ -329,6 +329,12 @@ jobs:
       - name: Set file permissions
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
       - name: Login to Amazon ECR
         id: login-ecr
         run: |
