@@ -24,13 +24,13 @@ pub(crate) struct Benchmark {
 	/// The server endpoint to connect to
 	pub(crate) endpoint: Option<String>,
 	/// The number of clients to spawn
-	clients: u32,
+	pub(crate) clients: u32,
 	/// The number of threads to spawn
-	threads: u32,
+	pub(crate) threads: u32,
 	/// The number of samples to run
-	samples: u32,
+	pub(crate) samples: u32,
 	/// Pid to monitor
-	pid: Option<u32>,
+	pub(crate) pid: Option<u32>,
 }
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {

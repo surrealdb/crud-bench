@@ -1,6 +1,6 @@
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::{KeyType, Scan};
+use crate::{Benchmark, KeyType, Scan};
 use anyhow::Result;
 use serde_json::Value;
 use std::hint::black_box;
@@ -14,7 +14,7 @@ impl BenchmarkEngine<DryClient> for DryClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		Ok(Self {})
 	}
 	/// Creates a new client for this benchmarking engine

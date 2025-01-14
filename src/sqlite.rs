@@ -3,7 +3,7 @@
 use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{KeyType, Projection, Scan};
+use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
 use serde_json::{Map, Value as Json};
 use std::borrow::Cow;
@@ -31,7 +31,7 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(kt: KeyType, columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
+	async fn setup(kt: KeyType, columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Remove the database directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Recreate the database directory

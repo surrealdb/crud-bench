@@ -4,7 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::{KeyType, Projection, Scan};
+use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use futures::{StreamExt, TryStreamExt};
 use mongodb::bson::{doc, Bson, Document};
@@ -16,6 +16,8 @@ use mongodb::{bson, Client, Collection, Cursor, Database};
 use serde_json::Value;
 use std::hint::black_box;
 
+pub const DEFAULT: &str = "mongodb://root:root@127.0.0.1:27017";
+
 pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "mongo",
 	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root",
@@ -23,38 +25,45 @@ pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 };
 
 pub(crate) struct MongoDBClientProvider {
-	url: String,
+	client: Client,
 }
 
 impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
+		// Get the custom endpoint if specified
+		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
+		// Create a new client with a connection pool.
+		// The MongoDB client does not correctly limit
+		// the number of connections in the connection
+		// pool. Therefore we create a single connection
+		// pool and share it with all of the crud-bench
+		// clients. This follows the recommended advice
+		// for using the MongoDB driver. Note that this
+		// still creates 2 more connections than has
+		// been specified in the `max_pool_size` option.
+		let mut opts = ClientOptions::parse(url).await?;
+		opts.max_pool_size = Some(options.clients);
+		opts.min_pool_size = None;
+		// Create the client provider
 		Ok(Self {
-			url: endpoint.unwrap_or("mongodb://root:root@localhost:27017").to_owned(),
+			client: Client::with_options(opts)?,
 		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<MongoDBClient> {
-		Ok(MongoDBClient(create_mongo_client(&self.url).await?))
+		let db = self.client.database_with_options(
+			"crud-bench",
+			DatabaseOptions::builder()
+				.write_concern(WriteConcern::builder().journal(false).build())
+				.read_concern(ReadConcern::majority())
+				.build(),
+		);
+		Ok(MongoDBClient(db))
 	}
 }
 
 pub(crate) struct MongoDBClient(Database);
-
-async fn create_mongo_client(url: &str) -> Result<Database>
-where
-{
-	let opts = ClientOptions::parse(url).await?;
-	let client = Client::with_options(opts)?;
-	let db = client.database_with_options(
-		"crud-bench",
-		DatabaseOptions::builder()
-			.write_concern(WriteConcern::builder().journal(false).build())
-			.read_concern(ReadConcern::majority())
-			.build(),
-	);
-	Ok(db)
-}
 
 impl BenchmarkClient for MongoDBClient {
 	async fn compact(&self) -> Result<()> {

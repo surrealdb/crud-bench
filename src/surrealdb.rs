@@ -3,7 +3,7 @@
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::{KeyType, Projection, Scan};
+use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
@@ -12,6 +12,8 @@ use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
 use surrealdb::RecordId;
 use surrealdb::Surreal;
+
+pub const DEFAULT: &str = "ws://127.0.0.1:8000";
 
 pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
@@ -52,9 +54,9 @@ async fn initialise_db(endpoint: &str, root: Root<'static>) -> Result<Surreal<An
 
 impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
-		// Get the endpoint if specified
-		let endpoint = endpoint.unwrap_or("ws://127.0.0.1:8000").replace("memory", "mem://");
+	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
+		// Get the custom endpoint if specified
+		let endpoint = options.endpoint.as_deref().unwrap_or(DEFAULT).replace("memory", "mem://");
 		// Define root user details
 		let root = Root {
 			username: "root",

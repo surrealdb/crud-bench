@@ -4,7 +4,7 @@ use crate::dialect::{Dialect, MySqlDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{KeyType, Projection, Scan};
+use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
 use mysql_async::consts;
 use mysql_async::prelude::Queryable;
@@ -14,6 +14,8 @@ use serde_json::{Map, Value};
 use std::hint::black_box;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+pub const DEFAULT: &str = "mysql://root:mysql@127.0.0.1:3306/bench";
 
 pub(crate) const MYSQL_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "mysql",
@@ -25,8 +27,10 @@ pub(crate) struct MysqlClientProvider(KeyType, Columns, String);
 
 impl BenchmarkEngine<MysqlClient> for MysqlClientProvider {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
-		let url = endpoint.unwrap_or("mysql://root:mysql@127.0.0.1:3306/bench").to_owned();
+	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
+		// Get the custom endpoint if specified
+		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
+		// Create the client provider
 		Ok(Self(kt, columns, url))
 	}
 	/// Creates a new client for this benchmarking engine

@@ -4,7 +4,7 @@ use crate::dialect::AnsiSqlDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{KeyType, Projection, Scan};
+use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
 use futures::StreamExt;
 use scylla::_macro_internal::SerializeValue;
@@ -13,6 +13,8 @@ use scylla::{Session, SessionBuilder};
 use serde_json::Value;
 use std::hint::black_box;
 use std::num::NonZeroUsize;
+
+pub const DEFAULT: &str = "127.0.0.1:9042";
 
 pub(crate) const SCYLLADB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "scylladb/scylla",
@@ -24,9 +26,9 @@ pub(crate) struct ScyllaDBClientProvider(KeyType, Columns, String);
 
 impl BenchmarkEngine<ScylladbClient> for ScyllaDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
-		let node = endpoint.unwrap_or("127.0.0.1:9042").to_owned();
-		Ok(ScyllaDBClientProvider(kt, columns, node))
+	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
+		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
+		Ok(ScyllaDBClientProvider(kt, columns, url))
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ScylladbClient> {

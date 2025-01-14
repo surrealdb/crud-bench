@@ -3,13 +3,15 @@
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::KeyType;
+use crate::{Benchmark, KeyType};
 use anyhow::Result;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client};
 use serde_json::Value;
 use std::hint::black_box;
 use tokio::sync::Mutex;
+
+pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
 pub(crate) const KEYDB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "eqalpha/keydb",
@@ -23,9 +25,9 @@ pub(crate) struct KeydbClientProvider {
 
 impl BenchmarkEngine<KeydbClient> for KeydbClientProvider {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		Ok(KeydbClientProvider {
-			url: endpoint.unwrap_or("redis://:root@127.0.0.1:6379/").to_owned(),
+			url: options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned(),
 		})
 	}
 	/// Creates a new client for this benchmarking engine

@@ -4,7 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::{KeyType, Projection, Scan};
+use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use arangors::client::reqwest::ReqwestClient;
 use arangors::document::options::InsertOptions;
@@ -14,6 +14,8 @@ use serde_json::Value;
 use std::hint::black_box;
 use std::time::Duration;
 use tokio::sync::Mutex;
+
+pub const DEFAULT: &str = "http://127.0.0.1:8529";
 
 pub(crate) const ARANGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "arangodb",
@@ -28,10 +30,10 @@ pub(crate) struct ArangoDBClientProvider {
 
 impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(kt: KeyType, _columns: Columns, endpoint: Option<&str>) -> Result<Self> {
+	async fn setup(kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		Ok(Self {
 			key: kt,
-			url: endpoint.unwrap_or("http://127.0.0.1:8529").to_owned(),
+			url: options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned(),
 		})
 	}
 	/// Creates a new client for this benchmarking engine

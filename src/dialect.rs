@@ -148,7 +148,7 @@ impl Dialect for Neo4jDialect {}
 
 impl Neo4jDialect {
 	/// Constructs the field clauses for the [C]reate tests
-	pub fn create_clause(_cols: &Columns, val: Value) -> Result<String> {
+	pub fn create_clause(val: Value) -> Result<String> {
 		let val = Flattener::new()
 			.set_key_separator("_")
 			.set_array_formatting(ArrayFormatting::Surrounded {
@@ -170,7 +170,7 @@ impl Neo4jDialect {
 		Ok(fields.join(", "))
 	}
 	/// Constructs the field clauses for the [U]pdate tests
-	pub fn update_clause(_cols: &Columns, val: Value) -> Result<String> {
+	pub fn update_clause(val: Value) -> Result<String> {
 		let val = Flattener::new()
 			.set_key_separator("_")
 			.set_array_formatting(ArrayFormatting::Surrounded {
