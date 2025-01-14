@@ -74,7 +74,7 @@ impl BenchmarkClient for SqliteClient {
 	async fn startup(&self) -> Result<()> {
 		// Optimise SQLite
 		let stmt = "
-            PRAGMA synchronous = NORMAL;
+            PRAGMA synchronous = OFF;
             PRAGMA journal_mode = WAL;
             PRAGMA page_size = 16384;
             PRAGMA cache_size = 2500;
