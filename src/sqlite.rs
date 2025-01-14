@@ -37,9 +37,9 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 		// Recreate the database directory
 		std::fs::create_dir(DATABASE_DIR)?;
 		// Switch to the new directory
-		std::env::set_current_dir(DATABASE_DIR)?;
+		let path = format!("{DATABASE_DIR}/db");
 		// Create the connection
-		let conn = Connection::open("db").await?;
+		let conn = Connection::open(&path).await?;
 		// Create the store
 		Ok(Self {
 			conn: Arc::new(conn),
