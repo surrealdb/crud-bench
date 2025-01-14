@@ -193,7 +193,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-amd64-large]
+    runs-on: [runner-amd64-large-private]
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -328,6 +328,14 @@ jobs:
 
       - name: Set file permissions
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        run: |
+          REGION=${{ secrets.REGISTRY_AWS_REGION }}
+          REGISTRY=${{ secrets.REGISTRY_AWS_ACCOUNT_ID }}.dkr.ecr.$REGION.amazonaws.com
+          aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
+          echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
 
       - name: ${{ matrix.skipped || 'Benchmark processing' }}
         if: ${{ !matrix.enabled }}
