@@ -115,9 +115,12 @@ pub(crate) struct Args {
 		env = "CRUD_BENCH_SCANS",
 		default_value = r#"[
 			{ "name": "count_all", "samples": 100, "projection": "COUNT" },
-			{ "name": "limit_keys", "samples": 100, "projection": "ID", "limit": 100, "expect": 100 },
-			{ "name": "limit_full", "samples": 100, "projection": "FULL", "limit": 100, "expect": 100 },
-			{ "name": "limit_count", "samples": 100, "projection": "COUNT", "limit": 100, "expect": 100 }
+			{ "name": "limit_id", "samples": 100, "projection": "ID", "limit": 100, "expect": 100 },
+			{ "name": "limit_all", "samples": 100, "projection": "FULL", "limit": 100, "expect": 100 },
+			{ "name": "limit_count", "samples": 100, "projection": "COUNT", "limit": 100, "expect": 100 },
+			{ "name": "limit_start_id", "samples": 100, "projection": "ID", "start": 5000, "limit": 100, "expect": 100 },
+			{ "name": "limit_start_all", "samples": 100, "projection": "FULL", "start": 5000, "limit": 100, "expect": 100 },
+			{ "name": "limit_start_count", "samples": 100, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 }
 		]"#
 	)]
 	pub(crate) scans: String,
