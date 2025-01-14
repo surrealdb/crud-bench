@@ -3,7 +3,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::{KeyType, Projection, Scan};
+use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use heed::types::Bytes;
 use heed::{Database, EnvOpenOptions};
@@ -32,7 +32,7 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Recreate the database directory

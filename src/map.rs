@@ -1,7 +1,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::{KeyType, Projection, Scan};
+use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use dashmap::DashMap;
 use serde_json::Value;
@@ -36,7 +36,7 @@ impl BenchmarkEngine<MapClient> for MapClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(kt: KeyType, _columns: Columns, _endpoint: Option<&str>) -> Result<Self> {
+	async fn setup(kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		Ok(Self(kt.into()))
 	}
 	/// Creates a new client for this benchmarking engine

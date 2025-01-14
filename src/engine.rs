@@ -1,6 +1,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::valueprovider::Columns;
+use crate::Benchmark;
 use crate::{KeyType, Scan};
 use anyhow::{bail, Result};
 use serde_json::Value;
@@ -14,7 +15,7 @@ where
 	C: BenchmarkClient + Send,
 {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self>;
+	async fn setup(kt: KeyType, columns: Columns, endpoint: &Benchmark) -> Result<Self>;
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<C>;
 	/// The number of seconds to wait before connecting

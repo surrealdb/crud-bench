@@ -108,8 +108,7 @@ impl Database {
 			Database::Dry => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						DryClientProvider::setup(kt, vp.columns(), benchmark.endpoint.as_deref())
-							.await?,
+						DryClientProvider::setup(kt, vp.columns(), benchmark).await?,
 						kp,
 						vp,
 						scans,
@@ -119,8 +118,7 @@ impl Database {
 			Database::Map => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						MapClientProvider::setup(kt, vp.columns(), benchmark.endpoint.as_deref())
-							.await?,
+						MapClientProvider::setup(kt, vp.columns(), benchmark).await?,
 						kp,
 						vp,
 						scans,
@@ -131,12 +129,8 @@ impl Database {
 			Database::Arangodb => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::arangodb::ArangoDBClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::arangodb::ArangoDBClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -150,7 +144,7 @@ impl Database {
 						crate::dragonfly::DragonflyClientProvider::setup(
 							kt,
 							vp.columns(),
-							benchmark.endpoint.as_deref(),
+							benchmark,
 						)
 						.await?,
 						kp,
@@ -163,12 +157,8 @@ impl Database {
 			Database::Keydb => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::keydb::KeydbClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::keydb::KeydbClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -179,12 +169,7 @@ impl Database {
 			Database::Lmdb => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::lmdb::LmDBClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::lmdb::LmDBClientProvider::setup(kt, vp.columns(), benchmark).await?,
 						kp,
 						vp,
 						scans,
@@ -195,12 +180,8 @@ impl Database {
 			Database::Mongodb => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::mongodb::MongoDBClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::mongodb::MongoDBClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -211,12 +192,8 @@ impl Database {
 			Database::Mysql => {
 				benchmark
 					.run::<_, MySqlDialect, _>(
-						crate::mysql::MysqlClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::mysql::MysqlClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -227,12 +204,8 @@ impl Database {
 			Database::Neo4j => {
 				benchmark
 					.run::<_, Neo4jDialect, _>(
-						crate::neo4j::Neo4jClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::neo4j::Neo4jClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -243,12 +216,8 @@ impl Database {
 			Database::Postgres => {
 				benchmark
 					.run::<_, AnsiSqlDialect, _>(
-						crate::postgres::PostgresClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::postgres::PostgresClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -259,12 +228,7 @@ impl Database {
 			Database::Redb => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::redb::ReDBClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::redb::ReDBClientProvider::setup(kt, vp.columns(), benchmark).await?,
 						kp,
 						vp,
 						scans,
@@ -275,12 +239,8 @@ impl Database {
 			Database::Redis => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::redis::RedisClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::redis::RedisClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -291,12 +251,8 @@ impl Database {
 			Database::Rocksdb => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::rocksdb::RocksDBClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::rocksdb::RocksDBClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -307,12 +263,8 @@ impl Database {
 			Database::Scylladb => {
 				benchmark
 					.run::<_, AnsiSqlDialect, _>(
-						crate::scylladb::ScyllaDBClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::scylladb::ScyllaDBClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -323,12 +275,8 @@ impl Database {
 			Database::Speedb => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::speedb::SpeeDBClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::speedb::SpeeDBClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -339,12 +287,8 @@ impl Database {
 			Database::Sqlite => {
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::sqlite::SqliteClientProvider::setup(
-							kt,
-							vp.columns(),
-							benchmark.endpoint.as_deref(),
-						)
-						.await?,
+						crate::sqlite::SqliteClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -358,7 +302,7 @@ impl Database {
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
-							benchmark.endpoint.as_deref(),
+							benchmark,
 						)
 						.await?,
 						kp,
@@ -374,7 +318,7 @@ impl Database {
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
-							benchmark.endpoint.as_deref(),
+							benchmark,
 						)
 						.await?,
 						kp,
@@ -390,7 +334,7 @@ impl Database {
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
-							benchmark.endpoint.as_deref(),
+							benchmark,
 						)
 						.await?,
 						kp,
@@ -406,7 +350,7 @@ impl Database {
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
-							benchmark.endpoint.as_deref(),
+							benchmark,
 						)
 						.await?,
 						kp,
@@ -422,7 +366,7 @@ impl Database {
 						crate::surrealkv::SurrealKVClientProvider::setup(
 							kt,
 							vp.columns(),
-							benchmark.endpoint.as_deref(),
+							benchmark,
 						)
 						.await?,
 						kp,

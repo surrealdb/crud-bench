@@ -5,7 +5,7 @@ use crate::dialect::Neo4jDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::{KeyType, Projection, Scan};
+use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use neo4rs::query;
 use neo4rs::BoltType;
@@ -14,6 +14,8 @@ use neo4rs::Graph;
 use serde_json::Value;
 use std::hint::black_box;
 
+pub const DEFAULT: &str = "127.0.0.1:7687";
+
 pub(crate) const NEO4J_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "neo4j",
 	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none",
@@ -21,44 +23,46 @@ pub(crate) const NEO4J_DOCKER_PARAMS: DockerParams = DockerParams {
 };
 
 pub(crate) struct Neo4jClientProvider {
-	url: String,
-	columns: Columns,
+	graph: Graph,
 }
 
 impl BenchmarkEngine<Neo4jClient> for Neo4jClientProvider {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
+		// Get the custom endpoint if specified
+		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
+		// Create a new client with a connection pool.
+		// The Neo4j client supports connection pooling
+		// and the recommended advice is to use a single
+		// graph connection and share that with all async
+		// tasks. Therefore we create a single connection
+		// pool and share it with all of the crud-bench
+		// clients. The Neo4j driver correctly limits the
+		// number of connections to the number specified
+		// in the `max_connections` option.
+		let config = ConfigBuilder::default()
+			.uri(url)
+			.db("neo4j")
+			.user("neo4j")
+			.password("neo4j")
+			.fetch_size(500)
+			.max_connections(options.clients as usize)
+			.build()?;
+		// Create the client
 		Ok(Self {
-			url: endpoint.unwrap_or("127.0.0.1:7687").to_owned(),
-			columns,
+			graph: Graph::connect(config).await?,
 		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<Neo4jClient> {
 		Ok(Neo4jClient {
-			graph: create_neo_client(&self.url).await?,
-			columns: self.columns.clone(),
+			graph: self.graph.clone(),
 		})
 	}
 }
 
 pub(crate) struct Neo4jClient {
 	graph: Graph,
-	columns: Columns,
-}
-
-async fn create_neo_client(url: &str) -> Result<Graph>
-where
-{
-	let config = ConfigBuilder::default()
-		.uri(url)
-		.db("neo4j")
-		.user("neo4j")
-		.password("neo4j")
-		.fetch_size(500)
-		.max_connections(1)
-		.build()?;
-	Ok(Graph::connect(config).await?)
 }
 
 impl BenchmarkClient for Neo4jClient {
@@ -114,7 +118,7 @@ impl Neo4jClient {
 	where
 		T: Into<BoltType> + Sync,
 	{
-		let fields = Neo4jDialect::create_clause(&self.columns, val)?;
+		let fields = Neo4jDialect::create_clause(val)?;
 		let stm = format!("CREATE (r:Record {{ id: $id, {fields} }}) RETURN r.id");
 		let stm = query(&stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
@@ -139,7 +143,7 @@ impl Neo4jClient {
 	where
 		T: Into<BoltType> + Sync,
 	{
-		let fields = Neo4jDialect::update_clause(&self.columns, val)?;
+		let fields = Neo4jDialect::update_clause(val)?;
 		let stm = format!("MATCH (r:Record {{ id: $id }}) SET {fields} RETURN r.id");
 		let stm = query(&stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();

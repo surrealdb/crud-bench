@@ -4,12 +4,14 @@ use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{KeyType, Projection, Scan};
+use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
 use serde_json::{Map, Value};
 use std::hint::black_box;
 use tokio_postgres::types::{Json, ToSql};
 use tokio_postgres::{Client, NoTls, Row};
+
+pub const DEFAULT: &str = "host=localhost user=postgres password=postgres";
 
 pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "postgres",
@@ -21,8 +23,10 @@ pub(crate) struct PostgresClientProvider(KeyType, Columns, String);
 
 impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(kt: KeyType, columns: Columns, endpoint: Option<&str>) -> Result<Self> {
-		let url = endpoint.unwrap_or("host=localhost user=postgres password=postgres").to_owned();
+	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
+		// Get the custom endpoint if specified
+		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
+		// Create the client provider
 		Ok(Self(kt, columns, url))
 	}
 	/// Creates a new client for this benchmarking engine
@@ -35,6 +39,7 @@ impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 				eprintln!("connection error: {}", e);
 			}
 		});
+		// Create the client
 		Ok(PostgresClient {
 			client,
 			kt: self.0,
