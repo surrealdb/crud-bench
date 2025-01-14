@@ -77,7 +77,7 @@ serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.135"
 serial_test = "3.2.0"
 speedb = { version = "0.0.5", features = ["lz4", "snappy"], optional = true }
-surrealdb = { version = "2", package = "surrealdb-nightly", optional = true }
+surrealdb = { version = "2", optional = true, git = "https://github.com/surrealdb/surrealdb" }
 surrealkv = { version = "0.8.0", optional = true }
 sysinfo = { version = "0.33.1", features = ["serde"] }
 tokio = { version = "1.43.0", features = ["macros", "time", "rt-multi-thread"] }
