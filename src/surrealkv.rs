@@ -178,35 +178,36 @@ impl SurrealKVClient {
 			// Perform the relevant projection scan type
 			match p {
 				Projection::Id => {
-					let iter = txn.scan(beg..end, Some(s + l))?;
+					let iter = txn.scan(beg..end, Some(s + l));
 					// We use a for loop to iterate over the results, while
 					// calling black_box internally. This is necessary as
 					// an iterator with `filter_map` or `map` is optimised
 					// out by the compiler when calling `count` at the end.
 					let mut count = 0;
-					for v in iter.into_iter().skip(s).take(l) {
-						black_box(v.0);
+					for v in iter.skip(s).take(l) {
+						assert!(v.is_ok());
+						black_box(v.unwrap().0);
 						count += 1;
 					}
 					Ok(count)
 				}
 				Projection::Full => {
-					let iter = txn.scan(beg..end, Some(s + l))?;
+					let iter = txn.scan(beg..end, Some(s + l));
 					// We use a for loop to iterate over the results, while
 					// calling black_box internally. This is necessary as
 					// an iterator with `filter_map` or `map` is optimised
 					// out by the compiler when calling `count` at the end.
 					let mut count = 0;
-					for v in iter.into_iter().skip(s).take(l) {
-						black_box(v.1);
+					for v in iter.skip(s).take(l) {
+						assert!(v.is_ok());
+						black_box(v.unwrap().1);
 						count += 1;
 					}
 					Ok(count)
 				}
 				Projection::Count => {
 					Ok(txn
-						.scan(beg..end, Some(s + l))?
-						.into_iter()
+						.keys(beg..end, Some(s + l))
 						.skip(s) // Skip the first `offset` entries
 						.take(l) // Take the next `limit` entries
 						.count())
