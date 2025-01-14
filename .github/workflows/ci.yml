@@ -200,7 +200,8 @@ jobs:
       matrix:
         include:
           # ArangoDB
-          - database: arangodb
+          - name: arangodb
+            database: arangodb
             enabled: true
             description: ArangoDB
           # Cassandra
