@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       datastore:
-        type: string
+        type: choice
         description: Datastore
         required: true
         options:
