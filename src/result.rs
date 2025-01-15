@@ -44,7 +44,7 @@ const HEADERS: [&str; 18] = [
 	"System load",
 ];
 
-const SKIP: [&str; 18] = ["-"; 18];
+const SKIP: [&str; 17] = ["-"; 17];
 
 impl Display for BenchmarkResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
