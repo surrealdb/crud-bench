@@ -50,5 +50,8 @@ Cargo.lock
 /bin/
 /.direnv/
 
+# --- Ignore generated result files
 result.json
 result-*.json
+result.csv
+result-*.csv

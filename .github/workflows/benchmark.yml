@@ -19,7 +19,7 @@ defaults:
 jobs:
   build:
     name: Build crud-bench
-    runs-on: [runner-amd64-2xlarge]
+    runs-on: [ runner-amd64-2xlarge ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -48,7 +48,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-amd64-4xlarge-private]
+    runs-on: [ runner-amd64-4xlarge-private ]
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -252,7 +252,9 @@ jobs:
         if: ${{ matrix.enabled && (success() || failure()) }}
         with:
           name: results ${{ matrix.name }}
-          path: result*.json
+          path: |
+            result*.json
+            result*.csv
 
       - name: Finish benchmarking
         run: echo "Complete"

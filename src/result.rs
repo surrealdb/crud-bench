@@ -2,6 +2,7 @@ use bytesize::ByteSize;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_FULL;
 use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
+use csv::Writer;
 use hdrhistogram::Histogram;
 use serde::Serialize;
 use serde_json::Value;
@@ -22,6 +23,29 @@ pub(crate) struct BenchmarkResult {
 	pub(crate) sample: Value,
 }
 
+const HEADERS: [&str; 18] = [
+	"Test",
+	"Total time",
+	"Mean",
+	"Max",
+	"99th",
+	"95th",
+	"75th",
+	"50th",
+	"25th",
+	"1st",
+	"Min",
+	"IQR",
+	"OPS",
+	"CPU",
+	"Memory",
+	"Reads",
+	"Writes",
+	"System load",
+];
+
+const SKIP: [&str; 18] = ["-"; 18];
+
 impl Display for BenchmarkResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		let mut table = Table::new();
@@ -30,26 +54,8 @@ impl Display for BenchmarkResult {
 			.apply_modifier(UTF8_ROUND_CORNERS)
 			.set_content_arrangement(ContentArrangement::Dynamic);
 		// Set the benchmark table header row
-		table.set_header(vec![
-			Cell::new("Test").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("Total time").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("Mean").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("Max").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("99th").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("95th").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("75th").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("50th").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("25th").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("1st").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("Min").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("IQR").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("OPS").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("CPU").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("Memory").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("Reads").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("Writes").add_attribute(Attribute::Bold).fg(Color::Blue),
-			Cell::new("System load").add_attribute(Attribute::Bold).fg(Color::Blue),
-		]);
+		let headers = HEADERS.map(|h| Cell::new(h).add_attribute(Attribute::Bold).fg(Color::Blue));
+		table.set_header(headers);
 		// Add the [C]reate results to the output
 		if let Some(res) = &self.creates {
 			table.add_row(res.output("[C]reate"));
@@ -63,29 +69,13 @@ impl Display for BenchmarkResult {
 			table.add_row(res.output("[U]pdate"));
 		}
 		for (name, samples, result) in &self.scans {
+			let name = format!("[S]can::{name} ({samples})");
 			if let Some(res) = &result {
-				table.add_row(res.output(format!("[S]can::{name} ({samples})")));
+				table.add_row(res.output(name));
 			} else {
-				table.add_row(vec![
-					format!("[S]can::{name} ({samples})"),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-					"-".to_string(),
-				]);
+				let mut cells = vec![name];
+				cells.extend(SKIP.iter().map(|s| s.to_string()));
+				table.add_row(cells);
 			}
 		}
 		// Add the [D]eletes results to the output
@@ -106,6 +96,47 @@ impl Display for BenchmarkResult {
 		column.set_cell_alignment(CellAlignment::Right);
 		// Output the formatted table
 		write!(f, "{table}")
+	}
+}
+
+impl BenchmarkResult {
+	pub(crate) fn to_csv(&self, path: &str) -> Result<(), csv::Error> {
+		let mut w = Writer::from_path(path)?;
+
+		// Write headers
+		w.write_record(HEADERS)?;
+
+		// Write rows
+		// Add the [C]reate results to the output
+		if let Some(res) = &self.creates {
+			w.write_record(res.output("[C]reate"))?;
+		}
+		// Add the [R]eads results to the output
+		if let Some(res) = &self.reads {
+			w.write_record(res.output("[R]ead"))?;
+		}
+		// Add the [U]pdates results to the output
+		if let Some(res) = &self.updates {
+			w.write_record(res.output("[U]pdate"))?;
+		}
+		// Add the [S]cans results to the output
+		for (name, samples, result) in &self.scans {
+			let name = format!("[S]can::{name} ({samples})");
+			if let Some(res) = &result {
+				w.write_record(res.output(name))?;
+			} else {
+				let mut cells = vec![name];
+				cells.extend(SKIP.iter().map(|s| s.to_string()));
+				w.write_record(cells)?;
+			}
+		}
+		// Add the [D]eletes results to the output
+		if let Some(res) = &self.deletes {
+			w.write_record(res.output("[D]elete"))?;
+		}
+		// Ensure all data is flushed to the file
+		w.flush()?;
+		Ok(())
 	}
 }
 
