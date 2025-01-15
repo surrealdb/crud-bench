@@ -262,11 +262,19 @@ fn run(args: Args) -> Result<()> {
 			// Write the JSON string to a file
 			let result_name = args
 				.name
+				.as_ref()
 				.map(|s| format!("result-{}.json", s))
 				.unwrap_or_else(|| "result.json".to_string());
 			let mut file = File::create(result_name)?;
 			file.write_all(json_string.as_bytes())?;
 
+			// Write the CSV file
+			let result_csv_name = args
+				.name
+				.as_ref()
+				.map(|s| format!("result-{}.csv", s))
+				.unwrap_or_else(|| "result.csv".to_string());
+			res.to_csv(&result_csv_name)?;
 			Ok(())
 		}
 		// Output the errors
