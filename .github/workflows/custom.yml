@@ -115,145 +115,145 @@ jobs:
             database: arangodb
             enabled: true
             description: ArangoDB
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(arangodb, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('arangodb', github.event.inputs.datastore) }}
           # Cassandra
           - name: cassandra
             database: cassandra
             enabled: false
             description: Cassandra
             skipped: Cassandra benchmark not yet implemented
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(cassandra, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('cassandra', github.event.inputs.datastore) }}
           # Dragonfly
           - name: dragonfly
             database: dragonfly
             enabled: true
             description: Dragonfly
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(dragonfly, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('dragonfly', github.event.inputs.datastore) }}
           # Dry
           - name: dry
             database: dry
             enabled: true
             description: Dry
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(dry, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('dry', github.event.inputs.datastore) }}
           # KeyDB
           - name: keydb
             database: keydb
             enabled: true
             description: KeyDB
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(keydb, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('keydb', github.event.inputs.datastore) }}
           # Map
           - name: map
             database: map
             enabled: true
             description: Map
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(map, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('map', github.event.inputs.datastore) }}
           # LMDB
           - name: lmdb
             database: lmdb
             enabled: true
             description: LMDB
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(lmdb, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('lmdb', github.event.inputs.datastore) }}
           # MongoDB
           - name: mongodb
             database: mongodb
             enabled: true
             description: MongoDB
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(mongodb, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('mongodb', github.event.inputs.datastore) }}
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(mysql, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('mysql', github.event.inputs.datastore) }}
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(neo4j, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('neo4j', github.event.inputs.datastore) }}
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(postgres, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('postgres', github.event.inputs.datastore) }}
           # Redb
           - name: redb
             database: redb
             enabled: false
             description: ReDB
             skipped: ReDB benchmark skipped due to excessive benchmark time
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(redb, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('redb', github.event.inputs.datastore) }}
           # Redis
           - name: redis
             database: redis
             enabled: true
             description: Redis
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(redis, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('redis', github.event.inputs.datastore) }}
           # RocksDB
           - name: rocksdb
             database: rocksdb
             enabled: true
             description: RocksDB
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(rocksdb, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('rocksdb', github.event.inputs.datastore) }}
           # Scylladb
           - name: scylladb
             database: scylladb
             enabled: false
             description: ScyllaDB
             skipped: ScyllaDB benchmark not yet implemented
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(scylladb, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('scylladb', github.event.inputs.datastore) }}
           # SQLite
           - name: sqlite
             database: sqlite
             enabled: true
             description: SQLite
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(sqlite, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('sqlite', github.event.inputs.datastore) }}
           # SurrealDB + Memory
           - name: surrealdb-memory
             database: surrealdb-memory
             enabled: true
             description: SurrealDB with in-memory storage
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(surrealdb-memory, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('surrealdb-memory', github.event.inputs.datastore) }}
           # SurrealDB + RocksDB
           - name: surrealdb-rocksdb
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(surrealdb-rocksdb, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('surrealdb-rocksdb', github.event.inputs.datastore) }}
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(surrealdb-surrealkv, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('surrealdb-surrealkv', github.event.inputs.datastore) }}
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
             enabled: true
             endpoint: -e memory
             description: SurrealDB embedded with in-memory storage
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(surrealdb-embedded-memory, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('surrealdb-embedded-memory', github.event.inputs.datastore) }}
           # SurrealDB RocksDB Engine
           - name: surrealdb-embedded-rocksdb
             database: surrealdb
             enabled: true
             endpoint: -e rocksdb:/tmp/rocksdb-engine
             description: SurrealDB embedded with RocksDB storage
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(surrealdb-embedded-rocksdb, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('surrealdb-embedded-rocksdb', github.event.inputs.datastore) }}
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
             enabled: true
             endpoint: -e surrealkv:/tmp/surrealkv-engine
             description: SurrealDB embedded with in-SurrealKV storage
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(surrealdb-embedded-surrealkv, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('surrealdb-embedded-surrealkv', github.event.inputs.datastore) }}
           # SurrealKV
           - name: surrealkv
             database: surrealkv
             enabled: true
             description: SurrealKV
-            execute: ${{ github.event.inputs.datastore == 'all' || contains(surrealkv, github.event.inputs.datastore) }}
+            execute: ${{ github.event.inputs.datastore == 'all' || contains('surrealkv', github.event.inputs.datastore) }}
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
