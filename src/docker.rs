@@ -27,9 +27,9 @@ impl Container {
 	/// Start the Docker container
 	pub(crate) fn start(image: String, pre: &str, post: &str) -> Self {
 		// Clean all remaining bechmark resources
-		Self::run_and_ignore(Arguments::new(["kill", "crud-bench"]));
+		Self::run_and_ignore(Arguments::new(["container", "kill", "crud-bench"]));
 		// Clean all remaining bechmark resources
-		Self::run_and_ignore(Arguments::new(["container", "remove", "crud-bench"]));
+		Self::run_and_ignore(Arguments::new(["container", "remove", "crud-bench", "--force"]));
 		// Output debug information to the logs
 		info!("Starting Docker image '{image}'");
 		// Configure the Docker command arguments
@@ -53,7 +53,7 @@ impl Container {
 	/// Kill the Docker container
 	pub(crate) fn kill(&mut self) {
 		info!("Killing Docker container 'bench'");
-		Self::run_and_ignore(Arguments::new(["kill", "crud-bench"]));
+		Self::run_and_ignore(Arguments::new(["container", "kill", "crud-bench"]));
 	}
 
 	/// Output the container logs
