@@ -58,6 +58,11 @@ on:
         description: Item content
         required: true
         default: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+      timeout:
+        type: string
+        description: Timeout in minutes
+        required: true
+        default: "360"
 
 concurrency:
   # Use github.run_id on main branch
@@ -245,7 +250,7 @@ jobs:
 
       - name: Run benchmarks (${{ github.event.inputs.samples }} samples / ${{ github.event.inputs.clients }} clients / ${{ github.event.inputs.threads }} threads / key ${{ github.event.inputs.key-type }} / random)
         continue-on-error: true
-        timeout-minutes: 360
+        timeout-minutes: ${{ github.event.inputs.timeout || 360 }}
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
         env:
