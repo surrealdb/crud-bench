@@ -69,7 +69,7 @@ impl Container {
 	}
 
 	/// Output the container logs
-	pub(crate) fn logs(&self) {
+	pub(crate) fn logs() {
 		info!("Logging Docker container 'crud-bench'");
 		let logs = Self::run_and_error(Arguments::new(["logs", "crud-bench"]));
 		println!("{logs}");
@@ -100,7 +100,10 @@ impl Container {
 				if i != 0 {
 					let stderr = String::from_utf8(output.stderr).unwrap().trim().to_string();
 					error!("Docker command failure: `docker {args}`");
-					println!("{stderr}");
+					eprintln!("{stderr}");
+					eprintln!("--------------------------------------------------");
+					Container::logs();
+					eprintln!("--------------------------------------------------");
 					exit(1);
 				}
 			}
