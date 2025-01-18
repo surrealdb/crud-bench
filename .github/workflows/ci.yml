@@ -199,126 +199,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ArangoDB
-          - name: arangodb
-            database: arangodb
-            enabled: true
-            description: ArangoDB
-          # Cassandra
-          - name: cassandra
-            database: cassandra
-            enabled: false
-            description: Cassandra
-            skipped: Cassandra benchmark not yet implemented
-          # Dragonfly
-          - name: dragonfly
-            database: dragonfly
-            enabled: true
-            description: Dragonfly
-          # Dry
-          - name: dry
-            database: dry
-            enabled: true
-            description: Dry
-          # KeyDB
-          - name: keydb
-            database: keydb
-            enabled: true
-            description: KeyDB
-          # LMDB
-          - name: lmdb
-            database: lmdb
-            enabled: true
-            description: LMDB
-          # Map
-          - name: map
-            database: map
-            enabled: true
-            description: Map
-          # MongoDB
-          - name: mongodb
-            database: mongodb
-            enabled: true
-            description: MongoDB
-          # Neo4j
-          - name: neo4j
-            database: neo4j
-            enabled: true
-            description: Neo4j
-          # MySQL
-          - name: mysql
-            database: mysql
-            enabled: true
-            description: MySQL
-          # Postgres
-          - name: postgres
-            database: postgres
-            enabled: true
-            description: Postgres
-          # Redb
-          - name: redb
-            database: redb
-            enabled: true
-            description: ReDB
-          # Redis
-          - name: redis
-            database: redis
-            enabled: true
-            description: Redis
-          # RocksDB
-          - name: rocksdb
-            database: rocksdb
-            enabled: true
-            description: RocksDB
-          # Scylladb
-          - name: scylladb
-            database: scylladb
-            enabled: false
-            description: ScyllaDB
-            skipped: SycllaDB benchmark not yet implemented
-          # SQLite
-          - name: sqlite
-            database: sqlite
-            enabled: true
-            description: SQLite
-          # SurrealDB + Memory
-          - name: surrealdb-memory
-            database: surrealdb-memory
-            enabled: true
-            description: SurrealDB with in-memory storage
           # SurrealDB + RocksDB
           - name: surrealdb-rocksdb
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-          # SurrealDB + SurrealKV
-          - name: surrealdb-surrealkv
-            database: surrealdb-surrealkv
-            enabled: true
-            description: SurrealDB with SurrealKV storage
-          # SurrealDB Memory Engine
-          - name: surrealdb-embedded-memory
-            database: surrealdb
-            enabled: true
-            endpoint: -e memory
-            description: SurrealDB embedded with in-memory storage
-          # SurrealDB RocksDB Engine
-          - name: surrealdb-embedded-rocksdb
-            database: surrealdb
-            enabled: true
-            endpoint: -e rocksdb:/tmp/rocksdb-engine
-            description: SurrealDB embedded with RocksDB storage
-          # SurrealDB SurrealKV Engine
-          - name: surrealdb-embedded-surrealkv
-            database: surrealdb
-            enabled: true
-            endpoint: -e surrealkv:/tmp/surrealkv-engine
-            description: SurrealDB embedded with SurrealKV storage
-          # SurrealKV
-          - name: surrealkv
-            database: surrealkv
-            enabled: true
-            description: SurrealKV
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -353,11 +238,31 @@ jobs:
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r -n integer-random
 
+      - name: Cleanup Docker state
+        continue-on-error: true
+        if: ${{ matrix.enabled && (success() || failure()) }}
+        run: |
+          docker container logs crud-bench
+          docker container stop --time 60 crud-bench
+          docker container kill --signal 9 crud-bench
+          docker container wait crud-bench
+          docker container rm --force crud-bench
+
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random)
         continue-on-error: true
         timeout-minutes: 15
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random
+
+      - name: Cleanup Docker state
+        continue-on-error: true
+        if: ${{ matrix.enabled && (success() || failure()) }}
+        run: |
+          docker container logs crud-bench
+          docker container stop --time 60 crud-bench
+          docker container kill --signal 9 crud-bench
+          docker container wait crud-bench
+          docker container rm --force crud-bench
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string90 / random)
         continue-on-error: true
@@ -365,17 +270,47 @@ jobs:
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r -n string90-random
 
+      - name: Cleanup Docker state
+        continue-on-error: true
+        if: ${{ matrix.enabled && (success() || failure()) }}
+        run: |
+          docker container logs crud-bench
+          docker container stop --time 60 crud-bench
+          docker container kill --signal 9 crud-bench
+          docker container wait crud-bench
+          docker container rm --force crud-bench
+
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string250 / random)
         continue-on-error: true
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string250 -r -n string250-random
 
+      - name: Cleanup Docker state
+        continue-on-error: true
+        if: ${{ matrix.enabled && (success() || failure()) }}
+        run: |
+          docker container logs crud-bench
+          docker container stop --time 60 crud-bench
+          docker container kill --signal 9 crud-bench
+          docker container wait crud-bench
+          docker container rm --force crud-bench
+
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random)
         continue-on-error: true
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r -n string506-random
+
+      - name: Cleanup Docker state
+        continue-on-error: true
+        if: ${{ matrix.enabled && (success() || failure()) }}
+        run: |
+          docker container logs crud-bench
+          docker container stop --time 60 crud-bench
+          docker container kill --signal 9 crud-bench
+          docker container wait crud-bench
+          docker container rm --force crud-bench
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         continue-on-error: true
