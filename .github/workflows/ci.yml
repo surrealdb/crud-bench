@@ -86,7 +86,7 @@ jobs:
         run: cargo test
 
   build:
-    name: Build crud-bench
+    name: Build crud-bench (${{ matrix.name }})
     strategy:
       matrix:
         include:
