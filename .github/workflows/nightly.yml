@@ -80,16 +80,16 @@ jobs:
             database: keydb
             enabled: true
             description: KeyDB
-          # Map
-          - name: map
-            database: map
-            enabled: true
-            description: Map
           # LMDB
           - name: lmdb
             database: lmdb
             enabled: true
             description: LMDB
+          # Map
+          - name: map
+            database: map
+            enabled: true
+            description: Map
           # MongoDB
           - name: mongodb
             database: mongodb
@@ -100,7 +100,6 @@ jobs:
             database: mysql
             enabled: true
             description: MySQL
-            skipped: MySQL benchmark skipped due to excessive benchmark time
           # Neo4j
           - name: neo4j
             database: neo4j
@@ -170,7 +169,7 @@ jobs:
             database: surrealdb
             enabled: true
             endpoint: -e surrealkv:/tmp/surrealkv-engine
-            description: SurrealDB embedded with in-SurrealKV storage
+            description: SurrealDB embedded with SurrealKV storage
           # SurrealKV
           - name: surrealkv
             database: surrealkv
@@ -205,50 +204,56 @@ jobs:
         run: echo "${{ matrix.skipped }}"
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key integer / random)
-        continue-on-error: true
         timeout-minutes: 60
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k integer -r -n integer-random
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k integer -r -n integer-random
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string26 / random)
-        continue-on-error: true
         timeout-minutes: 60
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string26 -r -n string26-random
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string26 -r -n string26-random
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string90 / random)
-        continue-on-error: true
         timeout-minutes: 60
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string90 -r -n string90-random
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string90 -r -n string90-random
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 3221225472 # 3 GiB
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string250 / random)
-        continue-on-error: true
         timeout-minutes: 60
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string250 -r -n string250-random
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string250 -r -n string250-random
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 10737418240 # 10 GiB
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string506 / random)
-        continue-on-error: true
         timeout-minutes: 60
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string506 -r -n string506-random
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string506 -r -n string506-random
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 16106127360 # 15 GiB
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
-        continue-on-error: true
         timeout-minutes: 60
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string26 -r -n string26-random-1k
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string26 -r -n string26-random-1k
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'

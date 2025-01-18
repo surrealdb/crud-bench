@@ -86,7 +86,7 @@ jobs:
         run: cargo test
 
   build:
-    name: Build crud-bench
+    name: Build crud-bench (${{ matrix.name }})
     strategy:
       matrix:
         include:
@@ -240,16 +240,16 @@ jobs:
             database: mongodb
             enabled: true
             description: MongoDB
-          # Neo4j
-          - name: neo4j
-            database: neo4j
-            enabled: true
-            description: Neo4j
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
+          # Neo4j
+          - name: neo4j
+            database: neo4j
+            enabled: true
+            description: Neo4j
           # Postgres
           - name: postgres
             database: postgres
@@ -275,7 +275,7 @@ jobs:
             database: scylladb
             enabled: false
             description: ScyllaDB
-            skipped: SycllaDB benchmark not yet implemented
+            skipped: ScyllaDB benchmark not yet implemented
           # SQLite
           - name: sqlite
             database: sqlite
@@ -348,40 +348,46 @@ jobs:
         run: echo "${{ matrix.skipped }}"
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key integer / random)
-        continue-on-error: true
         timeout-minutes: 15
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r -n integer-random
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r -n integer-random
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random)
-        continue-on-error: true
         timeout-minutes: 15
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string90 / random)
-        continue-on-error: true
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r -n string90-random
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r -n string90-random
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string250 / random)
-        continue-on-error: true
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string250 -r -n string250-random
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string250 -r -n string250-random
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random)
-        continue-on-error: true
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r -n string506-random
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r -n string506-random
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
-        continue-on-error: true
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random-1k
+        run: |
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random-1k
+          docker container kill crud-bench || docker container wait crud-bench || docker container prune --force || true
         env:
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
 

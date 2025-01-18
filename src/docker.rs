@@ -15,7 +15,6 @@ pub(crate) struct Container {
 impl Drop for Container {
 	fn drop(&mut self) {
 		Self::stop();
-		Self::wait();
 	}
 }
 
@@ -27,72 +26,39 @@ impl Container {
 
 	/// Start the Docker container
 	pub(crate) fn start(image: String, pre: &str, post: &str) -> Self {
-		// Clean all remaining bechmark resources
-		Self::kill();
-		// Clean all remaining bechmark resources
-		Self::clean();
 		// Output debug information to the logs
 		info!("Starting Docker image '{image}'");
 		// Configure the Docker command arguments
 		let mut arguments = Arguments::new(["run"]);
 		arguments.append(pre);
 		arguments.add(["--rm"]);
-		arguments.add(["--init"]);
 		arguments.add(["--quiet"]);
 		arguments.add(["--name", "crud-bench"]);
 		arguments.add(["--net", "host"]);
 		arguments.add(["-d", &image]);
 		arguments.append(post);
 		// Execute the Docker run command
-		Self::run_and_error(arguments);
+		Self::docker(arguments);
 		// Return the container name
 		Self {
 			image,
 		}
 	}
 
-	/// Wait for the Docker container
-	pub(crate) fn wait() {
-		info!("Waiting for Docker container 'crud-bench'");
-		Self::run_and_ignore(Arguments::new(["container", "wait", "crud-bench"]));
-	}
-
 	/// Stop the Docker container
 	pub(crate) fn stop() {
-		info!("Killing Docker container 'crud-bench'");
-		Self::run_and_ignore(Arguments::new(["container", "stop", "--time", "60", "crud-bench"]));
-	}
-
-	/// Kill the Docker container
-	pub(crate) fn kill() {
-		info!("Killing Docker container 'crud-bench'");
-		Self::run_and_ignore(Arguments::new(["container", "kill", "--signal", "9", "crud-bench"]));
-	}
-
-	/// Remove the Docker container
-	pub(crate) fn clean() {
-		info!("Removing Docker container 'crud-bench'");
-		Self::run_and_ignore(Arguments::new(["container", "rm", "--force", "crud-bench"]));
+		info!("Stopping Docker container 'crud-bench'");
+		Self::docker(Arguments::new(["container", "stop", "--time", "300", "crud-bench"]));
 	}
 
 	/// Output the container logs
-	pub(crate) fn logs(&self) {
+	pub(crate) fn logs() {
 		info!("Logging Docker container 'crud-bench'");
-		let logs = Self::run_and_error(Arguments::new(["logs", "crud-bench"]));
+		let logs = Self::docker(Arguments::new(["logs", "crud-bench"]));
 		println!("{logs}");
 	}
 
-	/// Run a command, and ignore any failure
-	fn run_and_ignore(args: Arguments) -> String {
-		Self::docker(args, false)
-	}
-
-	/// Run a command, and error on failure
-	fn run_and_error(args: Arguments) -> String {
-		Self::docker(args, true)
-	}
-
-	fn docker(args: Arguments, fail: bool) -> String {
+	fn docker(args: Arguments) -> String {
 		// Create a new process command
 		let mut command = Command::new("docker");
 		// Set the arguments on the command
@@ -101,15 +67,16 @@ impl Container {
 		let output = command.output().expect("Failed to execute process");
 		// Get the stdout out from the command
 		let stdout = String::from_utf8(output.stdout).unwrap().trim().to_string();
-		// Check command failure if desired
-		if fail {
-			if let Some(i) = output.status.code() {
-				if i != 0 {
-					let stderr = String::from_utf8(output.stderr).unwrap().trim().to_string();
-					error!("Docker command failure: `docker {args}`");
-					println!("{stderr}");
-					exit(1);
-				}
+		// Output command failure if errored
+		if let Some(i) = output.status.code() {
+			if i != 0 {
+				let stderr = String::from_utf8(output.stderr).unwrap().trim().to_string();
+				error!("Docker command failure: `docker {args}`");
+				eprintln!("{stderr}");
+				eprintln!("--------------------------------------------------");
+				Container::logs();
+				eprintln!("--------------------------------------------------");
+				exit(1);
 			}
 		}
 		stdout

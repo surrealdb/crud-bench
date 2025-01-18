@@ -279,9 +279,9 @@ fn run(args: Args) -> Result<()> {
 		}
 		// Output the errors
 		Err(e) => {
-			if let Some(container) = &container {
+			if container.is_some() {
 				eprintln!("--------------------------------------------------");
-				container.logs();
+				Container::logs();
 			}
 			eprintln!("--------------------------------------------------");
 			eprintln!("Failure: {e}");
