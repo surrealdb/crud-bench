@@ -15,7 +15,6 @@ pub(crate) struct Container {
 impl Drop for Container {
 	fn drop(&mut self) {
 		Self::stop();
-		Self::wait();
 	}
 }
 
@@ -49,12 +48,6 @@ impl Container {
 		Self {
 			image,
 		}
-	}
-
-	/// Wait for the Docker container
-	pub(crate) fn wait() {
-		info!("Waiting for Docker container 'crud-bench'");
-		Self::run_and_ignore(Arguments::new(["container", "wait", "crud-bench"]));
 	}
 
 	/// Stop the Docker container
