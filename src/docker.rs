@@ -36,7 +36,6 @@ impl Container {
 		let mut arguments = Arguments::new(["run"]);
 		arguments.append(pre);
 		arguments.add(["--rm"]);
-		arguments.add(["--init"]);
 		arguments.add(["--quiet"]);
 		arguments.add(["--name", "crud-bench"]);
 		arguments.add(["--net", "host"]);
