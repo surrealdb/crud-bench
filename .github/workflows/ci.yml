@@ -233,7 +233,6 @@ jobs:
         run: echo "${{ matrix.skipped }}"
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key integer / random)
-        continue-on-error: true
         timeout-minutes: 15
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r -n integer-random
@@ -249,7 +248,6 @@ jobs:
           docker container rm --force crud-bench
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random)
-        continue-on-error: true
         timeout-minutes: 15
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random
@@ -265,7 +263,6 @@ jobs:
           docker container rm --force crud-bench
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string90 / random)
-        continue-on-error: true
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r -n string90-random
@@ -281,7 +278,6 @@ jobs:
           docker container rm --force crud-bench
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string250 / random)
-        continue-on-error: true
         timeout-minutes: 30
         if: ${{ matrix.enabled }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string250 -r -n string250-random
@@ -297,7 +293,6 @@ jobs:
           docker container rm --force crud-bench
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random)
-        continue-on-error: true
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r -n string506-random
@@ -313,7 +308,6 @@ jobs:
           docker container rm --force crud-bench
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
-        continue-on-error: true
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random-1k
