@@ -14,7 +14,8 @@ pub(crate) struct Container {
 
 impl Drop for Container {
 	fn drop(&mut self) {
-		self.kill();
+		Self::stop();
+		Self::wait();
 	}
 }
 
@@ -27,9 +28,9 @@ impl Container {
 	/// Start the Docker container
 	pub(crate) fn start(image: String, pre: &str, post: &str) -> Self {
 		// Clean all remaining bechmark resources
-		Self::run_and_ignore(Arguments::new(["container", "kill", "crud-bench"]));
+		Self::kill();
 		// Clean all remaining bechmark resources
-		Self::run_and_ignore(Arguments::new(["container", "remove", "crud-bench", "--force"]));
+		Self::clean();
 		// Output debug information to the logs
 		info!("Starting Docker image '{image}'");
 		// Configure the Docker command arguments
@@ -50,15 +51,33 @@ impl Container {
 		}
 	}
 
+	/// Wait for the Docker container
+	pub(crate) fn wait() {
+		info!("Waiting for Docker container 'crud-bench'");
+		Self::run_and_ignore(Arguments::new(["container", "wait", "crud-bench"]));
+	}
+
+	/// Stop the Docker container
+	pub(crate) fn stop() {
+		info!("Killing Docker container 'crud-bench'");
+		Self::run_and_ignore(Arguments::new(["container", "stop", "--time", "60", "crud-bench"]));
+	}
+
 	/// Kill the Docker container
-	pub(crate) fn kill(&mut self) {
-		info!("Killing Docker container 'bench'");
-		Self::run_and_ignore(Arguments::new(["container", "kill", "crud-bench"]));
+	pub(crate) fn kill() {
+		info!("Killing Docker container 'crud-bench'");
+		Self::run_and_ignore(Arguments::new(["container", "kill", "--signal", "9", "crud-bench"]));
+	}
+
+	/// Remove the Docker container
+	pub(crate) fn clean() {
+		info!("Removing Docker container 'crud-bench'");
+		Self::run_and_ignore(Arguments::new(["container", "rm", "--force", "crud-bench"]));
 	}
 
 	/// Output the container logs
 	pub(crate) fn logs(&self) {
-		info!("Logging Docker container 'bench'");
+		info!("Logging Docker container 'crud-bench'");
 		let logs = Self::run_and_error(Arguments::new(["logs", "crud-bench"]));
 		println!("{logs}");
 	}
@@ -79,7 +98,7 @@ impl Container {
 		// Set the arguments on the command
 		let command = command.args(args.0.clone());
 		// Catch all output from the command
-		let output = command.output().unwrap();
+		let output = command.output().expect("Failed to execute process");
 		// Get the stdout out from the command
 		let stdout = String::from_utf8(output.stdout).unwrap().trim().to_string();
 		// Check command failure if desired

@@ -244,6 +244,7 @@ jobs:
         run: echo "${{ matrix.skipped }}"
 
       - name: Run benchmarks (${{ github.event.inputs.samples }} samples / ${{ github.event.inputs.clients }} clients / ${{ github.event.inputs.threads }} threads / key ${{ github.event.inputs.key-type }} / random)
+        continue-on-error: true
         timeout-minutes: 360
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
