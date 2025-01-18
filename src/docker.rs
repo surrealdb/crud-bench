@@ -48,7 +48,7 @@ impl Container {
 	/// Stop the Docker container
 	pub(crate) fn stop() {
 		info!("Stopping Docker container 'crud-bench'");
-		Self::run_and_ignore(Arguments::new(["container", "stop", "--time", "60", "crud-bench"]));
+		Self::run_and_error(Arguments::new(["container", "stop", "--time", "-1", "crud-bench"]));
 	}
 
 	/// Output the container logs

@@ -211,15 +211,10 @@ jobs:
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
-      - name: Cleanup Docker state
+      - name: Clean up Docker
         continue-on-error: true
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          docker container logs crud-bench
-          docker container stop --time 60 crud-bench
-          docker container kill --signal 9 crud-bench
-          docker container wait crud-bench
-          docker container rm --force crud-bench
+        run: docker container kill crud-bench || docker container wait crud-bench || docker container prune --force
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string26 / random)
         timeout-minutes: 60
@@ -228,15 +223,10 @@ jobs:
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
-      - name: Cleanup Docker state
+      - name: Clean up Docker
         continue-on-error: true
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          docker container logs crud-bench
-          docker container stop --time 60 crud-bench
-          docker container kill --signal 9 crud-bench
-          docker container wait crud-bench
-          docker container rm --force crud-bench
+        run: docker container kill crud-bench || docker container wait crud-bench || docker container prune --force
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string90 / random)
         timeout-minutes: 60
@@ -245,15 +235,10 @@ jobs:
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 3221225472 # 3 GiB
 
-      - name: Cleanup Docker state
+      - name: Clean up Docker
         continue-on-error: true
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          docker container logs crud-bench
-          docker container stop --time 60 crud-bench
-          docker container kill --signal 9 crud-bench
-          docker container wait crud-bench
-          docker container rm --force crud-bench
+        run: docker container kill crud-bench || docker container wait crud-bench || docker container prune --force
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string250 / random)
         timeout-minutes: 60
@@ -262,15 +247,10 @@ jobs:
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 10737418240 # 10 GiB
 
-      - name: Cleanup Docker state
+      - name: Clean up Docker
         continue-on-error: true
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          docker container logs crud-bench
-          docker container stop --time 60 crud-bench
-          docker container kill --signal 9 crud-bench
-          docker container wait crud-bench
-          docker container rm --force crud-bench
+        run: docker container kill crud-bench || docker container wait crud-bench || docker container prune --force
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string506 / random)
         timeout-minutes: 60
@@ -279,15 +259,10 @@ jobs:
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 16106127360 # 15 GiB
 
-      - name: Cleanup Docker state
+      - name: Clean up Docker
         continue-on-error: true
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          docker container logs crud-bench
-          docker container stop --time 60 crud-bench
-          docker container kill --signal 9 crud-bench
-          docker container wait crud-bench
-          docker container rm --force crud-bench
+        run: docker container kill crud-bench || docker container wait crud-bench || docker container prune --force
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 60
