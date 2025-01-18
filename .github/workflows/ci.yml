@@ -21,6 +21,16 @@ defaults:
     shell: bash
 
 jobs:
+  temp:
+    name: Cleanup Docker
+    runs-on: [runner-amd64-large]
+    continue-on-error: true
+    steps:
+      - name: Cleanup Docker
+        run: |
+          sudo systemctl restart docker
+          docker container prune --force
+
   format:
     name: Check format
     runs-on: [runner-amd64-large]
