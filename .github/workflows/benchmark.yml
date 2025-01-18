@@ -14,8 +14,8 @@ on:
           - dragonfly
           - dry
           - keydb
-          - map
           - lmdb
+          - map
           - mongodb
           - mysql
           - neo4j
