@@ -245,7 +245,6 @@ jobs:
             database: mysql
             enabled: true
             description: MySQL
-            skipped: MySQL benchmark skipped due to excessive benchmark time
           # Neo4j
           - name: neo4j
             database: neo4j
