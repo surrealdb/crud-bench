@@ -225,16 +225,16 @@ jobs:
             database: keydb
             enabled: true
             description: KeyDB
-          # Map
-          - name: map
-            database: map
-            enabled: true
-            description: Map
           # LMDB
           - name: lmdb
             database: lmdb
             enabled: true
             description: LMDB
+          # Map
+          - name: map
+            database: map
+            enabled: true
+            description: Map
           # MongoDB
           - name: mongodb
             database: mongodb
@@ -259,9 +259,8 @@ jobs:
           # Redb
           - name: redb
             database: redb
-            enabled: false
+            enabled: true
             description: ReDB
-            skipped: ReDB benchmark skipped due to excessive benchmark time
           # Redis
           - name: redis
             database: redis
@@ -315,7 +314,7 @@ jobs:
             database: surrealdb
             enabled: true
             endpoint: -e surrealkv:/tmp/surrealkv-engine
-            description: SurrealDB embedded with in-SurrealKV storage
+            description: SurrealDB embedded with SurrealKV storage
           # SurrealKV
           - name: surrealkv
             database: surrealkv
