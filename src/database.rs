@@ -19,6 +19,8 @@ pub(crate) enum Database {
 	Arangodb,
 	#[cfg(feature = "dragonfly")]
 	Dragonfly,
+	#[cfg(feature = "fjall")]
+	Fjall,
 	#[cfg(feature = "keydb")]
 	Keydb,
 	#[cfg(feature = "lmdb")]
@@ -115,16 +117,6 @@ impl Database {
 					)
 					.await
 			}
-			Database::Map => {
-				benchmark
-					.run::<_, DefaultDialect, _>(
-						MapClientProvider::setup(kt, vp.columns(), benchmark).await?,
-						kp,
-						vp,
-						scans,
-					)
-					.await
-			}
 			#[cfg(feature = "arangodb")]
 			Database::Arangodb => {
 				benchmark
@@ -153,6 +145,18 @@ impl Database {
 					)
 					.await
 			}
+			#[cfg(feature = "fjall")]
+			Database::Fjall => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::fjall::FjallClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
 			#[cfg(feature = "keydb")]
 			Database::Keydb => {
 				benchmark
@@ -170,6 +174,16 @@ impl Database {
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						crate::lmdb::LmDBClientProvider::setup(kt, vp.columns(), benchmark).await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			Database::Map => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						MapClientProvider::setup(kt, vp.columns(), benchmark).await?,
 						kp,
 						vp,
 						scans,
