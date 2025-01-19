@@ -94,6 +94,10 @@ and lists those which are planned in the future.
 - [ ] Fetching or traversing n-level, one-to-many relationships or joins
 - [ ] Fetching or traversing n-level, many-to-many relationships or joins
 
+**Workloads**
+
+- [ ] Workload support for creating, updating, and reading records concurrently
+
 ## Requirements
 
 - [Docker](https://www.docker.com/) - required when running automated tests
@@ -112,7 +116,7 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 Options:
   -i, --image <IMAGE>        Docker image
   -n, --name <NAME>          An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>  Database [possible values: dry, map, dragonfly, keydb, lmdb, mongodb, mysql, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealkv]
+  -d, --database <DATABASE>  Database [possible values: arangodb, dry, map, dragonfly, fjall, keydb, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealdb, surrealkv]
   -e, --endpoint <ENDPOINT>  Endpoint
   -b, --blocking <BLOCKING>  Maximum number of blocking threads (default is the number of CPU cores) [default: 12]
   -w, --workers <WORKERS>    Number of async runtime workers (default is the number of CPU cores) [default: 12]
@@ -266,6 +270,14 @@ following command:
 
 ```bash
 cargo run -r -- -d dragonfly -e redis://:root@127.0.0.1:6379 -s 100000 -c 12 -t 24 -r
+```
+
+### [Fjall](https://fjall-rs.github.io/)
+
+Fjall is a transactional, ACID-compliant, embedded, key-value datastore, based on LSM-trees, and written in safe Rust.
+
+```bash
+cargo run -r -- -d fjall -s 100000 -c 12 -t 24 -r
 ```
 
 ### [KeyDB](https://docs.keydb.dev/)
