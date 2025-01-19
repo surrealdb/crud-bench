@@ -1,6 +1,11 @@
-use log::{error, info};
+use log::{debug, error, info};
 use std::fmt;
 use std::process::{exit, Command};
+use std::time::Duration;
+
+const RETRIES: i32 = 10;
+
+const TIMEOUT: Duration = Duration::from_secs(6);
 
 pub(crate) struct DockerParams {
 	pub(crate) image: &'static str,
@@ -14,7 +19,7 @@ pub(crate) struct Container {
 
 impl Drop for Container {
 	fn drop(&mut self) {
-		Self::stop();
+		let _ = Self::stop();
 	}
 }
 
@@ -28,17 +33,38 @@ impl Container {
 	pub(crate) fn start(image: String, pre: &str, post: &str) -> Self {
 		// Output debug information to the logs
 		info!("Starting Docker image '{image}'");
-		// Configure the Docker command arguments
-		let mut arguments = Arguments::new(["run"]);
-		arguments.append(pre);
-		arguments.add(["--rm"]);
-		arguments.add(["--quiet"]);
-		arguments.add(["--name", "crud-bench"]);
-		arguments.add(["--net", "host"]);
-		arguments.add(["-d", &image]);
-		arguments.append(post);
-		// Execute the Docker run command
-		Self::docker(arguments);
+		// Attempt to start Docker 10 times
+		for i in 1..=RETRIES {
+			// Configure the Docker command arguments
+			let mut arguments = Arguments::new(["run"]);
+			arguments.append(pre);
+			arguments.add(["--rm"]);
+			arguments.add(["--quiet"]);
+			arguments.add(["--name", "crud-bench"]);
+			arguments.add(["--net", "host"]);
+			arguments.add(["-d", &image]);
+			arguments.append(post);
+			// Execute the Docker run command
+			match Self::execute(arguments.clone()) {
+				// The command executed successfully
+				Ok(_) => break,
+				// There was an error with the command
+				Err(e) => match i {
+					// This is the last attempt so exit fully
+					RETRIES => {
+						error!("Docker command failure: `docker {arguments}`");
+						error!("{e}");
+						exit(1);
+					}
+					// Let's log the output and retry the command
+					_ => {
+						debug!("Docker command failure: `docker {arguments}`");
+						debug!("{e}");
+						std::thread::sleep(TIMEOUT);
+					}
+				},
+			}
+		}
 		// Return the container name
 		Self {
 			image,
@@ -46,43 +72,37 @@ impl Container {
 	}
 
 	/// Stop the Docker container
-	pub(crate) fn stop() {
+	pub(crate) fn stop() -> Result<String, String> {
 		info!("Stopping Docker container 'crud-bench'");
-		Self::docker(Arguments::new(["container", "stop", "--time", "300", "crud-bench"]));
+		let args = ["container", "stop", "--time", "300", "crud-bench"];
+		Self::execute(Arguments::new(args))
 	}
 
 	/// Output the container logs
-	pub(crate) fn logs() {
+	pub(crate) fn logs() -> Result<String, String> {
 		info!("Logging Docker container 'crud-bench'");
-		let logs = Self::docker(Arguments::new(["logs", "crud-bench"]));
-		println!("{logs}");
+		let args = ["container", "logs", "crud-bench"];
+		Self::execute(Arguments::new(args))
 	}
 
-	fn docker(args: Arguments) -> String {
+	fn execute(args: Arguments) -> Result<String, String> {
 		// Create a new process command
 		let mut command = Command::new("docker");
 		// Set the arguments on the command
 		let command = command.args(args.0.clone());
 		// Catch all output from the command
 		let output = command.output().expect("Failed to execute process");
-		// Get the stdout out from the command
-		let stdout = String::from_utf8(output.stdout).unwrap().trim().to_string();
 		// Output command failure if errored
-		if let Some(i) = output.status.code() {
-			if i != 0 {
-				let stderr = String::from_utf8(output.stderr).unwrap().trim().to_string();
-				error!("Docker command failure: `docker {args}`");
-				eprintln!("{stderr}");
-				eprintln!("--------------------------------------------------");
-				Container::logs();
-				eprintln!("--------------------------------------------------");
-				exit(1);
-			}
+		match output.status.success() {
+			// Get the stderr out from the command
+			false => Err(String::from_utf8(output.stderr).unwrap().trim().to_string()),
+			// Get the stdout out from the command
+			true => Ok(String::from_utf8(output.stdout).unwrap().trim().to_string()),
 		}
-		stdout
 	}
 }
 
+#[derive(Clone)]
 pub(crate) struct Arguments(Vec<String>);
 
 impl fmt::Display for Arguments {

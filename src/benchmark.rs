@@ -144,7 +144,7 @@ impl Benchmark {
 	{
 		// Get the current system time
 		let time = SystemTime::now();
-		//
+		// Get the timeout for the engine
 		let wait = engine.wait_timeout();
 		// Check the elapsed time
 		while time.elapsed()? < TIMEOUT {
