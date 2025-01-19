@@ -43,7 +43,9 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Set the datastore compaction style
 		opts.set_compaction_style(DBCompactionStyle::Level);
 		// Increase the background thread count
-		opts.increase_parallelism(8);
+		opts.increase_parallelism(num_cpus::get() as i32);
+		// Increase the number of background jobs
+		opts.set_max_background_jobs(num_cpus::get() as i32);
 		// Set the maximum number of write buffers
 		opts.set_max_write_buffer_number(32);
 		// Set the amount of data to build up in memory
