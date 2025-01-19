@@ -274,7 +274,7 @@ cargo run -r -- -d dragonfly -e redis://:root@127.0.0.1:6379 -s 100000 -c 12 -t 
 
 ### [Fjall](https://fjall-rs.github.io/)
 
-Fjall is a transactional, ACID-compliant, embedded, key-value datastore, based on LSM-trees, and written in safe Rust.
+Fjall is a transactional, ACID-compliant, embedded, key-value datastore, written in safe Rust, and based on LSM-trees.
 
 ```bash
 cargo run -r -- -d fjall -s 100000 -c 12 -t 24 -r
