@@ -220,6 +220,11 @@ jobs:
             database: dry
             enabled: true
             description: Dry
+          # Fjall
+          - name: Fjall
+            database: fjall
+            enabled: true
+            description: Fjall
           # KeyDB
           - name: keydb
             database: keydb
