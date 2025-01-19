@@ -279,13 +279,17 @@ fn run(args: Args) -> Result<()> {
 		}
 		// Output the errors
 		Err(e) => {
-			if container.is_some() {
-				eprintln!("--------------------------------------------------");
-				Container::logs();
-			}
+			// Print the error output of the benchmark
 			eprintln!("--------------------------------------------------");
 			eprintln!("Failure: {e}");
 			eprintln!("--------------------------------------------------");
+			// Print the error output of the container
+			if container.is_some() {
+				match Container::logs() {
+					Ok(stdout) => eprintln!("{stdout}"),
+					Err(stderr) => eprintln!("{stderr}"),
+				}
+			}
 			Err(e)
 		}
 	}

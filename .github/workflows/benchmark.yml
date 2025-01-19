@@ -62,7 +62,7 @@ on:
         type: string
         description: Timeout in minutes
         required: true
-        default: "360"
+        default: "600"
 
 concurrency:
   # Use github.run_id on main branch
@@ -172,9 +172,8 @@ jobs:
           # Redb
           - name: redb
             database: redb
-            enabled: false
+            enabled: true
             description: ReDB
-            skipped: ReDB benchmark skipped due to excessive benchmark time
           # Redis
           - name: redis
             database: redis
