@@ -62,7 +62,7 @@ on:
         type: string
         description: Timeout in minutes
         required: true
-        default: "600"
+        default: "300"
 
 concurrency:
   # Use github.run_id on main branch
