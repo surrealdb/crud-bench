@@ -15,7 +15,7 @@ pub const DEFAULT: &str = "host=localhost user=postgres password=postgres";
 
 pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "postgres",
-	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres",
+	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres -e PGOPTIONS='-c fsync=off'",
 	post_args: "postgres -N 1024",
 };
 
