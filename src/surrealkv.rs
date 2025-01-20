@@ -37,8 +37,8 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		opts.disk_persistence = true;
 		// Set the directory location
 		opts.dir = PathBuf::from(DATABASE_DIR);
-		// Set the cache size
-		opts.max_value_cache_size = 10000;
+		// Set the cache to 250,000 entries
+		opts.max_value_cache_size = 250_000;
 		// Create the store
 		Ok(Self(Arc::new(Store::new(opts)?)))
 	}
