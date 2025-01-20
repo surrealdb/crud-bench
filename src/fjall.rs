@@ -10,13 +10,16 @@ use fjall::{
 	TransactionalKeyspace, TxPartitionHandle,
 };
 use serde_json::Value;
+use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
+use sysinfo::System;
 
 const DATABASE_DIR: &str = "fjall";
 
-/// Let the OS handle syncing to disk
+const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024;
+
 const DURABILITY: Option<PersistMode> = Some(PersistMode::Buffer);
 
 pub(crate) struct FjallClientProvider {
@@ -33,6 +36,12 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		// Load the system attributes
+		let system = System::new_all();
+		// Get the total system memory
+		let memory = system.total_memory();
+		// Calculate a good cache memory size
+		let memory = max(memory / 4, MIN_CACHE_SIZE);
 		// Configure the key-value separation
 		let blobopts = KvSeparationOptions::default()
 			// Separate values if larger than 4 KiB
@@ -46,9 +55,9 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			// Set the amount of data to build up in memory
 			.max_write_buffer_size(256 * 1024 * 1024)
 			// Set the blob cache size to 256 MiB
-			.blob_cache(Arc::new(BlobCache::with_capacity_bytes(256 * 1024 * 1024)))
+			.blob_cache(Arc::new(BlobCache::with_capacity_bytes(memory)))
 			// Set the block cache size to 256 MiB
-			.block_cache(Arc::new(BlockCache::with_capacity_bytes(256 * 1024 * 1024)))
+			.block_cache(Arc::new(BlockCache::with_capacity_bytes(memory)))
 			// Open a transactional keyspace
 			.open_transactional()?;
 		// Configure and create the partition

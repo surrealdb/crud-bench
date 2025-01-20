@@ -7,11 +7,15 @@ use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use redb::{Database, Durability, ReadableTable, TableDefinition};
 use serde_json::Value;
+use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
+use sysinfo::System;
 
 const DATABASE_DIR: &str = "redb";
+
+const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
 
 const TABLE: TableDefinition<&[u8], Vec<u8>> = TableDefinition::new("test");
 
@@ -26,10 +30,16 @@ impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_file(DATABASE_DIR).ok();
+		// Load the system attributes
+		let system = System::new_all();
+		// Get the total system memory
+		let memory = system.total_memory();
+		// Calculate a good cache memory size
+		let memory = max(memory / 2, MIN_CACHE_SIZE);
 		// Configure and create the database
 		let db = Database::builder()
 			// Set the cache size to 512 MiB
-			.set_cache_size(512 * 1024 * 1024)
+			.set_cache_size(memory as usize)
 			// Create the database directory
 			.create(DATABASE_DIR)?;
 		// Create the store

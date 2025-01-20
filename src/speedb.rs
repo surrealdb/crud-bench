@@ -11,11 +11,15 @@ use speedb::{
 	DBCompressionType, FlushOptions, IteratorMode, LogLevel, OptimisticTransactionDB,
 	OptimisticTransactionOptions, Options, ReadOptions, WriteOptions,
 };
+use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
+use sysinfo::System;
 
 const DATABASE_DIR: &str = "speedb";
+
+const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
 
 pub(crate) struct SpeeDBClientProvider(Arc<OptimisticTransactionDB>);
 
@@ -52,6 +56,10 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 		opts.set_target_file_size_base(512 * 1024 * 1024);
 		// Set minimum number of write buffers to merge
 		opts.set_min_write_buffer_number_to_merge(4);
+		// Allow multiple writers to update memtables
+		opts.set_allow_concurrent_memtable_write(true);
+		// Improve concurrency from write batch mutex
+		opts.set_enable_write_thread_adaptive_yield(true);
 		// Use separate write thread queues
 		opts.set_enable_pipelined_write(true);
 		// Enable separation of keys and values
@@ -66,12 +74,18 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 			DBCompressionType::Snappy,
 			DBCompressionType::Snappy,
 		]);
-		// Set the block cache size in bytes
+		// Create the in-memory LRU cache
+		let cache = Cache::new_lru_cache(memory as usize);
+		// Configure the block based file options
 		let mut block_opts = BlockBasedOptions::default();
-		let cache = Cache::new_lru_cache(256 * 1024 * 1024);
-		block_opts.set_bloom_filter(10.0, false);
+		block_opts.set_pin_top_level_index_and_filter(true);
+		block_opts.set_hybrid_ribbon_filter(10.0, 2);
 		block_opts.set_block_cache(&cache);
+		block_opts.set_block_size(4 * 1024);
+		// Configure the database with the cache
 		opts.set_block_based_table_factory(&block_opts);
+		opts.set_blob_cache(&cache);
+		opts.set_row_cache(&cache);
 		// Create the store
 		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)))
 	}
@@ -282,7 +296,7 @@ impl SpeeDBClient {
 			ro.set_iterate_lower_bound([0u8]);
 			ro.set_iterate_upper_bound([255u8]);
 			ro.set_async_io(true);
-			ro.fill_cache(false);
+			ro.fill_cache(true);
 			// Create an iterator starting at the beginning
 			let iter = txn.iterator_opt(IteratorMode::Start, ro);
 			// Perform the relevant projection scan type
