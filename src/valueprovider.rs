@@ -40,8 +40,6 @@ impl ValueProvider {
 	where
 		D: Dialect,
 	{
-		// let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
-		// self.generator.generate::<D>(&mut rng)
 		self.generator.generate::<D>(&mut self.rng)
 	}
 }
