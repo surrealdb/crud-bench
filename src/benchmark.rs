@@ -310,7 +310,6 @@ impl Benchmark {
 			match &operation {
 				BenchmarkOperation::Create => {
 					let value = vp.generate_value::<D>();
-					println!("{operation} {value:#}");
 					client.create(sample, value, &mut kp).await?
 				}
 				BenchmarkOperation::Read => client.read(sample, &mut kp).await?,

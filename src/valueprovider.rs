@@ -2,7 +2,7 @@ use crate::dialect::Dialect;
 use anyhow::{anyhow, bail, Result};
 use log::debug;
 use rand::prelude::SmallRng;
-use rand::{thread_rng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng};
 use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -10,7 +10,6 @@ use std::ops::Range;
 use std::str::FromStr;
 use uuid::Uuid;
 
-#[derive(Clone)]
 pub(crate) struct ValueProvider {
 	generator: ValueGenerator,
 	rng: SmallRng,
@@ -44,6 +43,16 @@ impl ValueProvider {
 		// let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
 		// self.generator.generate::<D>(&mut rng)
 		self.generator.generate::<D>(&mut self.rng)
+	}
+}
+
+impl Clone for ValueProvider {
+	fn clone(&self) -> Self {
+		Self {
+			generator: self.generator.clone(),
+			rng: SmallRng::from_entropy(),
+			columns: self.columns.clone(),
+		}
 	}
 }
 
@@ -358,14 +367,21 @@ mod test {
 	use tokio::task;
 
 	#[tokio::test]
-	async fn random_test() {
-		let mut vp = ValueProvider::new(r#"{ "int": "int", "int_range": "int:1..99"}"#).unwrap();
+	async fn check_all_values_are_unique() {
+		let vp = ValueProvider::new(r#"{ "int": "int", "int_range": "int:1..99"}"#).unwrap();
 		let mut v = vp.clone();
-		let f1 = task::spawn(async move { v.generate_value::<AnsiSqlDialect>() });
+		let f1 = task::spawn(async move {
+			(v.generate_value::<AnsiSqlDialect>(), v.generate_value::<AnsiSqlDialect>())
+		});
 		let mut v = vp.clone();
-		let f2 = task::spawn(async move { v.generate_value::<AnsiSqlDialect>() });
-		let v1 = f1.await.unwrap();
-		let v2 = f2.await.unwrap();
-		assert_ne!(v1, v2);
+		let f2 = task::spawn(async move {
+			(v.generate_value::<AnsiSqlDialect>(), v.generate_value::<AnsiSqlDialect>())
+		});
+		let (v1a, v1b) = f1.await.unwrap();
+		let (v2a, v2b) = f2.await.unwrap();
+		assert_ne!(v1a, v1b);
+		assert_ne!(v2a, v2b);
+		assert_ne!(v1a, v2a);
+		assert_ne!(v1b, v2b);
 	}
 }
