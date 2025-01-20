@@ -13,7 +13,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub(crate) struct ValueProvider {
 	generator: ValueGenerator,
-	// rng: SmallRng,
+	rng: SmallRng,
 	columns: Columns,
 }
 
@@ -29,7 +29,7 @@ impl ValueProvider {
 		Ok(Self {
 			generator,
 			columns,
-			// rng: SmallRng::from_entropy(),
+			rng: SmallRng::from_entropy(),
 		})
 	}
 
@@ -41,8 +41,9 @@ impl ValueProvider {
 	where
 		D: Dialect,
 	{
-		let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
-		self.generator.generate::<D>(&mut rng)
+		// let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
+		// self.generator.generate::<D>(&mut rng)
+		self.generator.generate::<D>(&mut self.rng)
 	}
 }
 
@@ -354,10 +355,17 @@ impl ColumnType {
 mod test {
 	use super::*;
 	use crate::dialect::AnsiSqlDialect;
+	use tokio::task;
 
-	#[test]
-	fn random_test() {
+	#[tokio::test]
+	async fn random_test() {
 		let mut vp = ValueProvider::new(r#"{ "int": "int", "int_range": "int:1..99"}"#).unwrap();
-		assert_ne!(vp.generate_value::<AnsiSqlDialect>(), vp.generate_value::<AnsiSqlDialect>());
+		let mut v = vp.clone();
+		let f1 = task::spawn(async move { v.generate_value::<AnsiSqlDialect>() });
+		let mut v = vp.clone();
+		let f2 = task::spawn(async move { v.generate_value::<AnsiSqlDialect>() });
+		let v1 = f1.await.unwrap();
+		let v2 = f2.await.unwrap();
+		assert_ne!(v1, v2);
 	}
 }
