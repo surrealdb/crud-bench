@@ -10,7 +10,6 @@ use std::ops::Range;
 use std::str::FromStr;
 use uuid::Uuid;
 
-#[derive(Clone)]
 pub(crate) struct ValueProvider {
 	generator: ValueGenerator,
 	rng: SmallRng,
@@ -42,6 +41,16 @@ impl ValueProvider {
 		D: Dialect,
 	{
 		self.generator.generate::<D>(&mut self.rng)
+	}
+}
+
+impl Clone for ValueProvider {
+	fn clone(&self) -> Self {
+		Self {
+			generator: self.generator.clone(),
+			rng: SmallRng::from_entropy(),
+			columns: self.columns.clone(),
+		}
 	}
 }
 
@@ -346,5 +355,31 @@ impl ColumnType {
 			}
 		};
 		Ok(r)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+	use crate::dialect::AnsiSqlDialect;
+	use tokio::task;
+
+	#[tokio::test]
+	async fn check_all_values_are_unique() {
+		let vp = ValueProvider::new(r#"{ "int": "int", "int_range": "int:1..99"}"#).unwrap();
+		let mut v = vp.clone();
+		let f1 = task::spawn(async move {
+			(v.generate_value::<AnsiSqlDialect>(), v.generate_value::<AnsiSqlDialect>())
+		});
+		let mut v = vp.clone();
+		let f2 = task::spawn(async move {
+			(v.generate_value::<AnsiSqlDialect>(), v.generate_value::<AnsiSqlDialect>())
+		});
+		let (v1a, v1b) = f1.await.unwrap();
+		let (v2a, v2b) = f2.await.unwrap();
+		assert_ne!(v1a, v1b);
+		assert_ne!(v2a, v2b);
+		assert_ne!(v1a, v2a);
+		assert_ne!(v1b, v2b);
 	}
 }
