@@ -177,8 +177,9 @@ jobs:
           # Redb
           - name: redb
             database: redb
-            enabled: true
+            enabled: false
             description: ReDB
+            skipped: ReDB benchmark skipped due to excessive benchmark time
           # Redis
           - name: redis
             database: redis
