@@ -32,6 +32,12 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		// Load the system attributes
+		let system = System::new_all();
+		// Get the total system memory
+		let memory = system.total_memory();
+		// Calculate a good cache memory size
+		let memory = max(memory / 2, MIN_CACHE_SIZE);
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
