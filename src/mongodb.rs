@@ -1,6 +1,6 @@
 #![cfg(feature = "mongodb")]
 
-use crate::benchmark::NOT_SUPPORTED_ERROR;
+use crate::dialect::MongoDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
@@ -163,9 +163,9 @@ impl MongoDBClient {
 	where
 		K: Into<Value> + Into<Bson> + Clone,
 	{
-		let bson = Self::to_doc(key.clone(), val)?;
+		let filter = doc! { "_id": key.clone() };
+		let bson = Self::to_doc(key, val)?;
 		let doc = bson.as_document().unwrap();
-		let filter = doc! { "_id": key };
 		let res = self.collection().replace_one(filter, doc).await?;
 		assert_eq!(res.modified_count, 1);
 		Ok(())
@@ -182,13 +182,10 @@ impl MongoDBClient {
 	}
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
-		// Contional scans are not supported
-		if scan.condition.is_some() {
-			bail!(NOT_SUPPORTED_ERROR);
-		}
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(i64::MAX as usize);
+		let c = MongoDBDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Consume documents function
 		let consume = |mut cursor: Cursor<Document>| async move {
@@ -204,7 +201,7 @@ impl MongoDBClient {
 			Projection::Id => {
 				let cursor = self
 					.collection()
-					.find(doc! {})
+					.find(c)
 					.skip(s as u64)
 					.limit(l as i64)
 					.projection(doc! { "_id": 1 })
@@ -212,7 +209,7 @@ impl MongoDBClient {
 				consume(cursor).await
 			}
 			Projection::Full => {
-				let cursor = self.collection().find(doc! {}).skip(s as u64).limit(l as i64).await?;
+				let cursor = self.collection().find(c).skip(s as u64).limit(l as i64).await?;
 				consume(cursor).await
 			}
 			Projection::Count => {

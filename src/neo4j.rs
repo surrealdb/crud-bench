@@ -1,12 +1,11 @@
 #![cfg(feature = "neo4j")]
 
-use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::Neo4jDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::Result;
 use neo4rs::query;
 use neo4rs::BoltType;
 use neo4rs::ConfigBuilder;
@@ -165,18 +164,15 @@ impl Neo4jClient {
 	}
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
-		// Contional scans are not supported
-		if scan.condition.is_some() {
-			bail!(NOT_SUPPORTED_ERROR);
-		}
 		// Extract parameters
-		let s = scan.start.unwrap_or(0);
-		let l = scan.limit.unwrap_or(i64::MAX as usize);
+		let s = scan.start.map(|s| format!("SKIP {s}")).unwrap_or_default();
+		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
+		let c = Neo4jDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stm = format!("MATCH (r) SKIP {s} LIMIT {l} RETURN r.id");
+				let stm = format!("MATCH (r) {c} {s} {l} RETURN r.id");
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let mut count = 0;
 				while let Ok(Some(v)) = res.next().await {
@@ -186,7 +182,7 @@ impl Neo4jClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("MATCH (r) SKIP {s} LIMIT {l} RETURN r");
+				let stm = format!("MATCH (r) {c} {s} {l} RETURN r");
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let mut count = 0;
 				while let Ok(Some(v)) = res.next().await {
@@ -196,7 +192,7 @@ impl Neo4jClient {
 				Ok(count)
 			}
 			Projection::Count => {
-				let stm = format!("MATCH (r) SKIP {s} LIMIT {l} RETURN count(r) as count");
+				let stm = format!("MATCH (r) {c} {s} {l} RETURN count(r) as count");
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let count = res.next().await.unwrap().unwrap().get("count").unwrap();
 				Ok(count)

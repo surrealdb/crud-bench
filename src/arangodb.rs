@@ -1,6 +1,7 @@
 #![cfg(feature = "arangodb")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
+use crate::dialect::ArangoDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
@@ -201,18 +202,15 @@ impl ArangoDBClient {
 	}
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
-		// Contional scans are not supported
-		if scan.condition.is_some() {
-			bail!(NOT_SUPPORTED_ERROR);
-		}
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(i64::MAX as usize);
+		let c = ArangoDBDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stm = format!("FOR doc IN record LIMIT {s}, {l} RETURN {{ _id: doc._id }}");
+				let stm = format!("FOR r IN record {c} LIMIT {s}, {l} RETURN {{ _id: r._id }}");
 				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
@@ -226,7 +224,7 @@ impl ArangoDBClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("FOR doc IN record LIMIT {s}, {l} RETURN doc");
+				let stm = format!("FOR r IN record {c} LIMIT {s}, {l} RETURN r");
 				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
@@ -241,7 +239,7 @@ impl ArangoDBClient {
 			}
 			Projection::Count => {
 				let stm = format!(
-					"FOR doc IN record LIMIT {s}, {l} COLLECT WITH COUNT INTO count RETURN count"
+					"FOR r IN record {c} LIMIT {s}, {l} COLLECT WITH COUNT INTO count RETURN count"
 				);
 				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
 				let count = res.first().unwrap().as_i64().unwrap();

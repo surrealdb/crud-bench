@@ -6,6 +6,7 @@ use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use docker::Container;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs::File;
 use std::io::{IsTerminal, Write};
 use tokio::runtime;
@@ -96,6 +97,7 @@ pub(crate) struct Args {
 		env = "CRUD_BENCH_VALUE",
 		default_value = r#"{
 			"text": "string:50",
+			"age": "int:1..99",
 			"integer": "int"
 		}"#
 	)]
@@ -121,7 +123,17 @@ pub(crate) struct Args {
 			{ "name": "limit_count", "samples": 100, "projection": "COUNT", "limit": 100, "expect": 100 },
 			{ "name": "limit_start_id", "samples": 100, "projection": "ID", "start": 5000, "limit": 100, "expect": 100 },
 			{ "name": "limit_start_all", "samples": 100, "projection": "FULL", "start": 5000, "limit": 100, "expect": 100 },
-			{ "name": "limit_start_count", "samples": 100, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 }
+			{ "name": "limit_start_count", "samples": 100, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 },
+			{ "name": "limit_where_id_integer", "samples": 100, "projection": "COUNT",
+				"condition": {
+					"sql": "age >= 18",
+					"mysql": "age >= 18",
+					"neo4j": "r.age >= 18",
+					"mongodb": { "age": { "$gte": 18 } },
+					"arangodb": "r.age >= 18",
+					"surrealdb": "age >= 18"
+				}
+			}
 		]"#
 	)]
 	pub(crate) scans: String,
@@ -144,24 +156,20 @@ pub(crate) enum KeyType {
 }
 
 pub(crate) type Scans = Vec<Scan>;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct Scan {
 	name: String,
 	samples: Option<usize>,
-	condition: Option<String>,
+	condition: Option<Condition>,
 	start: Option<usize>,
 	limit: Option<usize>,
 	expect: Option<usize>,
 	projection: Option<String>,
 }
 
-#[derive(Debug)]
-pub(crate) enum Projection {
-	Id,
-	Full,
-	Count,
-}
 impl Scan {
+	/// Returns the scan projection type
 	fn projection(&self) -> Result<Projection> {
 		match self.projection.as_deref() {
 			Some("ID") => Ok(Projection::Id),
@@ -171,6 +179,23 @@ impl Scan {
 			_ => Ok(Projection::Full),
 		}
 	}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) enum Projection {
+	Id,
+	Full,
+	Count,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct Condition {
+	sql: Option<String>,
+	mysql: Option<String>,
+	neo4j: Option<String>,
+	mongodb: Option<Value>,
+	arangodb: Option<String>,
+	surrealdb: Option<String>,
 }
 
 fn main() -> Result<()> {
