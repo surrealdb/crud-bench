@@ -2,7 +2,7 @@ use crate::dialect::Dialect;
 use anyhow::{anyhow, bail, Result};
 use log::debug;
 use rand::prelude::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{thread_rng, Rng, SeedableRng};
 use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -13,7 +13,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub(crate) struct ValueProvider {
 	generator: ValueGenerator,
-	rng: SmallRng,
+	// rng: SmallRng,
 	columns: Columns,
 }
 
@@ -29,7 +29,7 @@ impl ValueProvider {
 		Ok(Self {
 			generator,
 			columns,
-			rng: SmallRng::from_entropy(),
+			// rng: SmallRng::from_entropy(),
 		})
 	}
 
@@ -41,7 +41,8 @@ impl ValueProvider {
 	where
 		D: Dialect,
 	{
-		self.generator.generate::<D>(&mut self.rng)
+		let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
+		self.generator.generate::<D>(&mut rng)
 	}
 }
 
@@ -346,5 +347,17 @@ impl ColumnType {
 			}
 		};
 		Ok(r)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+	use crate::dialect::AnsiSqlDialect;
+
+	#[test]
+	fn random_test() {
+		let mut vp = ValueProvider::new(r#"{ "int": "int", "int_range": "int:1..99"}"#).unwrap();
+		assert_ne!(vp.generate_value::<AnsiSqlDialect>(), vp.generate_value::<AnsiSqlDialect>());
 	}
 }
