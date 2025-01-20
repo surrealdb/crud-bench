@@ -90,7 +90,6 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 		block_opts.set_block_size(4 * 1024);
 		// Configure the database with the cache
 		opts.set_block_based_table_factory(&block_opts);
-		opts.set_blob_cache(&cache);
 		opts.set_row_cache(&cache);
 		// Create the store
 		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)))
