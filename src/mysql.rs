@@ -20,7 +20,7 @@ pub const DEFAULT: &str = "mysql://root:mysql@127.0.0.1:3306/bench";
 pub(crate) const MYSQL_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "mysql",
 	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_HOST=% -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=bench",
-	post_args: "--max-connections=1024 --innodb-buffer-pool-size=16G --innodb-buffer-pool-instances=32",
+	post_args: "--max-connections=1024 --innodb-buffer-pool-size=16G --innodb-buffer-pool-instances=32 --innodb-flush-log-at-trx-commit=0",
 };
 
 pub(crate) struct MysqlClientProvider(KeyType, Columns, String);
