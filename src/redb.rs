@@ -26,8 +26,14 @@ impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_file(DATABASE_DIR).ok();
+		// Configure and create the database
+		let db = Database::builder()
+			// Set the cache size to 512 MiB
+			.set_cache_size(512 * 1024 * 1024)
+			// Create the database directory
+			.create(DATABASE_DIR)?;
 		// Create the store
-		Ok(Self(Arc::new(Database::create(DATABASE_DIR)?)))
+		Ok(Self(Arc::new(db)))
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ReDBClient> {
