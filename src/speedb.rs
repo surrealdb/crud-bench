@@ -88,10 +88,8 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 		let cache = Cache::new_lru_cache(memory as usize);
 		// Configure the block based file options
 		let mut block_opts = BlockBasedOptions::default();
-		block_opts.set_pin_top_level_index_and_filter(true);
 		block_opts.set_hybrid_ribbon_filter(10.0, 2);
 		block_opts.set_block_cache(&cache);
-		block_opts.set_block_size(4 * 1024);
 		// Configure the database with the cache
 		opts.set_block_based_table_factory(&block_opts);
 		opts.set_row_cache(&cache);

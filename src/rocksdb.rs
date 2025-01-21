@@ -7,9 +7,8 @@ use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use rocksdb::{
 	BlockBasedOptions, BottommostLevelCompaction, Cache, CompactOptions, DBCompactionStyle,
-	DBCompressionType, FlushOptions, IteratorMode, LogLevel, LruCacheOptions,
-	OptimisticTransactionDB, OptimisticTransactionOptions, Options, ReadOptions,
-	WaitForCompactOptions, WriteOptions,
+	DBCompressionType, FlushOptions, IteratorMode, LogLevel, OptimisticTransactionDB,
+	OptimisticTransactionOptions, Options, ReadOptions, WaitForCompactOptions, WriteOptions,
 };
 use serde_json::Value;
 use std::cmp::max;
@@ -89,18 +88,12 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 			DBCompressionType::Snappy,
 			DBCompressionType::Snappy,
 		]);
-		// Configure the in-memory cache options
-		let mut cache_opts = LruCacheOptions::default();
-		cache_opts.set_capacity(memory as usize);
-		cache_opts.set_num_shard_bits(8);
 		// Create the in-memory LRU cache
-		let cache = Cache::new_lru_cache_opts(&cache_opts);
+		let cache = Cache::new_lru_cache(memory as usize);
 		// Configure the block based file options
 		let mut block_opts = BlockBasedOptions::default();
-		block_opts.set_pin_top_level_index_and_filter(true);
 		block_opts.set_hybrid_ribbon_filter(10.0, 2);
 		block_opts.set_block_cache(&cache);
-		block_opts.set_block_size(4 * 1024);
 		// Configure the database with the cache
 		opts.set_block_based_table_factory(&block_opts);
 		opts.set_blob_cache(&cache);
