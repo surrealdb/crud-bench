@@ -1,12 +1,14 @@
 #![cfg(feature = "redis")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::{Benchmark, KeyType};
-use anyhow::Result;
+use crate::{Benchmark, KeyType, Projection, Scan};
+use anyhow::{bail, Result};
+use futures::StreamExt;
 use redis::aio::MultiplexedConnection;
-use redis::{AsyncCommands, Client};
+use redis::{AsyncCommands, AsyncIter, Client};
 use serde_json::Value;
 use std::hint::black_box;
 use tokio::sync::Mutex;
@@ -98,5 +100,72 @@ impl BenchmarkClient for RedisClient {
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.conn.lock().await.del(key).await?;
 		Ok(())
+	}
+
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		self.scan_bytes(scan).await
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan_bytes(scan).await
+	}
+}
+
+impl RedisClient {
+	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
+		// Conditional scans are not supported
+		if scan.condition.is_some() {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+		// Extract parameters
+		let s = scan.start.unwrap_or(0);
+		let l = scan.limit.unwrap_or(usize::MAX);
+		let p = scan.projection()?;
+
+		let mut conn = self.conn.lock().await;
+		// Create an iterator starting at the beginning
+		let mut iter: AsyncIter<String> = conn.scan().await?;
+		// We skip the first results
+		for _ in 0..s {
+			if iter.next().await.is_none() {
+				break;
+			}
+		}
+
+		match p {
+			Projection::Id => {
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for _ in 0..l {
+					if let Some(k) = iter.next().await {
+						black_box(k);
+						count += 1;
+					} else {
+						break;
+					}
+				}
+				Ok(count)
+			}
+			Projection::Full => {
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for _ in 0..l {
+					if let Some(k) = iter.next().await {
+						let v: Vec<u8> = self.conn.lock().await.get(k).await?;
+						black_box(v);
+						count += 1;
+					} else {
+						break;
+					}
+				}
+				Ok(count)
+			}
+			Projection::Count => Ok(iter.take(l).count().await),
+		}
 	}
 }
