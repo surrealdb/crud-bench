@@ -7,15 +7,20 @@ use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use rocksdb::{
 	BlockBasedOptions, BottommostLevelCompaction, Cache, CompactOptions, DBCompactionStyle,
-	DBCompressionType, FlushOptions, IteratorMode, LogLevel, OptimisticTransactionDB,
-	OptimisticTransactionOptions, Options, ReadOptions, WaitForCompactOptions, WriteOptions,
+	DBCompressionType, FlushOptions, IteratorMode, LogLevel, LruCacheOptions,
+	OptimisticTransactionDB, OptimisticTransactionOptions, Options, ReadOptions,
+	WaitForCompactOptions, WriteOptions,
 };
 use serde_json::Value;
+use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
+use sysinfo::System;
 
 const DATABASE_DIR: &str = "rocksdb";
+
+const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
 
 pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
 
@@ -28,6 +33,16 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		// Load the system attributes
+		let system = System::new_all();
+		// Get the total system memory
+		let memory = system.total_memory();
+		// Divide the total memory into half
+		let memory = memory.saturating_div(2);
+		// Subtract 1 GiB from the memory size
+		let memory = memory.saturating_sub(1024 * 1024 * 1024);
+		// Fallback to the minimum memory cache size
+		let memory = max(memory, MIN_CACHE_SIZE);
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
@@ -56,6 +71,8 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		opts.set_min_write_buffer_number_to_merge(4);
 		// Allow multiple writers to update memtables
 		opts.set_allow_concurrent_memtable_write(true);
+		// Improve concurrency from write batch mutex
+		opts.set_enable_write_thread_adaptive_yield(true);
 		// Avoid unnecessary blocking IO
 		opts.set_avoid_unnecessary_blocking_io(true);
 		// Use separate write thread queues
@@ -72,11 +89,19 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 			DBCompressionType::Snappy,
 			DBCompressionType::Snappy,
 		]);
-		// Set the block cache size in bytes
+		// Configure the in-memory cache options
+		let mut cache_opts = LruCacheOptions::default();
+		cache_opts.set_capacity(memory as usize);
+		cache_opts.set_num_shard_bits(8);
+		// Create the in-memory LRU cache
+		let cache = Cache::new_lru_cache_opts(&cache_opts);
+		// Configure the block based file options
 		let mut block_opts = BlockBasedOptions::default();
-		let cache = Cache::new_lru_cache(512 * 1024 * 1024);
+		block_opts.set_pin_top_level_index_and_filter(true);
 		block_opts.set_hybrid_ribbon_filter(10.0, 2);
 		block_opts.set_block_cache(&cache);
+		block_opts.set_block_size(4 * 1024);
+		// Configure the database with the cache
 		opts.set_block_based_table_factory(&block_opts);
 		opts.set_blob_cache(&cache);
 		opts.set_row_cache(&cache);
@@ -295,7 +320,7 @@ impl RocksDBClient {
 			ro.set_iterate_lower_bound([0u8]);
 			ro.set_iterate_upper_bound([255u8]);
 			ro.set_async_io(true);
-			ro.fill_cache(false);
+			ro.fill_cache(true);
 			// Create an iterator starting at the beginning
 			let iter = txn.iterator_opt(IteratorMode::Start, ro);
 			// Perform the relevant projection scan type
