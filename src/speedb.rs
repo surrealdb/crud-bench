@@ -36,8 +36,12 @@ impl BenchmarkEngine<SpeeDBClient> for SpeeDBClientProvider {
 		let system = System::new_all();
 		// Get the total system memory
 		let memory = system.total_memory();
-		// Calculate a good cache memory size
-		let memory = max(memory / 2, MIN_CACHE_SIZE);
+		// Divide the total memory into half
+		let memory = memory.saturating_div(2);
+		// Subtract 1 GiB from the memory size
+		let memory = memory.saturating_sub(1024 * 1024 * 1024);
+		// Fallback to the minimum memory cache size
+		let memory = max(memory, MIN_CACHE_SIZE);
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync

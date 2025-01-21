@@ -6,6 +6,7 @@ use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use serde_json::Value;
+use std::cmp::max;
 use std::hint::black_box;
 use std::iter::Iterator;
 use std::path::PathBuf;
@@ -15,8 +16,11 @@ use surrealkv::Durability;
 use surrealkv::Mode::{ReadOnly, ReadWrite};
 use surrealkv::Options;
 use surrealkv::Store;
+use sysinfo::System;
 
 const DATABASE_DIR: &str = "surrealkv";
+
+const MIN_CACHE_SIZE: u64 = 250_000;
 
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
@@ -29,6 +33,18 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 	async fn setup(_: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		// Load the system attributes
+		let system = System::new_all();
+		// Get the total system memory
+		let memory = system.total_memory();
+		// Divide the total memory into half
+		let memory = memory.saturating_div(2);
+		// Subtract 4 GiB from the memory size
+		let memory = memory.saturating_sub(1024 * 1024 * 1024);
+		// Divide the total memory by a 4KiB value size
+		let cache = memory.saturating_div(4096);
+		// Calculate a good cache memory size
+		let cache = max(cache, MIN_CACHE_SIZE);
 		// Configure custom options
 		let mut opts = Options::new();
 		// Disable versioning
@@ -38,7 +54,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Set the directory location
 		opts.dir = PathBuf::from(DATABASE_DIR);
 		// Set the cache to 250,000 entries
-		opts.max_value_cache_size = 250_000;
+		opts.max_value_cache_size = cache;
 		// Create the store
 		Ok(Self(Arc::new(Store::new(opts)?)))
 	}
