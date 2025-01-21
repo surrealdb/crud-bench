@@ -39,7 +39,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		let memory = system.total_memory();
 		// Divide the total memory into half
 		let memory = memory.saturating_div(2);
-		// Subtract 4 GiB from the memory size
+		// Subtract 1 GiB from the memory size
 		let memory = memory.saturating_sub(1024 * 1024 * 1024);
 		// Divide the total memory by a 4KiB value size
 		let cache = memory.saturating_div(4096);
