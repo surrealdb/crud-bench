@@ -48,7 +48,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-amd64-4xlarge-private]
+    runs-on: [runner-benchmarking]
     continue-on-error: true
     strategy:
       fail-fast: false
