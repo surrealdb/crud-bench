@@ -23,13 +23,13 @@ pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
 
 pub(crate) const SURREALDB_ROCKSDB_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 8000:8000 -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE=50465865728",
+	pre_args: "-p 8000:8000",
 	post_args: "start --user root --pass root rocksdb://tmp/crud-bench.db",
 };
 
 pub(crate) const SURREALDB_SURREALKV_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 8000:8000 -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE=12320768",
+	pre_args: "-p 8000:8000",
 	post_args: "start --user root --pass root surrealkv://tmp/crud-bench.db",
 };
 
