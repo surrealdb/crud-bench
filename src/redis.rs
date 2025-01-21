@@ -104,16 +104,22 @@ impl BenchmarkClient for RedisClient {
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan_bytes(scan).await
+		let mut conn_iter = self.conn_iter.lock().await;
+		let mut conn_record = self.conn_record.lock().await;
+		Self::scan_bytes(&mut conn_iter, &mut conn_record, scan).await
 	}
 
 	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan_bytes(scan).await
+		self.scan_u32(scan).await
 	}
 }
 
 impl RedisClient {
-	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
+	pub(super) async fn scan_bytes(
+		conn_iter: &mut MultiplexedConnection,
+		conn_record: &mut MultiplexedConnection,
+		scan: &Scan,
+	) -> Result<usize> {
 		// Conditional scans are not supported
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
@@ -124,7 +130,6 @@ impl RedisClient {
 		let p = scan.projection()?;
 
 		// Create an iterator starting at the beginning
-		let mut conn_iter = self.conn_iter.lock().await;
 		let mut iter = conn_iter.scan::<String>().await?.skip(s);
 
 		let res = match p {
@@ -146,7 +151,6 @@ impl RedisClient {
 			}
 			Projection::Full => {
 				let mut count = 0;
-				let mut conn_record = self.conn_record.lock().await;
 				// Stream keys and fetch values concurrently
 				while let Some(k) = iter.next().await {
 					let v: Vec<u8> = conn_record.get(k).await?;
