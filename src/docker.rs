@@ -37,13 +37,24 @@ impl Container {
 		for i in 1..=RETRIES {
 			// Configure the Docker command arguments
 			let mut arguments = Arguments::new(["run"]);
+			// Configure the default pre arguments
 			arguments.append(pre);
+			// Configure any custom pre arguments
+			if let Ok(v) = std::env::var("DOCKER_PRE_ARGS") {
+				arguments.append(&v);
+			}
+			// Configure the Docker container options
 			arguments.add(["--rm"]);
 			arguments.add(["--quiet"]);
 			arguments.add(["--name", "crud-bench"]);
 			arguments.add(["--net", "host"]);
 			arguments.add(["-d", &image]);
+			// Configure the default post arguments
 			arguments.append(post);
+			// Configure any custom post arguments
+			if let Ok(v) = std::env::var("DOCKER_POST_ARGS") {
+				arguments.append(&v);
+			}
 			// Execute the Docker run command
 			match Self::execute(arguments.clone()) {
 				// The command executed successfully
