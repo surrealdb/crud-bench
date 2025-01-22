@@ -53,7 +53,7 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			// Handle transaction flushed automatically
 			.manual_journal_persist(false)
 			// Set the amount of data to build up in memory
-			.max_write_buffer_size(256 * 1024 * 1024)
+			.max_write_buffer_size(u64::MAX)
 			// Set the blob cache size to 256 MiB
 			.blob_cache(Arc::new(BlobCache::with_capacity_bytes(memory)))
 			// Set the block cache size to 256 MiB
@@ -64,8 +64,8 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 		let options = PartitionCreateOptions::default()
 			// Set the data block size to 32 KiB
 			.block_size(32 * 1_024)
-			// Set the max memtable size to 64 Mib
-			.max_memtable_size(64 * 1_024 * 1_024)
+			// Set the max memtable size to 256 MiB
+			.max_memtable_size(256 * 1_024 * 1_024)
 			// Separate values if larger than 4 KiB
 			.with_kv_separation(blobopts);
 		// Create a default data partition
