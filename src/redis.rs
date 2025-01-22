@@ -1,10 +1,12 @@
 #![cfg(feature = "redis")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::{Benchmark, KeyType};
-use anyhow::Result;
+use crate::{Benchmark, KeyType, Projection, Scan};
+use anyhow::{bail, Result};
+use futures::StreamExt;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client};
 use serde_json::Value;
@@ -33,34 +35,35 @@ impl BenchmarkEngine<RedisClient> for RedisClientProvider {
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<RedisClient> {
 		let client = Client::open(self.url.as_str())?;
-		let conn = Mutex::new(client.get_multiplexed_async_connection().await?);
 		Ok(RedisClient {
-			conn,
+			conn_iter: Mutex::new(client.get_multiplexed_async_connection().await?),
+			conn_record: Mutex::new(client.get_multiplexed_async_connection().await?),
 		})
 	}
 }
 
 pub(crate) struct RedisClient {
-	conn: Mutex<MultiplexedConnection>,
+	conn_iter: Mutex<MultiplexedConnection>,
+	conn_record: Mutex<MultiplexedConnection>,
 }
 
 impl BenchmarkClient for RedisClient {
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		self.conn.lock().await.set(key, val).await?;
+		self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		self.conn.lock().await.set(key, val).await?;
+		self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		let val: Vec<u8> = self.conn.lock().await.get(key).await?;
+		let val: Vec<u8> = self.conn_record.lock().await.get(key).await?;
 		assert!(!val.is_empty());
 		black_box(val);
 		Ok(())
@@ -68,7 +71,7 @@ impl BenchmarkClient for RedisClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn read_string(&self, key: String) -> Result<()> {
-		let val: Vec<u8> = self.conn.lock().await.get(key).await?;
+		let val: Vec<u8> = self.conn_record.lock().await.get(key).await?;
 		assert!(!val.is_empty());
 		black_box(val);
 		Ok(())
@@ -77,26 +80,104 @@ impl BenchmarkClient for RedisClient {
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		self.conn.lock().await.set(key, val).await?;
+		self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		self.conn.lock().await.set(key, val).await?;
+		self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.conn.lock().await.del(key).await?;
+		self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_string(&self, key: String) -> Result<()> {
-		self.conn.lock().await.del(key).await?;
+		self.conn_record.lock().await.del(key).await?;
 		Ok(())
+	}
+
+	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+		let mut conn_iter = self.conn_iter.lock().await;
+		let mut conn_record = self.conn_record.lock().await;
+		Self::scan_bytes(&mut conn_iter, &mut conn_record, scan).await
+	}
+
+	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+		self.scan_u32(scan).await
+	}
+}
+
+impl RedisClient {
+	pub(super) async fn scan_bytes(
+		conn_iter: &mut MultiplexedConnection,
+		conn_record: &mut MultiplexedConnection,
+		scan: &Scan,
+	) -> Result<usize> {
+		// Conditional scans are not supported
+		if scan.condition.is_some() {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+		// Extract parameters
+		let s = scan.start.unwrap_or(0);
+		let l = scan.limit.unwrap_or(usize::MAX);
+		let p = scan.projection()?;
+
+		// Create an iterator starting at the beginning
+		let mut iter = conn_iter.scan::<String>().await?.skip(s);
+
+		let res = match p {
+			Projection::Id => {
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for _ in 0..l {
+					if let Some(k) = iter.next().await {
+						black_box(k);
+						count += 1;
+					} else {
+						break;
+					}
+				}
+				count
+			}
+			Projection::Full => {
+				let mut count = 0;
+				// Stream keys and fetch values concurrently
+				while let Some(k) = iter.next().await {
+					let v: Vec<u8> = conn_record.get(k).await?;
+					black_box(v);
+					count += 1;
+					if count >= l {
+						break;
+					}
+				}
+				count
+			}
+			Projection::Count => match scan.limit {
+				None => iter.count().await,
+				Some(l) => {
+					let mut count = 0;
+					for _ in 0..l {
+						if let Some(k) = iter.next().await {
+							black_box(k);
+							count += 1;
+						} else {
+							break;
+						}
+					}
+					count
+				}
+			},
+		};
+		Ok(res)
 	}
 }
