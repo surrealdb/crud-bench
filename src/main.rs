@@ -45,19 +45,23 @@ mod surrealkv;
 #[derive(Parser, Debug)]
 #[command(term_width = 0)]
 pub(crate) struct Args {
-	/// Docker image
-	#[arg(short, long)]
-	pub(crate) image: Option<String>,
-
 	/// An optional name for the test, used as a suffix for the JSON result file name
 	#[arg(short, long)]
 	pub(crate) name: Option<String>,
 
-	/// Database
+	/// The database to benchmark
 	#[arg(short, long)]
 	pub(crate) database: Database,
 
-	/// Endpoint
+	/// Specify a custom Docker image
+	#[arg(short, long)]
+	pub(crate) image: Option<String>,
+
+	/// Whether to run Docker in privileged mode
+	#[arg(short, long)]
+	pub(crate) privileged: bool,
+
+	/// Specify a custom endpoint to connect to
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
 
@@ -106,7 +110,7 @@ pub(crate) struct Args {
 	pub(crate) show_sample: bool,
 
 	/// Collect system information for a given pid
-	#[arg(short, long, value_parser=clap::value_parser!(u32).range(0..))]
+	#[arg(long, value_parser=clap::value_parser!(u32).range(0..))]
 	pub(crate) pid: Option<u32>,
 
 	/// An array of scan specifications
@@ -191,7 +195,7 @@ fn run(args: Args) -> Result<()> {
 		// Not handling this results in crud-bench starting a container never used by the client and the benchmark.
 		None
 	} else {
-		args.database.start_docker(args.image)
+		args.database.start_docker(&benchmark)
 	};
 	// Setup the asynchronous runtime
 	let runtime = runtime::Builder::new_multi_thread()
@@ -307,6 +311,7 @@ mod test {
 			image: None,
 			name: None,
 			database,
+			privileged: false,
 			endpoint: None,
 			blocking: 5,
 			workers: 5,
