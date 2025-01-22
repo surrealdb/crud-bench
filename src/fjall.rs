@@ -14,7 +14,6 @@ use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
-use std::u64;
 use sysinfo::System;
 
 const DATABASE_DIR: &str = "fjall";
