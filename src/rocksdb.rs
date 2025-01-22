@@ -89,6 +89,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 			DBCompressionType::Snappy,
 		]);
 		// Create the in-memory LRU cache
+		println!("Cache capacity: {memory} bytes");
 		let cache = Cache::new_lru_cache(memory as usize);
 		// Configure the block based file options
 		let mut block_opts = BlockBasedOptions::default();
