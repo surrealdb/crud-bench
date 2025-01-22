@@ -1,5 +1,7 @@
 name: Benchmark
 
+run-name: "Benchmark (${{ inputs.choice == 'custom' && inputs.custom || inputs.choice }})"
+
 on:
   workflow_dispatch:
     inputs:
