@@ -311,6 +311,7 @@ mod test {
 			image: None,
 			name: None,
 			database,
+			privileged: false,
 			endpoint: None,
 			blocking: 5,
 			workers: 5,
