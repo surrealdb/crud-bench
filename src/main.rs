@@ -53,15 +53,15 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) name: Option<String>,
 
-	/// Database
+	/// The database to benchmark
 	#[arg(short, long)]
 	pub(crate) database: Database,
 
-	/// Endpoint
+	/// A custom endpoint to connect to
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
 
-	/// Privileged
+	/// Whether to run Docker in privileged mode
 	#[arg(short, long)]
 	pub(crate) privileged: bool,
 
@@ -110,7 +110,7 @@ pub(crate) struct Args {
 	pub(crate) show_sample: bool,
 
 	/// Collect system information for a given pid
-	#[arg(short, long, value_parser=clap::value_parser!(u32).range(0..))]
+	#[arg(long, value_parser=clap::value_parser!(u32).range(0..))]
 	pub(crate) pid: Option<u32>,
 
 	/// An array of scan specifications

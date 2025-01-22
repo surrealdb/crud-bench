@@ -116,8 +116,9 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 Options:
   -i, --image <IMAGE>        Docker image
   -n, --name <NAME>          An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>  Database [possible values: arangodb, dry, map, dragonfly, fjall, keydb, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealdb, surrealkv]
-  -e, --endpoint <ENDPOINT>  Endpoint
+  -d, --database <DATABASE>  The database to benchmark [possible values: arangodb, dry, map, dragonfly, fjall, keydb, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealdb, surrealkv]
+  -e, --endpoint <ENDPOINT>  A custom endpoint to connect to
+  -p, --privileged           Whether to run Docker in privileged mode
   -b, --blocking <BLOCKING>  Maximum number of blocking threads (default is the number of CPU cores) [default: 12]
   -w, --workers <WORKERS>    Number of async runtime workers (default is the number of CPU cores) [default: 12]
   -c, --clients <CLIENTS>    Number of concurrent clients [default: 1]
@@ -127,7 +128,7 @@ Options:
   -k, --key <KEY>            The type of the key [default: integer] [possible values: integer, string26, string90, string506, uuid]
   -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=]
       --show-sample          Print-out an example of a generated value
-  -p, --pid <PID>            Collect system information for a given pid
+      --pid <PID>            Collect system information for a given pid
   -a, --scans <SCANS>        An array of scan specifications [env: CRUD_BENCH_SCANS=]
   -h, --help                 Print help (see more with '--help')
 ```
