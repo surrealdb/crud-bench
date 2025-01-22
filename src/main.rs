@@ -45,10 +45,6 @@ mod surrealkv;
 #[derive(Parser, Debug)]
 #[command(term_width = 0)]
 pub(crate) struct Args {
-	/// Docker image
-	#[arg(short, long)]
-	pub(crate) image: Option<String>,
-
 	/// An optional name for the test, used as a suffix for the JSON result file name
 	#[arg(short, long)]
 	pub(crate) name: Option<String>,
@@ -57,13 +53,17 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) database: Database,
 
-	/// A custom endpoint to connect to
+	/// Specify a custom Docker image
 	#[arg(short, long)]
-	pub(crate) endpoint: Option<String>,
+	pub(crate) image: Option<String>,
 
 	/// Whether to run Docker in privileged mode
 	#[arg(short, long)]
 	pub(crate) privileged: bool,
+
+	/// Specify a custom endpoint to connect to
+	#[arg(short, long)]
+	pub(crate) endpoint: Option<String>,
 
 	/// Maximum number of blocking threads (default is the number of CPU cores)
 	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
