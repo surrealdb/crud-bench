@@ -30,7 +30,7 @@ impl Container {
 	}
 
 	/// Start the Docker container
-	pub(crate) fn start(image: String, pre: &str, post: &str) -> Self {
+	pub(crate) fn start(image: String, pre: &str, post: &str, privileged: bool) -> Self {
 		// Output debug information to the logs
 		info!("Starting Docker image '{image}'");
 		// Attempt to start Docker 10 times
@@ -49,6 +49,10 @@ impl Container {
 			arguments.add(["--name", "crud-bench"]);
 			arguments.add(["--net", "host"]);
 			arguments.add(["-d", &image]);
+			// Run in privileged mode if specified
+			if privileged {
+				arguments.add(["--privileged"]);
+			}
 			// Configure the default post arguments
 			arguments.append(post);
 			// Configure any custom post arguments

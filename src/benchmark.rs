@@ -21,6 +21,10 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
 
 pub(crate) struct Benchmark {
+	/// Whether to run containers in privileged mode
+	pub(crate) privileged: bool,
+	/// The container image to use
+	pub(crate) image: Option<String>,
 	/// The server endpoint to connect to
 	pub(crate) endpoint: Option<String>,
 	/// The number of clients to spawn
@@ -35,6 +39,8 @@ pub(crate) struct Benchmark {
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
 		Self {
+			privileged: args.privileged,
+			image: args.image.to_owned(),
 			endpoint: args.endpoint.to_owned(),
 			clients: args.clients,
 			threads: args.threads,

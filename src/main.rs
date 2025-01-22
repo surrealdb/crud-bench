@@ -61,6 +61,10 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) endpoint: Option<String>,
 
+	/// Privileged
+	#[arg(short, long)]
+	pub(crate) privileged: bool,
+
 	/// Maximum number of blocking threads (default is the number of CPU cores)
 	#[arg(short, long, default_value=num_cpus::get().to_string(), value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) blocking: u32,
@@ -191,7 +195,7 @@ fn run(args: Args) -> Result<()> {
 		// Not handling this results in crud-bench starting a container never used by the client and the benchmark.
 		None
 	} else {
-		args.database.start_docker(args.image)
+		args.database.start_docker(&benchmark)
 	};
 	// Setup the asynchronous runtime
 	let runtime = runtime::Builder::new_multi_thread()

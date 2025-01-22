@@ -59,7 +59,7 @@ pub(crate) enum Database {
 
 impl Database {
 	/// Start the Docker container if necessary
-	pub(crate) fn start_docker(&self, image: Option<String>) -> Option<Container> {
+	pub(crate) fn start_docker(&self, options: &Benchmark) -> Option<Container> {
 		// Get any pre-defined Docker configuration
 		let params: DockerParams = match self {
 			#[cfg(feature = "arangodb")]
@@ -90,9 +90,11 @@ impl Database {
 			_ => return None,
 		};
 		// Check if a custom image has been specified
-		let image = image.unwrap_or(params.image.to_string());
+		let image = options.image.clone().unwrap_or(params.image.to_string());
 		// Start the specified container with arguments
-		let container = Container::start(image, params.pre_args, params.post_args);
+		let container =
+			Container::start(image, params.pre_args, params.post_args, options.privileged);
+		// Return the container reference
 		Some(container)
 	}
 
