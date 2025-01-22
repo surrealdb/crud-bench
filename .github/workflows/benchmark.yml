@@ -13,6 +13,7 @@ on:
           - cassandra
           - dragonfly
           - dry
+          - fjall
           - keydb
           - lmdb
           - map
@@ -26,7 +27,18 @@ on:
           - scylladb
           - sqlite
           - surrealdb
+          - surrealdb-memory
+          - surrealdb-rocksdb
+          - surrealdb-surrealkv
+          - surrealdb-embedded-memory
+          - surrealdb-embedded-rocksdb
+          - surrealdb-embedded-surrealkv
           - surrealkv
+          - custom
+      custom:
+        type: string
+        description: Custom choice
+        required: false
       samples:
         type: string
         description: Number of samples
@@ -256,8 +268,8 @@ jobs:
       - name: Run benchmarks (${{ github.event.inputs.samples }} samples / ${{ github.event.inputs.clients }} clients / ${{ github.event.inputs.threads }} threads / key ${{ github.event.inputs.key-type }} / random)
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(github.event.inputs.timeout) }}
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'other' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        run: ${{ github.workspace }}/artifacts/crud-bench -p -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: ${{ github.event.inputs.value }}
