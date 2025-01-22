@@ -43,16 +43,16 @@ impl Container {
 			if let Ok(v) = std::env::var("DOCKER_PRE_ARGS") {
 				arguments.append(&v);
 			}
+			// Run in privileged mode if specified
+			if privileged {
+				arguments.add(["--privileged"]);
+			}
 			// Configure the Docker container options
 			arguments.add(["--rm"]);
 			arguments.add(["--quiet"]);
 			arguments.add(["--name", "crud-bench"]);
 			arguments.add(["--net", "host"]);
 			arguments.add(["-d", &image]);
-			// Run in privileged mode if specified
-			if privileged {
-				arguments.add(["--privileged"]);
-			}
 			// Configure the default post arguments
 			arguments.append(post);
 			// Configure any custom post arguments
