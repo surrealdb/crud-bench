@@ -67,7 +67,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Set the target file size for compaction
 		opts.set_target_file_size_base(32 * 1024 * 1024);
 		// Set minimum number of write buffers to merge
-		opts.set_min_write_buffer_number_to_merge(4);
+		opts.set_min_write_buffer_number_to_merge(8);
 		// Allow multiple writers to update memtables
 		opts.set_allow_concurrent_memtable_write(true);
 		// Improve concurrency from write batch mutex
