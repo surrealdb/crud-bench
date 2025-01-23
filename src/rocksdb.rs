@@ -69,7 +69,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Set the levelled target file size multipler
 		opts.set_target_file_size_multiplier(2);
 		// Set minimum number of write buffers to merge
-		opts.set_min_write_buffer_number_to_merge(8);
+		opts.set_min_write_buffer_number_to_merge(2);
 		// Allow multiple writers to update memtables
 		opts.set_allow_concurrent_memtable_write(true);
 		// Improve concurrency from write batch mutex
