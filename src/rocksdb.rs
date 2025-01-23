@@ -65,7 +65,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Set the amount of data to build up in memory
 		opts.set_write_buffer_size(256 * 1024 * 1024);
 		// Set the target file size for compaction
-		opts.set_target_file_size_base(64 * 1024 * 1024);
+		opts.set_target_file_size_base(32 * 1024 * 1024);
 		// Set minimum number of write buffers to merge
 		opts.set_min_write_buffer_number_to_merge(4);
 		// Allow multiple writers to update memtables
