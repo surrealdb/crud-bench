@@ -94,6 +94,8 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		let cache = Cache::new_lru_cache(memory as usize);
 		// Configure the block based file options
 		let mut block_opts = BlockBasedOptions::default();
+		block_opts.set_cache_index_and_filter_blocks(true);
+		block_opts.set_pin_top_level_index_and_filter(true);
 		block_opts.set_hybrid_ribbon_filter(10.0, 2);
 		block_opts.set_block_cache(&cache);
 		// Configure the database with the cache
