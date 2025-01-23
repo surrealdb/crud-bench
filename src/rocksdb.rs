@@ -95,7 +95,8 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Configure the block based file options
 		let mut block_opts = BlockBasedOptions::default();
 		block_opts.set_cache_index_and_filter_blocks(true);
-		block_opts.set_pin_top_level_index_and_filter(true);
+		// block_opts.set_pin_top_level_index_and_filter(true);
+		// block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
 		block_opts.set_hybrid_ribbon_filter(10.0, 2);
 		block_opts.set_block_cache(&cache);
 		// Configure the database with the cache
