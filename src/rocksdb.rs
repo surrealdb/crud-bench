@@ -59,15 +59,17 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Increase the background thread count
 		opts.increase_parallelism(num_cpus::get() as i32);
 		// Increase the number of background jobs
-		opts.set_max_background_jobs(num_cpus::get() as i32);
+		opts.set_max_background_jobs(num_cpus::get() as i32 * 2);
 		// Set the maximum number of write buffers
 		opts.set_max_write_buffer_number(32);
 		// Set the amount of data to build up in memory
 		opts.set_write_buffer_size(256 * 1024 * 1024);
 		// Set the target file size for compaction
-		opts.set_target_file_size_base(512 * 1024 * 1024);
+		opts.set_target_file_size_base(32 * 1024 * 1024);
+		// Set the levelled target file size multipler
+		opts.set_target_file_size_multiplier(2);
 		// Set minimum number of write buffers to merge
-		opts.set_min_write_buffer_number_to_merge(4);
+		opts.set_min_write_buffer_number_to_merge(2);
 		// Allow multiple writers to update memtables
 		opts.set_allow_concurrent_memtable_write(true);
 		// Improve concurrency from write batch mutex
@@ -92,6 +94,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		let cache = Cache::new_lru_cache(memory as usize);
 		// Configure the block based file options
 		let mut block_opts = BlockBasedOptions::default();
+		block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
 		block_opts.set_hybrid_ribbon_filter(10.0, 2);
 		block_opts.set_block_cache(&cache);
 		// Configure the database with the cache
@@ -228,6 +231,7 @@ impl RocksDBClient {
 			// Configure read options
 			let mut ro = ReadOptions::default();
 			ro.set_snapshot(&txn.snapshot());
+			ro.set_verify_checksums(false);
 			ro.set_async_io(true);
 			ro.fill_cache(true);
 			// Process the data
@@ -312,6 +316,7 @@ impl RocksDBClient {
 			ro.set_snapshot(&txn.snapshot());
 			ro.set_iterate_lower_bound([0u8]);
 			ro.set_iterate_upper_bound([255u8]);
+			ro.set_verify_checksums(false);
 			ro.set_async_io(true);
 			ro.fill_cache(true);
 			// Create an iterator starting at the beginning
