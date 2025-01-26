@@ -11,7 +11,7 @@ use std::hint::black_box;
 use tokio_postgres::types::{Json, ToSql};
 use tokio_postgres::{Client, NoTls, Row};
 
-pub const DEFAULT: &str = "host=localhost user=postgres password=postgres";
+pub const DEFAULT: &str = "host=127.0.0.1 user=postgres password=postgres";
 
 pub(crate) const POSTGRES_DOCKER_PARAMS: DockerParams = DockerParams {
 	image: "postgres",
