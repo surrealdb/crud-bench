@@ -104,22 +104,16 @@ impl BenchmarkClient for RedisClient {
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		let mut conn_iter = self.conn_iter.lock().await;
-		let mut conn_record = self.conn_record.lock().await;
-		Self::scan_bytes(&mut conn_iter, &mut conn_record, scan).await
+		self.scan_bytes(scan).await
 	}
 
 	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan_u32(scan).await
+		self.scan_bytes(scan).await
 	}
 }
 
 impl RedisClient {
-	pub(super) async fn scan_bytes(
-		conn_iter: &mut MultiplexedConnection,
-		conn_record: &mut MultiplexedConnection,
-		scan: &Scan,
-	) -> Result<usize> {
+	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
 		// Conditional scans are not supported
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
@@ -128,11 +122,13 @@ impl RedisClient {
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
-
+		// Get the two connection types
+		let mut conn_iter = self.conn_iter.lock().await;
+		let mut conn_record = self.conn_record.lock().await;
 		// Create an iterator starting at the beginning
 		let mut iter = conn_iter.scan::<String>().await?.skip(s);
-
-		let res = match p {
+		// Perform the relevant projection scan type
+		match p {
 			Projection::Id => {
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
@@ -147,7 +143,7 @@ impl RedisClient {
 						break;
 					}
 				}
-				count
+				Ok(count)
 			}
 			Projection::Full => {
 				let mut count = 0;
@@ -160,24 +156,12 @@ impl RedisClient {
 						break;
 					}
 				}
-				count
+				Ok(count)
 			}
 			Projection::Count => match scan.limit {
-				None => iter.count().await,
-				Some(l) => {
-					let mut count = 0;
-					for _ in 0..l {
-						if let Some(k) = iter.next().await {
-							black_box(k);
-							count += 1;
-						} else {
-							break;
-						}
-					}
-					count
-				}
+				None => Ok(iter.count().await),
+				Some(l) => Ok(iter.take(l).count().await),
 			},
-		};
-		Ok(res)
+		}
 	}
 }
