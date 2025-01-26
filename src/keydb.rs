@@ -1,11 +1,12 @@
 #![cfg(feature = "keydb")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
-use crate::redis::RedisClient;
 use crate::valueprovider::Columns;
-use crate::{Benchmark, KeyType, Scan};
-use anyhow::Result;
+use crate::{Benchmark, KeyType, Projection, Scan};
+use anyhow::{bail, Result};
+use futures::StreamExt;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client};
 use serde_json::Value;
@@ -106,12 +107,64 @@ impl BenchmarkClient for KeydbClient {
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		let mut conn_iter = self.conn_iter.lock().await;
-		let mut conn_record = self.conn_record.lock().await;
-		RedisClient::scan_bytes(&mut conn_iter, &mut conn_record, scan).await
+		self.scan_bytes(scan).await
 	}
 
 	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan_u32(scan).await
+		self.scan_bytes(scan).await
+	}
+}
+
+impl KeydbClient {
+	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
+		// Conditional scans are not supported
+		if scan.condition.is_some() {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+		// Extract parameters
+		let s = scan.start.unwrap_or(0);
+		let l = scan.limit.unwrap_or(usize::MAX);
+		let p = scan.projection()?;
+		// Get the two connection types
+		let mut conn_iter = self.conn_iter.lock().await;
+		let mut conn_record = self.conn_record.lock().await;
+		// Create an iterator starting at the beginning
+		let mut iter = conn_iter.scan::<String>().await?.skip(s);
+		// Perform the relevant projection scan type
+		match p {
+			Projection::Id => {
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for _ in 0..l {
+					if let Some(k) = iter.next().await {
+						black_box(k);
+						count += 1;
+					} else {
+						break;
+					}
+				}
+				Ok(count)
+			}
+			Projection::Full => {
+				let mut count = 0;
+				// Stream keys and fetch values concurrently
+				while let Some(k) = iter.next().await {
+					let v: Vec<u8> = conn_record.get(k).await?;
+					black_box(v);
+					count += 1;
+					if count >= l {
+						break;
+					}
+				}
+				Ok(count)
+			}
+			Projection::Count => match scan.limit {
+				None => Ok(iter.count().await),
+				Some(l) => Ok(iter.take(l).count().await),
+			},
+		}
 	}
 }
