@@ -268,6 +268,11 @@ jobs:
         if: ${{ !matrix.enabled }}
         run: echo "${{ matrix.skipped }}"
 
+      - name: Clean up environment
+        continue-on-error: true
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        run: docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+
       - name: Run benchmarks (${{ github.event.inputs.samples }} samples / ${{ github.event.inputs.clients }} clients / ${{ github.event.inputs.threads }} threads / key ${{ github.event.inputs.key-type }} / random)
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(github.event.inputs.timeout) }}
