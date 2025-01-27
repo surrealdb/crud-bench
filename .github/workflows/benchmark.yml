@@ -133,7 +133,7 @@ jobs:
             database: arangodb
             enabled: true
             description: ArangoDB
-            environment: -e DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/arangodb3"
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/arangodb3"
           # Cassandra
           - name: cassandra
             database: cassandra
@@ -175,25 +175,25 @@ jobs:
             database: mongodb
             enabled: true
             description: MongoDB
-            environment: -e DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data/db"
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data/db"
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
-            environment: -e DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/mysql"
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/mysql"
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
-            environment: -e DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data"
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data"
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
-            environment: -e DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/postgresql/data"
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/postgresql/data"
           # Redb
           - name: redb
             database: redb
@@ -231,13 +231,13 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            environment: -e DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
-            environment: -e DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
@@ -276,21 +276,57 @@ jobs:
         run: echo "${{ matrix.skipped }}"
 
       - name: Clean up environment
-        continue-on-error: true
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
         run: |
           docker container kill crud-bench &>/dev/null || true
           docker container prune --force &>/dev/null || true
+          docker system prune --force &>/dev/null || true
           rm -rf /tmp/crud-bench || true
+
+      - name: Optimise system
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        run: |
+          # Flush disk writes
+          sync
+          # Clear page tables
+          echo 1 | sudo tee /proc/sys/vm/compact_memory
+          # Drop memory caches
+          echo 3 | sudo tee /proc/sys/vm/drop_caches
+          # Set the CPU to performance mode
+          echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+          # Optimize NVMe SSD scheduler
+          echo none | sudo tee /sys/block/nvme0n1/queue/scheduler
+          # Disable Transparent Hugh Pages
+          echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+          # Disable swap memory
+          sudo swapoff -a
+
+      - name: Wait for system cool down
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        run: sleep 10m
 
       - name: Run benchmarks (${{ github.event.inputs.samples }} samples / ${{ github.event.inputs.clients }} clients / ${{ github.event.inputs.threads }} threads / key ${{ github.event.inputs.key-type }} / random)
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(github.event.inputs.timeout) }}
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -p -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
+        run: ${{ matrix.environment || '' }} ${{ github.workspace }}/artifacts/crud-bench -p -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: ${{ github.event.inputs.value }}
+
+      - name: Normalise system
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        run: |
+          # Flush disk writes
+          sync
+          # Clear page tables
+          echo 1 | sudo tee /proc/sys/vm/compact_memory
+          # Drop memory caches
+          echo 3 | sudo tee /proc/sys/vm/drop_caches
+          # Set the CPU to ondemand mode
+          echo ondemand | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+          # Enable Transparent Hugh Pages
+          echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
 
       - name: Upload result artifacts
         uses: actions/upload-artifact@v4
