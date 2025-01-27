@@ -292,8 +292,6 @@ jobs:
           echo 1 | sudo tee /proc/sys/vm/compact_memory
           # Drop memory caches
           echo 3 | sudo tee /proc/sys/vm/drop_caches
-          # Set the CPU to performance mode
-          echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
           # Optimize NVMe SSD scheduler
           echo none | sudo tee /sys/block/nvme0n1/queue/scheduler
           # Disable Transparent Hugh Pages
@@ -323,8 +321,6 @@ jobs:
           echo 1 | sudo tee /proc/sys/vm/compact_memory
           # Drop memory caches
           echo 3 | sudo tee /proc/sys/vm/drop_caches
-          # Set the CPU to ondemand mode
-          echo ondemand | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
           # Enable Transparent Hugh Pages
           echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
 
