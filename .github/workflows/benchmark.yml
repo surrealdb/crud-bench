@@ -231,7 +231,7 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            environment: RUST_LOG=debug DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
@@ -279,9 +279,11 @@ jobs:
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
         run: |
           docker container kill crud-bench &>/dev/null || true
-          docker container prune --force &>/dev/null || true
-          docker system prune --force &>/dev/null || true
-          rm -rf /tmp/crud-bench || true
+          docker container prune --force
+          docker system prune --force
+          rm -rf /tmp/crud-bench
+          mkdir /tmp/crud-bench
+          chmod 777 /tmp/crud-bench
 
       - name: Optimise system
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
