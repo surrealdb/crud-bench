@@ -50,6 +50,7 @@ impl Container {
 			// Configure the Docker container options
 			arguments.add(["--rm"]);
 			arguments.add(["--quiet"]);
+			arguments.add(["--pull", "always"]);
 			arguments.add(["--name", "crud-bench"]);
 			arguments.add(["--net", "host"]);
 			arguments.add(["-d", &image]);
