@@ -231,7 +231,7 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
+            environment: RUST_LOG=debug DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
