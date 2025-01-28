@@ -292,8 +292,6 @@ jobs:
           echo 1 | sudo tee /proc/sys/vm/compact_memory
           # Drop memory caches
           echo 3 | sudo tee /proc/sys/vm/drop_caches
-          # Optimize NVMe SSD scheduler
-          echo none | sudo tee /sys/block/nvme0n1/queue/scheduler
           # Disable Transparent Hugh Pages
           echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
           # Disable swap memory
