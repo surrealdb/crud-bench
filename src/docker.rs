@@ -1,3 +1,4 @@
+use crate::benchmark::Benchmark;
 use log::{debug, error, info};
 use std::fmt;
 use std::process::{exit, Command};
@@ -30,7 +31,7 @@ impl Container {
 	}
 
 	/// Start the Docker container
-	pub(crate) fn start(image: String, pre: &str, post: &str, privileged: bool) -> Self {
+	pub(crate) fn start(image: String, pre: &str, post: &str, options: &Benchmark) -> Self {
 		// Output debug information to the logs
 		info!("Starting Docker image '{image}'");
 		// Attempt to start Docker 10 times
@@ -43,8 +44,23 @@ impl Container {
 			if let Ok(v) = std::env::var("DOCKER_PRE_ARGS") {
 				arguments.append(&v);
 			}
+			// Configure container options
+			match options.sync {
+				true => {
+					if image.as_str() == "surrealdb/surrealdb:nightly" {
+						arguments.append("-e SURREAL_ROCKSDB_SYNC_DATA=true");
+						arguments.append("-e SURREAL_SURREALKV_SYNC_DATA=true");
+					}
+				}
+				false => {
+					if image.as_str() == "surrealdb/surrealdb:nightly" {
+						arguments.append("-e SURREAL_ROCKSDB_SYNC_DATA=false");
+						arguments.append("-e SURREAL_SURREALKV_SYNC_DATA=false");
+					}
+				}
+			}
 			// Run in privileged mode if specified
-			if privileged {
+			if options.privileged {
 				arguments.add(["--privileged"]);
 			}
 			// Configure the Docker container options
@@ -56,6 +72,22 @@ impl Container {
 			arguments.add(["-d", &image]);
 			// Configure the default post arguments
 			arguments.append(post);
+			// Configure container options
+			match options.sync {
+				true => {
+					if image.as_str() == "postgres" {
+						arguments.append("-c fsync=on")
+					}
+				}
+				false => {
+					if image.as_str() == "postgres" {
+						arguments.append("-c fsync=off")
+					}
+					if image.as_str() == "mysql" {
+						arguments.append("--innodb-flush-log-at-trx-commit=0");
+					}
+				}
+			}
 			// Configure any custom post arguments
 			if let Ok(v) = std::env::var("DOCKER_POST_ARGS") {
 				arguments.append(&v);

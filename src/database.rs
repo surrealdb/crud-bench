@@ -92,8 +92,7 @@ impl Database {
 		// Check if a custom image has been specified
 		let image = options.image.clone().unwrap_or(params.image.to_string());
 		// Start the specified container with arguments
-		let container =
-			Container::start(image, params.pre_args, params.post_args, options.privileged);
+		let container = Container::start(image, params.pre_args, params.post_args, options);
 		// Return the container reference
 		Some(container)
 	}

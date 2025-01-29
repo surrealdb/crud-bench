@@ -89,6 +89,10 @@ pub(crate) struct Args {
 	#[arg(short, long)]
 	pub(crate) random: bool,
 
+	/// Whether to ensure data is synced and durable
+	#[arg(long)]
+	pub(crate) sync: bool,
+
 	/// The type of the key
 	#[arg(short, long, default_value_t = KeyType::Integer, value_enum)]
 	pub(crate) key: KeyType,
@@ -318,6 +322,7 @@ mod test {
 			clients: 2,
 			threads: 2,
 			samples: 10000,
+			sync: false,
 			random,
 			key,
 			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),
