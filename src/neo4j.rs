@@ -19,10 +19,7 @@ pub const DEFAULT: &str = "127.0.0.1:7687";
 pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "neo4j",
-		pre_args: match options.sync {
-			true => "--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_db_tx__log_flush__every=1",
-			false => "--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_db_tx__log_flush__every=0",
-		},
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_db_tx__log_flush__every=1",
 		post_args: "",
 	}
 }
