@@ -84,9 +84,6 @@ impl Container {
 						args.append("--sync_binlog=1");
 						args.append("--innodb-flush-log-at-trx-commit=1");
 					}
-					if image.as_str() == "mongo" {
-						args.append("--journal");
-					}
 				}
 				false => {
 					if image.as_str() == "postgres" {
@@ -97,9 +94,6 @@ impl Container {
 						args.append("--fsync=on");
 						args.append("--sync_binlog=0");
 						args.append("--innodb-flush-log-at-trx-commit=0");
-					}
-					if image.as_str() == "mongo" {
-						args.append("--journal");
 					}
 				}
 			}
