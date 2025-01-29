@@ -15,11 +15,13 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
-pub(crate) const KEYDB_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "eqalpha/keydb",
-	pre_args: "-p 127.0.0.1:6379:6379",
-	post_args: "keydb-server --requirepass root",
-};
+pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+	DockerParams {
+		image: "eqalpha/keydb",
+		pre_args: "-p 127.0.0.1:6379:6379",
+		post_args: "keydb-server --requirepass root",
+	}
+}
 
 pub(crate) struct KeydbClientProvider {
 	url: String,

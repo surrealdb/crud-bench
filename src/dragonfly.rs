@@ -15,11 +15,13 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
-pub(crate) const DRAGONFLY_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "docker.dragonflydb.io/dragonflydb/dragonfly",
-	pre_args: "-p 127.0.0.1:6379:6379 --ulimit memlock=-1",
-	post_args: "--requirepass root",
-};
+pub(crate) const fn docker(_: &Benchmark) -> DockerParams {
+	DockerParams {
+		image: "docker.dragonflydb.io/dragonflydb/dragonfly",
+		pre_args: "-p 127.0.0.1:6379:6379 --ulimit memlock=-1",
+		post_args: "--requirepass root",
+	}
+}
 
 pub(crate) struct DragonflyClientProvider {
 	url: String,
