@@ -78,7 +78,6 @@ impl Container {
 						args.append("-c synchronous_commit=on");
 					}
 					if image.as_str() == "mysql" {
-						args.append("--fsync=on");
 						args.append("--sync_binlog=1");
 						args.append("--innodb-flush-log-at-trx-commit=1");
 					}
@@ -89,7 +88,6 @@ impl Container {
 						args.append("-c synchronous_commit=off");
 					}
 					if image.as_str() == "mysql" {
-						args.append("--fsync=on");
 						args.append("--sync_binlog=0");
 						args.append("--innodb-flush-log-at-trx-commit=0");
 					}
