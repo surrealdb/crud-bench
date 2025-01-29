@@ -56,7 +56,7 @@ on:
         type: string
         description: Number of threads
         required: true
-        default: "64"
+        default: "48"
       key-type:
         type: choice
         description: Primary key type
@@ -244,7 +244,7 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true"
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv

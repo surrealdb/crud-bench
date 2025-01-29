@@ -142,7 +142,7 @@ impl Container {
 
 	fn execute(args: Arguments) -> Result<String, String> {
 		// Output debug information to the logs
-		info!("Running command `docker {args}`");
+		println!("Running command: `docker {args}`");
 		// Create a new process command
 		let mut command = Command::new("docker");
 		// Set the arguments on the command
