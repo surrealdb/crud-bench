@@ -35,6 +35,8 @@ pub(crate) struct Benchmark {
 	pub(crate) samples: u32,
 	/// Pid to monitor
 	pub(crate) pid: Option<u32>,
+	/// Whether to ensure data is synced
+	pub(crate) sync: bool,
 }
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
@@ -45,6 +47,7 @@ impl Benchmark {
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
+			sync: args.sync,
 			pid: args.pid,
 		}
 	}

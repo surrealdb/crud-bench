@@ -11,7 +11,7 @@ use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
 use mongodb::options::ReadConcern;
-use mongodb::options::WriteConcern;
+use mongodb::options::{Acknowledgment, WriteConcern};
 use mongodb::{bson, Client, Collection, Cursor, Database};
 use serde_json::Value;
 use std::hint::black_box;
@@ -25,6 +25,7 @@ pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
 };
 
 pub(crate) struct MongoDBClientProvider {
+	sync: bool,
 	client: Client,
 }
 
@@ -47,6 +48,7 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 		opts.min_pool_size = None;
 		// Create the client provider
 		Ok(Self {
+			sync: options.sync,
 			client: Client::with_options(opts)?,
 		})
 	}
@@ -54,10 +56,20 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 	async fn create_client(&self) -> Result<MongoDBClient> {
 		let db = self.client.database_with_options(
 			"crud-bench",
-			DatabaseOptions::builder()
-				.write_concern(WriteConcern::builder().journal(false).build())
-				.read_concern(ReadConcern::majority())
-				.build(),
+			match self.sync {
+				true => DatabaseOptions::builder()
+					.write_concern(
+						WriteConcern::builder().w(Acknowledgment::Majority).journal(true).build(),
+					)
+					.read_concern(ReadConcern::majority())
+					.build(),
+				false => DatabaseOptions::builder()
+					.write_concern(
+						WriteConcern::builder().w(Acknowledgment::Majority).journal(false).build(),
+					)
+					.read_concern(ReadConcern::majority())
+					.build(),
+			},
 		);
 		Ok(MongoDBClient(db))
 	}
