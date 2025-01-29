@@ -49,13 +49,11 @@ impl Container {
 				true => {
 					if image.as_str() == "surrealdb/surrealdb:nightly" {
 						args.append("-e SURREAL_SYNC_DATA=true");
-						args.append("-e SURREAL_ROCKSDB_BACKGROUND_FLUSH=false");
 					}
 				}
 				false => {
 					if image.as_str() == "surrealdb/surrealdb:nightly" {
 						args.append("-e SURREAL_SYNC_DATA=false");
-						args.append("-e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true");
 					}
 				}
 			}
