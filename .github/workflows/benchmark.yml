@@ -63,21 +63,25 @@ on:
         required: true
         default: "string26"
         options:
-          - integer
-          - string26
-          - string90
-          - string250
-          - string506
+          - "integer"
+          - "string26"
+          - "string90"
+          - "string250"
+          - "string506"
       value:
         type: string
         description: Item content
         required: true
         default: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
-      arguments:
-        type: string
-        description: Additional arguments
-        required: false
-        default: "--sync"
+      sync:
+        type: choice
+        description: Acknowledge disk writes
+        required: true
+        default: "false"
+        options:
+          - "true"
+          - "false"
+
       timeout:
         type: string
         description: Timeout in minutes

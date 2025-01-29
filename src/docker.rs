@@ -84,7 +84,6 @@ impl Container {
 					}
 					if image.as_str() == "mongo" {
 						args.append("--journal");
-						args.append("--journalCommitInterval=1");
 					}
 				}
 				false => {
@@ -96,6 +95,9 @@ impl Container {
 						args.append("--fsync=on");
 						args.append("--sync_binlog=0");
 						args.append("--innodb-flush-log-at-trx-commit=0");
+					}
+					if image.as_str() == "mongo" {
+						args.append("--journal");
 					}
 				}
 			}
