@@ -18,11 +18,13 @@ use std::hint::black_box;
 
 pub const DEFAULT: &str = "mongodb://root:root@127.0.0.1:27017";
 
-pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "mongo",
-	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root",
-	post_args: "",
-};
+pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+	DockerParams {
+		image: "mongo",
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root",
+		post_args: "",
+	}
+}
 
 pub(crate) struct MongoDBClientProvider {
 	sync: bool,

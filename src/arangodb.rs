@@ -17,11 +17,13 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "http://127.0.0.1:8529";
 
-pub(crate) const ARANGODB_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "arangodb",
-	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1",
-	post_args: "--server.scheduler-queue-size 8192 --server.prio1-size 8192 --server.prio2-size 8192 --server.maximal-queue-size 8192",
-};
+pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+	DockerParams {
+		image: "arangodb",
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1",
+		post_args: "--server.scheduler-queue-size 8192 --server.prio1-size 8192 --server.prio2-size 8192 --server.maximal-queue-size 8192",
+	}
+}
 
 pub(crate) struct ArangoDBClientProvider {
 	sync: bool,

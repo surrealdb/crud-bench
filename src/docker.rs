@@ -44,19 +44,6 @@ impl Container {
 			if let Ok(v) = std::env::var("DOCKER_PRE_ARGS") {
 				args.append(&v);
 			}
-			// Configure container options
-			match options.sync {
-				true => {
-					if image.as_str() == "surrealdb/surrealdb:nightly" {
-						args.append("-e SURREAL_SYNC_DATA=true");
-					}
-				}
-				false => {
-					if image.as_str() == "surrealdb/surrealdb:nightly" {
-						args.append("-e SURREAL_SYNC_DATA=false");
-					}
-				}
-			}
 			// Run in privileged mode if specified
 			if options.privileged {
 				args.add(["--privileged"]);
@@ -70,29 +57,6 @@ impl Container {
 			args.add(["-d", &image]);
 			// Configure the default post arguments
 			args.append(post);
-			// Configure container options
-			match options.sync {
-				true => {
-					if image.as_str() == "postgres" {
-						args.append("-c fsync=on");
-						args.append("-c synchronous_commit=on");
-					}
-					if image.as_str() == "mysql" {
-						args.append("--sync_binlog=1");
-						args.append("--innodb-flush-log-at-trx-commit=1");
-					}
-				}
-				false => {
-					if image.as_str() == "postgres" {
-						args.append("-c fsync=on");
-						args.append("-c synchronous_commit=off");
-					}
-					if image.as_str() == "mysql" {
-						args.append("--sync_binlog=0");
-						args.append("--innodb-flush-log-at-trx-commit=0");
-					}
-				}
-			}
 			// Configure any custom post arguments
 			if let Ok(v) = std::env::var("DOCKER_POST_ARGS") {
 				args.append(&v);
