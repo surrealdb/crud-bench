@@ -81,7 +81,11 @@ on:
         options:
           - "true"
           - "false"
-
+      cooldown:
+        type: string
+        description: Cooldown in minutes
+        required: true
+        default: "15"
       timeout:
         type: string
         description: Timeout in minutes
@@ -310,13 +314,13 @@ jobs:
 
       - name: Wait for system cool down
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
-        run: sleep 15m
+        run: sleep ${{ github.event.inputs.cooldown }}m
 
       - name: Run benchmarks (${{ github.event.inputs.samples }} samples / ${{ github.event.inputs.clients }} clients / ${{ github.event.inputs.threads }} threads / key ${{ github.event.inputs.key-type }} / random)
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(github.event.inputs.timeout) }}
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
-        run: ${{ matrix.environment || '' }} ${{ github.workspace }}/artifacts/crud-bench --privileged ${{ github.event.inputs.arguments || '' }} -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
+        run: ${{ matrix.environment || '' }} ${{ github.workspace }}/artifacts/crud-bench --privileged ${{ github.event.inputs.sync == 'true' && '--sync' || '' }} -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: ${{ github.event.inputs.value }}
