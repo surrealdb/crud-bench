@@ -78,13 +78,8 @@ impl Container {
 						args.append("-c synchronous_commit=on");
 					}
 					if image.as_str() == "mysql" {
-						args.append("--fsync=on");
 						args.append("--sync_binlog=1");
 						args.append("--innodb-flush-log-at-trx-commit=1");
-					}
-					if image.as_str() == "mongo" {
-						args.append("--journal");
-						args.append("--journalCommitInterval=1");
 					}
 				}
 				false => {
@@ -93,7 +88,6 @@ impl Container {
 						args.append("-c synchronous_commit=off");
 					}
 					if image.as_str() == "mysql" {
-						args.append("--fsync=on");
 						args.append("--sync_binlog=0");
 						args.append("--innodb-flush-log-at-trx-commit=0");
 					}
@@ -146,7 +140,7 @@ impl Container {
 
 	fn execute(args: Arguments) -> Result<String, String> {
 		// Output debug information to the logs
-		info!("Running command `docker {args}`");
+		println!("Running command: `docker {args}`");
 		// Create a new process command
 		let mut command = Command::new("docker");
 		// Set the arguments on the command
