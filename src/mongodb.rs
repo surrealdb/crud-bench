@@ -56,31 +56,48 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 	async fn create_client(&self) -> Result<MongoDBClient> {
 		let db = self.client.database_with_options(
 			"crud-bench",
-			match self.sync {
-				true => DatabaseOptions::builder()
-					.write_concern(
-						WriteConcern::builder().w(Acknowledgment::Majority).journal(true).build(),
-					)
-					.read_concern(ReadConcern::majority())
-					.build(),
-				false => DatabaseOptions::builder()
-					.write_concern(
-						WriteConcern::builder().w(Acknowledgment::Majority).journal(false).build(),
-					)
-					.read_concern(ReadConcern::majority())
-					.build(),
-			},
+			DatabaseOptions::builder()
+				// Configure the write concern options
+				.write_concern(
+					// Configure the write options
+					WriteConcern::builder()
+						// Ensure that all writes are written,
+						// replicated, and acknowledged by the
+						// majority of nodes in the cluster.
+						.w(Acknowledgment::Majority)
+						// Ensure that all writes are written
+						// to the journal before being being
+						// acknowledged back to the client.
+						// MongoDB does not actually write the
+						// journal file to disk synchronously
+						// but instead the operation is only
+						// acknowledged once the operation
+						// is written to the journal in memory.
+						.journal(true)
+						// Finalise the write options
+						.build(),
+				)
+				// Configure the read concern options
+				.read_concern(ReadConcern::majority())
+				// Finalise the database configuration
+				.build(),
 		);
-		Ok(MongoDBClient(db))
+		Ok(MongoDBClient {
+			sync: self.sync,
+			db,
+		})
 	}
 }
 
-pub(crate) struct MongoDBClient(Database);
+pub(crate) struct MongoDBClient {
+	sync: bool,
+	db: Database,
+}
 
 impl BenchmarkClient for MongoDBClient {
 	async fn compact(&self) -> Result<()> {
 		// For a database compaction
-		self.0
+		self.db
 			.run_command(doc! {
 				"compact": "record",
 				"dryRun": false,
@@ -138,7 +155,7 @@ impl BenchmarkClient for MongoDBClient {
 
 impl MongoDBClient {
 	fn collection(&self) -> Collection<Document> {
-		self.0.collection("record")
+		self.db.collection("record")
 	}
 
 	fn to_doc<K>(key: K, mut val: Value) -> Result<Bson>
@@ -150,6 +167,17 @@ impl MongoDBClient {
 		Ok(bson::to_bson(&val)?)
 	}
 
+	async fn sync(&self) -> Result<()> {
+		if self.sync {
+			// If we need to ensure that writes are
+			// synced to disk before being acknowledged
+			// then we need to specifically call `fsync`
+			// once we have written to the database.
+			self.db.run_command(doc! { "fsync": 1 }).await?;
+		}
+		Ok(())
+	}
+
 	async fn create<K>(&self, key: K, val: Value) -> Result<()>
 	where
 		K: Into<Value> + Into<Bson>,
@@ -158,6 +186,7 @@ impl MongoDBClient {
 		let doc = bson.as_document().unwrap();
 		let res = self.collection().insert_one(doc).await?;
 		assert_ne!(res.inserted_id, Bson::Null);
+		self.sync().await?;
 		Ok(())
 	}
 
@@ -180,6 +209,7 @@ impl MongoDBClient {
 		let filter = doc! { "_id": key };
 		let res = self.collection().replace_one(filter, doc).await?;
 		assert_eq!(res.modified_count, 1);
+		self.sync().await?;
 		Ok(())
 	}
 
@@ -190,6 +220,7 @@ impl MongoDBClient {
 		let filter = doc! { "_id": key };
 		let res = self.collection().delete_one(filter).await?;
 		assert_eq!(res.deleted_count, 1);
+		self.sync().await?;
 		Ok(())
 	}
 
