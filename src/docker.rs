@@ -37,76 +37,87 @@ impl Container {
 		// Attempt to start Docker 10 times
 		for i in 1..=RETRIES {
 			// Configure the Docker command arguments
-			let mut arguments = Arguments::new(["run"]);
+			let mut args = Arguments::new(["run"]);
 			// Configure the default pre arguments
-			arguments.append(pre);
+			args.append(pre);
 			// Configure any custom pre arguments
 			if let Ok(v) = std::env::var("DOCKER_PRE_ARGS") {
-				arguments.append(&v);
+				args.append(&v);
 			}
 			// Configure container options
 			match options.sync {
 				true => {
 					if image.as_str() == "surrealdb/surrealdb:nightly" {
-						arguments.append("-e SURREAL_ROCKSDB_SYNC_DATA=true");
-						arguments.append("-e SURREAL_SURREALKV_SYNC_DATA=true");
+						args.append("-e SURREAL_SYNC_DATA=true");
 					}
 				}
 				false => {
 					if image.as_str() == "surrealdb/surrealdb:nightly" {
-						arguments.append("-e SURREAL_ROCKSDB_SYNC_DATA=false");
-						arguments.append("-e SURREAL_SURREALKV_SYNC_DATA=false");
+						args.append("-e SURREAL_SYNC_DATA=false");
 					}
 				}
 			}
 			// Run in privileged mode if specified
 			if options.privileged {
-				arguments.add(["--privileged"]);
+				args.add(["--privileged"]);
 			}
 			// Configure the Docker container options
-			arguments.add(["--rm"]);
-			arguments.add(["--quiet"]);
-			arguments.add(["--pull", "always"]);
-			arguments.add(["--name", "crud-bench"]);
-			arguments.add(["--net", "host"]);
-			arguments.add(["-d", &image]);
+			args.add(["--rm"]);
+			args.add(["--quiet"]);
+			args.add(["--pull", "always"]);
+			args.add(["--name", "crud-bench"]);
+			args.add(["--net", "host"]);
+			args.add(["-d", &image]);
 			// Configure the default post arguments
-			arguments.append(post);
+			args.append(post);
 			// Configure container options
 			match options.sync {
 				true => {
 					if image.as_str() == "postgres" {
-						arguments.append("-c fsync=on")
+						args.append("-c fsync=on");
+						args.append("-c synchronous_commit=on");
+					}
+					if image.as_str() == "mysql" {
+						args.append("--fsync=on");
+						args.append("--sync_binlog=1");
+						args.append("--innodb-flush-log-at-trx-commit=1");
+					}
+					if image.as_str() == "mongo" {
+						args.append("--journal");
+						args.append("--journalCommitInterval=1");
 					}
 				}
 				false => {
 					if image.as_str() == "postgres" {
-						arguments.append("-c fsync=off")
+						args.append("-c fsync=on");
+						args.append("-c synchronous_commit=off");
 					}
 					if image.as_str() == "mysql" {
-						arguments.append("--innodb-flush-log-at-trx-commit=0");
+						args.append("--fsync=on");
+						args.append("--sync_binlog=0");
+						args.append("--innodb-flush-log-at-trx-commit=0");
 					}
 				}
 			}
 			// Configure any custom post arguments
 			if let Ok(v) = std::env::var("DOCKER_POST_ARGS") {
-				arguments.append(&v);
+				args.append(&v);
 			}
 			// Execute the Docker run command
-			match Self::execute(arguments.clone()) {
+			match Self::execute(args.clone()) {
 				// The command executed successfully
 				Ok(_) => break,
 				// There was an error with the command
 				Err(e) => match i {
 					// This is the last attempt so exit fully
 					RETRIES => {
-						error!("Docker command failure: `docker {arguments}`");
+						error!("Docker command failure: `docker {args}`");
 						error!("{e}");
 						exit(1);
 					}
 					// Let's log the output and retry the command
 					_ => {
-						debug!("Docker command failure: `docker {arguments}`");
+						debug!("Docker command failure: `docker {args}`");
 						debug!("{e}");
 						std::thread::sleep(TIMEOUT);
 					}
