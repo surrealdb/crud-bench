@@ -41,7 +41,6 @@ on:
         type: string
         description: Custom choice
         required: false
-        default: surrealdb-rocksdb,surrealdb-embedded-rocksdb
       samples:
         type: string
         description: Number of samples
