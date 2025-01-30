@@ -41,8 +41,6 @@ pub(crate) enum Database {
 	Rocksdb,
 	#[cfg(feature = "scylladb")]
 	Scylladb,
-	#[cfg(feature = "speedb")]
-	Speedb,
 	#[cfg(feature = "sqlite")]
 	Sqlite,
 	#[cfg(feature = "surrealkv")]
@@ -279,18 +277,6 @@ impl Database {
 				benchmark
 					.run::<_, AnsiSqlDialect, _>(
 						crate::scylladb::ScyllaDBClientProvider::setup(kt, vp.columns(), benchmark)
-							.await?,
-						kp,
-						vp,
-						scans,
-					)
-					.await
-			}
-			#[cfg(feature = "speedb")]
-			Database::Speedb => {
-				benchmark
-					.run::<_, DefaultDialect, _>(
-						crate::speedb::SpeeDBClientProvider::setup(kt, vp.columns(), benchmark)
 							.await?,
 						kp,
 						vp,
