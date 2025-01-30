@@ -122,71 +122,47 @@ impl BenchmarkClient for LmDBClient {
 
 impl LmDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Serialise the value
-			let val = bincode::serialize(&val)?;
-			// Create a new transaction
-			let mut txn = db.0.write_txn()?;
-			// Process the data
-			db.1.put(&mut txn, key, val.as_ref())?;
-			txn.commit()?;
-			Ok(())
-		})
-		.await
+		// Serialise the value
+		let val = bincode::serialize(&val)?;
+		// Create a new transaction
+		let mut txn = self.db.0.write_txn()?;
+		// Process the data
+		self.db.1.put(&mut txn, key, val.as_ref())?;
+		txn.commit()?;
+		Ok(())
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Create a new transaction
-			let txn = db.0.read_txn()?;
-			// Process the data
-			let res: Option<_> = db.1.get(&txn, key)?;
-			// Check the value exists
-			assert!(res.is_some());
-			// Deserialise the value
-			black_box(res.unwrap());
-			// All ok
-			Ok(())
-		})
-		.await
+		// Create a new transaction
+		let txn = self.db.0.read_txn()?;
+		// Process the data
+		let res: Option<_> = self.db.1.get(&txn, key)?;
+		// Check the value exists
+		assert!(res.is_some());
+		// Deserialise the value
+		black_box(res.unwrap());
+		// All ok
+		Ok(())
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Serialise the value
-			let val = bincode::serialize(&val)?;
-			// Create a new transaction
-			let mut txn = db.0.write_txn()?;
-			// Process the data
-			db.1.put(&mut txn, key, &val)?;
-			txn.commit()?;
-			Ok(())
-		})
-		.await
+		// Serialise the value
+		let val = bincode::serialize(&val)?;
+		// Create a new transaction
+		let mut txn = self.db.0.write_txn()?;
+		// Process the data
+		self.db.1.put(&mut txn, key, &val)?;
+		txn.commit()?;
+		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Create a new transaction
-			let mut txn = db.0.write_txn()?;
-			// Process the data
-			db.1.delete(&mut txn, key)?;
-			txn.commit()?;
-			Ok(())
-		})
-		.await
+		// Create a new transaction
+		let mut txn = self.db.0.write_txn()?;
+		// Process the data
+		self.db.1.delete(&mut txn, key)?;
+		txn.commit()?;
+		Ok(())
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -198,48 +174,42 @@ impl LmDBClient {
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Create a new transaction
-			let txn = db.0.read_txn()?;
-			// Create an iterator starting at the beginning
-			let iter = db.1.iter(&txn)?;
-			// Perform the relevant projection scan type
-			match p {
-				Projection::Id => {
-					// We use a for loop to iterate over the results, while
-					// calling black_box internally. This is necessary as
-					// an iterator with `filter_map` or `map` is optimised
-					// out by the compiler when calling `count` at the end.
-					let mut count = 0;
-					for v in iter.skip(s).take(l) {
-						black_box(v.unwrap().0);
-						count += 1;
-					}
-					Ok(count)
+		// Create a new transaction
+		let txn = self.db.0.read_txn()?;
+		// Create an iterator starting at the beginning
+		let iter = self.db.1.iter(&txn)?;
+		// Perform the relevant projection scan type
+		match p {
+			Projection::Id => {
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in iter.skip(s).take(l) {
+					black_box(v.unwrap().0);
+					count += 1;
 				}
-				Projection::Full => {
-					// We use a for loop to iterate over the results, while
-					// calling black_box internally. This is necessary as
-					// an iterator with `filter_map` or `map` is optimised
-					// out by the compiler when calling `count` at the end.
-					let mut count = 0;
-					for v in iter.skip(s).take(l) {
-						black_box(v.unwrap().1);
-						count += 1;
-					}
-					Ok(count)
-				}
-				Projection::Count => {
-					Ok(iter
-						.skip(s) // Skip the first `offset` entries
-						.take(l) // Take the next `limit` entries
-						.count())
-				}
+				Ok(count)
 			}
-		})
-		.await
+			Projection::Full => {
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in iter.skip(s).take(l) {
+					black_box(v.unwrap().1);
+					count += 1;
+				}
+				Ok(count)
+			}
+			Projection::Count => {
+				Ok(iter
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.count())
+			}
+		}
 	}
 }
