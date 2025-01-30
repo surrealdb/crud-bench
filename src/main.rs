@@ -123,12 +123,12 @@ pub(crate) struct Args {
 		env = "CRUD_BENCH_SCANS",
 		default_value = r#"[
 			{ "name": "count_all", "samples": 100, "projection": "COUNT" },
-			{ "name": "limit_id", "samples": 100000, "projection": "ID", "limit": 100, "expect": 100 },
-			{ "name": "limit_all", "samples": 100000, "projection": "FULL", "limit": 100, "expect": 100 },
-			{ "name": "limit_count", "samples": 100000, "projection": "COUNT", "limit": 100, "expect": 100 },
-			{ "name": "limit_start_id", "samples": 10000, "projection": "ID", "start": 5000, "limit": 100, "expect": 100 },
-			{ "name": "limit_start_all", "samples": 10000, "projection": "FULL", "start": 5000, "limit": 100, "expect": 100 },
-			{ "name": "limit_start_count", "samples": 10000, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 }
+			{ "name": "limit_id", "samples": 25000, "projection": "ID", "limit": 100, "expect": 100 },
+			{ "name": "limit_all", "samples": 25000, "projection": "FULL", "limit": 100, "expect": 100 },
+			{ "name": "limit_count", "samples": 25000, "projection": "COUNT", "limit": 100, "expect": 100 },
+			{ "name": "limit_start_id", "samples": 2500, "projection": "ID", "start": 5000, "limit": 100, "expect": 100 },
+			{ "name": "limit_start_all", "samples": 2500, "projection": "FULL", "start": 5000, "limit": 100, "expect": 100 },
+			{ "name": "limit_start_count", "samples": 2500, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 }
 		]"#
 	)]
 	pub(crate) scans: String,
