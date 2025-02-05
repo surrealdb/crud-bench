@@ -5,11 +5,11 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
-use surrealdb::opt::{Config, Resource};
+use surrealdb::opt::{Config, Raw, Resource};
 use surrealdb::RecordId;
 use surrealdb::Surreal;
 
@@ -41,7 +41,7 @@ pub(crate) struct SurrealDBClientProvider {
 
 async fn initialise_db(endpoint: &str, root: Root<'static>) -> Result<Surreal<Any>> {
 	// Set the root user
-	let config = Config::new().user(root);
+	let config = Config::new().user(root).ast_payload();
 	// Connect to the database
 	let db = connect((endpoint, config)).await?;
 	// Signin as a namespace, database, or root user
@@ -106,6 +106,12 @@ struct SurrealRecord {
 	id: RecordId,
 }
 
+#[derive(Debug, Serialize)]
+struct Bindings<T> {
+	content: Value,
+	key: T,
+}
+
 impl BenchmarkClient for SurrealDBClient {
 	async fn startup(&self) -> Result<()> {
 		// Ensure the table exists. This wouldn't
@@ -120,7 +126,7 @@ impl BenchmarkClient for SurrealDBClient {
             REMOVE TABLE IF EXISTS record;
 			DEFINE TABLE record;
 		";
-		self.db.query(surql).await?.check()?;
+		self.db.query(Raw::from(surql)).await?.check()?;
 		Ok(())
 	}
 
@@ -132,9 +138,11 @@ impl BenchmarkClient for SurrealDBClient {
 		*/
 		let res = self
 			.db
-			.query("CREATE type::thing('record', $key) CONTENT $content RETURN NULL")
-			.bind(("content", val))
-			.bind(("key", key))
+			.query(Raw::from("CREATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
 			.await?
 			.take::<surrealdb::Value>(0)?;
 		assert!(res.into_inner().is_some());
@@ -149,9 +157,11 @@ impl BenchmarkClient for SurrealDBClient {
 		*/
 		let res = self
 			.db
-			.query("CREATE type::thing('record', $key) CONTENT $content RETURN NULL")
-			.bind(("content", val))
-			.bind(("key", key))
+			.query(Raw::from("CREATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
 			.await?
 			.take::<surrealdb::Value>(0)?;
 		assert!(res.into_inner().is_some());
@@ -178,9 +188,11 @@ impl BenchmarkClient for SurrealDBClient {
 		*/
 		let res = self
 			.db
-			.query("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL")
-			.bind(("content", val))
-			.bind(("key", key))
+			.query(Raw::from("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
 			.await?
 			.take::<surrealdb::Value>(0)?;
 		assert!(res.into_inner().is_some());
@@ -195,9 +207,11 @@ impl BenchmarkClient for SurrealDBClient {
 		*/
 		let res = self
 			.db
-			.query("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL")
-			.bind(("content", val))
-			.bind(("key", key))
+			.query(Raw::from("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
 			.await?
 			.take::<surrealdb::Value>(0)?;
 		assert!(res.into_inner().is_some());
@@ -212,7 +226,7 @@ impl BenchmarkClient for SurrealDBClient {
 		*/
 		let res = self
 			.db
-			.query("DELETE type::thing('record', $key) RETURN NULL")
+			.query(Raw::from("DELETE type::thing('record', $key) RETURN NULL"))
 			.bind(("key", key))
 			.await?
 			.take::<surrealdb::Value>(0)?;
@@ -228,7 +242,7 @@ impl BenchmarkClient for SurrealDBClient {
 		*/
 		let res = self
 			.db
-			.query("DELETE type::thing('record', $key) RETURN NULL")
+			.query(Raw::from("DELETE type::thing('record', $key) RETURN NULL"))
 			.bind(("key", key))
 			.await?
 			.take::<surrealdb::Value>(0)?;
@@ -256,7 +270,7 @@ impl SurrealDBClient {
 		match p {
 			Projection::Id => {
 				let sql = format!("SELECT id FROM record {c} {s} {l}");
-				let res: surrealdb::Value = self.db.query(sql).await?.take(0)?;
+				let res: surrealdb::Value = self.db.query(Raw::from(sql)).await?.take(0)?;
 				let surrealdb::sql::Value::Array(arr) = res.into_inner() else {
 					panic!("Unexpected response type");
 				};
@@ -264,7 +278,7 @@ impl SurrealDBClient {
 			}
 			Projection::Full => {
 				let sql = format!("SELECT * FROM record {c} {s} {l}");
-				let res: surrealdb::Value = self.db.query(sql).await?.take(0)?;
+				let res: surrealdb::Value = self.db.query(Raw::from(sql)).await?.take(0)?;
 				let surrealdb::sql::Value::Array(arr) = res.into_inner() else {
 					panic!("Unexpected response type");
 				};
@@ -276,7 +290,7 @@ impl SurrealDBClient {
 				} else {
 					format!("SELECT count() FROM (SELECT 1 FROM record {c} {s} {l}) GROUP ALL")
 				};
-				let res: Option<usize> = self.db.query(sql).await?.take("count")?;
+				let res: Option<usize> = self.db.query(Raw::from(sql)).await?.take("count")?;
 				Ok(res.unwrap())
 			}
 		}
