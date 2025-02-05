@@ -144,10 +144,10 @@ impl FjallClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(DURABILITY);
+		let mut txn = self.keyspace.write_tx()?.durability(DURABILITY);
 		// Process the data
 		txn.insert(&self.partition, key, val);
-		txn.commit()?;
+		txn.commit()?.ok();
 		Ok(())
 	}
 
@@ -168,19 +168,19 @@ impl FjallClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(DURABILITY);
+		let mut txn = self.keyspace.write_tx()?.durability(DURABILITY);
 		// Process the data
 		txn.insert(&self.partition, key, val);
-		txn.commit()?;
+		txn.commit()?.ok();
 		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(DURABILITY);
+		let mut txn = self.keyspace.write_tx()?.durability(DURABILITY);
 		// Process the data
 		txn.remove(&self.partition, key);
-		txn.commit()?;
+		txn.commit()?.ok();
 		Ok(())
 	}
 
