@@ -45,7 +45,7 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 		// Configure the key-value separation
 		let blobopts = KvSeparationOptions::default()
 			// Separate values if larger than 1 KiB
-			.separation_threshold(1 * 1024);
+			.separation_threshold(1024);
 		// Configure and create the keyspace
 		let keyspace = Config::new(DATABASE_DIR)
 			// Fsync data every 100 milliseconds
