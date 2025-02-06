@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
-use surrealdb::opt::{Config, Resource};
+use surrealdb::opt::{Config, Raw, Resource};
 use surrealdb::RecordId;
 use surrealdb::Surreal;
 
@@ -51,7 +51,7 @@ pub(crate) struct SurrealDBClientProvider {
 
 async fn initialise_db(endpoint: &str, root: Root<'static>) -> Result<Surreal<Any>> {
 	// Set the root user
-	let config = Config::new().user(root);
+	let config = Config::new().user(root).ast_payload();
 	// Connect to the database
 	let db = connect((endpoint, config)).await?;
 	// Signin as a namespace, database, or root user
@@ -130,7 +130,7 @@ impl BenchmarkClient for SurrealDBClient {
             REMOVE TABLE IF EXISTS record;
 			DEFINE TABLE record;
 		";
-		self.db.query(surql).await?.check()?;
+		self.db.query(Raw::from(surql)).await?.check()?;
 		Ok(())
 	}
 
@@ -202,7 +202,7 @@ impl SurrealDBClient {
 		match p {
 			Projection::Id => {
 				let sql = format!("SELECT id FROM record {c} {s} {l}");
-				let res: surrealdb::Value = self.db.query(sql).await?.take(0)?;
+				let res: surrealdb::Value = self.db.query(Raw::from(sql)).await?.take(0)?;
 				let surrealdb::sql::Value::Array(arr) = res.into_inner() else {
 					panic!("Unexpected response type");
 				};
@@ -210,7 +210,7 @@ impl SurrealDBClient {
 			}
 			Projection::Full => {
 				let sql = format!("SELECT * FROM record {c} {s} {l}");
-				let res: surrealdb::Value = self.db.query(sql).await?.take(0)?;
+				let res: surrealdb::Value = self.db.query(Raw::from(sql)).await?.take(0)?;
 				let surrealdb::sql::Value::Array(arr) = res.into_inner() else {
 					panic!("Unexpected response type");
 				};
@@ -222,7 +222,7 @@ impl SurrealDBClient {
 				} else {
 					format!("SELECT count() FROM (SELECT 1 FROM record {c} {s} {l}) GROUP ALL")
 				};
-				let res: Option<usize> = self.db.query(sql).await?.take("count")?;
+				let res: Option<usize> = self.db.query(Raw::from(sql)).await?.take("count")?;
 				Ok(res.unwrap())
 			}
 		}
