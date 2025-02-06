@@ -134,22 +134,16 @@ impl SurrealKVClient {
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Create a new transaction
-			let mut txn = db.begin_with_mode(ReadOnly)?;
-			// Process the data
-			let res = txn.get(key)?;
-			// Check the value exists
-			assert!(res.is_some());
-			// Deserialise the value
-			black_box(res.unwrap());
-			// All ok
-			Ok(())
-		})
-		.await
+		// Create a new transaction
+		let mut txn = self.db.begin_with_mode(ReadOnly)?;
+		// Process the data
+		let res = txn.get(key)?;
+		// Check the value exists
+		assert!(res.is_some());
+		// Deserialise the value
+		black_box(res.unwrap());
+		// All ok
+		Ok(())
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
@@ -185,54 +179,48 @@ impl SurrealKVClient {
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Create a new transaction
-			let mut txn = db.begin_with_mode(ReadOnly)?;
-			let beg = [0u8].as_slice();
-			let end = [255u8].as_slice();
-			// Perform the relevant projection scan type
-			match p {
-				Projection::Id => {
-					// Create an iterator starting at the beginning
-					let iter = txn.keys(beg..end, Some(s + l));
-					// We use a for loop to iterate over the results, while
-					// calling black_box internally. This is necessary as
-					// an iterator with `filter_map` or `map` is optimised
-					// out by the compiler when calling `count` at the end.
-					let mut count = 0;
-					for v in iter.skip(s).take(l) {
-						black_box(v);
-						count += 1;
-					}
-					Ok(count)
+		// Create a new transaction
+		let mut txn = self.db.begin_with_mode(ReadOnly)?;
+		let beg = [0u8].as_slice();
+		let end = [255u8].as_slice();
+		// Perform the relevant projection scan type
+		match p {
+			Projection::Id => {
+				// Create an iterator starting at the beginning
+				let iter = txn.keys(beg..end, Some(s + l));
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in iter.skip(s).take(l) {
+					black_box(v);
+					count += 1;
 				}
-				Projection::Full => {
-					// Create an iterator starting at the beginning
-					let iter = txn.scan(beg..end, Some(s + l));
-					// We use a for loop to iterate over the results, while
-					// calling black_box internally. This is necessary as
-					// an iterator with `filter_map` or `map` is optimised
-					// out by the compiler when calling `count` at the end.
-					let mut count = 0;
-					for v in iter.skip(s).take(l) {
-						assert!(v.is_ok());
-						black_box(v.unwrap().1);
-						count += 1;
-					}
-					Ok(count)
-				}
-				Projection::Count => {
-					Ok(txn
-						.keys(beg..end, Some(s + l))
-						.skip(s) // Skip the first `offset` entries
-						.take(l) // Take the next `limit` entries
-						.count())
-				}
+				Ok(count)
 			}
-		})
-		.await
+			Projection::Full => {
+				// Create an iterator starting at the beginning
+				let iter = txn.scan(beg..end, Some(s + l));
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in iter.skip(s).take(l) {
+					assert!(v.is_ok());
+					black_box(v.unwrap().1);
+					count += 1;
+				}
+				Ok(count)
+			}
+			Projection::Count => {
+				Ok(txn
+					.keys(beg..end, Some(s + l))
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.count())
+			}
+		}
 	}
 }

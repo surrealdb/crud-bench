@@ -1,5 +1,6 @@
 #![cfg(feature = "surrealdb")]
 
+use crate::database::Database;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
@@ -15,23 +16,32 @@ use surrealdb::Surreal;
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
 
-pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "surrealdb/surrealdb:nightly",
-	pre_args: "--ulimit nofile=65536:65536 -p 8000:8000",
-	post_args: "start --user root --pass root memory",
-};
-
-pub(crate) const SURREALDB_ROCKSDB_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 8000:8000",
-	post_args: "start --user root --pass root rocksdb://tmp/crud-bench.db",
-};
-
-pub(crate) const SURREALDB_SURREALKV_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 8000:8000",
-	post_args: "start --user root --pass root surrealkv://tmp/crud-bench.db",
-};
+pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
+	match options.database {
+		Database::SurrealdbMemory => DockerParams {
+			image: "surrealdb/surrealdb:nightly",
+			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000",
+			post_args: "start --user root --pass root memory",
+		},
+		Database::SurrealdbRocksdb => DockerParams {
+			image: "surrealdb/surrealdb:nightly",
+			pre_args: match options.sync {
+				true => "-p 8000:8000 -e SURREAL_SYNC_DATA=true",
+				false => "-p 8000:8000 -e SURREAL_SYNC_DATA=false",
+			},
+			post_args: "start --user root --pass root rocksdb:/tmp/crud-bench.db",
+		},
+		Database::SurrealdbSurrealkv => DockerParams {
+			image: "surrealdb/surrealdb:nightly",
+			pre_args: match options.sync {
+				true => "-p 8000:8000 -e SURREAL_SYNC_DATA=true",
+				false => "-p 8000:8000 -e SURREAL_SYNC_DATA=false",
+			},
+			post_args: "start --user root --pass root surrealkv:/tmp/crud-bench.db",
+		},
+		_ => unreachable!(),
+	}
+}
 
 pub(crate) struct SurrealDBClientProvider {
 	client: Option<Surreal<Any>>,

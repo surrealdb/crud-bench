@@ -37,7 +37,6 @@ mod redb;
 mod redis;
 mod rocksdb;
 mod scylladb;
-mod speedb;
 mod sqlite;
 mod surrealdb;
 mod surrealkv;
@@ -88,6 +87,10 @@ pub(crate) struct Args {
 	/// Generate the keys in a pseudo-randomized order
 	#[arg(short, long)]
 	pub(crate) random: bool,
+
+	/// Whether to ensure data is synced and durable
+	#[arg(long)]
+	pub(crate) sync: bool,
 
 	/// The type of the key
 	#[arg(short, long, default_value_t = KeyType::Integer, value_enum)]
@@ -318,6 +321,7 @@ mod test {
 			clients: 2,
 			threads: 2,
 			samples: 10000,
+			sync: false,
 			random,
 			key,
 			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),

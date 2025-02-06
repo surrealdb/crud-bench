@@ -41,7 +41,6 @@ on:
         type: string
         description: Custom choice
         required: false
-        default: surrealdb-rocksdb,surrealdb-embedded-rocksdb
       samples:
         type: string
         description: Number of samples
@@ -56,23 +55,36 @@ on:
         type: string
         description: Number of threads
         required: true
-        default: "64"
+        default: "48"
       key-type:
         type: choice
         description: Primary key type
         required: true
         default: "string26"
         options:
-          - integer
-          - string26
-          - string90
-          - string250
-          - string506
+          - "integer"
+          - "string26"
+          - "string90"
+          - "string250"
+          - "string506"
       value:
         type: string
         description: Item content
         required: true
         default: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+      sync:
+        type: choice
+        description: Acknowledge disk writes
+        required: true
+        default: "false"
+        options:
+          - "true"
+          - "false"
+      cooldown:
+        type: string
+        description: Cooldown in minutes
+        required: true
+        default: "15"
       timeout:
         type: string
         description: Timeout in minutes
@@ -133,6 +145,7 @@ jobs:
             database: arangodb
             enabled: true
             description: ArangoDB
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/arangodb3"
           # Cassandra
           - name: cassandra
             database: cassandra
@@ -174,21 +187,25 @@ jobs:
             database: mongodb
             enabled: true
             description: MongoDB
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data/db"
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/mysql"
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data"
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/postgresql/data"
           # Redb
           - name: redb
             database: redb
@@ -226,11 +243,13 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true"
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
+            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
@@ -241,13 +260,13 @@ jobs:
           - name: surrealdb-embedded-rocksdb
             database: surrealdb
             enabled: true
-            endpoint: -e rocksdb:/tmp/rocksdb-engine
+            endpoint: -e rocksdb:/tmp/crud-bench
             description: SurrealDB embedded with RocksDB storage
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
             enabled: true
-            endpoint: -e surrealkv:/tmp/surrealkv-engine
+            endpoint: -e surrealkv:/tmp/crud-bench
             description: SurrealDB embedded with SurrealKV storage
           # SurrealKV
           - name: surrealkv
@@ -264,23 +283,64 @@ jobs:
       - name: Set file permissions
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
       - name: ${{ matrix.skipped || 'Benchmark processing' }}
         if: ${{ !matrix.enabled }}
         run: echo "${{ matrix.skipped }}"
 
       - name: Clean up environment
-        continue-on-error: true
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
-        run: docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+        run: |
+          docker container kill crud-bench &>/dev/null || true
+          docker container prune --force
+          docker system prune --force
+          rm -rf /tmp/crud-bench
+          mkdir /tmp/crud-bench
+          chmod 777 /tmp/crud-bench
+
+      - name: Optimise system
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        run: |
+          # Flush disk writes
+          sync
+          # Clear page tables
+          echo 1 | sudo tee /proc/sys/vm/compact_memory
+          # Drop memory caches
+          echo 3 | sudo tee /proc/sys/vm/drop_caches
+          # Disable Transparent Hugh Pages
+          echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+          # Disable swap memory
+          sudo swapoff -a
+
+      - name: Wait for system cool down
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        run: sleep ${{ github.event.inputs.cooldown }}m
 
       - name: Run benchmarks (${{ github.event.inputs.samples }} samples / ${{ github.event.inputs.clients }} clients / ${{ github.event.inputs.threads }} threads / key ${{ github.event.inputs.key-type }} / random)
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(github.event.inputs.timeout) }}
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
-        run: ${{ github.workspace }}/artifacts/crud-bench -p -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
+        run: ${{ matrix.environment || '' }} ${{ github.workspace }}/artifacts/crud-bench --privileged ${{ github.event.inputs.sync == 'true' && '--sync' || '' }} -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: ${{ github.event.inputs.value }}
+
+      - name: Normalise system
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        run: |
+          # Flush disk writes
+          sync
+          # Clear page tables
+          echo 1 | sudo tee /proc/sys/vm/compact_memory
+          # Drop memory caches
+          echo 3 | sudo tee /proc/sys/vm/drop_caches
+          # Enable Transparent Hugh Pages
+          echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
 
       - name: Upload result artifacts
         uses: actions/upload-artifact@v4

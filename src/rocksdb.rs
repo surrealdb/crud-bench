@@ -5,6 +5,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
+use log::error;
 use rocksdb::{
 	BlockBasedOptions, BottommostLevelCompaction, Cache, CompactOptions, DBCompactionStyle,
 	DBCompressionType, FlushOptions, IteratorMode, LogLevel, OptimisticTransactionDB,
@@ -46,6 +47,8 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
 		opts.set_use_fsync(false);
+		// Set the maximum number of open files
+		opts.set_max_open_files(1024);
 		// Only use warning log level
 		opts.set_log_level(LogLevel::Error);
 		// Set the number of log files to keep
@@ -65,11 +68,17 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Set the amount of data to build up in memory
 		opts.set_write_buffer_size(256 * 1024 * 1024);
 		// Set the target file size for compaction
-		opts.set_target_file_size_base(32 * 1024 * 1024);
+		opts.set_target_file_size_base(128 * 1024 * 1024);
 		// Set the levelled target file size multipler
-		opts.set_target_file_size_multiplier(2);
+		opts.set_target_file_size_multiplier(10);
 		// Set minimum number of write buffers to merge
-		opts.set_min_write_buffer_number_to_merge(2);
+		opts.set_min_write_buffer_number_to_merge(6);
+		// Delay compaction until the minimum number of files
+		opts.set_level_zero_file_num_compaction_trigger(16);
+		// Set the compaction readahead size
+		opts.set_compaction_readahead_size(16 * 1024 * 1024);
+		// Set the max number of subcompactions
+		opts.set_max_subcompactions(4);
 		// Allow multiple writers to update memtables
 		opts.set_allow_concurrent_memtable_write(true);
 		// Improve concurrency from write batch mutex
@@ -82,6 +91,8 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		opts.set_enable_blob_files(true);
 		// Store 4KB values separate from keys
 		opts.set_min_blob_size(4 * 1024);
+		// Set the write-ahead-log size limit
+		opts.set_wal_size_limit_mb(1024);
 		// Set specific compression levels
 		opts.set_compression_per_level(&[
 			DBCompressionType::None,
@@ -95,14 +106,52 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Configure the block based file options
 		let mut block_opts = BlockBasedOptions::default();
 		block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-		block_opts.set_hybrid_ribbon_filter(10.0, 2);
+		block_opts.set_pin_top_level_index_and_filter(true);
+		block_opts.set_bloom_filter(10.0, false);
+		block_opts.set_block_size(64 * 1024);
 		block_opts.set_block_cache(&cache);
 		// Configure the database with the cache
 		opts.set_block_based_table_factory(&block_opts);
 		opts.set_blob_cache(&cache);
 		opts.set_row_cache(&cache);
+		// Allow memory-mapped reads
+		opts.set_allow_mmap_reads(true);
+		// Configure background WAL flush behaviour
+		let db = match std::env::var("ROCKSDB_BACKGROUND_FLUSH").is_ok() {
+			// Beckground flush is disabled which
+			// means that the WAL will be flushed
+			// whenever a transaction is committed.
+			false => {
+				// Enable manual WAL flush
+				opts.set_manual_wal_flush(false);
+				// Create the optimistic datastore
+				Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)
+			}
+			// Background flush is enabled so we
+			// spawn a background worker thread to
+			// flush the WAL to disk periodically.
+			true => {
+				// Enable manual WAL flush
+				opts.set_manual_wal_flush(true);
+				// Create the optimistic datastore
+				let db = Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?);
+				// Clone the database reference
+				let dbc = db.clone();
+				// Create a new background thread
+				std::thread::spawn(move || loop {
+					// Wait for the specified interval
+					std::thread::sleep(Duration::from_millis(200));
+					// Flush the WAL to disk periodically
+					if let Err(err) = dbc.flush_wal(true) {
+						error!("Failed to flush WAL: {err}");
+					}
+				});
+				// Return the datastore
+				db
+			}
+		};
 		// Create the store
-		Ok(Self(Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)))
+		Ok(Self(db))
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<RocksDBClient> {
@@ -193,101 +242,77 @@ impl BenchmarkClient for RocksDBClient {
 
 impl RocksDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Serialise the value
-			let val = bincode::serialize(&val)?;
-			// Set the transaction options
-			let mut to = OptimisticTransactionOptions::default();
-			to.set_snapshot(true);
-			// Set the write options
-			let mut wo = WriteOptions::default();
-			wo.set_sync(false);
-			// Create a new transaction
-			let txn = db.transaction_opt(&wo, &to);
-			// Process the data
-			txn.put(key, val)?;
-			txn.commit()?;
-			Ok(())
-		})
-		.await
+		// Serialise the value
+		let val = bincode::serialize(&val)?;
+		// Set the transaction options
+		let mut to = OptimisticTransactionOptions::default();
+		to.set_snapshot(true);
+		// Set the write options
+		let mut wo = WriteOptions::default();
+		wo.set_sync(false);
+		// Create a new transaction
+		let txn = self.db.transaction_opt(&wo, &to);
+		// Process the data
+		txn.put(key, val)?;
+		txn.commit()?;
+		Ok(())
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Set the transaction options
-			let mut to = OptimisticTransactionOptions::default();
-			to.set_snapshot(true);
-			// Set the write options
-			let mut wo = WriteOptions::default();
-			wo.set_sync(false);
-			// Create a new transaction
-			let txn = db.transaction_opt(&wo, &to);
-			// Configure read options
-			let mut ro = ReadOptions::default();
-			ro.set_snapshot(&txn.snapshot());
-			ro.set_verify_checksums(false);
-			ro.set_async_io(true);
-			ro.fill_cache(true);
-			// Process the data
-			let res = txn.get_pinned_opt(key, &ro)?;
-			// Check the value exists
-			assert!(res.is_some());
-			// Deserialise the value
-			black_box(res.unwrap());
-			// All ok
-			Ok(())
-		})
-		.await
+		// Set the transaction options
+		let mut to = OptimisticTransactionOptions::default();
+		to.set_snapshot(true);
+		// Set the write options
+		let mut wo = WriteOptions::default();
+		wo.set_sync(false);
+		// Create a new transaction
+		let txn = self.db.transaction_opt(&wo, &to);
+		// Configure read options
+		let mut ro = ReadOptions::default();
+		ro.set_snapshot(&txn.snapshot());
+		ro.set_verify_checksums(false);
+		ro.set_async_io(true);
+		ro.fill_cache(true);
+		// Process the data
+		let res = txn.get_pinned_opt(key, &ro)?;
+		// Check the value exists
+		assert!(res.is_some());
+		// Deserialise the value
+		black_box(res.unwrap());
+		// All ok
+		Ok(())
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Serialise the value
-			let val = bincode::serialize(&val)?;
-			// Set the transaction options
-			let mut to = OptimisticTransactionOptions::default();
-			to.set_snapshot(true);
-			// Set the write options
-			let mut wo = WriteOptions::default();
-			wo.set_sync(false);
-			// Create a new transaction
-			let txn = db.transaction_opt(&wo, &to);
-			// Process the data
-			txn.put(key, val)?;
-			txn.commit()?;
-			Ok(())
-		})
-		.await
+		// Serialise the value
+		let val = bincode::serialize(&val)?;
+		// Set the transaction options
+		let mut to = OptimisticTransactionOptions::default();
+		to.set_snapshot(true);
+		// Set the write options
+		let mut wo = WriteOptions::default();
+		wo.set_sync(false);
+		// Create a new transaction
+		let txn = self.db.transaction_opt(&wo, &to);
+		// Process the data
+		txn.put(key, val)?;
+		txn.commit()?;
+		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Set the transaction options
-			let mut to = OptimisticTransactionOptions::default();
-			to.set_snapshot(true);
-			// Set the write options
-			let mut wo = WriteOptions::default();
-			wo.set_sync(false);
-			// Create a new transaction
-			let txn = db.transaction_opt(&wo, &to);
-			// Process the data
-			txn.delete(key)?;
-			txn.commit()?;
-			Ok(())
-		})
-		.await
+		// Set the transaction options
+		let mut to = OptimisticTransactionOptions::default();
+		to.set_snapshot(true);
+		// Set the write options
+		let mut wo = WriteOptions::default();
+		wo.set_sync(false);
+		// Create a new transaction
+		let txn = self.db.transaction_opt(&wo, &to);
+		// Process the data
+		txn.delete(key)?;
+		txn.commit()?;
+		Ok(())
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -299,62 +324,56 @@ impl RocksDBClient {
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
-		// Clone the datastore
-		let db = self.db.clone();
-		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
-			// Set the transaction options
-			let mut to = OptimisticTransactionOptions::default();
-			to.set_snapshot(true);
-			// Set the write options
-			let mut wo = WriteOptions::default();
-			wo.set_sync(false);
-			// Create a new transaction
-			let txn = db.transaction_opt(&wo, &to);
-			// Configure read options
-			let mut ro = ReadOptions::default();
-			ro.set_snapshot(&txn.snapshot());
-			ro.set_iterate_lower_bound([0u8]);
-			ro.set_iterate_upper_bound([255u8]);
-			ro.set_verify_checksums(false);
-			ro.set_async_io(true);
-			ro.fill_cache(true);
-			// Create an iterator starting at the beginning
-			let iter = txn.iterator_opt(IteratorMode::Start, ro);
-			// Perform the relevant projection scan type
-			match p {
-				Projection::Id => {
-					// We use a for loop to iterate over the results, while
-					// calling black_box internally. This is necessary as
-					// an iterator with `filter_map` or `map` is optimised
-					// out by the compiler when calling `count` at the end.
-					let mut count = 0;
-					for v in iter.skip(s).take(l) {
-						black_box(v.unwrap().0);
-						count += 1;
-					}
-					Ok(count)
+		// Set the transaction options
+		let mut to = OptimisticTransactionOptions::default();
+		to.set_snapshot(true);
+		// Set the write options
+		let mut wo = WriteOptions::default();
+		wo.set_sync(false);
+		// Create a new transaction
+		let txn = self.db.transaction_opt(&wo, &to);
+		// Configure read options
+		let mut ro = ReadOptions::default();
+		ro.set_snapshot(&txn.snapshot());
+		ro.set_iterate_lower_bound([0u8]);
+		ro.set_iterate_upper_bound([255u8]);
+		ro.set_verify_checksums(false);
+		ro.set_async_io(true);
+		ro.fill_cache(true);
+		// Create an iterator starting at the beginning
+		let iter = txn.iterator_opt(IteratorMode::Start, ro);
+		// Perform the relevant projection scan type
+		match p {
+			Projection::Id => {
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in iter.skip(s).take(l) {
+					black_box(v.unwrap().0);
+					count += 1;
 				}
-				Projection::Full => {
-					// We use a for loop to iterate over the results, while
-					// calling black_box internally. This is necessary as
-					// an iterator with `filter_map` or `map` is optimised
-					// out by the compiler when calling `count` at the end.
-					let mut count = 0;
-					for v in iter.skip(s).take(l) {
-						black_box(v.unwrap().1);
-						count += 1;
-					}
-					Ok(count)
-				}
-				Projection::Count => {
-					Ok(iter
-						.skip(s) // Skip the first `offset` entries
-						.take(l) // Take the next `limit` entries
-						.count())
-				}
+				Ok(count)
 			}
-		})
-		.await
+			Projection::Full => {
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
+				let mut count = 0;
+				for v in iter.skip(s).take(l) {
+					black_box(v.unwrap().1);
+					count += 1;
+				}
+				Ok(count)
+			}
+			Projection::Count => {
+				Ok(iter
+					.skip(s) // Skip the first `offset` entries
+					.take(l) // Take the next `limit` entries
+					.count())
+			}
+		}
 	}
 }

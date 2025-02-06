@@ -1,3 +1,4 @@
+use crate::database::Database;
 use crate::dialect::Dialect;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::keyprovider::KeyProvider;
@@ -24,6 +25,8 @@ pub(crate) struct Benchmark {
 	/// Whether to run containers in privileged mode
 	pub(crate) privileged: bool,
 	/// The container image to use
+	pub(crate) database: Database,
+	/// The container image to use
 	pub(crate) image: Option<String>,
 	/// The server endpoint to connect to
 	pub(crate) endpoint: Option<String>,
@@ -35,16 +38,20 @@ pub(crate) struct Benchmark {
 	pub(crate) samples: u32,
 	/// Pid to monitor
 	pub(crate) pid: Option<u32>,
+	/// Whether to ensure data is synced
+	pub(crate) sync: bool,
 }
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
 		Self {
 			privileged: args.privileged,
+			database: args.database,
 			image: args.image.to_owned(),
 			endpoint: args.endpoint.to_owned(),
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
+			sync: args.sync,
 			pid: args.pid,
 		}
 	}
