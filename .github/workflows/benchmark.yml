@@ -318,6 +318,10 @@ jobs:
           echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
           # Disable swap memory
           sudo swapoff -a
+          # Increase max limits
+          ulimit -n 65536
+          ulimit -u unlimited
+          ulimit -l unlimited
 
       - name: Wait for system cool down
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
