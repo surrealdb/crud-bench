@@ -335,10 +335,10 @@ jobs:
           uname -a
           echo "=== CPU Details (lscpu) ==="
           lscpu
-          echo "=== First 20 lines of /proc/cpuinfo ==="
-          head -n 20 /proc/cpuinfo
-          echo "=== First 20 lines of /proc/meminfo ==="
-          head -n 20 /proc/meminfo
+          echo "=== First 50 lines of /proc/cpuinfo ==="
+          head -n 50 /proc/cpuinfo
+          echo "=== First 50 lines of /proc/meminfo ==="
+          head -n 50 /proc/meminfo
           echo "=== Cgroup Information (/proc/self/cgroup) ==="
           cat /proc/self/cgroup
 
