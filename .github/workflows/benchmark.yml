@@ -296,12 +296,17 @@ jobs:
       - name: Clean up environment
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
         run: |
+          # Clean up Docker environment
           docker container kill crud-bench &>/dev/null || true
           docker container prune --force
           docker system prune --force
+          # Clean up data directory
           rm -rf /tmp/crud-bench
           mkdir /tmp/crud-bench
           chmod 777 /tmp/crud-bench
+          # Remove old results
+          rm -f result*.json
+          rm -f result*.csv
 
       - name: Optimise system
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
