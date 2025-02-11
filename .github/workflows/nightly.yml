@@ -215,6 +215,27 @@ jobs:
         if: ${{ !matrix.enabled }}
         run: echo "${{ matrix.skipped }}"
 
+      - name: Clean up environment
+        if: ${{ matrix.enabled }}
+        run: |
+          # Clean up data directory
+          rm -rf /tmp/crud-bench
+          mkdir /tmp/crud-bench
+          chmod 777 /tmp/crud-bench
+          # Remove old results
+          rm -f result*.json
+          rm -f result*.csv
+
+      - name: Optimise system
+        if: ${{ matrix.enabled }}
+        run: |
+          # Flush disk writes
+          sync
+          # Increase max limits
+          ulimit -n 65536
+          ulimit -u unlimited
+          ulimit -l unlimited
+
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 60
         if: ${{ matrix.enabled && (success() || failure()) }}
