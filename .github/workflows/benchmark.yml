@@ -306,6 +306,8 @@ jobs:
       - name: Optimise system
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
         run: |
+          # Disable services
+          sudo systemctl stop unattended-upgrades
           # Flush disk writes
           sync
           # Clear page tables
@@ -333,6 +335,8 @@ jobs:
       - name: Normalise system
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
         run: |
+          # Enable services
+          sudo systemctl start unattended-upgrades
           # Flush disk writes
           sync
           # Clear page tables
