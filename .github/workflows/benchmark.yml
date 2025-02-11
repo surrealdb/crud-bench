@@ -105,7 +105,7 @@ defaults:
 jobs:
   build:
     name: Build crud-bench
-    runs-on: [runner-amd64-4xlarge]
+    runs-on: [ runner-amd64-4xlarge ]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -134,7 +134,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-benchmarking]
+    runs-on: [ runner-benchmarking ]
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -326,6 +326,21 @@ jobs:
       - name: Wait for system cool down
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
         run: sleep ${{ github.event.inputs.cooldown }}m
+
+      - name: System Information
+        run: |
+          echo "=== Environment Variables ==="
+          env
+          echo "=== Kernel & OS Info ==="
+          uname -a
+          echo "=== CPU Details (lscpu) ==="
+          lscpu
+          echo "=== First 20 lines of /proc/cpuinfo ==="
+          head -n 20 /proc/cpuinfo
+          echo "=== First 20 lines of /proc/meminfo ==="
+          head -n 20 /proc/meminfo
+          echo "=== Cgroup Information (/proc/self/cgroup) ==="
+          cat /proc/self/cgroup
 
       - name: Run benchmarks (${{ github.event.inputs.samples }} samples / ${{ github.event.inputs.clients }} clients / ${{ github.event.inputs.threads }} threads / key ${{ github.event.inputs.key-type }} / random)
         continue-on-error: true

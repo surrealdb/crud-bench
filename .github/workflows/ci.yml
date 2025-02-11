@@ -23,7 +23,7 @@ defaults:
 jobs:
   format:
     name: Check format
-    runs-on: [runner-amd64-large]
+    runs-on: [ runner-amd64-large ]
     continue-on-error: true
     steps:
       - name: Install stable toolchain
@@ -45,7 +45,7 @@ jobs:
 
   clippy:
     name: Check clippy
-    runs-on: [runner-amd64-large]
+    runs-on: [ runner-amd64-large ]
     continue-on-error: true
     steps:
       - name: Install stable toolchain
@@ -67,7 +67,7 @@ jobs:
 
   test:
     name: Check tests
-    runs-on: [runner-amd64-large]
+    runs-on: [ runner-amd64-large ]
     continue-on-error: true
     steps:
       - name: Install stable toolchain
@@ -122,7 +122,7 @@ jobs:
 
   docker-build:
     name: Build Docker image
-    runs-on: [runner-amd64-large-private]
+    runs-on: [ runner-amd64-large-private ]
     needs: build
     continue-on-error: true
     steps:
@@ -193,7 +193,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-amd64-large-private]
+    runs-on: [ runner-amd64-large-private ]
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -347,6 +347,21 @@ jobs:
           REGISTRY=${{ secrets.REGISTRY_AWS_ACCOUNT_ID }}.dkr.ecr.$REGION.amazonaws.com
           aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
           echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
+
+      - name: System Information
+        run: |
+          echo "=== Environment Variables ==="
+          env
+          echo "=== Kernel & OS Info ==="
+          uname -a
+          echo "=== CPU Details (lscpu) ==="
+          lscpu
+          echo "=== First 20 lines of /proc/cpuinfo ==="
+          head -n 20 /proc/cpuinfo
+          echo "=== First 20 lines of /proc/meminfo ==="
+          head -n 20 /proc/meminfo
+          echo "=== Cgroup Information (/proc/self/cgroup) ==="
+          cat /proc/self/cgroup
 
       - name: ${{ matrix.skipped || 'Benchmark processing' }}
         if: ${{ !matrix.enabled }}
