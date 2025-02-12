@@ -145,7 +145,7 @@ jobs:
             database: arangodb
             enabled: true
             description: ArangoDB
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/arangodb3"
+            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/var/lib/arangodb3"
           # Cassandra
           - name: cassandra
             database: cassandra
@@ -187,25 +187,25 @@ jobs:
             database: mongodb
             enabled: true
             description: MongoDB
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data/db"
+            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/data/db"
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/mysql"
+            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/var/lib/mysql"
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data"
+            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/data"
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/postgresql/data"
+            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/var/lib/postgresql/data"
           # Redb
           - name: redb
             database: redb
@@ -243,13 +243,13 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true"
+            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true"
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
+            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/data"
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
@@ -260,13 +260,13 @@ jobs:
           - name: surrealdb-embedded-rocksdb
             database: surrealdb
             enabled: true
-            endpoint: -e rocksdb:/tmp/crud-bench
+            endpoint: -e rocksdb:/data/crud-bench
             description: SurrealDB embedded with RocksDB storage
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
             enabled: true
-            endpoint: -e surrealkv:/tmp/crud-bench
+            endpoint: -e surrealkv:/data/crud-bench
             description: SurrealDB embedded with SurrealKV storage
           # SurrealKV
           - name: surrealkv
@@ -296,17 +296,12 @@ jobs:
       - name: Clean up environment
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
         run: |
-          # Clean up Docker environment
           docker container kill crud-bench &>/dev/null || true
           docker container prune --force
           docker system prune --force
-          # Clean up data directory
-          rm -rf /tmp/crud-bench
-          mkdir /tmp/crud-bench
-          chmod 777 /tmp/crud-bench
-          # Remove old results
-          rm -f result*.json
-          rm -f result*.csv
+          rm -rf /data/crud-bench
+          mkdir -p /data/crud-bench
+          chmod 777 /data/crud-bench
 
       - name: Optimise system
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
