@@ -452,13 +452,13 @@ cargo run -r -- -d surrealdb -e memory -s 100000 -c 12 -t 24 -r
 ### [SurrealDB](https://surrealdb.com) embedded (RocksDB storage engine)
 
 ```bash
-cargo run -r -- -d surrealdb -e rocksdb:/tmp/db -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d surrealdb -e rocksdb:/data/db -s 100000 -c 12 -t 24 -r
 ```
 
 ### [SurrealDB](https://surrealdb.com) embedded (SurrealKV storage engine)
 
 ```bash
-cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d surrealdb -e surrealkv:/data/db -s 100000 -c 12 -t 24 -r
 ```
 
 ### [SurrealKV](https://surrealkv.org)
@@ -477,7 +477,7 @@ To run the benchmark against an already running SurrealDB instance, follow the s
 Start a SurrealDB server:
 
 ```bash
-surreal start --allow-all -u root -p root rocksdb:/tmp/db
+surreal start --allow-all -u root -p root rocksdb:/data/db
 ```
 
 Then run crud-bench with the `surrealdb` database option:
