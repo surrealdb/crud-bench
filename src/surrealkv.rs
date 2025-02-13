@@ -20,7 +20,7 @@ use sysinfo::System;
 
 const DATABASE_DIR: &str = "surrealkv";
 
-const MIN_CACHE_SIZE: u64 = 250_000;
+const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB
 
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
@@ -55,6 +55,8 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		opts.dir = PathBuf::from(DATABASE_DIR);
 		// Set the cache to 250,000 entries
 		opts.max_value_cache_size = cache;
+		// Enable cache on write
+		opts.cache_on_write = true;
 		// Create the store
 		Ok(Self(Arc::new(Store::new(opts)?)))
 	}
