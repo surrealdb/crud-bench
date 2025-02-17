@@ -20,7 +20,7 @@ use sysinfo::System;
 
 const DATABASE_DIR: &str = "surrealkv";
 
-const MIN_CACHE_SIZE: u64 = 250_000;
+const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB
 
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
