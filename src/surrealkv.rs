@@ -129,7 +129,7 @@ impl SurrealKVClient {
 		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.set(key, &val)?;
-		txn.commit()?;
+		txn.commit().await?;
 		Ok(())
 	}
 
@@ -155,7 +155,7 @@ impl SurrealKVClient {
 		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.set(key, &val)?;
-		txn.commit()?;
+		txn.commit().await?;
 		Ok(())
 	}
 
@@ -166,7 +166,7 @@ impl SurrealKVClient {
 		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.delete(key)?;
-		txn.commit()?;
+		txn.commit().await?;
 		Ok(())
 	}
 
