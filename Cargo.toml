@@ -7,7 +7,22 @@ readme = "README.md"
 
 [features]
 default = [
+    "arangodb",
+    "dragonfly",
+    "fjall",
+    "keydb",
+    "lmdb",
+    "mongodb",
+    "mysql",
+    "neo4j",
+    "postgres",
+    "redb",
+    "redis",
+    "rocksdb",
+    "scylladb",
+    "sqlite",
     "surrealkv",
+    "surrealdb",
 ]
 arangodb = ["dep:arangors"]
 dragonfly = ["dep:redis"]
