@@ -27,6 +27,8 @@ pub(crate) enum Database {
 	Keydb,
 	#[cfg(feature = "lmdb")]
 	Lmdb,
+	#[cfg(feature = "memodb")]
+	Memodb,
 	#[cfg(feature = "mongodb")]
 	Mongodb,
 	#[cfg(feature = "mysql")]
@@ -197,6 +199,18 @@ impl Database {
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						MapClientProvider::setup(kt, vp.columns(), benchmark).await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "memodb")]
+			Database::Memodb => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::memodb::MemoDBClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,

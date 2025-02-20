@@ -30,6 +30,7 @@ mod fjall;
 mod keydb;
 mod lmdb;
 mod map;
+mod memodb;
 mod mongodb;
 mod mysql;
 mod neo4j;
