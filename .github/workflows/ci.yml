@@ -240,6 +240,11 @@ jobs:
             database: map
             enabled: true
             description: Map
+          # MemoDB
+          - name: memodb
+            database: memodb
+            enabled: true
+            description: MemoDB
           # MongoDB
           - name: mongodb
             database: mongodb
