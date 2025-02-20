@@ -26,16 +26,16 @@ pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
 		Database::SurrealdbRocksdb => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: match options.sync {
-				true => "-p 8000:8000 -e SURREAL_SYNC_DATA=true",
-				false => "-p 8000:8000 -e SURREAL_SYNC_DATA=false",
+				true => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=true",
+				false => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=false",
 			},
 			post_args: "start --user root --pass root rocksdb:/data/crud-bench.db",
 		},
 		Database::SurrealdbSurrealkv => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: match options.sync {
-				true => "-p 8000:8000 -e SURREAL_SYNC_DATA=true",
-				false => "-p 8000:8000 -e SURREAL_SYNC_DATA=false",
+				true => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=true",
+				false => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=false",
 			},
 			post_args: "start --user root --pass root surrealkv:/data/crud-bench.db",
 		},
