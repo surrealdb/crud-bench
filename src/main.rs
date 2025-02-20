@@ -25,6 +25,7 @@ mod valueprovider;
 mod arangodb;
 mod dragonfly;
 mod dry;
+mod echodb;
 mod fjall;
 mod keydb;
 mod lmdb;
