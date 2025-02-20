@@ -187,7 +187,7 @@ jobs:
           path: ${{ github.workspace }}/artifacts
           merge-multiple: true
 
-      - name: Set file permissions3
+      - name: Set file permissions
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
 
       - name: Login to Docker Hub
