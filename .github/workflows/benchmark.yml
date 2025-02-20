@@ -298,6 +298,7 @@ jobs:
         run: |
           docker container kill crud-bench &>/dev/null || true
           docker container prune --force
+          docker volume prune --force
           docker system prune --force
           rm -rf /data/crud-bench
           mkdir -p /data/crud-bench
