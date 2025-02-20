@@ -311,13 +311,13 @@ jobs:
           - name: surrealdb-embedded-rocksdb
             database: surrealdb
             enabled: true
-            endpoint: -e rocksdb:/data/crud-bench
+            endpoint: -e rocksdb:/tmp/crud-bench
             description: SurrealDB embedded with RocksDB storage
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
             enabled: true
-            endpoint: -e surrealkv:/data/crud-bench
+            endpoint: -e surrealkv:/tmp/crud-bench
             description: SurrealDB embedded with SurrealKV storage
           # SurrealKV
           - name: surrealkv
@@ -371,9 +371,9 @@ jobs:
         if: ${{ matrix.enabled }}
         run: |
           # Clean up data directory
-          rm -rf /data/crud-bench
-          mkdir -p /data/crud-bench
-          chmod 777 /data/crud-bench
+          rm -rf /tmp/crud-bench
+          mkdir -p /tmp/crud-bench
+          chmod 777 /tmp/crud-bench
           # Remove old results
           rm -f result*.json
           rm -f result*.csv
