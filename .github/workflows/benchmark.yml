@@ -145,7 +145,7 @@ jobs:
             database: arangodb
             enabled: true
             description: ArangoDB
-            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/var/lib/arangodb3"
+            DOCKER_PRE_ARGS: "-v /data/crud-bench:/var/lib/arangodb3"
           # Cassandra
           - name: cassandra
             database: cassandra
@@ -187,25 +187,25 @@ jobs:
             database: mongodb
             enabled: true
             description: MongoDB
-            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/data/db"
+            DOCKER_PRE_ARGS: "-v /data/crud-bench:/data/db"
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
-            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/var/lib/mysql"
+            DOCKER_PRE_ARGS: "-v /data/crud-bench:/var/lib/mysql"
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
-            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/data"
+            DOCKER_PRE_ARGS: "-v /data/crud-bench:/data"
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
-            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/var/lib/postgresql/data"
+            DOCKER_PRE_ARGS: "-v /data/crud-bench:/var/lib/postgresql/data"
           # Redb
           - name: redb
             database: redb
@@ -243,13 +243,13 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true"
+            DOCKER_PRE_ARGS: "-v /data/crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true"
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
-            environment: DOCKER_PRE_ARGS="-v /data/crud-bench:/data"
+            DOCKER_PRE_ARGS: "-v /data/crud-bench:/data"
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
@@ -350,6 +350,8 @@ jobs:
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: ${{ github.event.inputs.value }}
+          DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
+          DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
       - name: Normalise system
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
