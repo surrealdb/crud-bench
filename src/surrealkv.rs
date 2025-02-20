@@ -50,7 +50,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Disable versioning
 		opts.enable_versions = false;
 		// Enable disk persistence
-		opts.disk_persistence = true;
+		opts.disk_persistence = false;
 		// Set the directory location
 		opts.dir = PathBuf::from(DATABASE_DIR);
 		// Set the cache to 250,000 entries
