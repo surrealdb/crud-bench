@@ -50,7 +50,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Disable versioning
 		opts.enable_versions = false;
 		// Enable disk persistence
-		opts.disk_persistence = false;
+		opts.disk_persistence = true;
 		// Set the directory location
 		opts.dir = PathBuf::from(DATABASE_DIR);
 		// Set the cache to 250,000 entries
@@ -121,53 +121,69 @@ impl BenchmarkClient for SurrealKVClient {
 
 impl SurrealKVClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Serialise the value
-		let val = bincode::serialize(&val)?;
-		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
-		// Process the data
-		txn.set(key, &val)?;
-		txn.commit()?;
-		Ok(())
+		// Execute on the blocking threadpool
+		affinitypool::spawn_local(|| -> Result<_> {
+			// Serialise the value
+			let val = bincode::serialize(&val)?;
+			// Create a new transaction
+			let mut txn = self.db.begin_with_mode(ReadWrite)?;
+			// Let the OS handle syncing to disk
+			txn.set_durability(Durability::Eventual);
+			// Process the data
+			txn.set(key, &val)?;
+			txn.commit()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadOnly)?;
-		// Process the data
-		let res = txn.get(key)?;
-		// Check the value exists
-		assert!(res.is_some());
-		// Deserialise the value
-		black_box(res.unwrap());
-		// All ok
-		Ok(())
+		// Execute on the blocking threadpool
+		affinitypool::spawn_local(|| -> Result<_> {
+			// Create a new transaction
+			let mut txn = self.db.begin_with_mode(ReadOnly)?;
+			// Process the data
+			let res = txn.get(key)?;
+			// Check the value exists
+			assert!(res.is_some());
+			// Deserialise the value
+			black_box(res.unwrap());
+			// All ok
+			Ok(())
+		})
+		.await
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Serialise the value
-		let val = bincode::serialize(&val)?;
-		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
-		// Process the data
-		txn.set(key, &val)?;
-		txn.commit()?;
-		Ok(())
+		// Execute on the blocking threadpool
+		affinitypool::spawn_local(|| -> Result<_> {
+			// Serialise the value
+			let val = bincode::serialize(&val)?;
+			// Create a new transaction
+			let mut txn = self.db.begin_with_mode(ReadWrite)?;
+			// Let the OS handle syncing to disk
+			txn.set_durability(Durability::Eventual);
+			// Process the data
+			txn.set(key, &val)?;
+			txn.commit()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
-		// Process the data
-		txn.delete(key)?;
-		txn.commit()?;
-		Ok(())
+		// Execute on the blocking threadpool
+		affinitypool::spawn_local(|| -> Result<_> {
+			// Create a new transaction
+			let mut txn = self.db.begin_with_mode(ReadWrite)?;
+			// Let the OS handle syncing to disk
+			txn.set_durability(Durability::Eventual);
+			// Process the data
+			txn.delete(key)?;
+			txn.commit()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -179,48 +195,52 @@ impl SurrealKVClient {
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
-		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadOnly)?;
-		let beg = [0u8].as_slice();
-		let end = [255u8].as_slice();
-		// Perform the relevant projection scan type
-		match p {
-			Projection::Id => {
-				// Create an iterator starting at the beginning
-				let iter = txn.keys(beg..end, Some(s + l));
-				// We use a for loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
-				let mut count = 0;
-				for v in iter.skip(s).take(l) {
-					black_box(v);
-					count += 1;
+		// Execute on the blocking threadpool
+		affinitypool::spawn_local(|| -> Result<_> {
+			// Create a new transaction
+			let mut txn = self.db.begin_with_mode(ReadOnly)?;
+			let beg = [0u8].as_slice();
+			let end = [255u8].as_slice();
+			// Perform the relevant projection scan type
+			match p {
+				Projection::Id => {
+					// Create an iterator starting at the beginning
+					let iter = txn.keys(beg..end, Some(s + l));
+					// We use a for loop to iterate over the results, while
+					// calling black_box internally. This is necessary as
+					// an iterator with `filter_map` or `map` is optimised
+					// out by the compiler when calling `count` at the end.
+					let mut count = 0;
+					for v in iter.skip(s).take(l) {
+						black_box(v);
+						count += 1;
+					}
+					Ok(count)
 				}
-				Ok(count)
-			}
-			Projection::Full => {
-				// Create an iterator starting at the beginning
-				let iter = txn.scan(beg..end, Some(s + l));
-				// We use a for loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
-				let mut count = 0;
-				for v in iter.skip(s).take(l) {
-					assert!(v.is_ok());
-					black_box(v.unwrap().1);
-					count += 1;
+				Projection::Full => {
+					// Create an iterator starting at the beginning
+					let iter = txn.scan(beg..end, Some(s + l));
+					// We use a for loop to iterate over the results, while
+					// calling black_box internally. This is necessary as
+					// an iterator with `filter_map` or `map` is optimised
+					// out by the compiler when calling `count` at the end.
+					let mut count = 0;
+					for v in iter.skip(s).take(l) {
+						assert!(v.is_ok());
+						black_box(v.unwrap().1);
+						count += 1;
+					}
+					Ok(count)
 				}
-				Ok(count)
+				Projection::Count => {
+					Ok(txn
+						.keys(beg..end, Some(s + l))
+						.skip(s) // Skip the first `offset` entries
+						.take(l) // Take the next `limit` entries
+						.count())
+				}
 			}
-			Projection::Count => {
-				Ok(txn
-					.keys(beg..end, Some(s + l))
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.count())
-			}
-		}
+		})
+		.await
 	}
 }
