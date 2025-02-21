@@ -75,6 +75,11 @@ jobs:
             database: dry
             enabled: true
             description: Dry
+          # EchoDB
+          - name: echodb
+            database: echodb
+            enabled: true
+            description: EchoDB
           # Fjall
           - name: fjall
             database: fjall
@@ -95,6 +100,11 @@ jobs:
             database: map
             enabled: true
             description: Map
+          # MemoDB
+          - name: memodb
+            database: memodb
+            enabled: true
+            description: MemoDB
           # MongoDB
           - name: mongodb
             database: mongodb

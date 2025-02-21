@@ -19,12 +19,16 @@ pub(crate) enum Database {
 	Arangodb,
 	#[cfg(feature = "dragonfly")]
 	Dragonfly,
+	#[cfg(feature = "echodb")]
+	Echodb,
 	#[cfg(feature = "fjall")]
 	Fjall,
 	#[cfg(feature = "keydb")]
 	Keydb,
 	#[cfg(feature = "lmdb")]
 	Lmdb,
+	#[cfg(feature = "memodb")]
+	Memodb,
 	#[cfg(feature = "mongodb")]
 	Mongodb,
 	#[cfg(feature = "mysql")]
@@ -144,6 +148,18 @@ impl Database {
 					)
 					.await
 			}
+			#[cfg(feature = "echodb")]
+			Database::Echodb => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::echodb::EchoDBClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
 			#[cfg(feature = "fjall")]
 			Database::Fjall => {
 				benchmark
@@ -183,6 +199,18 @@ impl Database {
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						MapClientProvider::setup(kt, vp.columns(), benchmark).await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "memodb")]
+			Database::Memodb => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::memodb::MemoDBClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,

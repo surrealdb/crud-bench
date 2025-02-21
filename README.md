@@ -26,7 +26,7 @@ can be modified so that an optimised, remote environment can be connected to, in
 locally. This allows for running crud-bench against remote datastores, and distributed datastores on a local network
 or remotely in the cloud.
 
-In one table, the benchmark will operate 4 main tasks:
+In one table, the benchmark will operate 5 main tasks:
 
 - Create: inserting N unique records, with the specified concurrency.
 - Read: read N unique records, with the specified concurrency.
