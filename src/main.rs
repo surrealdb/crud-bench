@@ -193,7 +193,7 @@ fn main() -> Result<()> {
 
 fn run(args: Args) -> Result<()> {
 	// Prepare the benchmark
-	let benchmark = Benchmark::new(&args);
+	let mut benchmark = Benchmark::new(&args);
 	// If a Docker image is specified but the endpoint, spawn the container.
 	let container = if args.endpoint.is_some() {
 		// The endpoint is specified usually when you want the benchmark to run against a remote server.
@@ -229,7 +229,7 @@ fn run(args: Args) -> Result<()> {
 	let vp = ValueProvider::new(&args.value)?;
 	// Run the benchmark
 	let res = runtime
-		.block_on(async { args.database.run(&benchmark, args.key, kp, vp, &args.scans).await });
+		.block_on(async { args.database.run(&mut benchmark, args.key, kp, vp, &args.scans).await });
 	// Output the results
 	match res {
 		// Output the results

@@ -36,6 +36,7 @@ on:
           - surrealdb-embedded-rocksdb
           - surrealdb-embedded-surrealkv
           - surrealkv
+          - surrealkv-memory
           - custom
       custom:
         type: string
@@ -283,6 +284,11 @@ jobs:
             database: surrealkv
             enabled: true
             description: SurrealKV
+          # SurrealKVMemory
+          - name: surrealkv-memory
+            database: surrealkv-memory
+            enabled: true
+            description: SurrealKV with in-memory storage
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
