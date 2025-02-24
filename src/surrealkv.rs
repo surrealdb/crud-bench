@@ -11,6 +11,7 @@ use std::hint::black_box;
 use std::iter::Iterator;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 use surrealkv::Durability;
 use surrealkv::Mode::{ReadOnly, ReadWrite};
@@ -20,7 +21,20 @@ use sysinfo::System;
 
 const DATABASE_DIR: &str = "surrealkv";
 
-const MIN_CACHE_SIZE: u64 = 250_000;
+const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB
+
+pub(crate) static SKV_THREADPOOL: OnceLock<affinitypool::Threadpool> = OnceLock::new();
+
+fn get_threadpool() -> &'static affinitypool::Threadpool {
+	SKV_THREADPOOL.get_or_init(|| {
+		affinitypool::Builder::new()
+			.thread_name("surrealkv-threadpool")
+			.thread_stack_size(5 * 1024 * 1024)
+			.thread_per_core(false)
+			.worker_threads(1)
+			.build()
+	})
+}
 
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
@@ -55,6 +69,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		opts.dir = PathBuf::from(DATABASE_DIR);
 		// Set the cache to 250,000 entries
 		opts.max_value_cache_size = cache;
+
 		// Create the store
 		Ok(Self(Arc::new(Store::new(opts)?)))
 	}
@@ -129,7 +144,7 @@ impl SurrealKVClient {
 		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.set(key, &val)?;
-		txn.commit().await?;
+		get_threadpool().spawn(move || txn.commit()).await?;
 		Ok(())
 	}
 
@@ -155,7 +170,7 @@ impl SurrealKVClient {
 		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.set(key, &val)?;
-		txn.commit().await?;
+		get_threadpool().spawn(move || txn.commit()).await?;
 		Ok(())
 	}
 
@@ -166,7 +181,7 @@ impl SurrealKVClient {
 		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.delete(key)?;
-		txn.commit().await?;
+		get_threadpool().spawn(move || txn.commit()).await?;
 		Ok(())
 	}
 

@@ -111,7 +111,7 @@ impl ReDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
+		affinitypool::spawn_local(|| -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Create a new transaction
@@ -133,7 +133,7 @@ impl ReDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
+		affinitypool::spawn_local(|| -> Result<_> {
 			// Create a new transaction
 			let txn = db.begin_read()?;
 			// Open the database table
@@ -154,7 +154,7 @@ impl ReDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
+		affinitypool::spawn_local(|| -> Result<_> {
 			// Serialise the value
 			let val = bincode::serialize(&val)?;
 			// Create a new transaction
@@ -176,7 +176,7 @@ impl ReDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
+		affinitypool::spawn_local(|| -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Let the OS handle syncing to disk
@@ -204,7 +204,7 @@ impl ReDBClient {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
-		affinitypool::execute(|| -> Result<_> {
+		affinitypool::spawn_local(|| -> Result<_> {
 			// Create a new transaction
 			let txn = db.begin_read()?;
 			// Open the database table
