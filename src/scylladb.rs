@@ -16,11 +16,13 @@ use std::num::NonZeroUsize;
 
 pub const DEFAULT: &str = "127.0.0.1:9042";
 
-pub(crate) const SCYLLADB_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "scylladb/scylla",
-	pre_args: "-p 9042:9042",
-	post_args: "",
-};
+pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+	DockerParams {
+		image: "scylladb/scylla",
+		pre_args: "-p 9042:9042",
+		post_args: "",
+	}
+}
 
 pub(crate) struct ScyllaDBClientProvider(KeyType, Columns, String);
 

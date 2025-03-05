@@ -18,13 +18,16 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "http://127.0.0.1:8529";
 
-pub(crate) const ARANGODB_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "arangodb",
-	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1",
-	post_args: "--server.scheduler-queue-size 8192 --server.prio1-size 8192 --server.prio2-size 8192 --server.maximal-queue-size 8192",
-};
+pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+	DockerParams {
+		image: "arangodb",
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1",
+		post_args: "--server.scheduler-queue-size 8192 --server.prio1-size 8192 --server.prio2-size 8192 --server.maximal-queue-size 8192",
+	}
+}
 
 pub(crate) struct ArangoDBClientProvider {
+	sync: bool,
 	key: KeyType,
 	url: String,
 }
@@ -33,6 +36,7 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		Ok(Self {
+			sync: options.sync,
 			key: kt,
 			url: options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned(),
 		})
@@ -41,6 +45,7 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 	async fn create_client(&self) -> Result<ArangoDBClient> {
 		let (conn, db, co) = create_arango_client(&self.url).await?;
 		Ok(ArangoDBClient {
+			sync: self.sync,
 			keytype: self.key,
 			connection: conn,
 			database: Mutex::new(db),
@@ -54,6 +59,7 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 }
 
 pub(crate) struct ArangoDBClient {
+	sync: bool,
 	keytype: KeyType,
 	connection: GenericConnection<ReqwestClient>,
 	database: Mutex<Database<ReqwestClient>>,
@@ -171,8 +177,11 @@ impl ArangoDBClient {
 
 	async fn create(&self, key: String, val: Value) -> Result<()> {
 		let val = Self::to_doc(key, val)?;
-		let opt =
-			InsertOptions::builder().wait_for_sync(false).return_new(true).overwrite(false).build();
+		let opt = InsertOptions::builder()
+			.wait_for_sync(self.sync)
+			.return_new(true)
+			.overwrite(false)
+			.build();
 		let res = { self.collection.lock().await.create_document(val, opt).await? };
 		assert!(res.new_doc().is_some());
 		Ok(())
@@ -187,15 +196,18 @@ impl ArangoDBClient {
 
 	async fn update(&self, key: String, val: Value) -> Result<()> {
 		let val = Self::to_doc(key, val)?;
-		let opt =
-			InsertOptions::builder().wait_for_sync(false).return_new(true).overwrite(true).build();
+		let opt = InsertOptions::builder()
+			.wait_for_sync(self.sync)
+			.return_new(true)
+			.overwrite(true)
+			.build();
 		let res = { self.collection.lock().await.create_document(val, opt).await? };
 		assert!(res.new_doc().is_some());
 		Ok(())
 	}
 
 	async fn delete(&self, key: String) -> Result<()> {
-		let opt = RemoveOptions::builder().wait_for_sync(true).build();
+		let opt = RemoveOptions::builder().wait_for_sync(self.sync).build();
 		let res = { self.collection.lock().await.remove_document::<Value>(&key, opt, None).await? };
 		assert!(res.has_response());
 		Ok(())

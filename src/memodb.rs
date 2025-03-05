@@ -1,103 +1,44 @@
-#![cfg(feature = "fjall")]
+#![cfg(feature = "memodb")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
-use fjall::{
-	BlobCache, BlockCache, Config, KvSeparationOptions, PartitionCreateOptions, PersistMode,
-	TransactionalKeyspace, TxPartitionHandle,
-};
+use memodb::{new, Database};
 use serde_json::Value;
-use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
-use sysinfo::System;
 
-const DATABASE_DIR: &str = "fjall";
+type Key = Vec<u8>;
+type Val = Vec<u8>;
 
-const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024;
+pub(crate) struct MemoDBClientProvider(Arc<Database<Key, Val>>);
 
-const DURABILITY: Option<PersistMode> = Some(PersistMode::Buffer);
-
-pub(crate) struct FjallClientProvider {
-	keyspace: Arc<TransactionalKeyspace>,
-	partition: Arc<TxPartitionHandle>,
-}
-
-impl BenchmarkEngine<FjallClient> for FjallClientProvider {
+impl BenchmarkEngine<MemoDBClient> for MemoDBClientProvider {
 	/// The number of seconds to wait before connecting
 	fn wait_timeout(&self) -> Option<Duration> {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
-		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
-		// Load the system attributes
-		let system = System::new_all();
-		// Get the total system memory
-		let memory = system.total_memory();
-		// Calculate a good cache memory size
-		let memory = max(memory / 4, MIN_CACHE_SIZE);
-		// Configure the key-value separation
-		let blobopts = KvSeparationOptions::default()
-			// Separate values if larger than 1 KiB
-			.separation_threshold(1024);
-		// Configure and create the keyspace
-		let keyspace = Config::new(DATABASE_DIR)
-			// Fsync data every 100 milliseconds
-			.fsync_ms(Some(100))
-			// Handle transaction flushed automatically
-			.manual_journal_persist(false)
-			// Set the amount of data to build up in memory
-			.max_write_buffer_size(u64::MAX)
-			// Set the blob cache size to 256 MiB
-			.blob_cache(Arc::new(BlobCache::with_capacity_bytes(memory)))
-			// Set the block cache size to 256 MiB
-			.block_cache(Arc::new(BlockCache::with_capacity_bytes(memory)))
-			// Open a transactional keyspace
-			.open_transactional()?;
-		// Configure and create the partition
-		let options = PartitionCreateOptions::default()
-			// Set the data block size to 32 KiB
-			.block_size(16 * 1_024)
-			// Set the max memtable size to 256 MiB
-			.max_memtable_size(256 * 1_024 * 1_024)
-			// Separate values if larger than 4 KiB
-			.with_kv_separation(blobopts);
-		// Create a default data partition
-		let partition = keyspace.open_partition("default", options)?;
+	async fn setup(_: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Create the store
-		Ok(Self {
-			keyspace: Arc::new(keyspace),
-			partition: Arc::new(partition),
-		})
+		Ok(Self(Arc::new(new())))
 	}
 	/// Creates a new client for this benchmarking engine
-	async fn create_client(&self) -> Result<FjallClient> {
-		Ok(FjallClient {
-			keyspace: self.keyspace.clone(),
-			partition: self.partition.clone(),
+	async fn create_client(&self) -> Result<MemoDBClient> {
+		Ok(MemoDBClient {
+			db: self.0.clone(),
 		})
 	}
 }
 
-pub(crate) struct FjallClient {
-	keyspace: Arc<TransactionalKeyspace>,
-	partition: Arc<TxPartitionHandle>,
+pub(crate) struct MemoDBClient {
+	db: Arc<Database<Key, Val>>,
 }
 
-impl BenchmarkClient for FjallClient {
-	async fn shutdown(&self) -> Result<()> {
-		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
-		// Ok
-		Ok(())
-	}
-
+impl BenchmarkClient for MemoDBClient {
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.create_bytes(&key.to_ne_bytes(), val).await
 	}
@@ -139,23 +80,23 @@ impl BenchmarkClient for FjallClient {
 	}
 }
 
-impl FjallClient {
+impl MemoDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(DURABILITY);
+		let mut txn = self.db.begin(true);
 		// Process the data
-		txn.insert(&self.partition, key, val);
+		txn.set(key, val)?;
 		txn.commit()?;
 		Ok(())
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let txn = self.keyspace.read_tx();
+		let txn = self.db.begin(false);
 		// Process the data
-		let res = txn.get(&self.partition, key)?;
+		let res = txn.get(key.to_vec())?;
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value
@@ -168,18 +109,18 @@ impl FjallClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(DURABILITY);
+		let mut txn = self.db.begin(true);
 		// Process the data
-		txn.insert(&self.partition, key, val);
+		txn.set(key, val)?;
 		txn.commit()?;
 		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(DURABILITY);
+		let mut txn = self.db.begin(true);
 		// Process the data
-		txn.remove(&self.partition, key);
+		txn.del(key)?;
 		txn.commit()?;
 		Ok(())
 	}
@@ -194,39 +135,47 @@ impl FjallClient {
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
 		// Create a new transaction
-		let txn = self.keyspace.read_tx();
+		let txn = self.db.begin(false);
+		let beg = [0u8].to_vec();
+		let end = [255u8].to_vec();
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
+				// Scan the desired range of keys
+				let iter = txn.keys(beg..end, s + l)?;
 				// Create an iterator starting at the beginning
-				let iter = txn.keys(&self.partition);
+				let iter = iter.into_iter();
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
 				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
 				for v in iter.skip(s).take(l) {
-					black_box(v.unwrap());
+					black_box(v);
 					count += 1;
 				}
 				Ok(count)
 			}
 			Projection::Full => {
+				// Scan the desired range of keys
+				let iter = txn.scan(beg..end, s + l)?;
 				// Create an iterator starting at the beginning
-				let iter = txn.iter(&self.partition);
+				let iter = iter.into_iter();
+				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
 				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
 				for v in iter.skip(s).take(l) {
-					black_box(v.unwrap().1);
+					black_box(v.1);
 					count += 1;
 				}
 				Ok(count)
 			}
 			Projection::Count => {
 				Ok(txn
-					.keys(&self.partition)
+					.keys(beg..end, s + l)?
+					.iter()
 					.skip(s) // Skip the first `offset` entries
 					.take(l) // Take the next `limit` entries
 					.count())

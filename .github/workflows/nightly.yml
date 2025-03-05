@@ -19,7 +19,7 @@ defaults:
 jobs:
   build:
     name: Build crud-bench
-    runs-on: [runner-amd64-2xlarge]
+    runs-on: [runner-amd64-4xlarge]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -48,7 +48,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-amd64-4xlarge-private]
+    runs-on: [runner-benchmarking]
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -75,6 +75,11 @@ jobs:
             database: dry
             enabled: true
             description: Dry
+          # EchoDB
+          - name: echodb
+            database: echodb
+            enabled: true
+            description: EchoDB
           # Fjall
           - name: fjall
             database: fjall
@@ -95,6 +100,11 @@ jobs:
             database: map
             enabled: true
             description: Map
+          # MemoDB
+          - name: memodb
+            database: memodb
+            enabled: true
+            description: MemoDB
           # MongoDB
           - name: mongodb
             database: mongodb
@@ -196,17 +206,45 @@ jobs:
           username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
+      - name: System Information
         run: |
-          REGION=${{ secrets.REGISTRY_AWS_REGION }}
-          REGISTRY=${{ secrets.REGISTRY_AWS_ACCOUNT_ID }}.dkr.ecr.$REGION.amazonaws.com
-          aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
-          echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
+          echo "=== Environment Variables ==="
+          env
+          echo "=== Kernel & OS Info ==="
+          uname -a
+          echo "=== CPU Details (lscpu) ==="
+          lscpu
+          echo "=== First 50 lines of /proc/cpuinfo ==="
+          head -n 50 /proc/cpuinfo
+          echo "=== First 50 lines of /proc/meminfo ==="
+          head -n 50 /proc/meminfo
+          echo "=== Cgroup Information (/proc/self/cgroup) ==="
+          cat /proc/self/cgroup
 
       - name: ${{ matrix.skipped || 'Benchmark processing' }}
         if: ${{ !matrix.enabled }}
         run: echo "${{ matrix.skipped }}"
+
+      - name: Clean up environment
+        if: ${{ matrix.enabled }}
+        run: |
+          # Clean up data directory
+          rm -rf /tmp/crud-bench
+          mkdir /tmp/crud-bench
+          chmod 777 /tmp/crud-bench
+          # Remove old results
+          rm -f result*.json
+          rm -f result*.csv
+
+      - name: Optimise system
+        if: ${{ matrix.enabled }}
+        run: |
+          # Flush disk writes
+          sync
+          # Increase max limits
+          ulimit -n 65536
+          ulimit -u unlimited
+          ulimit -l unlimited
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 60

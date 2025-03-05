@@ -26,7 +26,7 @@ can be modified so that an optimised, remote environment can be connected to, in
 locally. This allows for running crud-bench against remote datastores, and distributed datastores on a local network
 or remotely in the cloud.
 
-In one table, the benchmark will operate 4 main tasks:
+In one table, the benchmark will operate 5 main tasks:
 
 - Create: inserting N unique records, with the specified concurrency.
 - Read: read N unique records, with the specified concurrency.
@@ -114,23 +114,23 @@ cargo run -r -- -h
 Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
-  -i, --image <IMAGE>        Docker image
   -n, --name <NAME>          An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>  Database [possible values: arangodb, dry, map, dragonfly, fjall, keydb, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealdb, surrealkv]
-  -e, --endpoint <ENDPOINT>  Endpoint
+  -d, --database <DATABASE>  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
+  -i, --image <IMAGE>        Specify a custom Docker image
+  -p, --privileged           Whether to run Docker in privileged mode
+  -e, --endpoint <ENDPOINT>  Specify a custom endpoint to connect to
   -b, --blocking <BLOCKING>  Maximum number of blocking threads (default is the number of CPU cores) [default: 12]
   -w, --workers <WORKERS>    Number of async runtime workers (default is the number of CPU cores) [default: 12]
   -c, --clients <CLIENTS>    Number of concurrent clients [default: 1]
   -t, --threads <THREADS>    Number of concurrent threads per client [default: 1]
   -s, --samples <SAMPLES>    Number of samples to be created, read, updated, and deleted
   -r, --random               Generate the keys in a pseudo-randomized order
-  -k, --key <KEY>            The type of the key [default: integer] [possible values: integer, string26, string90, string506, uuid]
-  -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=]
+  -k, --key <KEY>            The type of the key [default: integer] [possible values: integer, string26, string90, string250, string506, uuid]
+  -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=] [default: "{\n\t\t\t\"text\": \"string:50\",\n\t\t\t\"integer\": \"int\"\n\t\t}"]
       --show-sample          Print-out an example of a generated value
-  -p, --pid <PID>            Collect system information for a given pid
-  -a, --scans <SCANS>        An array of scan specifications [env: CRUD_BENCH_SCANS=]
-  -h, --help                 Print help (see more with '--help')
-```
+      --pid <PID>            Collect system information for a given pid
+  -a, --scans <SCANS>        An array of scan specifications [env: CRUD_BENCH_SCANS=] [default: "[\n\t\t\t{ \"name\": \"count_all\", \"samples\": 100, \"projection\": \"COUNT\" },\n\t\t\t{ \"name\": \"limit_id\", \"samples\": 100, \"projection\": \"ID\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_all\", \"samples\": 100, \"projection\": \"FULL\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_count\", \"samples\": 100, \"projection\": \"COUNT\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_id\", \"samples\": 100, \"projection\": \"ID\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_all\", \"samples\": 100, \"projection\": \"FULL\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_count\", \"samples\": 100, \"projection\": \"COUNT\", \"start\": 5000, \"limit\": 100, \"expect\": 100 }\n\t\t]"]
+  -h, --help                 Print help (see more with '--help')```
 
 For more detailed help information run the following command:
 

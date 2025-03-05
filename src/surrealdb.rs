@@ -1,5 +1,6 @@
 #![cfg(feature = "surrealdb")]
 
+use crate::database::Database;
 use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
@@ -10,29 +11,38 @@ use serde::Deserialize;
 use serde_json::Value;
 use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
-use surrealdb::opt::{Config, Resource};
+use surrealdb::opt::{Config, Raw, Resource};
 use surrealdb::RecordId;
 use surrealdb::Surreal;
 
 pub const DEFAULT: &str = "ws://127.0.0.1:8000";
 
-pub(crate) const SURREALDB_MEMORY_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "surrealdb/surrealdb:nightly",
-	pre_args: "--ulimit nofile=65536:65536 -p 8000:8000",
-	post_args: "start --user root --pass root memory",
-};
-
-pub(crate) const SURREALDB_ROCKSDB_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 8000:8000",
-	post_args: "start --user root --pass root rocksdb://tmp/crud-bench.db",
-};
-
-pub(crate) const SURREALDB_SURREALKV_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "surrealdb/surrealdb:nightly",
-	pre_args: "-p 8000:8000",
-	post_args: "start --user root --pass root surrealkv://tmp/crud-bench.db",
-};
+pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
+	match options.database {
+		Database::SurrealdbMemory => DockerParams {
+			image: "surrealdb/surrealdb:nightly",
+			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000",
+			post_args: "start --user root --pass root memory",
+		},
+		Database::SurrealdbRocksdb => DockerParams {
+			image: "surrealdb/surrealdb:nightly",
+			pre_args: match options.sync {
+				true => "-p 8000:8000 -e SURREAL_SYNC_DATA=true",
+				false => "-p 8000:8000 -e SURREAL_SYNC_DATA=false",
+			},
+			post_args: "start --user root --pass root rocksdb:/tmp/crud-bench.db",
+		},
+		Database::SurrealdbSurrealkv => DockerParams {
+			image: "surrealdb/surrealdb:nightly",
+			pre_args: match options.sync {
+				true => "-p 8000:8000 -e SURREAL_SYNC_DATA=true",
+				false => "-p 8000:8000 -e SURREAL_SYNC_DATA=false",
+			},
+			post_args: "start --user root --pass root surrealkv:/tmp/crud-bench.db",
+		},
+		_ => unreachable!(),
+	}
+}
 
 pub(crate) struct SurrealDBClientProvider {
 	client: Option<Surreal<Any>>,
@@ -42,7 +52,7 @@ pub(crate) struct SurrealDBClientProvider {
 
 async fn initialise_db(endpoint: &str, root: Root<'static>) -> Result<Surreal<Any>> {
 	// Set the root user
-	let config = Config::new().user(root);
+	let config = Config::new().user(root).ast_payload();
 	// Connect to the database
 	let db = connect((endpoint, config)).await?;
 	// Signin as a namespace, database, or root user
@@ -121,7 +131,7 @@ impl BenchmarkClient for SurrealDBClient {
             REMOVE TABLE IF EXISTS record;
 			DEFINE TABLE record;
 		";
-		self.db.query(surql).await?.check()?;
+		self.db.query(Raw::from(surql)).await?.check()?;
 		Ok(())
 	}
 
@@ -193,7 +203,7 @@ impl SurrealDBClient {
 		match p {
 			Projection::Id => {
 				let sql = format!("SELECT id FROM record {c} {s} {l}");
-				let res: surrealdb::Value = self.db.query(sql).await?.take(0)?;
+				let res: surrealdb::Value = self.db.query(Raw::from(sql)).await?.take(0)?;
 				let surrealdb::sql::Value::Array(arr) = res.into_inner() else {
 					panic!("Unexpected response type");
 				};
@@ -201,7 +211,7 @@ impl SurrealDBClient {
 			}
 			Projection::Full => {
 				let sql = format!("SELECT * FROM record {c} {s} {l}");
-				let res: surrealdb::Value = self.db.query(sql).await?.take(0)?;
+				let res: surrealdb::Value = self.db.query(Raw::from(sql)).await?.take(0)?;
 				let surrealdb::sql::Value::Array(arr) = res.into_inner() else {
 					panic!("Unexpected response type");
 				};
@@ -213,7 +223,7 @@ impl SurrealDBClient {
 				} else {
 					format!("SELECT count() FROM (SELECT 1 FROM record {c} {s} {l}) GROUP ALL")
 				};
-				let res: Option<usize> = self.db.query(sql).await?.take("count")?;
+				let res: Option<usize> = self.db.query(Raw::from(sql)).await?.take("count")?;
 				Ok(res.unwrap())
 			}
 		}

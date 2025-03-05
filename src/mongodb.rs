@@ -11,20 +11,23 @@ use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
 use mongodb::options::ReadConcern;
-use mongodb::options::WriteConcern;
+use mongodb::options::{Acknowledgment, WriteConcern};
 use mongodb::{bson, Client, Collection, Cursor, Database};
 use serde_json::Value;
 use std::hint::black_box;
 
 pub const DEFAULT: &str = "mongodb://root:root@127.0.0.1:27017";
 
-pub(crate) const MONGODB_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "mongo",
-	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root",
-	post_args: "",
-};
+pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+	DockerParams {
+		image: "mongo",
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root",
+		post_args: "",
+	}
+}
 
 pub(crate) struct MongoDBClientProvider {
+	sync: bool,
 	client: Client,
 }
 
@@ -47,6 +50,7 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 		opts.min_pool_size = None;
 		// Create the client provider
 		Ok(Self {
+			sync: options.sync,
 			client: Client::with_options(opts)?,
 		})
 	}
@@ -55,20 +59,47 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 		let db = self.client.database_with_options(
 			"crud-bench",
 			DatabaseOptions::builder()
-				.write_concern(WriteConcern::builder().journal(false).build())
+				// Configure the write concern options
+				.write_concern(
+					// Configure the write options
+					WriteConcern::builder()
+						// Ensure that all writes are written,
+						// replicated, and acknowledged by the
+						// majority of nodes in the cluster.
+						.w(Acknowledgment::Majority)
+						// Ensure that all writes are written
+						// to the journal before being being
+						// acknowledged back to the client.
+						// MongoDB does not actually write the
+						// journal file to disk synchronously
+						// but instead the operation is only
+						// acknowledged once the operation
+						// is written to the journal in memory.
+						.journal(true)
+						// Finalise the write options
+						.build(),
+				)
+				// Configure the read concern options
 				.read_concern(ReadConcern::majority())
+				// Finalise the database configuration
 				.build(),
 		);
-		Ok(MongoDBClient(db))
+		Ok(MongoDBClient {
+			sync: self.sync,
+			db,
+		})
 	}
 }
 
-pub(crate) struct MongoDBClient(Database);
+pub(crate) struct MongoDBClient {
+	sync: bool,
+	db: Database,
+}
 
 impl BenchmarkClient for MongoDBClient {
 	async fn compact(&self) -> Result<()> {
 		// For a database compaction
-		self.0
+		self.db
 			.run_command(doc! {
 				"compact": "record",
 				"dryRun": false,
@@ -126,7 +157,7 @@ impl BenchmarkClient for MongoDBClient {
 
 impl MongoDBClient {
 	fn collection(&self) -> Collection<Document> {
-		self.0.collection("record")
+		self.db.collection("record")
 	}
 
 	fn to_doc<K>(key: K, mut val: Value) -> Result<Bson>
@@ -138,6 +169,17 @@ impl MongoDBClient {
 		Ok(bson::to_bson(&val)?)
 	}
 
+	async fn sync(&self) -> Result<()> {
+		if self.sync {
+			// If we need to ensure that writes are
+			// synced to disk before being acknowledged
+			// then we need to specifically call `fsync`
+			// once we have written to the database.
+			self.db.run_command(doc! { "fsync": 1 }).await?;
+		}
+		Ok(())
+	}
+
 	async fn create<K>(&self, key: K, val: Value) -> Result<()>
 	where
 		K: Into<Value> + Into<Bson>,
@@ -146,6 +188,7 @@ impl MongoDBClient {
 		let doc = bson.as_document().unwrap();
 		let res = self.collection().insert_one(doc).await?;
 		assert_ne!(res.inserted_id, Bson::Null);
+		self.sync().await?;
 		Ok(())
 	}
 
@@ -168,6 +211,7 @@ impl MongoDBClient {
 		let doc = bson.as_document().unwrap();
 		let res = self.collection().replace_one(filter, doc).await?;
 		assert_eq!(res.modified_count, 1);
+		self.sync().await?;
 		Ok(())
 	}
 
@@ -178,6 +222,7 @@ impl MongoDBClient {
 		let filter = doc! { "_id": key };
 		let res = self.collection().delete_one(filter).await?;
 		assert_eq!(res.deleted_count, 1);
+		self.sync().await?;
 		Ok(())
 	}
 

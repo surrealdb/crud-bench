@@ -1,3 +1,4 @@
+use crate::benchmark::Benchmark;
 use log::{debug, error, info};
 use std::fmt;
 use std::process::{exit, Command};
@@ -30,35 +31,51 @@ impl Container {
 	}
 
 	/// Start the Docker container
-	pub(crate) fn start(image: String, pre: &str, post: &str) -> Self {
+	pub(crate) fn start(image: String, pre: &str, post: &str, options: &Benchmark) -> Self {
 		// Output debug information to the logs
 		info!("Starting Docker image '{image}'");
 		// Attempt to start Docker 10 times
 		for i in 1..=RETRIES {
 			// Configure the Docker command arguments
-			let mut arguments = Arguments::new(["run"]);
-			arguments.append(pre);
-			arguments.add(["--rm"]);
-			arguments.add(["--quiet"]);
-			arguments.add(["--name", "crud-bench"]);
-			arguments.add(["--net", "host"]);
-			arguments.add(["-d", &image]);
-			arguments.append(post);
+			let mut args = Arguments::new(["run"]);
+			// Configure the default pre arguments
+			args.append(pre);
+			// Configure any custom pre arguments
+			if let Ok(v) = std::env::var("DOCKER_PRE_ARGS") {
+				args.append(&v);
+			}
+			// Run in privileged mode if specified
+			if options.privileged {
+				args.add(["--privileged"]);
+			}
+			// Configure the Docker container options
+			args.add(["--rm"]);
+			args.add(["--quiet"]);
+			args.add(["--pull", "always"]);
+			args.add(["--name", "crud-bench"]);
+			args.add(["--net", "host"]);
+			args.add(["-d", &image]);
+			// Configure the default post arguments
+			args.append(post);
+			// Configure any custom post arguments
+			if let Ok(v) = std::env::var("DOCKER_POST_ARGS") {
+				args.append(&v);
+			}
 			// Execute the Docker run command
-			match Self::execute(arguments.clone()) {
+			match Self::execute(args.clone()) {
 				// The command executed successfully
 				Ok(_) => break,
 				// There was an error with the command
 				Err(e) => match i {
 					// This is the last attempt so exit fully
 					RETRIES => {
-						error!("Docker command failure: `docker {arguments}`");
+						error!("Docker command failure: `docker {args}`");
 						error!("{e}");
 						exit(1);
 					}
 					// Let's log the output and retry the command
 					_ => {
-						debug!("Docker command failure: `docker {arguments}`");
+						debug!("Docker command failure: `docker {args}`");
 						debug!("{e}");
 						std::thread::sleep(TIMEOUT);
 					}
@@ -86,6 +103,8 @@ impl Container {
 	}
 
 	fn execute(args: Arguments) -> Result<String, String> {
+		// Output debug information to the logs
+		println!("Running command: `docker {args}`");
 		// Create a new process command
 		let mut command = Command::new("docker");
 		// Set the arguments on the command

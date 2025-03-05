@@ -15,11 +15,13 @@ use std::hint::black_box;
 
 pub const DEFAULT: &str = "127.0.0.1:7687";
 
-pub(crate) const NEO4J_DOCKER_PARAMS: DockerParams = DockerParams {
-	image: "neo4j",
-	pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none",
-	post_args: "",
-};
+pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+	DockerParams {
+		image: "neo4j",
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none",
+		post_args: "",
+	}
+}
 
 pub(crate) struct Neo4jClientProvider {
 	graph: Graph,
