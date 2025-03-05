@@ -59,4 +59,4 @@ export CRUD_BENCH_SCANS
 export CRUD_BENCH_VALUE
 .PHONY: test
 test:
-	target/release/crud-bench -d $(database) -s 1000000 -c 128 -t 48 -k string26 -r
+	target/release/crud-bench -d $(database) -s 5000000 -c 128 -t 48 -k string26 -r
