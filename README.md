@@ -126,7 +126,7 @@ Options:
   -s, --samples <SAMPLES>    Number of samples to be created, read, updated, and deleted
   -r, --random               Generate the keys in a pseudo-randomized order
   -k, --key <KEY>            The type of the key [default: integer] [possible values: integer, string26, string90, string250, string506, uuid]
-  -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=] [default: "{\n\t\t\t\"text\": \"string:50\",\n\t\t\t\"integer\": \"int\"\n\t\t}"]
+  -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=] [default: "{\n\t\t\t\"text\": \"string:50\",\n\t\t\t\"age\": \"int:1..99\",\n\t\t\t\"integer\": \"int\"\n\t\t}"]
       --show-sample          Print-out an example of a generated value
       --pid <PID>            Collect system information for a given pid
   -a, --scans <SCANS>        An array of scan specifications [env: CRUD_BENCH_SCANS=] [default: "[\n\t\t\t{ \"name\": \"count_all\", \"samples\": 100, \"projection\": \"COUNT\" },\n\t\t\t{ \"name\": \"limit_id\", \"samples\": 100, \"projection\": \"ID\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_all\", \"samples\": 100, \"projection\": \"FULL\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_count\", \"samples\": 100, \"projection\": \"COUNT\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_id\", \"samples\": 100, \"projection\": \"ID\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_all\", \"samples\": 100, \"projection\": \"FULL\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_count\", \"samples\": 100, \"projection\": \"COUNT\", \"start\": 5000, \"limit\": 100, \"expect\": 100 }\n\t\t]"]
