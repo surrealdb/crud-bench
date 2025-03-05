@@ -5,7 +5,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
-use memodb::{new, Database};
+use memodb::Database;
 use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
@@ -23,8 +23,10 @@ impl BenchmarkEngine<MemoDBClient> for MemoDBClientProvider {
 	}
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
+		// Instantiate a new database
+		let db = Database::new_with_besteffort_commits();
 		// Create the store
-		Ok(Self(Arc::new(new())))
+		Ok(Self(Arc::new(db)))
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<MemoDBClient> {
@@ -133,6 +135,7 @@ impl MemoDBClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
+		let t = scan.limit.map(|l| s + l);
 		let p = scan.projection()?;
 		// Create a new transaction
 		let txn = self.db.begin(false);
@@ -142,7 +145,7 @@ impl MemoDBClient {
 		match p {
 			Projection::Id => {
 				// Scan the desired range of keys
-				let iter = txn.keys(beg..end, s + l)?;
+				let iter = txn.keys(beg..end, t)?;
 				// Create an iterator starting at the beginning
 				let iter = iter.into_iter();
 				// We use a for loop to iterate over the results, while
@@ -158,7 +161,7 @@ impl MemoDBClient {
 			}
 			Projection::Full => {
 				// Scan the desired range of keys
-				let iter = txn.scan(beg..end, s + l)?;
+				let iter = txn.scan(beg..end, t)?;
 				// Create an iterator starting at the beginning
 				let iter = iter.into_iter();
 				// We use a for loop to iterate over the results, while
@@ -174,7 +177,7 @@ impl MemoDBClient {
 			}
 			Projection::Count => {
 				Ok(txn
-					.keys(beg..end, s + l)?
+					.keys(beg..end, t)?
 					.iter()
 					.skip(s) // Skip the first `offset` entries
 					.take(l) // Take the next `limit` entries
