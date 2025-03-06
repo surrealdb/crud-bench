@@ -23,10 +23,8 @@ impl BenchmarkEngine<MemoDBClient> for MemoDBClientProvider {
 	}
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
-		// Instantiate a new database
-		let db = Database::new_with_besteffort_commits();
 		// Create the store
-		Ok(Self(Arc::new(db)))
+		Ok(Self(Arc::new(Database::new())))
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<MemoDBClient> {
@@ -87,7 +85,7 @@ impl MemoDBClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let mut txn = self.db.begin(true);
+		let mut txn = self.db.begin();
 		// Process the data
 		txn.set(key, val)?;
 		txn.commit()?;
@@ -96,7 +94,7 @@ impl MemoDBClient {
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let txn = self.db.begin(false);
+		let txn = self.db.begin();
 		// Process the data
 		let res = txn.get(key.to_vec())?;
 		// Check the value exists
@@ -111,7 +109,7 @@ impl MemoDBClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let mut txn = self.db.begin(true);
+		let mut txn = self.db.begin();
 		// Process the data
 		txn.set(key, val)?;
 		txn.commit()?;
@@ -120,7 +118,7 @@ impl MemoDBClient {
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.begin(true);
+		let mut txn = self.db.begin();
 		// Process the data
 		txn.del(key)?;
 		txn.commit()?;
@@ -138,7 +136,7 @@ impl MemoDBClient {
 		let t = scan.limit.map(|l| s + l);
 		let p = scan.projection()?;
 		// Create a new transaction
-		let txn = self.db.begin(false);
+		let txn = self.db.begin();
 		let beg = [0u8].to_vec();
 		let end = [255u8].to_vec();
 		// Perform the relevant projection scan type
