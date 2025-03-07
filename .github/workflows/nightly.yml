@@ -299,7 +299,7 @@ jobs:
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
-          CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+          CRUD_BENCH_VALUE: '{ "text": "text:50", "age": "int:1..99", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
 
       - name: Upload result artifacts
         uses: actions/upload-artifact@v4
