@@ -148,7 +148,7 @@ jobs:
             database: arangodb
             enabled: true
             description: ArangoDB
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && "-v crud-bench:/var/lib/arangodb3" || "-v /data/crud-bench:/var/lib/arangodb3" }}
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/arangodb3' || '-v /data/crud-bench:/var/lib/arangodb3' }}
           # Cassandra
           - name: cassandra
             database: cassandra
@@ -180,7 +180,7 @@ jobs:
             database: keydb
             enabled: true
             description: KeyDB
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && "-v crud-bench:/data" || "-v /data/crud-bench:/data" }}
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # LMDB
           - name: lmdb
             database: lmdb
@@ -201,25 +201,25 @@ jobs:
             database: mongodb
             enabled: true
             description: MongoDB
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && "-v crud-bench:/data/db" || "-v /data/crud-bench:/data/db" }}
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data/db' || '-v /data/crud-bench:/data/db' }}
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && "-v crud-bench:/var/lib/mysql" || "-v /data/crud-bench:/var/lib/mysql" }}
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/mysql' || '-v /data/crud-bench:/var/lib/mysql' }}
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && "-v crud-bench:/data" || "-v /data/crud-bench:/data" }}
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && "-v crud-bench:/var/lib/postgresql/data" || "-v /data/crud-bench:/var/lib/postgresql/data" }}
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/postgresql/data' || '-v /data/crud-bench:/var/lib/postgresql/data' }}
           # Redb
           - name: redb
             database: redb
@@ -231,7 +231,7 @@ jobs:
             database: redis
             enabled: true
             description: Redis
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && "-v crud-bench:/data" || "-v /data/crud-bench:/data" }}
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # RocksDB
           - name: rocksdb
             database: rocksdb
@@ -258,13 +258,13 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && "-v crud-bench:/data" || "-v /data/crud-bench:/data" }}
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && "-v crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true" || "-v /data/crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true" }}
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true' || '-v /data/crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true' }}
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
