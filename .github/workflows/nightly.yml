@@ -190,6 +190,11 @@ jobs:
             database: surrealkv
             enabled: true
             description: SurrealKV
+          # SurrealKV Memory
+          - name: surrealkv-memory
+            database: surrealkv-memory
+            enabled: true
+            description: SurrealKV with in-memory storage
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
