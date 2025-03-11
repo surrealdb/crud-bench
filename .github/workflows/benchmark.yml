@@ -37,6 +37,7 @@ on:
           - surrealdb-embedded-memory
           - surrealdb-embedded-rocksdb
           - surrealdb-embedded-surrealkv
+          - surrealkv-memory
           - surrealkv
           - custom
       custom:
@@ -285,7 +286,7 @@ jobs:
             database: surrealkv
             enabled: true
             description: SurrealKV
-          # SurrealKVMemory
+          # SurrealKV Memory
           - name: surrealkv-memory
             database: surrealkv-memory
             enabled: true
