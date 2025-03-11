@@ -38,11 +38,6 @@ on:
           - surrealdb-embedded-rocksdb
           - surrealdb-embedded-surrealkv
           - surrealkv
-          - custom
-      custom:
-        type: string
-        description: Custom choice
-        required: false
       samples:
         type: string
         description: Number of samples
@@ -82,6 +77,14 @@ on:
         options:
           - "true"
           - "false"
+      data:
+        type: choice
+        description: Data volume type
+        required: true
+        default: "docker"
+        options:
+          - "docker"
+          - "host"
       cooldown:
         type: string
         description: Cooldown in minutes
@@ -147,7 +150,7 @@ jobs:
             database: arangodb
             enabled: true
             description: ArangoDB
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/arangodb3"
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/arangodb3' || '-v /data/crud-bench:/var/lib/arangodb3' }}
           # Cassandra
           - name: cassandra
             database: cassandra
@@ -179,6 +182,7 @@ jobs:
             database: keydb
             enabled: true
             description: KeyDB
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # LMDB
           - name: lmdb
             database: lmdb
@@ -199,25 +203,25 @@ jobs:
             database: mongodb
             enabled: true
             description: MongoDB
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data/db"
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data/db' || '-v /data/crud-bench:/data/db' }}
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/mysql"
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/mysql' || '-v /data/crud-bench:/var/lib/mysql' }}
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data"
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/postgresql/data"
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/postgresql/data' || '-v /data/crud-bench:/var/lib/postgresql/data' }}
           # Redb
           - name: redb
             database: redb
@@ -229,6 +233,7 @@ jobs:
             database: redis
             enabled: true
             description: Redis
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # RocksDB
           - name: rocksdb
             database: rocksdb
@@ -255,13 +260,13 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true"
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
+            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true' || '-v /data/crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true' }}
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
@@ -272,13 +277,13 @@ jobs:
           - name: surrealdb-embedded-rocksdb
             database: surrealdb
             enabled: true
-            endpoint: -e rocksdb:/tmp/crud-bench
+            endpoint: -e rocksdb:/data/crud-bench
             description: SurrealDB embedded with RocksDB storage
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
             enabled: true
-            endpoint: -e surrealkv:/tmp/crud-bench
+            endpoint: -e surrealkv:/data/crud-bench
             description: SurrealDB embedded with SurrealKV storage
           # SurrealKV
           - name: surrealkv
@@ -306,22 +311,19 @@ jobs:
         run: echo "${{ matrix.skipped }}"
 
       - name: Clean up environment
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: |
-          # Clean up Docker environment
           docker container kill crud-bench &>/dev/null || true
           docker container prune --force
+          docker volume prune --all --force
           docker system prune --force
-          # Clean up data directory
-          rm -rf /tmp/crud-bench
-          mkdir /tmp/crud-bench
-          chmod 777 /tmp/crud-bench
-          # Remove old results
-          rm -f result*.json
-          rm -f result*.csv
+          rm -rf /data/crud-bench
+          mkdir -p /data/crud-bench
+          chmod 777 /data/crud-bench
+          docker volume create crud-bench
 
       - name: Optimise system
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: |
           # Disable services
           sudo systemctl stop unattended-upgrades
@@ -341,7 +343,7 @@ jobs:
           ulimit -l unlimited
 
       - name: Wait for system cool down
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: sleep ${{ github.event.inputs.cooldown }}m
 
       - name: System Information
@@ -362,14 +364,16 @@ jobs:
       - name: Run benchmarks (${{ github.event.inputs.samples }} samples / ${{ github.event.inputs.clients }} clients / ${{ github.event.inputs.threads }} threads / key ${{ github.event.inputs.key-type }} / random)
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(github.event.inputs.timeout) }}
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
-        run: ${{ matrix.environment || '' }} sudo taskset -c 0-$(($(nproc) - 1)) sudo nice -n -20 sudo ionice -c 1 -n 0 sudo ${{ github.workspace }}/artifacts/crud-bench --privileged ${{ github.event.inputs.sync == 'true' && '--sync' || '' }} -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
+        run: sudo -E taskset -c 0-$(($(nproc) - 1)) ionice -c 2 -n 0 ${{ github.workspace }}/artifacts/crud-bench --privileged ${{ github.event.inputs.sync == 'true' && '--sync' || '' }} -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: ${{ github.event.inputs.value }}
+          DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
+          DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
       - name: Normalise system
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: |
           # Enable services
           sudo systemctl start unattended-upgrades
