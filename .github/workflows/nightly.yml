@@ -190,7 +190,7 @@ jobs:
             database: surrealkv
             enabled: true
             description: SurrealKV
-          # SurrealKVMemory
+          # SurrealKV Memory
           - name: surrealkv-memory
             database: surrealkv-memory
             enabled: true
