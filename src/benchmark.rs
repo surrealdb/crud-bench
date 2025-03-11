@@ -358,6 +358,7 @@ impl Benchmark {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum BenchmarkOperation {
 	Create,
 	Read,
