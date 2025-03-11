@@ -15,10 +15,12 @@ on:
           - cassandra
           - dragonfly
           - dry
+          - echodb
           - fjall
           - keydb
           - lmdb
           - map
+          - memodb
           - mongodb
           - mysql
           - neo4j
