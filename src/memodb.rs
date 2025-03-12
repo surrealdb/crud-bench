@@ -170,7 +170,7 @@ impl MemoDBClient {
 				}
 				Ok(count)
 			}
-			Projection::Count => Ok(txn.keys(beg..end, scan.start, scan.limit)?.iter().count()),
+			Projection::Count => Ok(txn.keys(beg..end, scan.start, scan.limit)?.len()),
 		}
 	}
 }
