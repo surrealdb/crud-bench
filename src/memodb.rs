@@ -131,9 +131,6 @@ impl MemoDBClient {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
 		// Extract parameters
-		let s = scan.start.unwrap_or(0);
-		let l = scan.limit.unwrap_or(usize::MAX);
-		let t = scan.limit.map(|l| s + l);
 		let p = scan.projection()?;
 		// Create a new transaction
 		let txn = self.db.transaction();
@@ -143,7 +140,7 @@ impl MemoDBClient {
 		match p {
 			Projection::Id => {
 				// Scan the desired range of keys
-				let iter = txn.keys(beg..end, t)?;
+				let iter = txn.keys(beg..end, scan.start, scan.limit)?;
 				// Create an iterator starting at the beginning
 				let iter = iter.into_iter();
 				// We use a for loop to iterate over the results, while
@@ -151,7 +148,7 @@ impl MemoDBClient {
 				// an iterator with `filter_map` or `map` is optimised
 				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				for v in iter.skip(s).take(l) {
+				for v in iter {
 					black_box(v);
 					count += 1;
 				}
@@ -159,7 +156,7 @@ impl MemoDBClient {
 			}
 			Projection::Full => {
 				// Scan the desired range of keys
-				let iter = txn.scan(beg..end, t)?;
+				let iter = txn.scan(beg..end, scan.start, scan.limit)?;
 				// Create an iterator starting at the beginning
 				let iter = iter.into_iter();
 				// We use a for loop to iterate over the results, while
@@ -167,20 +164,13 @@ impl MemoDBClient {
 				// an iterator with `filter_map` or `map` is optimised
 				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				for v in iter.skip(s).take(l) {
+				for v in iter {
 					black_box(v.1);
 					count += 1;
 				}
 				Ok(count)
 			}
-			Projection::Count => {
-				Ok(txn
-					.keys(beg..end, t)?
-					.iter()
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.count())
-			}
+			Projection::Count => Ok(txn.keys(beg..end, scan.start, scan.limit)?.iter().count()),
 		}
 	}
 }
