@@ -44,7 +44,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
+	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Load the system attributes
@@ -64,7 +64,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Disable versioning
 		opts.enable_versions = false;
 		// Enable disk persistence
-		opts.disk_persistence = true;
+		opts.disk_persistence = options.disk_persistence;
 		// Set the directory location
 		opts.dir = PathBuf::from(DATABASE_DIR);
 		// Set the cache to 250,000 entries

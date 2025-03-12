@@ -40,6 +40,8 @@ pub(crate) struct Benchmark {
 	pub(crate) pid: Option<u32>,
 	/// Whether to ensure data is synced
 	pub(crate) sync: bool,
+	/// Whether to enable disk persistence (specific to surrealkv for now)
+	pub(crate) disk_persistence: bool,
 }
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
@@ -53,6 +55,7 @@ impl Benchmark {
 			samples: args.samples,
 			sync: args.sync,
 			pid: args.pid,
+			disk_persistence: true,
 		}
 	}
 	/// Run the benchmark for the desired benchmark engine
