@@ -42,7 +42,7 @@ redis = ["dep:redis"]
 rocksdb = ["dep:rocksdb"]
 scylladb = ["dep:scylla"]
 sqlite = ["dep:tokio-rusqlite"]
-surrealdb = ["dep:surrealdb", "surrealdb/allocator", "surrealdb/kv-mem", "surrealdb/kv-rocksdb", "surrealdb/kv-surrealkv", "surrealdb/protocol-http", "surrealdb/protocol-ws"]
+surrealdb = ["dep:surrealdb", "surrealdb/kv-mem", "surrealdb/kv-rocksdb", "surrealdb/kv-surrealkv", "surrealdb/protocol-http", "surrealdb/protocol-ws"]
 surrealkv = ["dep:surrealkv"]
 
 [profile.release]
@@ -72,6 +72,7 @@ hdrhistogram = "7.5.4"
 heed = { version = "0.21.0", optional = true }
 log = "0.4.25"
 memodb = { version = "0.7.0", optional = true }
+mimalloc = "0.1.43"
 mongodb = { version = "3.1.1", optional = true }
 mysql_async = { version = "0.35.1", default-features = false, features = ["bigdecimal", "binlog", "derive", "frunk", "rust_decimal", "time"], optional = true }
 neo4rs = { version = "0.8.0", optional = true }
@@ -85,7 +86,7 @@ scylla = { version = "0.15.1", optional = true }
 serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.135"
 serial_test = "3.2.0"
-surrealdb = { version = "2", package = "surrealdb-nightly", optional = true }
+surrealdb = { version = "2", package = "surrealdb-nightly", default-features = false, optional = true }
 surrealkv = { version = "0.9.1", optional = true }
 sysinfo = { version = "0.33.1", features = ["serde"] }
 tokio = { version = "1.43.0", features = ["macros", "time", "rt-multi-thread"] }

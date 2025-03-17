@@ -11,6 +11,7 @@ use std::io::{IsTerminal, Write};
 use tokio::runtime;
 
 // Benchmark modules
+mod allocator;
 mod benchmark;
 mod database;
 mod dialect;
