@@ -151,6 +151,7 @@ jobs:
             database: arangodb
             enabled: true
             description: ArangoDB
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
             DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/arangodb3' || '-v /data/crud-bench:/var/lib/arangodb3' }}
           # Cassandra
           - name: cassandra
@@ -158,70 +159,83 @@ jobs:
             enabled: false
             description: Cassandra
             skipped: Cassandra benchmark not yet implemented
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # Dragonfly
           - name: dragonfly
             database: dragonfly
             enabled: true
             description: Dragonfly
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # Dry
           - name: dry
             database: dry
             enabled: true
             description: Dry
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # EchoDB
           - name: echodb
             database: echodb
             enabled: true
             description: EchoDB
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # Fjall
           - name: fjall
             database: fjall
             enabled: true
             description: Fjall
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # KeyDB
           - name: keydb
             database: keydb
             enabled: true
             description: KeyDB
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
             DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # LMDB
           - name: lmdb
             database: lmdb
             enabled: true
             description: LMDB
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # Map
           - name: map
             database: map
             enabled: true
             description: Map
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # MemoDB
           - name: memodb
             database: memodb
             enabled: true
             description: MemoDB
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # MongoDB
           - name: mongodb
             database: mongodb
             enabled: true
             description: MongoDB
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
             DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data/db' || '-v /data/crud-bench:/data/db' }}
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
             DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/mysql' || '-v /data/crud-bench:/var/lib/mysql' }}
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
             DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
             DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/postgresql/data' || '-v /data/crud-bench:/var/lib/postgresql/data' }}
           # Redb
           - name: redb
@@ -229,44 +243,52 @@ jobs:
             enabled: false
             description: ReDB
             skipped: ReDB benchmark skipped due to excessive benchmark time
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # Redis
           - name: redis
             database: redis
             enabled: true
             description: Redis
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
             DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # RocksDB
           - name: rocksdb
             database: rocksdb
             enabled: true
             description: RocksDB
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # Scylladb
           - name: scylladb
             database: scylladb
             enabled: false
             description: ScyllaDB
             skipped: ScyllaDB benchmark not yet implemented
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # SQLite
           - name: sqlite
             database: sqlite
             enabled: true
             description: SQLite
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # SurrealDB + Memory
           - name: surrealdb-memory
             database: surrealdb-memory
             enabled: true
             description: SurrealDB with in-memory storage
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # SurrealDB + RocksDB
           - name: surrealdb-rocksdb
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
             DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
             DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true' || '-v /data/crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true' }}
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
@@ -274,28 +296,33 @@ jobs:
             enabled: true
             endpoint: -e memory
             description: SurrealDB embedded with in-memory storage
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # SurrealDB RocksDB Engine
           - name: surrealdb-embedded-rocksdb
             database: surrealdb
             enabled: true
             endpoint: -e rocksdb:/data/crud-bench
             description: SurrealDB embedded with RocksDB storage
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
             enabled: true
             endpoint: -e surrealkv:/data/crud-bench
             description: SurrealDB embedded with SurrealKV storage
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # SurrealKV
           - name: surrealkv
             database: surrealkv
             enabled: true
             description: SurrealKV
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # SurrealKV Memory
           - name: surrealkv-memory
             database: surrealkv-memory
             enabled: true
             description: SurrealKV with in-memory storage
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -371,7 +398,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(github.event.inputs.timeout) }}
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
-        run: sudo -E taskset -c 0-$(($(nproc) - 1)) ionice -c 2 -n 0 ${{ github.workspace }}/artifacts/crud-bench --privileged ${{ github.event.inputs.sync == 'true' && '--sync' || '' }} -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
+        run: sudo -E taskset -c 0-$(($(nproc) - 1)) ${{ matrix.CLI_ARGS || '' }} ${{ github.workspace }}/artifacts/crud-bench --privileged ${{ github.event.inputs.sync == 'true' && '--sync' || '' }} -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: ${{ github.event.inputs.value }}
