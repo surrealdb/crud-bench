@@ -85,7 +85,7 @@ impl MemoDBClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let mut txn = self.db.transaction();
+		let mut txn = self.db.transaction(true);
 		// Process the data
 		txn.set(key, val)?;
 		txn.commit()?;
@@ -94,7 +94,7 @@ impl MemoDBClient {
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.transaction();
+		let mut txn = self.db.transaction(false);
 		// Process the data
 		let res = txn.get(key.to_vec())?;
 		// Check the value exists
@@ -109,7 +109,7 @@ impl MemoDBClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let mut txn = self.db.transaction();
+		let mut txn = self.db.transaction(true);
 		// Process the data
 		txn.set(key, val)?;
 		txn.commit()?;
@@ -118,7 +118,7 @@ impl MemoDBClient {
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.transaction();
+		let mut txn = self.db.transaction(true);
 		// Process the data
 		txn.del(key)?;
 		txn.commit()?;
@@ -133,7 +133,7 @@ impl MemoDBClient {
 		// Extract parameters
 		let p = scan.projection()?;
 		// Create a new transaction
-		let txn = self.db.transaction();
+		let mut txn = self.db.transaction(false);
 		let beg = [0u8].to_vec();
 		let end = [255u8].to_vec();
 		// Perform the relevant projection scan type
@@ -170,7 +170,7 @@ impl MemoDBClient {
 				}
 				Ok(count)
 			}
-			Projection::Count => Ok(txn.keys(beg..end, scan.start, scan.limit)?.len()),
+			Projection::Count => Ok(txn.total(beg..end, scan.start, scan.limit)?),
 		}
 	}
 }
