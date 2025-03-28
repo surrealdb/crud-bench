@@ -78,14 +78,6 @@ on:
         options:
           - "true"
           - "false"
-      data:
-        type: choice
-        description: Data volume type
-        required: true
-        default: "docker"
-        options:
-          - "docker"
-          - "host"
       cooldown:
         type: string
         description: Cooldown in minutes
@@ -152,7 +144,6 @@ jobs:
             enabled: true
             description: ArangoDB
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/arangodb3' || '-v /data/crud-bench:/var/lib/arangodb3' }}
           # Cassandra
           - name: cassandra
             database: cassandra
@@ -190,7 +181,6 @@ jobs:
             enabled: true
             description: KeyDB
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # LMDB
           - name: lmdb
             database: lmdb
@@ -215,28 +205,24 @@ jobs:
             enabled: true
             description: MongoDB
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data/db' || '-v /data/crud-bench:/data/db' }}
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/mysql' || '-v /data/crud-bench:/var/lib/mysql' }}
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/var/lib/postgresql/data' || '-v /data/crud-bench:/var/lib/postgresql/data' }}
           # Redb
           - name: redb
             database: redb
@@ -250,7 +236,6 @@ jobs:
             enabled: true
             description: Redis
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
           # RocksDB
           - name: rocksdb
             database: rocksdb
@@ -282,14 +267,13 @@ jobs:
             enabled: true
             description: SurrealDB with RocksDB storage
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data' || '-v /data/crud-bench:/data' }}
+            DOCKER_PRE_ARGS: -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: ${{ github.event.inputs.data == 'docker' && '-v crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true' || '-v /data/crud-bench:/data -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true' }}
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
