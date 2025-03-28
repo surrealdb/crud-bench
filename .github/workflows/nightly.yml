@@ -180,7 +180,6 @@ jobs:
             enabled: true
             endpoint: -e rocksdb:~/crud-bench
             description: SurrealDB embedded with RocksDB storage
-            DOCKER_PRE_ARGS: -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
