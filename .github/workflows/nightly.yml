@@ -273,7 +273,7 @@ jobs:
         timeout-minutes: 60
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string26 -r -n string26-random-1k
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string26 -r -n string26-random-1k
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
