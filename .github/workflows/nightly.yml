@@ -19,7 +19,7 @@ defaults:
 jobs:
   build:
     name: Build crud-bench
-    runs-on: [runner-amd64-4xlarge]
+    runs-on: [runner-amd64-large]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -48,7 +48,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-benchmarking]
+    runs-on: [runner-amd64-4xlarge]
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -162,6 +162,7 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
+            DOCKER_PRE_ARGS: -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
@@ -177,19 +178,24 @@ jobs:
           - name: surrealdb-embedded-rocksdb
             database: surrealdb
             enabled: true
-            endpoint: -e rocksdb:/tmp/rocksdb-engine
+            endpoint: -e rocksdb:~/crud-bench
             description: SurrealDB embedded with RocksDB storage
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
             enabled: true
-            endpoint: -e surrealkv:/tmp/surrealkv-engine
+            endpoint: -e surrealkv:~/crud-bench
             description: SurrealDB embedded with SurrealKV storage
           # SurrealKV
           - name: surrealkv
             database: surrealkv
             enabled: true
             description: SurrealKV
+          # SurrealKV Memory
+          - name: surrealkv-memory
+            database: surrealkv-memory
+            enabled: true
+            description: SurrealKV with in-memory storage
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -229,9 +235,9 @@ jobs:
         if: ${{ matrix.enabled }}
         run: |
           # Clean up data directory
-          rm -rf /tmp/crud-bench
-          mkdir /tmp/crud-bench
-          chmod 777 /tmp/crud-bench
+          rm -rf ~/crud-bench
+          mkdir -p ~/crud-bench
+          chmod 777 ~/crud-bench
           # Remove old results
           rm -f result*.json
           rm -f result*.csv
@@ -251,7 +257,7 @@ jobs:
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k integer -r -n integer-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
@@ -260,46 +266,23 @@ jobs:
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string26 -r -n string26-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
 
-      - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string90 / random)
+      - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 60
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string90 -r -n string90-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
-        env:
-          CRUD_BENCH_LMDB_DATABASE_SIZE: 3221225472 # 3 GiB
-
-      - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string250 / random)
-        timeout-minutes: 60
-        if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string250 -r -n string250-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
-        env:
-          CRUD_BENCH_LMDB_DATABASE_SIZE: 10737418240 # 10 GiB
-
-      - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string506 / random)
-        timeout-minutes: 60
-        if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string506 -r -n string506-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
-        env:
-          CRUD_BENCH_LMDB_DATABASE_SIZE: 16106127360 # 15 GiB
-
-      - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
-        timeout-minutes: 60
-        if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000000 -c 128 -t 48 -k string26 -r -n string26-random-1k
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 5000000 -c 128 -t 48 -k string26 -r -n string26-random-1k
+          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+
+      - name: Wait for system cool down
+        if: ${{ matrix.enabled && (success() || failure()) }}
+        run: sleep 5m
 
       - name: Upload result artifacts
         uses: actions/upload-artifact@v4
