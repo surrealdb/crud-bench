@@ -6,8 +6,8 @@ use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use fjall::{
-	BlobCache, BlockCache, Config, KvSeparationOptions, PartitionCreateOptions, PersistMode,
-	TransactionalKeyspace, TxPartitionHandle,
+	Config, KvSeparationOptions, PartitionCreateOptions, PersistMode, TransactionalKeyspace,
+	TxPartitionHandle,
 };
 use serde_json::Value;
 use std::cmp::max;
@@ -54,10 +54,8 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			.manual_journal_persist(false)
 			// Set the amount of data to build up in memory
 			.max_write_buffer_size(u64::MAX)
-			// Set the blob cache size to 256 MiB
-			.blob_cache(Arc::new(BlobCache::with_capacity_bytes(memory)))
-			// Set the block cache size to 256 MiB
-			.block_cache(Arc::new(BlockCache::with_capacity_bytes(memory)))
+			// Set the cache size to 256 MiB
+			.cache_size(memory)
 			// Open a transactional keyspace
 			.open_transactional()?;
 		// Configure and create the partition
