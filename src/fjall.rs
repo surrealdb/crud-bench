@@ -54,7 +54,7 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			.manual_journal_persist(false)
 			// Set the amount of data to build up in memory
 			.max_write_buffer_size(u64::MAX)
-			// Set the cache size to 256 MiB
+			// Set the cache size to 512 MiB
 			.cache_size(memory)
 			// Open a transactional keyspace
 			.open_transactional()?;
