@@ -6,8 +6,8 @@ use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
 use fjall::{
-	BlobCache, BlockCache, Config, KvSeparationOptions, PartitionCreateOptions, PersistMode,
-	TransactionalKeyspace, TxPartitionHandle,
+	Config, KvSeparationOptions, PartitionCreateOptions, PersistMode, TransactionalKeyspace,
+	TxPartitionHandle,
 };
 use serde_json::Value;
 use std::cmp::max;
@@ -18,7 +18,7 @@ use sysinfo::System;
 
 const DATABASE_DIR: &str = "fjall";
 
-const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024;
+const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
 
 const DURABILITY: Option<PersistMode> = Some(PersistMode::Buffer);
 
@@ -40,8 +40,12 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 		let system = System::new_all();
 		// Get the total system memory
 		let memory = system.total_memory();
-		// Calculate a good cache memory size
-		let memory = max(memory / 4, MIN_CACHE_SIZE);
+		// Divide the total memory into half
+		let memory = memory.saturating_div(2);
+		// Subtract 1 GiB from the memory size
+		let memory = memory.saturating_sub(1024 * 1024 * 1024);
+		// Fallback to the minimum memory cache size
+		let memory = max(memory, MIN_CACHE_SIZE);
 		// Configure the key-value separation
 		let blobopts = KvSeparationOptions::default()
 			// Separate values if larger than 1 KiB
@@ -54,10 +58,8 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			.manual_journal_persist(false)
 			// Set the amount of data to build up in memory
 			.max_write_buffer_size(u64::MAX)
-			// Set the blob cache size to 256 MiB
-			.blob_cache(Arc::new(BlobCache::with_capacity_bytes(memory)))
-			// Set the block cache size to 256 MiB
-			.block_cache(Arc::new(BlockCache::with_capacity_bytes(memory)))
+			// Set the cache size to 512 MiB
+			.cache_size(memory)
 			// Open a transactional keyspace
 			.open_transactional()?;
 		// Configure and create the partition
