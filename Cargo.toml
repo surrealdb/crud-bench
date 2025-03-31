@@ -42,7 +42,7 @@ redis = ["dep:redis"]
 rocksdb = ["dep:rocksdb"]
 scylladb = ["dep:scylla"]
 sqlite = ["dep:tokio-rusqlite"]
-surrealdb = ["dep:surrealdb", "surrealdb/kv-mem", "surrealdb/kv-rocksdb", "surrealdb/kv-surrealkv", "surrealdb/protocol-http", "surrealdb/protocol-ws", "surrealdb/native-tls"]
+surrealdb = ["dep:surrealdb", "surrealdb/kv-mem", "surrealdb/kv-rocksdb", "surrealdb/kv-surrealkv", "surrealdb/protocol-http", "surrealdb/protocol-ws", "surrealdb/rustls"]
 surrealkv = ["dep:surrealkv"]
 
 [profile.release]
