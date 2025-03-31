@@ -18,7 +18,7 @@ use sysinfo::System;
 
 const DATABASE_DIR: &str = "fjall";
 
-const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024;
+const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
 
 const DURABILITY: Option<PersistMode> = Some(PersistMode::Buffer);
 
@@ -40,8 +40,12 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 		let system = System::new_all();
 		// Get the total system memory
 		let memory = system.total_memory();
-		// Calculate a good cache memory size
-		let memory = max(memory / 4, MIN_CACHE_SIZE);
+		// Divide the total memory into half
+		let memory = memory.saturating_div(2);
+		// Subtract 1 GiB from the memory size
+		let memory = memory.saturating_sub(1024 * 1024 * 1024);
+		// Fallback to the minimum memory cache size
+		let memory = max(memory, MIN_CACHE_SIZE);
 		// Configure the key-value separation
 		let blobopts = KvSeparationOptions::default()
 			// Separate values if larger than 1 KiB
