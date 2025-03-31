@@ -60,6 +60,8 @@ pub(crate) enum Database {
 	SurrealdbRocksdb,
 	#[cfg(feature = "surrealdb")]
 	SurrealdbSurrealkv,
+	#[cfg(feature = "surrealkv")]
+	SurrealkvMemory,
 }
 
 impl Database {
@@ -105,7 +107,7 @@ impl Database {
 	/// Run the benchmarks for the chosen database
 	pub(crate) async fn run(
 		&self,
-		benchmark: &Benchmark,
+		benchmark: &mut Benchmark,
 		kt: KeyType,
 		kp: KeyProvider,
 		vp: ValueProvider,
@@ -393,6 +395,23 @@ impl Database {
 			}
 			#[cfg(feature = "surrealkv")]
 			Database::Surrealkv => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::surrealkv::SurrealKVClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "surrealkv")]
+			Database::SurrealkvMemory => {
+				benchmark.disk_persistence = false;
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						crate::surrealkv::SurrealKVClientProvider::setup(

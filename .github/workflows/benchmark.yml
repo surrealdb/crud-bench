@@ -15,10 +15,12 @@ on:
           - cassandra
           - dragonfly
           - dry
+          - echodb
           - fjall
           - keydb
           - lmdb
           - map
+          - memodb
           - mongodb
           - mysql
           - neo4j
@@ -35,12 +37,8 @@ on:
           - surrealdb-embedded-memory
           - surrealdb-embedded-rocksdb
           - surrealdb-embedded-surrealkv
+          - surrealkv-memory
           - surrealkv
-          - custom
-      custom:
-        type: string
-        description: Custom choice
-        required: false
       samples:
         type: string
         description: Number of samples
@@ -105,7 +103,7 @@ defaults:
 jobs:
   build:
     name: Build crud-bench
-    runs-on: [runner-amd64-4xlarge]
+    runs-on: [runner-amd64-large]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -145,144 +143,170 @@ jobs:
             database: arangodb
             enabled: true
             description: ArangoDB
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/arangodb3"
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # Cassandra
           - name: cassandra
             database: cassandra
             enabled: false
             description: Cassandra
             skipped: Cassandra benchmark not yet implemented
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # Dragonfly
           - name: dragonfly
             database: dragonfly
             enabled: true
             description: Dragonfly
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # Dry
           - name: dry
             database: dry
             enabled: true
             description: Dry
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # EchoDB
           - name: echodb
             database: echodb
             enabled: true
             description: EchoDB
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # Fjall
           - name: fjall
             database: fjall
             enabled: true
             description: Fjall
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # KeyDB
           - name: keydb
             database: keydb
             enabled: true
             description: KeyDB
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # LMDB
           - name: lmdb
             database: lmdb
             enabled: true
             description: LMDB
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # Map
           - name: map
             database: map
             enabled: true
             description: Map
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # MemoDB
           - name: memodb
             database: memodb
             enabled: true
             description: MemoDB
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # MongoDB
           - name: mongodb
             database: mongodb
             enabled: true
             description: MongoDB
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data/db"
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/mysql"
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/data"
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/var/lib/postgresql/data"
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # Redb
           - name: redb
             database: redb
             enabled: false
             description: ReDB
             skipped: ReDB benchmark skipped due to excessive benchmark time
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # Redis
           - name: redis
             database: redis
             enabled: true
             description: Redis
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # RocksDB
           - name: rocksdb
             database: rocksdb
             enabled: true
             description: RocksDB
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # Scylladb
           - name: scylladb
             database: scylladb
             enabled: false
             description: ScyllaDB
             skipped: ScyllaDB benchmark not yet implemented
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # SQLite
           - name: sqlite
             database: sqlite
             enabled: true
             description: SQLite
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # SurrealDB + Memory
           - name: surrealdb-memory
             database: surrealdb-memory
             enabled: true
             description: SurrealDB with in-memory storage
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # SurrealDB + RocksDB
           - name: surrealdb-rocksdb
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true"
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
+            DOCKER_PRE_ARGS: -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
-            environment: DOCKER_PRE_ARGS="-v /tmp/crud-bench:/tmp"
+            CLI_ARGS: nice -n -10 ionice -c 2 -n 0
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
             enabled: true
             endpoint: -e memory
             description: SurrealDB embedded with in-memory storage
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # SurrealDB RocksDB Engine
           - name: surrealdb-embedded-rocksdb
             database: surrealdb
             enabled: true
-            endpoint: -e rocksdb:/tmp/crud-bench
+            endpoint: -e rocksdb:/data/crud-bench
             description: SurrealDB embedded with RocksDB storage
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
             enabled: true
-            endpoint: -e surrealkv:/tmp/crud-bench
+            endpoint: -e surrealkv:/data/crud-bench
             description: SurrealDB embedded with SurrealKV storage
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # SurrealKV
           - name: surrealkv
             database: surrealkv
             enabled: true
             description: SurrealKV
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
+          # SurrealKV Memory
+          - name: surrealkv-memory
+            database: surrealkv-memory
+            enabled: true
+            description: SurrealKV with in-memory storage
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -304,22 +328,19 @@ jobs:
         run: echo "${{ matrix.skipped }}"
 
       - name: Clean up environment
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: |
-          # Clean up Docker environment
           docker container kill crud-bench &>/dev/null || true
           docker container prune --force
+          docker volume prune --all --force
           docker system prune --force
-          # Clean up data directory
-          rm -rf /tmp/crud-bench
-          mkdir /tmp/crud-bench
-          chmod 777 /tmp/crud-bench
-          # Remove old results
-          rm -f result*.json
-          rm -f result*.csv
+          rm -rf /data/crud-bench
+          mkdir -p /data/crud-bench
+          chmod 777 /data/crud-bench
+          docker volume create crud-bench
 
       - name: Optimise system
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: |
           # Disable services
           sudo systemctl stop unattended-upgrades
@@ -339,7 +360,7 @@ jobs:
           ulimit -l unlimited
 
       - name: Wait for system cool down
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: sleep ${{ github.event.inputs.cooldown }}m
 
       - name: System Information
@@ -360,14 +381,16 @@ jobs:
       - name: Run benchmarks (${{ github.event.inputs.samples }} samples / ${{ github.event.inputs.clients }} clients / ${{ github.event.inputs.threads }} threads / key ${{ github.event.inputs.key-type }} / random)
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(github.event.inputs.timeout) }}
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
-        run: ${{ matrix.environment || '' }} sudo taskset -c 0-$(($(nproc) - 1)) sudo nice -n -20 sudo ionice -c 1 -n 0 sudo ${{ github.workspace }}/artifacts/crud-bench --privileged ${{ github.event.inputs.sync == 'true' && '--sync' || '' }} -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
+        run: sudo -E taskset -c 0-$(($(nproc) - 1)) ${{ matrix.CLI_ARGS || '' }} ${{ github.workspace }}/artifacts/crud-bench --privileged ${{ github.event.inputs.sync == 'true' && '--sync' || '' }} -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
           CRUD_BENCH_VALUE: ${{ github.event.inputs.value }}
+          DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
+          DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
       - name: Normalise system
-        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) || ( github.event.inputs.datastore == 'custom' && contains(github.event.inputs.custom, matrix.name) ) ) && (success() || failure()) }}
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: |
           # Enable services
           sudo systemctl start unattended-upgrades
