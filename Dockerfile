@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/glibc-dynamic:latest
+FROM ubuntu
 
 ARG TARGETARCH
 COPY artifacts/crud-bench-${TARGETARCH}/crud-bench /crud-bench
