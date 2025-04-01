@@ -180,283 +180,275 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.image.outputs.docker-repo }}:${{ steps.image.outputs.docker-tag }}
-
-      - name: Build and push Docker image for release
-        uses: docker/build-push-action@v6
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.image.outputs.docker-repo }}:${{ steps.image.outputs.docker-tag }}
           push: true
 
-  benchmark:
-    name: Benchmark ${{ matrix.description }}
-    needs: build
-    runs-on: [runner-amd64-large-private]
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # ArangoDB
-          - name: arangodb
-            database: arangodb
-            enabled: true
-            description: ArangoDB
-          # Cassandra
-          - name: cassandra
-            database: cassandra
-            enabled: false
-            description: Cassandra
-            skipped: Cassandra benchmark not yet implemented
-          # Dragonfly
-          - name: dragonfly
-            database: dragonfly
-            enabled: true
-            description: Dragonfly
-          # Dry
-          - name: dry
-            database: dry
-            enabled: true
-            description: Dry
-          # EchoDB
-          - name: echodb
-            database: echodb
-            enabled: true
-            description: EchoDB
-          # Fjall
-          - name: Fjall
-            database: fjall
-            enabled: true
-            description: Fjall
-          # KeyDB
-          - name: keydb
-            database: keydb
-            enabled: true
-            description: KeyDB
-          # LMDB
-          - name: lmdb
-            database: lmdb
-            enabled: true
-            description: LMDB
-          # Map
-          - name: map
-            database: map
-            enabled: true
-            description: Map
-          # MemoDB
-          - name: memodb
-            database: memodb
-            enabled: true
-            description: MemoDB
-          # MongoDB
-          - name: mongodb
-            database: mongodb
-            enabled: true
-            description: MongoDB
-          # MySQL
-          - name: mysql
-            database: mysql
-            enabled: true
-            description: MySQL
-          # Neo4j
-          - name: neo4j
-            database: neo4j
-            enabled: true
-            description: Neo4j
-          # Postgres
-          - name: postgres
-            database: postgres
-            enabled: true
-            description: Postgres
-          # Redb
-          - name: redb
-            database: redb
-            enabled: false
-            description: ReDB
-            skipped: ReDB benchmark skipped due to excessive benchmark time
-          # Redis
-          - name: redis
-            database: redis
-            enabled: true
-            description: Redis
-          # RocksDB
-          - name: rocksdb
-            database: rocksdb
-            enabled: true
-            description: RocksDB
-          # Scylladb
-          - name: scylladb
-            database: scylladb
-            enabled: false
-            description: ScyllaDB
-            skipped: ScyllaDB benchmark not yet implemented
-          # SQLite
-          - name: sqlite
-            database: sqlite
-            enabled: true
-            description: SQLite
-          # SurrealDB + Memory
-          - name: surrealdb-memory
-            database: surrealdb-memory
-            enabled: true
-            description: SurrealDB with in-memory storage
-          # SurrealDB + RocksDB
-          - name: surrealdb-rocksdb
-            database: surrealdb-rocksdb
-            enabled: true
-            description: SurrealDB with RocksDB storage
-          # SurrealDB + SurrealKV
-          - name: surrealdb-surrealkv
-            database: surrealdb-surrealkv
-            enabled: true
-            description: SurrealDB with SurrealKV storage
-          # SurrealDB Memory Engine
-          - name: surrealdb-embedded-memory
-            database: surrealdb
-            enabled: true
-            endpoint: -e memory
-            description: SurrealDB embedded with in-memory storage
-          # SurrealDB RocksDB Engine
-          - name: surrealdb-embedded-rocksdb
-            database: surrealdb
-            enabled: true
-            endpoint: -e rocksdb:~/crud-bench
-            description: SurrealDB embedded with RocksDB storage
-          # SurrealDB SurrealKV Engine
-          - name: surrealdb-embedded-surrealkv
-            database: surrealdb
-            enabled: true
-            endpoint: -e surrealkv:~/crud-bench
-            description: SurrealDB embedded with SurrealKV storage
-          # SurrealKV
-          - name: surrealkv
-            database: surrealkv
-            enabled: true
-            description: SurrealKV
-          # SurrealKV Memory
-          - name: surrealkv-memory
-            database: surrealkv-memory
-            enabled: true
-            description: SurrealKV with in-memory storage
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: crud-bench-amd64
-          path: ${{ github.workspace }}/artifacts
+  # benchmark:
+  #   name: Benchmark ${{ matrix.description }}
+  #   needs: build
+  #   runs-on: [runner-amd64-large-private]
+  #   continue-on-error: true
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         # ArangoDB
+  #         - name: arangodb
+  #           database: arangodb
+  #           enabled: true
+  #           description: ArangoDB
+  #         # Cassandra
+  #         - name: cassandra
+  #           database: cassandra
+  #           enabled: false
+  #           description: Cassandra
+  #           skipped: Cassandra benchmark not yet implemented
+  #         # Dragonfly
+  #         - name: dragonfly
+  #           database: dragonfly
+  #           enabled: true
+  #           description: Dragonfly
+  #         # Dry
+  #         - name: dry
+  #           database: dry
+  #           enabled: true
+  #           description: Dry
+  #         # EchoDB
+  #         - name: echodb
+  #           database: echodb
+  #           enabled: true
+  #           description: EchoDB
+  #         # Fjall
+  #         - name: Fjall
+  #           database: fjall
+  #           enabled: true
+  #           description: Fjall
+  #         # KeyDB
+  #         - name: keydb
+  #           database: keydb
+  #           enabled: true
+  #           description: KeyDB
+  #         # LMDB
+  #         - name: lmdb
+  #           database: lmdb
+  #           enabled: true
+  #           description: LMDB
+  #         # Map
+  #         - name: map
+  #           database: map
+  #           enabled: true
+  #           description: Map
+  #         # MemoDB
+  #         - name: memodb
+  #           database: memodb
+  #           enabled: true
+  #           description: MemoDB
+  #         # MongoDB
+  #         - name: mongodb
+  #           database: mongodb
+  #           enabled: true
+  #           description: MongoDB
+  #         # MySQL
+  #         - name: mysql
+  #           database: mysql
+  #           enabled: true
+  #           description: MySQL
+  #         # Neo4j
+  #         - name: neo4j
+  #           database: neo4j
+  #           enabled: true
+  #           description: Neo4j
+  #         # Postgres
+  #         - name: postgres
+  #           database: postgres
+  #           enabled: true
+  #           description: Postgres
+  #         # Redb
+  #         - name: redb
+  #           database: redb
+  #           enabled: false
+  #           description: ReDB
+  #           skipped: ReDB benchmark skipped due to excessive benchmark time
+  #         # Redis
+  #         - name: redis
+  #           database: redis
+  #           enabled: true
+  #           description: Redis
+  #         # RocksDB
+  #         - name: rocksdb
+  #           database: rocksdb
+  #           enabled: true
+  #           description: RocksDB
+  #         # Scylladb
+  #         - name: scylladb
+  #           database: scylladb
+  #           enabled: false
+  #           description: ScyllaDB
+  #           skipped: ScyllaDB benchmark not yet implemented
+  #         # SQLite
+  #         - name: sqlite
+  #           database: sqlite
+  #           enabled: true
+  #           description: SQLite
+  #         # SurrealDB + Memory
+  #         - name: surrealdb-memory
+  #           database: surrealdb-memory
+  #           enabled: true
+  #           description: SurrealDB with in-memory storage
+  #         # SurrealDB + RocksDB
+  #         - name: surrealdb-rocksdb
+  #           database: surrealdb-rocksdb
+  #           enabled: true
+  #           description: SurrealDB with RocksDB storage
+  #         # SurrealDB + SurrealKV
+  #         - name: surrealdb-surrealkv
+  #           database: surrealdb-surrealkv
+  #           enabled: true
+  #           description: SurrealDB with SurrealKV storage
+  #         # SurrealDB Memory Engine
+  #         - name: surrealdb-embedded-memory
+  #           database: surrealdb
+  #           enabled: true
+  #           endpoint: -e memory
+  #           description: SurrealDB embedded with in-memory storage
+  #         # SurrealDB RocksDB Engine
+  #         - name: surrealdb-embedded-rocksdb
+  #           database: surrealdb
+  #           enabled: true
+  #           endpoint: -e rocksdb:~/crud-bench
+  #           description: SurrealDB embedded with RocksDB storage
+  #         # SurrealDB SurrealKV Engine
+  #         - name: surrealdb-embedded-surrealkv
+  #           database: surrealdb
+  #           enabled: true
+  #           endpoint: -e surrealkv:~/crud-bench
+  #           description: SurrealDB embedded with SurrealKV storage
+  #         # SurrealKV
+  #         - name: surrealkv
+  #           database: surrealkv
+  #           enabled: true
+  #           description: SurrealKV
+  #         # SurrealKV Memory
+  #         - name: surrealkv-memory
+  #           database: surrealkv-memory
+  #           enabled: true
+  #           description: SurrealKV with in-memory storage
+  #   steps:
+  #     - name: Download artifacts
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: crud-bench-amd64
+  #         path: ${{ github.workspace }}/artifacts
 
-      - name: Set file permissions
-        run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
+  #     - name: Set file permissions
+  #       run: chmod +x ${{ github.workspace }}/artifacts/crud-bench
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_TOKEN }}
+  #     - name: Login to Docker Hub
+  #       uses: docker/login-action@v3
+  #       with:
+  #         username: ${{ secrets.DOCKER_USER }}
+  #         password: ${{ secrets.DOCKER_TOKEN }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        run: |
-          REGION=${{ secrets.REGISTRY_AWS_REGION }}
-          REGISTRY=${{ secrets.REGISTRY_AWS_ACCOUNT_ID }}.dkr.ecr.$REGION.amazonaws.com
-          aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
-          echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
+  #     - name: Login to Amazon ECR
+  #       id: login-ecr
+  #       run: |
+  #         REGION=${{ secrets.REGISTRY_AWS_REGION }}
+  #         REGISTRY=${{ secrets.REGISTRY_AWS_ACCOUNT_ID }}.dkr.ecr.$REGION.amazonaws.com
+  #         aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
+  #         echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
 
-      - name: System Information
-        run: |
-          echo "=== Environment Variables ==="
-          env
-          echo "=== Kernel & OS Info ==="
-          uname -a
-          echo "=== CPU Details (lscpu) ==="
-          lscpu
-          echo "=== First 50 lines of /proc/cpuinfo ==="
-          head -n 50 /proc/cpuinfo
-          echo "=== First 50 lines of /proc/meminfo ==="
-          head -n 50 /proc/meminfo
-          echo "=== Cgroup Information (/proc/self/cgroup) ==="
-          cat /proc/self/cgroup
+  #     - name: System Information
+  #       run: |
+  #         echo "=== Environment Variables ==="
+  #         env
+  #         echo "=== Kernel & OS Info ==="
+  #         uname -a
+  #         echo "=== CPU Details (lscpu) ==="
+  #         lscpu
+  #         echo "=== First 50 lines of /proc/cpuinfo ==="
+  #         head -n 50 /proc/cpuinfo
+  #         echo "=== First 50 lines of /proc/meminfo ==="
+  #         head -n 50 /proc/meminfo
+  #         echo "=== Cgroup Information (/proc/self/cgroup) ==="
+  #         cat /proc/self/cgroup
 
-      - name: ${{ matrix.skipped || 'Benchmark processing' }}
-        if: ${{ !matrix.enabled }}
-        run: echo "${{ matrix.skipped }}"
+  #     - name: ${{ matrix.skipped || 'Benchmark processing' }}
+  #       if: ${{ !matrix.enabled }}
+  #       run: echo "${{ matrix.skipped }}"
 
-      - name: Clean up environment
-        if: ${{ matrix.enabled }}
-        run: |
-          # Clean up data directory
-          rm -rf ~/crud-bench
-          mkdir -p ~/crud-bench
-          chmod 777 ~/crud-bench
-          # Remove old results
-          rm -f result*.json
-          rm -f result*.csv
+  #     - name: Clean up environment
+  #       if: ${{ matrix.enabled }}
+  #       run: |
+  #         # Clean up data directory
+  #         rm -rf ~/crud-bench
+  #         mkdir -p ~/crud-bench
+  #         chmod 777 ~/crud-bench
+  #         # Remove old results
+  #         rm -f result*.json
+  #         rm -f result*.csv
 
-      - name: Optimise system
-        if: ${{ matrix.enabled }}
-        run: |
-          # Flush disk writes
-          sync
-          # Increase max limits
-          ulimit -n 65536
-          ulimit -u unlimited
-          ulimit -l unlimited
+  #     - name: Optimise system
+  #       if: ${{ matrix.enabled }}
+  #       run: |
+  #         # Flush disk writes
+  #         sync
+  #         # Increase max limits
+  #         ulimit -n 65536
+  #         ulimit -u unlimited
+  #         ulimit -l unlimited
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key integer / random)
-        timeout-minutes: 15
-        if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r -n integer-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
+  #     - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key integer / random)
+  #       timeout-minutes: 15
+  #       if: ${{ matrix.enabled && (success() || failure()) }}
+  #       run: |
+  #         ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r -n integer-random
+  #         docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random)
-        timeout-minutes: 15
-        if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
+  #     - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random)
+  #       timeout-minutes: 15
+  #       if: ${{ matrix.enabled && (success() || failure()) }}
+  #       run: |
+  #         ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random
+  #         docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string90 / random)
-        timeout-minutes: 30
-        if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r -n string90-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
+  #     - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string90 / random)
+  #       timeout-minutes: 30
+  #       if: ${{ matrix.enabled && (success() || failure()) }}
+  #       run: |
+  #         ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r -n string90-random
+  #         docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string250 / random)
-        timeout-minutes: 30
-        if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string250 -r -n string250-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
+  #     - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string250 / random)
+  #       timeout-minutes: 30
+  #       if: ${{ matrix.enabled && (success() || failure()) }}
+  #       run: |
+  #         ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string250 -r -n string250-random
+  #         docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random)
-        timeout-minutes: 30
-        if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r -n string506-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
+  #     - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random)
+  #       timeout-minutes: 30
+  #       if: ${{ matrix.enabled && (success() || failure()) }}
+  #       run: |
+  #         ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r -n string506-random
+  #         docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
-        timeout-minutes: 30
-        if: ${{ matrix.enabled && (success() || failure()) }}
-        run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random-1k
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
-        env:
-          CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+  #     - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
+  #       timeout-minutes: 30
+  #       if: ${{ matrix.enabled && (success() || failure()) }}
+  #       run: |
+  #         ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random-1k
+  #         docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
+  #       env:
+  #         CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
 
-      - name: Upload result artifacts
-        uses: actions/upload-artifact@v4
-        if: ${{ matrix.enabled && (success() || failure()) }}
-        with:
-          name: results ${{ matrix.name }}
-          path: |
-            result*.json
-            result*.csv
+  #     - name: Upload result artifacts
+  #       uses: actions/upload-artifact@v4
+  #       if: ${{ matrix.enabled && (success() || failure()) }}
+  #       with:
+  #         name: results ${{ matrix.name }}
+  #         path: |
+  #           result*.json
+  #           result*.csv
 
-      - name: Finish benchmarking
-        run: echo "Complete"
-        if: success() || failure()
+  #     - name: Finish benchmarking
+  #       run: echo "Complete"
+  #       if: success() || failure()
