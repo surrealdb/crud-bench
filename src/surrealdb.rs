@@ -1,6 +1,7 @@
 #![cfg(feature = "surrealdb")]
 
 use crate::database::Database;
+use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
@@ -196,7 +197,7 @@ impl SurrealDBClient {
 		// Extract parameters
 		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {s}")).unwrap_or_default();
+		let c = SurrealDBDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
