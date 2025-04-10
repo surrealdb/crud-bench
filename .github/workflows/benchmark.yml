@@ -69,7 +69,7 @@ on:
         type: string
         description: Item content
         required: true
-        default: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+        default: '{ "text": "text:50", "age": "int:1..99", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
       sync:
         type: choice
         description: Acknowledge disk writes
