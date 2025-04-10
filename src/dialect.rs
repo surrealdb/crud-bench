@@ -5,6 +5,7 @@ use anyhow::{bail, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use flatten_json_object::ArrayFormatting;
 use flatten_json_object::Flattener;
+#[cfg(feature = "mongodb")]
 use mongodb::bson::{doc, to_document, Document};
 use serde_json::Value;
 use uuid::Uuid;
@@ -279,8 +280,10 @@ impl ArangoDBDialect {
 
 pub(crate) struct MongoDBDialect();
 
+#[cfg(feature = "mongodb")]
 impl Dialect for MongoDBDialect {}
 
+#[cfg(feature = "mongodb")]
 impl MongoDBDialect {
 	/// Constructs the filter document for [S]elect tests
 	pub fn filter_clause(scan: &Scan) -> Result<Document> {
