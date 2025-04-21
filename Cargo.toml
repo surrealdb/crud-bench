@@ -54,33 +54,33 @@ codegen-units = 1
 
 [dependencies]
 affinitypool = "0.3.1"
-anyhow = "1.0.97"
+anyhow = "1.0.98"
 arangors = { version = "0.6.0", optional = true }
 bincode = "1.3.3"
 bytesize = "2.0.1"
-comfy-table = "7.1.3"
-chrono = "0.4.39"
-clap = { version = "4.5.26", features = ["derive", "string", "env", "color"] }
+comfy-table = "7.1.4"
+chrono = "0.4.40"
+clap = { version = "4.5.37", features = ["derive", "string", "env", "color"] }
 csv = "1.3.1"
 dashmap = "6.1.0"
 echodb = { version = "0.8.0", optional = true }
-env_logger = "0.11.7"
-fjall = { version = "2.8.0", optional = true }
+env_logger = "0.11.8"
+fjall = { version = "2.9.0", optional = true }
 flatten-json-object = "0.6.1"
 futures = "0.3.31"
 hdrhistogram = "7.5.4"
 heed = { version = "0.21.0", optional = true }
-log = "0.4.25"
+log = "0.4.27"
 memodb = { version = "0.8.0", optional = true }
-mimalloc = "0.1.43"
-mongodb = { version = "3.1.1", optional = true }
+mimalloc = "0.1.46"
+mongodb = { version = "3.2.3", optional = true }
 mysql_async = { version = "0.35.1", default-features = false, features = ["bigdecimal", "binlog", "derive", "frunk", "rust_decimal", "time"], optional = true }
 neo4rs = { version = "0.8.0", optional = true }
 num_cpus = "1.16.0"
 pprof = { version = "0.14.0", features = ["flamegraph", "prost-codec"] }
 rand = { version = "0.8.5", features = ["small_rng"] }
 redb = { version = "2.4.0", optional = true }
-redis = { version = "0.29.2", features = ["tokio-comp"], optional = true }
+redis = { version = "0.29.5", features = ["tokio-comp"], optional = true }
 rocksdb = { version = "0.23.0", features = ["lz4", "snappy"], optional = true }
 scylla = { version = "0.15.1", optional = true }
 serde = { version = "1.0.219", features = ["derive"] }
@@ -88,8 +88,8 @@ serde_json = "1.0.140"
 serial_test = "3.2.0"
 surrealdb = { version = "2", package = "surrealdb-nightly", default-features = false, optional = true }
 surrealkv = { version = "0.9.1", optional = true }
-sysinfo = { version = "0.34.1", features = ["serde"] }
-tokio = { version = "1.44.1", features = ["macros", "time", "rt-multi-thread"] }
+sysinfo = { version = "0.34.2", features = ["serde"] }
+tokio = { version = "1.44.2", features = ["macros", "time", "rt-multi-thread"] }
 tokio-postgres = { version = "0.7.13", optional = true, features = ["with-serde_json-1", "with-uuid-1"] }
 tokio-rusqlite = { version = "0.6.0", optional = true, features = ["bundled"] }
 twox-hash = "2.1.0"
