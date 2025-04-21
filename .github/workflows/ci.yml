@@ -220,6 +220,11 @@ jobs:
             database: dry
             enabled: true
             description: Dry
+          # EchoDB
+          - name: echodb
+            database: echodb
+            enabled: true
+            description: EchoDB
           # Fjall
           - name: Fjall
             database: fjall
@@ -240,6 +245,11 @@ jobs:
             database: map
             enabled: true
             description: Map
+          # MemoDB
+          - name: memodb
+            database: memodb
+            enabled: true
+            description: MemoDB
           # MongoDB
           - name: mongodb
             database: mongodb
@@ -263,8 +273,9 @@ jobs:
           # Redb
           - name: redb
             database: redb
-            enabled: true
+            enabled: false
             description: ReDB
+            skipped: ReDB benchmark skipped due to excessive benchmark time
           # Redis
           - name: redis
             database: redis
@@ -311,19 +322,24 @@ jobs:
           - name: surrealdb-embedded-rocksdb
             database: surrealdb
             enabled: true
-            endpoint: -e rocksdb:/tmp/rocksdb-engine
+            endpoint: -e rocksdb:~/crud-bench
             description: SurrealDB embedded with RocksDB storage
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
             enabled: true
-            endpoint: -e surrealkv:/tmp/surrealkv-engine
+            endpoint: -e surrealkv:~/crud-bench
             description: SurrealDB embedded with SurrealKV storage
           # SurrealKV
           - name: surrealkv
             database: surrealkv
             enabled: true
             description: SurrealKV
+          # SurrealKV Memory
+          - name: surrealkv-memory
+            database: surrealkv-memory
+            enabled: true
+            description: SurrealKV with in-memory storage
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -348,51 +364,87 @@ jobs:
           aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
           echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
 
+      - name: System Information
+        run: |
+          echo "=== Environment Variables ==="
+          env
+          echo "=== Kernel & OS Info ==="
+          uname -a
+          echo "=== CPU Details (lscpu) ==="
+          lscpu
+          echo "=== First 50 lines of /proc/cpuinfo ==="
+          head -n 50 /proc/cpuinfo
+          echo "=== First 50 lines of /proc/meminfo ==="
+          head -n 50 /proc/meminfo
+          echo "=== Cgroup Information (/proc/self/cgroup) ==="
+          cat /proc/self/cgroup
+
       - name: ${{ matrix.skipped || 'Benchmark processing' }}
         if: ${{ !matrix.enabled }}
         run: echo "${{ matrix.skipped }}"
+
+      - name: Clean up environment
+        if: ${{ matrix.enabled }}
+        run: |
+          # Clean up data directory
+          rm -rf ~/crud-bench
+          mkdir -p ~/crud-bench
+          chmod 777 ~/crud-bench
+          # Remove old results
+          rm -f result*.json
+          rm -f result*.csv
+
+      - name: Optimise system
+        if: ${{ matrix.enabled }}
+        run: |
+          # Flush disk writes
+          sync
+          # Increase max limits
+          ulimit -n 65536
+          ulimit -u unlimited
+          ulimit -l unlimited
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key integer / random)
         timeout-minutes: 15
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k integer -r -n integer-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random)
         timeout-minutes: 15
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string90 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string90 -r -n string90-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string250 / random)
         timeout-minutes: 30
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string250 -r -n string250-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string506 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string506 -r -n string506-random
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
 
       - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random-1k
-          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || true
+          docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
 

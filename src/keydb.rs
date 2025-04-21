@@ -169,7 +169,8 @@ impl KeydbClient {
 				Ok(count)
 			}
 			Projection::Count => match scan.limit {
-				None => Ok(iter.count().await),
+				// Full count queries are too slow
+				None => bail!(NOT_SUPPORTED_ERROR),
 				Some(l) => Ok(iter.take(l).count().await),
 			},
 		}

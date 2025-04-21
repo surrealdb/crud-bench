@@ -11,6 +11,7 @@ use std::hint::black_box;
 use std::iter::Iterator;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 use surrealkv::Durability;
 use surrealkv::Mode::{ReadOnly, ReadWrite};
@@ -20,7 +21,20 @@ use sysinfo::System;
 
 const DATABASE_DIR: &str = "surrealkv";
 
-const MIN_CACHE_SIZE: u64 = 250_000;
+const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB
+
+pub(crate) static SKV_THREADPOOL: OnceLock<affinitypool::Threadpool> = OnceLock::new();
+
+fn get_threadpool() -> &'static affinitypool::Threadpool {
+	SKV_THREADPOOL.get_or_init(|| {
+		affinitypool::Builder::new()
+			.thread_name("surrealkv-threadpool")
+			.thread_stack_size(5 * 1024 * 1024)
+			.thread_per_core(false)
+			.worker_threads(1)
+			.build()
+	})
+}
 
 pub(crate) struct SurrealKVClientProvider(Arc<Store>);
 
@@ -30,7 +44,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
+	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Load the system attributes
@@ -50,11 +64,12 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Disable versioning
 		opts.enable_versions = false;
 		// Enable disk persistence
-		opts.disk_persistence = true;
+		opts.disk_persistence = options.disk_persistence;
 		// Set the directory location
 		opts.dir = PathBuf::from(DATABASE_DIR);
 		// Set the cache to 250,000 entries
 		opts.max_value_cache_size = cache;
+
 		// Create the store
 		Ok(Self(Arc::new(Store::new(opts)?)))
 	}
@@ -129,7 +144,7 @@ impl SurrealKVClient {
 		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.set(key, &val)?;
-		txn.commit().await?;
+		get_threadpool().spawn(move || txn.commit()).await?;
 		Ok(())
 	}
 
@@ -155,7 +170,7 @@ impl SurrealKVClient {
 		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.set(key, &val)?;
-		txn.commit().await?;
+		get_threadpool().spawn(move || txn.commit()).await?;
 		Ok(())
 	}
 
@@ -166,7 +181,7 @@ impl SurrealKVClient {
 		txn.set_durability(Durability::Eventual);
 		// Process the data
 		txn.delete(key)?;
-		txn.commit().await?;
+		get_threadpool().spawn(move || txn.commit()).await?;
 		Ok(())
 	}
 
@@ -178,6 +193,7 @@ impl SurrealKVClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
+		let t = scan.limit.map(|l| s + l);
 		let p = scan.projection()?;
 		// Create a new transaction
 		let mut txn = self.db.begin_with_mode(ReadOnly)?;
@@ -187,7 +203,7 @@ impl SurrealKVClient {
 		match p {
 			Projection::Id => {
 				// Create an iterator starting at the beginning
-				let iter = txn.keys(beg..end, Some(s + l));
+				let iter = txn.keys(beg..end, t);
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -201,7 +217,7 @@ impl SurrealKVClient {
 			}
 			Projection::Full => {
 				// Create an iterator starting at the beginning
-				let iter = txn.scan(beg..end, Some(s + l));
+				let iter = txn.scan(beg..end, t);
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -216,7 +232,7 @@ impl SurrealKVClient {
 			}
 			Projection::Count => {
 				Ok(txn
-					.keys(beg..end, Some(s + l))
+					.keys(beg..end, t)
 					.skip(s) // Skip the first `offset` entries
 					.take(l) // Take the next `limit` entries
 					.count())
