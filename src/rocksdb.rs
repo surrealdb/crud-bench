@@ -45,77 +45,77 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		let memory = max(memory, MIN_CACHE_SIZE);
 		// Configure custom options
 		let mut opts = Options::default();
-		// Ensure we use fdatasync
-		opts.set_use_fsync(false);
-		// Set the maximum number of open files
-		opts.set_max_open_files(1024);
-		// Only use warning log level
-		opts.set_log_level(LogLevel::Error);
-		// Set the number of log files to keep
-		opts.set_keep_log_file_num(20);
-		// Create database if missing
-		opts.create_if_missing(true);
-		// Create column families if missing
-		opts.create_missing_column_families(true);
-		// Set the datastore compaction style
-		opts.set_compaction_style(DBCompactionStyle::Level);
-		// Increase the background thread count
-		opts.increase_parallelism(num_cpus::get() as i32);
-		// Increase the number of background jobs
-		opts.set_max_background_jobs(num_cpus::get() as i32 * 2);
-		// Set the maximum number of write buffers
-		opts.set_max_write_buffer_number(32);
-		// Set the amount of data to build up in memory
-		opts.set_write_buffer_size(256 * 1024 * 1024);
-		// Set the target file size for compaction
-		opts.set_target_file_size_base(128 * 1024 * 1024);
-		// Set the levelled target file size multipler
-		opts.set_target_file_size_multiplier(10);
-		// Set minimum number of write buffers to merge
-		opts.set_min_write_buffer_number_to_merge(6);
-		// Delay compaction until the minimum number of files
-		opts.set_level_zero_file_num_compaction_trigger(16);
-		// Set the compaction readahead size
-		opts.set_compaction_readahead_size(16 * 1024 * 1024);
-		// Set the max number of subcompactions
-		opts.set_max_subcompactions(4);
-		// Allow multiple writers to update memtables
-		opts.set_allow_concurrent_memtable_write(true);
-		// Improve concurrency from write batch mutex
-		opts.set_enable_write_thread_adaptive_yield(true);
-		// Avoid unnecessary blocking IO
-		opts.set_avoid_unnecessary_blocking_io(true);
-		// Use separate write thread queues
-		opts.set_enable_pipelined_write(true);
-		// Enable separation of keys and values
-		opts.set_enable_blob_files(true);
-		// Store 4KB values separate from keys
-		opts.set_min_blob_size(4 * 1024);
-		// Set the write-ahead-log size limit
-		opts.set_wal_size_limit_mb(1024);
-		// Set specific compression levels
-		opts.set_compression_per_level(&[
-			DBCompressionType::None,
-			DBCompressionType::None,
-			DBCompressionType::Snappy,
-			DBCompressionType::Snappy,
-			DBCompressionType::Snappy,
-		]);
+		// // Ensure we use fdatasync
+		// opts.set_use_fsync(false);
+		// // Set the maximum number of open files
+		// opts.set_max_open_files(1024);
+		// // Only use warning log level
+		// opts.set_log_level(LogLevel::Error);
+		// // Set the number of log files to keep
+		// opts.set_keep_log_file_num(20);
+		// // Create database if missing
+		// opts.create_if_missing(true);
+		// // Create column families if missing
+		// opts.create_missing_column_families(true);
+		// // Set the datastore compaction style
+		// opts.set_compaction_style(DBCompactionStyle::Level);
+		// // Increase the background thread count
+		// opts.increase_parallelism(num_cpus::get() as i32);
+		// // Increase the number of background jobs
+		// opts.set_max_background_jobs(num_cpus::get() as i32 * 2);
+		// // Set the maximum number of write buffers
+		// opts.set_max_write_buffer_number(32);
+		// // Set the amount of data to build up in memory
+		// opts.set_write_buffer_size(256 * 1024 * 1024);
+		// // Set the target file size for compaction
+		// opts.set_target_file_size_base(128 * 1024 * 1024);
+		// // Set the levelled target file size multipler
+		// opts.set_target_file_size_multiplier(10);
+		// // Set minimum number of write buffers to merge
+		// opts.set_min_write_buffer_number_to_merge(6);
+		// // Delay compaction until the minimum number of files
+		// opts.set_level_zero_file_num_compaction_trigger(16);
+		// // Set the compaction readahead size
+		// opts.set_compaction_readahead_size(16 * 1024 * 1024);
+		// // Set the max number of subcompactions
+		// opts.set_max_subcompactions(4);
+		// // Allow multiple writers to update memtables
+		// opts.set_allow_concurrent_memtable_write(true);
+		// // Improve concurrency from write batch mutex
+		// opts.set_enable_write_thread_adaptive_yield(true);
+		// // Avoid unnecessary blocking IO
+		// opts.set_avoid_unnecessary_blocking_io(true);
+		// // Use separate write thread queues
+		// opts.set_enable_pipelined_write(true);
+		// // Enable separation of keys and values
+		// opts.set_enable_blob_files(true);
+		// // Store 4KB values separate from keys
+		// opts.set_min_blob_size(4 * 1024);
+		// // Set the write-ahead-log size limit
+		// opts.set_wal_size_limit_mb(1024);
+		// // Set specific compression levels
+		// opts.set_compression_per_level(&[
+		// 	DBCompressionType::None,
+		// 	DBCompressionType::None,
+		// 	DBCompressionType::Snappy,
+		// 	DBCompressionType::Snappy,
+		// 	DBCompressionType::Snappy,
+		// ]);
 		// Create the in-memory LRU cache
-		let cache = Cache::new_lru_cache(memory as usize);
+		// let cache = Cache::new_lru_cache(memory as usize);
 		// Configure the block based file options
-		let mut block_opts = BlockBasedOptions::default();
-		block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-		block_opts.set_pin_top_level_index_and_filter(true);
-		block_opts.set_bloom_filter(10.0, false);
-		block_opts.set_block_size(64 * 1024);
-		block_opts.set_block_cache(&cache);
-		// Configure the database with the cache
-		opts.set_block_based_table_factory(&block_opts);
-		opts.set_blob_cache(&cache);
-		opts.set_row_cache(&cache);
-		// Allow memory-mapped reads
-		opts.set_allow_mmap_reads(true);
+		// let mut block_opts = BlockBasedOptions::default();
+		// block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+		// block_opts.set_pin_top_level_index_and_filter(true);
+		// block_opts.set_bloom_filter(10.0, false);
+		// block_opts.set_block_size(64 * 1024);
+		// block_opts.set_block_cache(&cache);
+		// // Configure the database with the cache
+		// opts.set_block_based_table_factory(&block_opts);
+		// opts.set_blob_cache(&cache);
+		// opts.set_row_cache(&cache);
+		// // Allow memory-mapped reads
+		// opts.set_allow_mmap_reads(true);
 		// Configure background WAL flush behaviour
 		let db = match std::env::var("ROCKSDB_BACKGROUND_FLUSH").is_ok() {
 			// Beckground flush is disabled which
@@ -123,7 +123,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 			// whenever a transaction is committed.
 			false => {
 				// Enable manual WAL flush
-				opts.set_manual_wal_flush(false);
+				// opts.set_manual_wal_flush(false);
 				// Create the optimistic datastore
 				Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)
 			}
@@ -132,7 +132,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 			// flush the WAL to disk periodically.
 			true => {
 				// Enable manual WAL flush
-				opts.set_manual_wal_flush(true);
+				// opts.set_manual_wal_flush(true);
 				// Create the optimistic datastore
 				let db = Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?);
 				// Clone the database reference
