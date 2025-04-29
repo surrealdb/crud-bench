@@ -6,7 +6,17 @@ define CRUD_BENCH_SCANS
 	{ "name": "limit_count", "samples": 100, "projection": "COUNT", "limit": 100, "expect": 100 },
 	{ "name": "limit_start_id", "samples": 100, "projection": "ID", "start": 5000, "limit": 100, "expect": 100 },
 	{ "name": "limit_start_all", "samples": 100, "projection": "FULL", "start": 5000, "limit": 100, "expect": 100 },
-	{ "name": "limit_start_count", "samples": 100, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 }
+	{ "name": "limit_start_count", "samples": 100, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 },
+	{ "name": "limit_where_id", "samples": 100, "projection": "COUNT",
+		"condition": {
+			"sql": "age >= 18",
+			"mysql": "age >= 18",
+			"neo4j": "r.age >= 18",
+			"mongodb": { "age": { "$$gte": 18 } },
+			"arangodb": "doc.age >= 18",
+			"surrealdb": "age >= 18"
+		}
+	}
 ]
 endef
 
@@ -14,6 +24,7 @@ define CRUD_BENCH_VALUE
 {
 	"text": "text:50",
 	"integer": "int",
+	"age": "int:1..99",
 	"nested": {
 		"text": "text:1000",
 		"array": [
