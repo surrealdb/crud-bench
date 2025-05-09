@@ -6,7 +6,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
@@ -14,7 +14,7 @@ use surrealdb::opt::{Config, Raw, Resource};
 use surrealdb::RecordId;
 use surrealdb::Surreal;
 
-pub const DEFAULT: &str = "ws://127.0.0.1:8000";
+const DEFAULT: &str = "ws://127.0.0.1:8000";
 
 pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
 	match options.database {
@@ -116,6 +116,12 @@ struct SurrealRecord {
 	id: RecordId,
 }
 
+#[derive(Debug, Serialize)]
+struct Bindings<T> {
+	content: Value,
+	key: T,
+}
+
 impl BenchmarkClient for SurrealDBClient {
 	async fn startup(&self) -> Result<()> {
 		// Ensure the table exists. This wouldn't
@@ -135,13 +141,39 @@ impl BenchmarkClient for SurrealDBClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+		/*
 		let res = self.db.create(Resource::from(("record", key as i64))).content(val).await?;
+		assert!(res.into_inner().is_some());
+		Ok(())
+		*/
+		let res = self
+			.db
+			.query(Raw::from("CREATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
+			.await?
+			.take::<surrealdb::Value>(0)?;
 		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+		/*
 		let res = self.db.create(Resource::from(("record", key))).content(val).await?;
+		assert!(res.into_inner().is_some());
+		Ok(())
+		*/
+		let res = self
+			.db
+			.query(Raw::from("CREATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
+			.await?
+			.take::<surrealdb::Value>(0)?;
 		assert!(res.into_inner().is_some());
 		Ok(())
 	}
@@ -159,25 +191,71 @@ impl BenchmarkClient for SurrealDBClient {
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+		/*
 		let res = self.db.update(Resource::from(("record", key as i64))).content(val).await?;
+		assert!(res.into_inner().is_some());
+		Ok(())
+		*/
+		let res = self
+			.db
+			.query(Raw::from("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
+			.await?
+			.take::<surrealdb::Value>(0)?;
 		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+		/*
 		let res = self.db.update(Resource::from(("record", key))).content(val).await?;
+		assert!(res.into_inner().is_some());
+		Ok(())
+		*/
+		let res = self
+			.db
+			.query(Raw::from("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
+			.await?
+			.take::<surrealdb::Value>(0)?;
 		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
+		/*
 		let res = self.db.delete(Resource::from(("record", key as i64))).await?;
+		assert!(res.into_inner().is_some());
+		Ok(())
+		*/
+		let res = self
+			.db
+			.query(Raw::from("DELETE type::thing('record', $key) RETURN NULL"))
+			.bind(("key", key))
+			.await?
+			.take::<surrealdb::Value>(0)?;
 		assert!(res.into_inner().is_some());
 		Ok(())
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
+		/*
 		let res = self.db.delete(Resource::from(("record", key))).await?;
+		assert!(res.into_inner().is_some());
+		Ok(())
+		*/
+		let res = self
+			.db
+			.query(Raw::from("DELETE type::thing('record', $key) RETURN NULL"))
+			.bind(("key", key))
+			.await?
+			.take::<surrealdb::Value>(0)?;
 		assert!(res.into_inner().is_some());
 		Ok(())
 	}
