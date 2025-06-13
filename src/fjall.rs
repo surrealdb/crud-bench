@@ -18,7 +18,7 @@ use sysinfo::System;
 
 const DATABASE_DIR: &str = "fjall";
 
-const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
+const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024;
 
 const DURABILITY: Option<PersistMode> = Some(PersistMode::Buffer);
 
@@ -43,7 +43,7 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 		// Divide the total memory into half
 		let memory = memory.saturating_div(2);
 		// Subtract 1 GiB from the memory size
-		let memory = memory.saturating_sub(1024 * 1024 * 1024);
+		let memory = memory.saturating_sub(256 * 1024 * 1024);
 		// Fallback to the minimum memory cache size
 		let memory = max(memory, MIN_CACHE_SIZE);
 		// Configure the key-value separation
@@ -67,9 +67,9 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			// Set the data block size to 32 KiB
 			.block_size(16 * 1_024)
 			// Set the max memtable size to 256 MiB
-			.max_memtable_size(256 * 1_024 * 1_024)
-			// Separate values if larger than 4 KiB
-			.with_kv_separation(blobopts);
+			.max_memtable_size(256 * 1_024 * 1_024);
+			// // Separate values if larger than 4 KiB
+			// .with_kv_separation(blobopts);
 		// Create a default data partition
 		let partition = keyspace.open_partition("default", options)?;
 		// Create the store

@@ -59,6 +59,8 @@ pub(crate) enum Database {
 	SurrealdbSurrealkv,
 	#[cfg(feature = "surrealkv")]
 	SurrealkvMemory,
+	#[cfg(feature = "lsm")]
+	SurrealdbLSM,
 }
 
 impl Database {
@@ -213,6 +215,17 @@ impl Database {
 					.run::<_, DefaultDialect, _>(
 						crate::memodb::MemoDBClientProvider::setup(kt, vp.columns(), benchmark)
 							.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "lsm")]
+			Database::SurrealdbLSM => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::lsm::LSMClientProvider::setup(kt, vp.columns(), benchmark).await?,
 						kp,
 						vp,
 						scans,

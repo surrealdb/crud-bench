@@ -31,6 +31,7 @@ mod echodb;
 mod fjall;
 mod keydb;
 mod lmdb;
+mod lsm;
 mod map;
 mod memodb;
 mod mongodb;
