@@ -203,7 +203,7 @@ impl SurrealDBClient {
 			Projection::Id => {
 				let sql = format!("SELECT id FROM record {c} {s} {l}");
 				let res: surrealdb::Value = self.db.query(Raw::from(sql)).await?.take(0)?;
-				let surrealdb::sql::Value::Array(arr) = res.into_inner() else {
+				let surrealdb::expr::Value::Array(arr) = res.into_inner() else {
 					panic!("Unexpected response type");
 				};
 				Ok(arr.len())
@@ -211,7 +211,7 @@ impl SurrealDBClient {
 			Projection::Full => {
 				let sql = format!("SELECT * FROM record {c} {s} {l}");
 				let res: surrealdb::Value = self.db.query(Raw::from(sql)).await?.take(0)?;
-				let surrealdb::sql::Value::Array(arr) = res.into_inner() else {
+				let surrealdb::expr::Value::Array(arr) = res.into_inner() else {
 					panic!("Unexpected response type");
 				};
 				Ok(arr.len())
