@@ -282,7 +282,7 @@ jobs:
 
       - name: Wait for system cool down
         if: ${{ matrix.enabled && (success() || failure()) }}
-        run: sleep 5m
+        run: sleep 1m
 
       - name: Upload result artifacts
         uses: actions/upload-artifact@v4
