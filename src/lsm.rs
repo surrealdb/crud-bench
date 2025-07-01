@@ -33,7 +33,7 @@ impl BenchmarkEngine<LSMClient> for LSMClientProvider {
 			.with_block_size(16 * 1024)
 			.with_max_memtable_size(256 * 1024 * 1024)
 			.with_block_cache_capacity(1 << 28) // 256 MiB
-			.with_vlog_value_threshold(100)
+			.with_vlog_value_threshold(1024)
 			.with_filter_policy(None);
 		let opts = Arc::new(opts);
 		Ok(Self(Arc::new(Database::new(opts)?)))
