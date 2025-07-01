@@ -12,25 +12,11 @@ use std::hint::black_box;
 use std::iter::Iterator;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 const DATABASE_DIR: &str = "surrealkv";
 
 const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB
-
-pub(crate) static SKV_THREADPOOL: OnceLock<affinitypool::Threadpool> = OnceLock::new();
-
-fn get_threadpool() -> &'static affinitypool::Threadpool {
-	SKV_THREADPOOL.get_or_init(|| {
-		affinitypool::Builder::new()
-			.thread_name("surrealkv-threadpool")
-			.thread_stack_size(5 * 1024 * 1024)
-			.thread_per_core(false)
-			.worker_threads(8)
-			.build()
-	})
-}
 
 pub(crate) struct SurrealKVClientProvider(Arc<Database>);
 
@@ -40,7 +26,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
+	async fn setup(_: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 
@@ -124,7 +110,7 @@ impl SurrealKVClient {
 		let mut txn = self.db.begin()?;
 		// Process the data
 		txn.set(key, &val)?;
-		get_threadpool().spawn(move || futures::executor::block_on(txn.commit())).await?;
+		txn.commit().await?;
 		Ok(())
 	}
 
@@ -148,7 +134,7 @@ impl SurrealKVClient {
 		let mut txn = self.db.begin()?;
 		// Process the data
 		txn.set(key, &val)?;
-		get_threadpool().spawn(move || futures::executor::block_on(txn.commit())).await?;
+		txn.commit().await?;
 		Ok(())
 	}
 
@@ -157,7 +143,7 @@ impl SurrealKVClient {
 		let mut txn = self.db.begin()?;
 		// Process the data
 		txn.delete(key)?;
-		get_threadpool().spawn(move || futures::executor::block_on(txn.commit())).await?;
+		txn.commit().await?;
 		Ok(())
 	}
 
