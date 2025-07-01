@@ -20,7 +20,7 @@ use sysinfo::System;
 
 const DATABASE_DIR: &str = "rocksdb";
 
-const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
+const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024;
 
 pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
 
@@ -42,7 +42,8 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Subtract 1 GiB from the memory size
 		let memory = memory.saturating_sub(1024 * 1024 * 1024);
 		// Fallback to the minimum memory cache size
-		let memory = max(memory, MIN_CACHE_SIZE);
+		// let memory = max(memory, MIN_CACHE_SIZE);
+		let memory = MIN_CACHE_SIZE;
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync

@@ -30,7 +30,7 @@ impl BenchmarkEngine<LSMClient> for LSMClientProvider {
 		// Create the store
 		let opts = Options::default()
 			.with_path(PathBuf::from(DATABASE_DIR))
-			.with_block_size(16 * 1024)
+			.with_block_size(64 * 1024)
 			.with_max_memtable_size(256 * 1024 * 1024)
 			.with_block_cache_capacity(1 << 28) // 256 MiB
 			.with_vlog_value_threshold(1024)

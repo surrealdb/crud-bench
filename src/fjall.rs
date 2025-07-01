@@ -45,7 +45,8 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 		// Subtract 1 GiB from the memory size
 		let memory = memory.saturating_sub(256 * 1024 * 1024);
 		// Fallback to the minimum memory cache size
-		let memory = max(memory, MIN_CACHE_SIZE);
+		// let memory = max(memory, MIN_CACHE_SIZE);
+		let memory = MIN_CACHE_SIZE;
 		// Configure the key-value separation
 		let blobopts = KvSeparationOptions::default()
 			// Separate values if larger than 1 KiB
