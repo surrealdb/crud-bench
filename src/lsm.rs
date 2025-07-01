@@ -33,6 +33,7 @@ impl BenchmarkEngine<LSMClient> for LSMClientProvider {
 			.with_block_size(16 * 1024)
 			.with_max_memtable_size(256 * 1024 * 1024)
 			.with_block_cache_capacity(1 << 28) // 256 MiB
+			.with_vlog_value_threshold(100)
 			.with_filter_policy(None);
 		let opts = Arc::new(opts);
 		Ok(Self(Arc::new(Database::new(opts)?)))
@@ -50,6 +51,20 @@ pub(crate) struct LSMClient {
 }
 
 impl BenchmarkClient for LSMClient {
+	async fn shutdown(&self) -> Result<()> {
+		// Cleanup the data directory
+		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		// Ok
+		Ok(())
+	}
+
+	async fn compact(&self) -> Result<()> {
+		// Compact the database
+		self.db.flush()?;
+		// Ok
+		Ok(())
+	}
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.create_bytes(&key.to_ne_bytes(), val).await
 	}
@@ -107,7 +122,7 @@ impl LSMClient {
 		// Create a new transaction
 		let txn = self.db.begin()?;
 		// Process the data
-		let res = txn.get(key.to_vec().as_slice())?;
+		let res = txn.get(key)?;
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value

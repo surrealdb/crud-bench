@@ -67,9 +67,9 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			// Set the data block size to 32 KiB
 			.block_size(16 * 1_024)
 			// Set the max memtable size to 256 MiB
-			.max_memtable_size(256 * 1_024 * 1_024);
-			// // Separate values if larger than 4 KiB
-			// .with_kv_separation(blobopts);
+			.max_memtable_size(256 * 1_024 * 1_024)
+			// Separate values if larger than 1 KiB
+			.with_kv_separation(blobopts);
 		// Create a default data partition
 		let partition = keyspace.open_partition("default", options)?;
 		// Create the store
