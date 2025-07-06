@@ -282,27 +282,27 @@ fn format_duration(duration: Duration) -> String {
 	if secs >= 86400 {
 		let days = secs / 86400;
 		let hours = (secs % 86400) / 3600;
-		format!("{}d {}h", days, hours)
+		format!("{days}d {hours}h")
 	} else if secs >= 3600 {
 		let hours = secs / 3600;
 		let minutes = (secs % 3600) / 60;
-		format!("{}h {}m", hours, minutes)
+		format!("{hours}h {minutes}m")
 	} else if secs >= 60 {
 		let minutes = secs / 60;
 		let seconds = secs % 60;
-		format!("{}m {}s", minutes, seconds)
+		format!("{minutes}m {seconds}s")
 	} else if secs > 0 {
 		let seconds = secs;
 		let millis = duration.subsec_millis();
-		format!("{}s {}ms", seconds, millis)
+		format!("{seconds}s {millis}ms")
 	} else if duration.subsec_millis() > 0 {
 		let millis = duration.subsec_millis();
 		let micros = duration.subsec_micros() % 1000;
-		format!("{}ms {}µs", millis, micros)
+		format!("{millis}ms {micros}µs")
 	} else if duration.subsec_micros() > 0 {
 		let micros = duration.subsec_micros();
 		let nanos = duration.subsec_nanos() % 1000;
-		format!("{}µs {}ns", micros, nanos)
+		format!("{micros}µs {nanos}ns")
 	} else {
 		format!("{}ns", duration.subsec_nanos())
 	}

@@ -256,7 +256,7 @@ fn run(args: Args) -> Result<()> {
 					None => print!("Benchmark result for {:?}", args.database),
 				},
 			}
-			println!("{}", args.name.as_ref().map(|s| format!(" - {}", s)).unwrap_or_default());
+			println!("{}", args.name.as_ref().map(|s| format!(" - {s}")).unwrap_or_default());
 			println!(
 				"CPUs: {} - Blocking threads: {} - Workers: {} - Clients: {} - Threads: {} - Samples: {} - Key: {:?} - Random: {}",
 				num_cpus::get(),
@@ -283,7 +283,7 @@ fn run(args: Args) -> Result<()> {
 			let result_name = args
 				.name
 				.as_ref()
-				.map(|s| format!("result-{}.json", s))
+				.map(|s| format!("result-{s}.json"))
 				.unwrap_or_else(|| "result.json".to_string());
 			let mut file = File::create(result_name)?;
 			file.write_all(json_string.as_bytes())?;
@@ -292,7 +292,7 @@ fn run(args: Args) -> Result<()> {
 			let result_csv_name = args
 				.name
 				.as_ref()
-				.map(|s| format!("result-{}.csv", s))
+				.map(|s| format!("result-{s}.csv"))
 				.unwrap_or_else(|| "result.csv".to_string());
 			res.to_csv(&result_csv_name)?;
 			Ok(())
