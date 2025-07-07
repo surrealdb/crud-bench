@@ -118,7 +118,7 @@ fn hash_string(n: u32, repeat: usize) -> String {
 	let mut hex_string = String::with_capacity(repeat * 16 + 10);
 	for s in 0..repeat as u64 {
 		let hash_result = XxHash64::oneshot(s, &n.to_be_bytes());
-		hex_string.push_str(&format!("{:x}", hash_result));
+		hex_string.push_str(&format!("{hash_result:x}"));
 	}
 	hex_string
 }
@@ -135,7 +135,7 @@ impl OrderedString {
 impl StringKeyProvider for OrderedString {
 	fn key(&mut self, n: u32) -> String {
 		let hex_string = hash_string(n, self.0);
-		format!("{:010}{hex_string}", n)
+		format!("{n:010}{hex_string}")
 	}
 }
 
@@ -151,7 +151,7 @@ impl UnorderedString {
 impl StringKeyProvider for UnorderedString {
 	fn key(&mut self, n: u32) -> String {
 		let hex_string = hash_string(n, self.0);
-		format!("{hex_string}{:010}", n)
+		format!("{hex_string}{n:010}")
 	}
 }
 

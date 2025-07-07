@@ -185,7 +185,7 @@ impl ScylladbClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or_default();
 		let l = scan.limit.map(|l| format!("LIMIT {}", l + s)).unwrap_or_default();
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or_default();
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {s}")).unwrap_or_default();
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
