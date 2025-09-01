@@ -42,7 +42,7 @@ impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 		// Log any errors when the connection is closed
 		tokio::spawn(async move {
 			if let Err(e) = connection.await {
-				eprintln!("connection error: {}", e);
+				eprintln!("connection error: {e}");
 			}
 		});
 		// Create the client
@@ -238,9 +238,9 @@ impl PostgresClient {
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
 		// Extract parameters
-		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
-		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or_default();
+		let s = scan.start.map(|s| format!("OFFSET {s}")).unwrap_or_default();
+		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
+		let c = scan.condition.as_ref().map(|s| format!("WHERE {s}")).unwrap_or_default();
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
