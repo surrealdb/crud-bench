@@ -15,11 +15,15 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
-pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "redis",
 		pre_args: "-p 127.0.0.1:6379:6379",
-		post_args: "redis-server --requirepass root",
+		post_args: match (options.persistence, options.sync) {
+			(false, _) => "redis-server --requirepass root --appendonly no --save ''",
+			(true, false) => "redis-server --requirepass root --appendonly yes --appendfsync no",
+			(true, true) => "redis-server --requirepass root --appendonly yes --appendfsync always",
+		},
 	}
 }
 

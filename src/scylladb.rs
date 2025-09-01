@@ -16,10 +16,17 @@ use std::num::NonZeroUsize;
 
 pub const DEFAULT: &str = "127.0.0.1:9042";
 
-pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "scylladb/scylla",
-		pre_args: "-p 9042:9042",
+		pre_args: match options.sync {
+			true => {
+				"-p 9042:9042 -e SCYLLA_ARGS='--commitlog-sync=batch --commitlog-sync-batch-window-in-ms=1'"
+			}
+			false => {
+				"-p 9042:9042 -e SCYLLA_ARGS='--commitlog-sync=periodic --commitlog-sync-period-in-ms=1000'"
+			}
+		},
 		post_args: "",
 	}
 }

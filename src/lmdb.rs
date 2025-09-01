@@ -16,7 +16,7 @@ use std::time::Duration;
 
 const DATABASE_DIR: &str = "lmdb";
 
-const DEFAULT_SIZE: usize = 1_073_741_824;
+const DEFAULT_SIZE: usize = 4_294_967_296; // 4GiB
 
 static DATABASE_SIZE: LazyLock<usize> = LazyLock::new(|| {
 	std::env::var("CRUD_BENCH_LMDB_DATABASE_SIZE")
@@ -32,22 +32,20 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Recreate the database directory
 		std::fs::create_dir(DATABASE_DIR)?;
+		// Configure sync flags based on options
+		let flags = if options.sync {
+			EnvFlags::NO_TLS | EnvFlags::MAP_ASYNC
+		} else {
+			EnvFlags::NO_TLS | EnvFlags::MAP_ASYNC | EnvFlags::NO_SYNC | EnvFlags::NO_META_SYNC
+		};
 		// Create a new environment
 		let env = unsafe {
-			EnvOpenOptions::new()
-				.flags(
-					EnvFlags::NO_TLS
-						| EnvFlags::MAP_ASYNC
-						| EnvFlags::NO_SYNC
-						| EnvFlags::NO_META_SYNC,
-				)
-				.map_size(*DATABASE_SIZE)
-				.open(DATABASE_DIR)
+			EnvOpenOptions::new().flags(flags).map_size(*DATABASE_SIZE).open(DATABASE_DIR)
 		}?;
 		// Creaye the database
 		let db = {

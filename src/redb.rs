@@ -19,7 +19,10 @@ const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
 
 const TABLE: TableDefinition<&[u8], Vec<u8>> = TableDefinition::new("test");
 
-pub(crate) struct ReDBClientProvider(Arc<Database>);
+pub(crate) struct ReDBClientProvider {
+	db: Arc<Database>,
+	sync: bool,
+}
 
 impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 	/// The number of seconds to wait before connecting
@@ -27,7 +30,7 @@ impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_file(DATABASE_DIR).ok();
 		// Load the system attributes
@@ -43,18 +46,23 @@ impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 			// Create the database directory
 			.create(DATABASE_DIR)?;
 		// Create the store
-		Ok(Self(Arc::new(db)))
+		Ok(Self {
+			db: Arc::new(db),
+			sync: options.sync,
+		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ReDBClient> {
 		Ok(ReDBClient {
-			db: self.0.clone(),
+			db: self.db.clone(),
+			sync: self.sync,
 		})
 	}
 }
 
 pub(crate) struct ReDBClient {
 	db: Arc<Database>,
+	sync: bool,
 }
 
 impl BenchmarkClient for ReDBClient {
@@ -108,16 +116,21 @@ impl BenchmarkClient for ReDBClient {
 
 impl ReDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Clone the datastore
+		// Clone the datastore and sync flag
 		let db = self.db.clone();
+		let sync = self.sync;
 		// Execute on the blocking threadpool
-		affinitypool::spawn_local(|| -> Result<_> {
+		affinitypool::spawn_local(move || -> Result<_> {
 			// Serialise the value
 			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
-			// Let the OS handle syncing to disk
-			txn.set_durability(Durability::Eventual);
+			// Set the transaction durability
+			txn.set_durability(if sync {
+				Durability::Immediate
+			} else {
+				Durability::Eventual
+			});
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;
 			// Process the data
@@ -130,16 +143,17 @@ impl ReDBClient {
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Clone the datastore
+		// Clone the datastore and key
 		let db = self.db.clone();
+		let key = key.to_vec();
 		// Execute on the blocking threadpool
-		affinitypool::spawn_local(|| -> Result<_> {
+		affinitypool::spawn_local(move || -> Result<_> {
 			// Create a new transaction
 			let txn = db.begin_read()?;
 			// Open the database table
 			let tab = txn.open_table(TABLE)?;
 			// Process the data
-			let res: Option<_> = tab.get(key)?;
+			let res: Option<_> = tab.get(&key[..])?;
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
@@ -151,16 +165,21 @@ impl ReDBClient {
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
-		// Clone the datastore
+		// Clone the datastore and sync flag
 		let db = self.db.clone();
+		let sync = self.sync;
 		// Execute on the blocking threadpool
-		affinitypool::spawn_local(|| -> Result<_> {
+		affinitypool::spawn_local(move || -> Result<_> {
 			// Serialise the value
 			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
-			// Let the OS handle syncing to disk
-			txn.set_durability(Durability::Eventual);
+			// Set the transaction durability
+			txn.set_durability(if sync {
+				Durability::Immediate
+			} else {
+				Durability::Eventual
+			});
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;
 			// Process the data
@@ -173,14 +192,19 @@ impl ReDBClient {
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Clone the datastore
+		// Clone the datastore and sync flag
 		let db = self.db.clone();
+		let sync = self.sync;
 		// Execute on the blocking threadpool
-		affinitypool::spawn_local(|| -> Result<_> {
+		affinitypool::spawn_local(move || -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
-			// Let the OS handle syncing to disk
-			txn.set_durability(Durability::Eventual);
+			// Set the transaction durability
+			txn.set_durability(if sync {
+				Durability::Immediate
+			} else {
+				Durability::Eventual
+			});
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;
 			// Process the data

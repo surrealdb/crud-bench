@@ -97,6 +97,10 @@ pub(crate) struct Args {
 	#[arg(long)]
 	pub(crate) sync: bool,
 
+	/// Whether to enable disk persistence for Redis-family databases
+	#[arg(long)]
+	pub(crate) persistence: bool,
+
 	/// The type of the key
 	#[arg(short, long, default_value_t = KeyType::Integer, value_enum)]
 	pub(crate) key: KeyType,
@@ -335,6 +339,7 @@ mod test {
 			threads: 2,
 			samples: 10000,
 			sync: false,
+			persistence: false,
 			random,
 			key,
 			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),

@@ -23,6 +23,7 @@ pub(crate) struct SqliteClientProvider {
 	conn: Arc<Connection>,
 	kt: KeyType,
 	columns: Columns,
+	sync: bool,
 }
 
 impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
@@ -31,7 +32,7 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(kt: KeyType, columns: Columns, _options: &Benchmark) -> Result<Self> {
+	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Remove the database directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Recreate the database directory
@@ -45,6 +46,7 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 			conn: Arc::new(conn),
 			kt,
 			columns,
+			sync: options.sync,
 		})
 	}
 	/// Creates a new client for this benchmarking engine
@@ -53,6 +55,7 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 			conn: self.conn.clone(),
 			kt: self.kt,
 			columns: self.columns.clone(),
+			sync: self.sync,
 		})
 	}
 }
@@ -61,6 +64,7 @@ pub(crate) struct SqliteClient {
 	conn: Arc<Connection>,
 	kt: KeyType,
 	columns: Columns,
+	sync: bool,
 }
 
 impl BenchmarkClient for SqliteClient {
@@ -72,15 +76,22 @@ impl BenchmarkClient for SqliteClient {
 	}
 
 	async fn startup(&self) -> Result<()> {
-		// Optimise SQLite
-		let stmt = "
-            PRAGMA synchronous = OFF;
+		// Optimize SQLite
+		let stmt = format!(
+			"
+            PRAGMA synchronous = {};
             PRAGMA journal_mode = WAL;
             PRAGMA page_size = 16384;
             PRAGMA cache_size = 2500;
             PRAGMA locking_mode = EXCLUSIVE;
-		";
-		self.execute_batch(Cow::Borrowed(stmt)).await?;
+		",
+			if self.sync {
+				"ON"
+			} else {
+				"OFF"
+			}
+		);
+		self.execute_batch(Cow::Owned(stmt)).await?;
 		let id_type = match self.kt {
 			KeyType::Integer => "SERIAL",
 			KeyType::String26 => "VARCHAR(26)",

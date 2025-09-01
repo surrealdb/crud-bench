@@ -20,11 +20,12 @@ const DATABASE_DIR: &str = "fjall";
 
 const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
 
-const DURABILITY: Option<PersistMode> = Some(PersistMode::Buffer);
+// Durability will be set dynamically based on sync flag
 
 pub(crate) struct FjallClientProvider {
 	keyspace: Arc<TransactionalKeyspace>,
 	partition: Arc<TxPartitionHandle>,
+	sync: bool,
 }
 
 impl BenchmarkEngine<FjallClient> for FjallClientProvider {
@@ -33,7 +34,7 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Load the system attributes
@@ -53,9 +54,13 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 		// Configure and create the keyspace
 		let keyspace = Config::new(DATABASE_DIR)
 			// Fsync data every 100 milliseconds
-			.fsync_ms(Some(100))
+			.fsync_ms(if options.sync {
+				Some(100)
+			} else {
+				None
+			})
 			// Handle transaction flushed automatically
-			.manual_journal_persist(false)
+			.manual_journal_persist(!options.sync)
 			// Set the amount of data to build up in memory
 			.max_write_buffer_size(u64::MAX)
 			// Set the cache size to 512 MiB
@@ -63,7 +68,7 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			// Open a transactional keyspace
 			.open_transactional()?;
 		// Configure and create the partition
-		let options = PartitionCreateOptions::default()
+		let partition = PartitionCreateOptions::default()
 			// Set the data block size to 32 KiB
 			.block_size(16 * 1_024)
 			// Set the max memtable size to 256 MiB
@@ -71,11 +76,12 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			// Separate values if larger than 4 KiB
 			.with_kv_separation(blobopts);
 		// Create a default data partition
-		let partition = keyspace.open_partition("default", options)?;
+		let partition = keyspace.open_partition("default", partition)?;
 		// Create the store
 		Ok(Self {
 			keyspace: Arc::new(keyspace),
 			partition: Arc::new(partition),
+			sync: options.sync,
 		})
 	}
 	/// Creates a new client for this benchmarking engine
@@ -83,6 +89,7 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 		Ok(FjallClient {
 			keyspace: self.keyspace.clone(),
 			partition: self.partition.clone(),
+			sync: self.sync,
 		})
 	}
 }
@@ -90,6 +97,7 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 pub(crate) struct FjallClient {
 	keyspace: Arc<TransactionalKeyspace>,
 	partition: Arc<TxPartitionHandle>,
+	sync: bool,
 }
 
 impl BenchmarkClient for FjallClient {
@@ -145,8 +153,14 @@ impl FjallClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		// Set the transaction durability
+		let durability = if self.sync {
+			None
+		} else {
+			Some(PersistMode::Buffer)
+		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(DURABILITY);
+		let mut txn = self.keyspace.write_tx().durability(durability);
 		// Process the data
 		txn.insert(&self.partition, key, val);
 		txn.commit()?;
@@ -169,8 +183,14 @@ impl FjallClient {
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		// Set the transaction durability
+		let durability = if self.sync {
+			None
+		} else {
+			Some(PersistMode::Buffer)
+		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(DURABILITY);
+		let mut txn = self.keyspace.write_tx().durability(durability);
 		// Process the data
 		txn.insert(&self.partition, key, val);
 		txn.commit()?;
@@ -178,8 +198,14 @@ impl FjallClient {
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
+		// Set the transaction durability
+		let durability = if self.sync {
+			None
+		} else {
+			Some(PersistMode::Buffer)
+		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(DURABILITY);
+		let mut txn = self.keyspace.write_tx().durability(durability);
 		// Process the data
 		txn.remove(&self.partition, key);
 		txn.commit()?;

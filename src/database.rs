@@ -421,7 +421,7 @@ impl Database {
 			}
 			#[cfg(feature = "surrealkv")]
 			Database::SurrealkvMemory => {
-				benchmark.disk_persistence = false;
+				benchmark.persistence = false;
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						crate::surrealkv::SurrealKVClientProvider::setup(

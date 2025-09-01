@@ -67,15 +67,12 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 						// replicated, and acknowledged by the
 						// majority of nodes in the cluster.
 						.w(Acknowledgment::Majority)
-						// Ensure that all writes are written
-						// to the journal before being being
-						// acknowledged back to the client.
-						// MongoDB does not actually write the
-						// journal file to disk synchronously
-						// but instead the operation is only
-						// acknowledged once the operation
-						// is written to the journal in memory.
-						.journal(true)
+						// Configure journal durability based on sync setting.
+						// When `true`: writes are acknowledged only after
+						// being written to the on-disk journal (full durability).
+						// When `false`: writes are acknowledged after being
+						// written to memory (faster, less durable).
+						.journal(self.sync)
 						// Finalise the write options
 						.build(),
 				)
@@ -85,14 +82,12 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 				.build(),
 		);
 		Ok(MongoDBClient {
-			sync: self.sync,
 			db,
 		})
 	}
 }
 
 pub(crate) struct MongoDBClient {
-	sync: bool,
 	db: Database,
 }
 
@@ -169,17 +164,6 @@ impl MongoDBClient {
 		Ok(bson::to_bson(&val)?)
 	}
 
-	async fn sync(&self) -> Result<()> {
-		if self.sync {
-			// If we need to ensure that writes are
-			// synced to disk before being acknowledged
-			// then we need to specifically call `fsync`
-			// once we have written to the database.
-			self.db.run_command(doc! { "fsync": 1 }).await?;
-		}
-		Ok(())
-	}
-
 	async fn create<K>(&self, key: K, val: Value) -> Result<()>
 	where
 		K: Into<Value> + Into<Bson>,
@@ -188,7 +172,6 @@ impl MongoDBClient {
 		let doc = bson.as_document().unwrap();
 		let res = self.collection().insert_one(doc).await?;
 		assert_ne!(res.inserted_id, Bson::Null);
-		self.sync().await?;
 		Ok(())
 	}
 
@@ -211,7 +194,6 @@ impl MongoDBClient {
 		let filter = doc! { "_id": key };
 		let res = self.collection().replace_one(filter, doc).await?;
 		assert_eq!(res.modified_count, 1);
-		self.sync().await?;
 		Ok(())
 	}
 
@@ -222,7 +204,6 @@ impl MongoDBClient {
 		let filter = doc! { "_id": key };
 		let res = self.collection().delete_one(filter).await?;
 		assert_eq!(res.deleted_count, 1);
-		self.sync().await?;
 		Ok(())
 	}
 

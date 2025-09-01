@@ -19,7 +19,7 @@ pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
 		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres",
 		post_args: match options.sync {
 			true => "postgres -N 1024 -c fsync=on -c synchronous_commit=on",
-			false => "postgres -N 1024 -c fsync=on -c synchronous_commit=off",
+			false => "postgres -N 1024 -c fsync=off -c synchronous_commit=on",
 		},
 	}
 }

@@ -22,7 +22,10 @@ const DATABASE_DIR: &str = "rocksdb";
 
 const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
 
-pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
+pub(crate) struct RocksDBClientProvider {
+	db: Arc<OptimisticTransactionDB>,
+	sync: bool,
+}
 
 impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 	/// The number of seconds to wait before connecting
@@ -30,7 +33,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Load the system attributes
@@ -153,18 +156,23 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 			}
 		};
 		// Create the store
-		Ok(Self(db))
+		Ok(Self {
+			db,
+			sync: options.sync,
+		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<RocksDBClient> {
 		Ok(RocksDBClient {
-			db: self.0.clone(),
+			db: self.db.clone(),
+			sync: self.sync,
 		})
 	}
 }
 
 pub(crate) struct RocksDBClient {
 	db: Arc<OptimisticTransactionDB>,
+	sync: bool,
 }
 
 impl BenchmarkClient for RocksDBClient {
@@ -251,7 +259,7 @@ impl RocksDBClient {
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
+		wo.set_sync(self.sync);
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
@@ -266,7 +274,7 @@ impl RocksDBClient {
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
+		wo.set_sync(self.sync);
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Configure read options
@@ -293,7 +301,7 @@ impl RocksDBClient {
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
+		wo.set_sync(self.sync);
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
@@ -308,7 +316,7 @@ impl RocksDBClient {
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
+		wo.set_sync(self.sync);
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
@@ -331,7 +339,7 @@ impl RocksDBClient {
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
+		wo.set_sync(self.sync);
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Configure read options

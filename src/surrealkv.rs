@@ -36,7 +36,10 @@ fn get_threadpool() -> &'static affinitypool::Threadpool {
 	})
 }
 
-pub(crate) struct SurrealKVClientProvider(Arc<Store>);
+pub(crate) struct SurrealKVClientProvider {
+	store: Arc<Store>,
+	sync: bool,
+}
 
 impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 	/// The number of seconds to wait before connecting
@@ -64,25 +67,29 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Disable versioning
 		opts.enable_versions = false;
 		// Enable disk persistence
-		opts.disk_persistence = options.disk_persistence;
+		opts.disk_persistence = options.persistence;
 		// Set the directory location
 		opts.dir = PathBuf::from(DATABASE_DIR);
 		// Set the cache to 250,000 entries
 		opts.max_value_cache_size = cache;
-
 		// Create the store
-		Ok(Self(Arc::new(Store::new(opts)?)))
+		Ok(Self {
+			store: Arc::new(Store::new(opts)?),
+			sync: options.sync,
+		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SurrealKVClient> {
 		Ok(SurrealKVClient {
-			db: self.0.clone(),
+			db: self.store.clone(),
+			sync: self.sync,
 		})
 	}
 }
 
 pub(crate) struct SurrealKVClient {
 	db: Arc<Store>,
+	sync: bool,
 }
 
 impl BenchmarkClient for SurrealKVClient {
@@ -140,8 +147,12 @@ impl SurrealKVClient {
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Create a new transaction
 		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
+		// Set the transaction durability
+		txn.set_durability(if self.sync {
+			Durability::Immediate
+		} else {
+			Durability::Eventual
+		});
 		// Process the data
 		txn.set(key, &val)?;
 		get_threadpool().spawn(move || txn.commit()).await?;
@@ -166,8 +177,12 @@ impl SurrealKVClient {
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Create a new transaction
 		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
+		// Set the transaction durability
+		txn.set_durability(if self.sync {
+			Durability::Immediate
+		} else {
+			Durability::Eventual
+		});
 		// Process the data
 		txn.set(key, &val)?;
 		get_threadpool().spawn(move || txn.commit()).await?;
@@ -177,8 +192,12 @@ impl SurrealKVClient {
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
 		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
+		// Set the transaction durability
+		txn.set_durability(if self.sync {
+			Durability::Immediate
+		} else {
+			Durability::Eventual
+		});
 		// Process the data
 		txn.delete(key)?;
 		get_threadpool().spawn(move || txn.commit()).await?;
