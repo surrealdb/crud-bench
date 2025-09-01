@@ -5,7 +5,7 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use futures::StreamExt;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client, ScanOptions};
@@ -55,14 +55,14 @@ impl BenchmarkClient for DragonflyClient {
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
@@ -85,26 +85,26 @@ impl BenchmarkClient for DragonflyClient {
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
 		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.conn_record.lock().await.del(key).await?;
+		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_string(&self, key: String) -> Result<()> {
-		self.conn_record.lock().await.del(key).await?;
+		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
 

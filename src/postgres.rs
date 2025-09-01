@@ -16,8 +16,7 @@ pub const DEFAULT: &str = "host=127.0.0.1 user=postgres password=postgres";
 pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "postgres",
-		pre_args:
-			"--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres",
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres",
 		post_args: match options.sync {
 			true => "postgres -N 1024 -c fsync=on -c synchronous_commit=on",
 			false => "postgres -N 1024 -c fsync=on -c synchronous_commit=off",
@@ -90,7 +89,9 @@ impl BenchmarkClient for PostgresClient {
 			})
 			.collect::<Vec<String>>()
 			.join(", ");
-		let stm = format!("DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
+		let stm = format!(
+			"DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});"
+		);
 		self.client.batch_execute(&stm).await?;
 		Ok(())
 	}

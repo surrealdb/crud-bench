@@ -4,7 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use redb::{Database, Durability, ReadableTable, TableDefinition};
 use serde_json::Value;
 use std::cmp::max;

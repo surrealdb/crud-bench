@@ -4,7 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use heed::types::Bytes;
 use heed::{Database, EnvOpenOptions};
 use heed::{Env, EnvFlags};

@@ -1,3 +1,4 @@
+use crate::KeyType;
 use crate::benchmark::Benchmark;
 use crate::dialect::{AnsiSqlDialect, DefaultDialect, MySqlDialect, Neo4jDialect};
 use crate::docker::{Container, DockerParams};
@@ -7,7 +8,6 @@ use crate::keyprovider::KeyProvider;
 use crate::map::MapClientProvider;
 use crate::result::BenchmarkResult;
 use crate::valueprovider::ValueProvider;
-use crate::KeyType;
 use anyhow::Result;
 use clap::ValueEnum;
 

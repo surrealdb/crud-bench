@@ -8,11 +8,11 @@ use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
-use surrealdb::engine::any::{connect, Any};
-use surrealdb::opt::auth::Root;
-use surrealdb::opt::{Config, Raw, Resource};
 use surrealdb::RecordId;
 use surrealdb::Surreal;
+use surrealdb::engine::any::{Any, connect};
+use surrealdb::opt::auth::Root;
+use surrealdb::opt::{Config, Raw, Resource};
 
 pub const DEFAULT: &str = "ws://127.0.0.1:8000";
 
@@ -26,16 +26,24 @@ pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
 		Database::SurrealdbRocksdb => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: match options.sync {
-				true => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=true --user root",
-				false => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=false --user root",
+				true => {
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=true --user root"
+				}
+				false => {
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=false --user root"
+				}
 			},
 			post_args: "start --user root --pass root rocksdb:/data/crud-bench.db",
 		},
 		Database::SurrealdbSurrealkv => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: match options.sync {
-				true => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=true --user root",
-				false => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=false --user root",
+				true => {
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=true --user root"
+				}
+				false => {
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=false --user root"
+				}
 			},
 			post_args: "start --user root --pass root surrealkv:/data/crud-bench.db",
 		},

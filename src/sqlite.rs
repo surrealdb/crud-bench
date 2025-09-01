@@ -10,9 +10,9 @@ use std::borrow::Cow;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_rusqlite::Connection;
 use tokio_rusqlite::types::ToSqlOutput;
 use tokio_rusqlite::types::Value;
-use tokio_rusqlite::Connection;
 
 const DATABASE_DIR: &str = "sqlite";
 

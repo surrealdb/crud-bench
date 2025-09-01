@@ -1,7 +1,7 @@
 use crate::benchmark::Benchmark;
 use log::{debug, error, info};
 use std::fmt;
-use std::process::{exit, Command};
+use std::process::{Command, exit};
 use std::time::Duration;
 
 const RETRIES: i32 = 10;

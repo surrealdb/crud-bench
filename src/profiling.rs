@@ -1,6 +1,6 @@
-use pprof::protos::Message;
 use pprof::ProfilerGuard;
 use pprof::ProfilerGuardBuilder;
+use pprof::protos::Message;
 use std::io::Write;
 use std::sync::OnceLock;
 
@@ -17,17 +17,17 @@ pub(crate) fn initialise() {
 }
 
 pub(crate) fn process() {
-	if let Some(guard) = PROFILER.get() {
-		if let Ok(report) = guard.report().build() {
-			// Output a flamegraph
-			let file = std::fs::File::create("flamegraph.svg").unwrap();
-			report.flamegraph(file).unwrap();
-			// Output a pprof
-			let mut file = std::fs::File::create("profile.pb").unwrap();
-			let profile = report.pprof().unwrap();
-			let mut content = Vec::new();
-			profile.encode(&mut content).unwrap();
-			file.write_all(&content).unwrap();
-		}
+	if let Some(guard) = PROFILER.get()
+		&& let Ok(report) = guard.report().build()
+	{
+		// Output a flamegraph
+		let file = std::fs::File::create("flamegraph.svg").unwrap();
+		report.flamegraph(file).unwrap();
+		// Output a pprof
+		let mut file = std::fs::File::create("profile.pb").unwrap();
+		let profile = report.pprof().unwrap();
+		let mut content = Vec::new();
+		profile.encode(&mut content).unwrap();
+		file.write_all(&content).unwrap();
 	}
 }
