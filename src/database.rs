@@ -25,6 +25,8 @@ pub(crate) enum Database {
 	Fjall,
 	#[cfg(feature = "keydb")]
 	Keydb,
+	#[cfg(feature = "mdbx")]
+	Mdbx,
 	#[cfg(feature = "lmdb")]
 	Lmdb,
 	#[cfg(feature = "memodb")]
@@ -180,6 +182,17 @@ impl Database {
 					.run::<_, DefaultDialect, _>(
 						crate::keydb::KeydbClientProvider::setup(kt, vp.columns(), benchmark)
 							.await?,
+						kp,
+						vp,
+						scans,
+					)
+					.await
+			}
+			#[cfg(feature = "mdbx")]
+			Database::Mdbx => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::mdbx::MDBXClientProvider::setup(kt, vp.columns(), benchmark).await?,
 						kp,
 						vp,
 						scans,
