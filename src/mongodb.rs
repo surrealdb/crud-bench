@@ -3,6 +3,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::memory::Config;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -18,11 +19,27 @@ use std::hint::black_box;
 
 pub const DEFAULT: &str = "mongodb://root:root@127.0.0.1:27017";
 
-pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+/// Calculate MongoDB specific memory allocation
+fn calculate_mongodb_memory() -> u64 {
+	// Load the system memory
+	let memory = Config::new();
+	// Use ~80% of recommended cache allocation
+	(memory.cache_gb * 4 / 5).max(1)
+}
+
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// Calculate memory allocation
+	let cache_gb = calculate_mongodb_memory();
+	// Return Docker parameters
 	DockerParams {
 		image: "mongo",
-		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root",
-		post_args: "",
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root".to_string(),
+		post_args: match options.optimised {
+			// Optimised configuration
+			true => format!("mongod --wiredTigerCacheSizeGB {cache_gb}"),
+			// Default configuration
+			false => "".to_string(),
+		},
 	}
 }
 

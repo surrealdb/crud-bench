@@ -98,7 +98,7 @@ impl Database {
 		// Check if a custom image has been specified
 		let image = options.image.clone().unwrap_or(params.image.to_string());
 		// Start the specified container with arguments
-		let container = Container::start(image, params.pre_args, params.post_args, options);
+		let container = Container::start(image, &params.pre_args, &params.post_args, options);
 		// Return the container reference
 		Some(container)
 	}
@@ -421,7 +421,7 @@ impl Database {
 			}
 			#[cfg(feature = "surrealkv")]
 			Database::SurrealkvMemory => {
-				benchmark.persistence = false;
+				benchmark.persisted = false;
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						crate::surrealkv::SurrealKVClientProvider::setup(

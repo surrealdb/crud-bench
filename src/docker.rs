@@ -10,8 +10,8 @@ const TIMEOUT: Duration = Duration::from_secs(6);
 
 pub(crate) struct DockerParams {
 	pub(crate) image: &'static str,
-	pub(crate) pre_args: &'static str,
-	pub(crate) post_args: &'static str,
+	pub(crate) pre_args: String,
+	pub(crate) post_args: String,
 }
 
 pub(crate) struct Container {

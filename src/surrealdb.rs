@@ -3,6 +3,7 @@
 use crate::database::Database;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
@@ -16,36 +17,67 @@ use surrealdb::opt::{Config, Raw, Resource};
 
 pub const DEFAULT: &str = "ws://127.0.0.1:8000";
 
-pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
+/// Calculate SurrealDB RocksDB specific memory allocation
+fn calculate_surrealdb_memory() -> u64 {
+	// Load the system memory
+	let memory = MemoryConfig::new();
+	// Use ~80% of recommended cache allocation
+	(memory.cache_gb * 4 / 6).max(1)
+}
+
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// Calculate memory allocation
+	let cache_gb = calculate_surrealdb_memory();
+	// Return Docker parameters
 	match options.database {
 		Database::SurrealdbMemory => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
-			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root",
-			post_args: "start --user root --pass root memory",
+			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
+			post_args: "start --user root --pass root memory".to_string(),
 		},
 		Database::SurrealdbRocksdb => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
-			pre_args: match options.sync {
-				true => {
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=true --user root"
-				}
-				false => {
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=false --user root"
-				}
+			pre_args: match options.optimised {
+				true => format!(
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA={} -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
+					if options.sync {
+						"true"
+					} else {
+						"false"
+					}
+				),
+				false => format!(
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA={} --user root",
+					if options.sync {
+						"true"
+					} else {
+						"false"
+					}
+				),
 			},
-			post_args: "start --user root --pass root rocksdb:/data/crud-bench.db",
+			post_args: "start --user root --pass root rocksdb:/data/crud-bench.db".to_string(),
 		},
 		Database::SurrealdbSurrealkv => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
-			pre_args: match options.sync {
-				true => {
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=true --user root"
-				}
-				false => {
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA=false --user root"
-				}
+			pre_args: match options.optimised {
+				true => format!(
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA={} -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
+					if options.sync {
+						"true"
+					} else {
+						"false"
+					}
+				),
+				false => format!(
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA={} --user root",
+					if options.sync {
+						"true"
+					} else {
+						"false"
+					}
+				),
 			},
-			post_args: "start --user root --pass root surrealkv:/data/crud-bench.db",
+			post_args: "start --user root --pass root surrealkv:/data/crud-bench.db".to_string(),
 		},
 		_ => unreachable!(),
 	}

@@ -15,14 +15,18 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
-pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "docker.dragonflydb.io/dragonflydb/dragonfly",
-		pre_args: "-p 127.0.0.1:6379:6379 --ulimit memlock=-1",
-		post_args: match (options.persistence, options.sync) {
-			(false, _) => "--requirepass root --dbfilename '' --save_schedule ''",
-			(true, false) => "--requirepass root --dbfilename dump.rdb --save_schedule '*/1sec:*'",
-			(true, true) => "--requirepass root --dbfilename dump.rdb --save_schedule '*:*'",
+		pre_args: "-p 127.0.0.1:6379:6379 --ulimit memlock=-1".to_string(),
+		post_args: match (options.persisted, options.sync) {
+			(false, _) => "--requirepass root --dbfilename '' --save_schedule ''".to_string(),
+			(true, false) => {
+				"--requirepass root --dbfilename dump.rdb --save_schedule '*/1sec:*'".to_string()
+			}
+			(true, true) => {
+				"--requirepass root --dbfilename dump.rdb --save_schedule '*:*'".to_string()
+			}
 		},
 	}
 }

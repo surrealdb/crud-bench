@@ -3,6 +3,7 @@
 use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
@@ -13,13 +14,82 @@ use tokio_postgres::{Client, NoTls, Row};
 
 pub const DEFAULT: &str = "host=127.0.0.1 user=postgres password=postgres";
 
-pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
+/// Calculate Postgres specific memory allocation
+fn calculate_postgres_memory() -> (u64, u64, u64, u64, u64, u64) {
+	// Load the system memory
+	let memory = Config::new();
+	// Use ~33% of recommended cache allocation
+	let shared_buffers_gb = (memory.cache_gb / 3).max(1);
+	// Use ~75% of total system memory for caching
+	let effective_cache_gb = memory.cache_gb;
+	// Scale work_mem with shared_buffers
+	let work_mem_mb = (shared_buffers_gb * 64).max(32);
+	// Use 25% of shared_buffers, max 8GB
+	let maintenance_work_mem_gb = (shared_buffers_gb / 4).clamp(1, 8);
+	// Scale WAL with shared_buffers
+	let max_wal_gb = (shared_buffers_gb).clamp(2, 16);
+	let min_wal_gb = (max_wal_gb / 4).max(1);
+	// Return configuration
+	(
+		shared_buffers_gb,
+		effective_cache_gb,
+		work_mem_mb,
+		maintenance_work_mem_gb,
+		max_wal_gb,
+		min_wal_gb,
+	)
+}
+
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// Calculate memory allocation
+	let (
+		shared_buffers_gb,
+		effective_cache_gb,
+		work_mem_mb,
+		maintenance_work_mem_gb,
+		max_wal_gb,
+		min_wal_gb,
+	) = calculate_postgres_memory();
+	// Return Docker parameters
 	DockerParams {
 		image: "postgres",
-		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres",
-		post_args: match options.sync {
-			true => "postgres -N 1024 -c fsync=on -c synchronous_commit=on",
-			false => "postgres -N 1024 -c fsync=off -c synchronous_commit=on",
+		pre_args:
+			"--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
+				.to_string(),
+		post_args: match options.optimised {
+			// Optimised configuration
+			true => format!(
+				"postgres -N 1024 \
+				-c shared_buffers={shared_buffers_gb}GB \
+				-c effective_cache_size={effective_cache_gb}GB \
+				-c work_mem={work_mem_mb}MB \
+				-c maintenance_work_mem={maintenance_work_mem_gb}GB \
+				-c wal_buffers=16MB \
+				-c checkpoint_timeout=15min \
+				-c checkpoint_completion_target=0.9 \
+				-c random_page_cost=1.1 \
+				-c effective_io_concurrency=200 \
+				-c min_wal_size={min_wal_gb}GB \
+				-c max_wal_size={max_wal_gb}GB \
+				-c fsync={} \
+				-c synchronous_commit=on",
+				if options.sync {
+					"on"
+				} else {
+					"off"
+				}
+			),
+			// Default configuration
+			false => format!(
+				"postgres -N 1024 \
+				-c fsync={} \
+				-c synchronous_commit=on",
+				if options.sync {
+					"on"
+				} else {
+					"off"
+				}
+			),
 		},
 	}
 }

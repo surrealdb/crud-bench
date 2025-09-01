@@ -18,6 +18,7 @@ mod dialect;
 mod docker;
 mod engine;
 mod keyprovider;
+mod memory;
 mod profiling;
 mod result;
 mod terminal;
@@ -99,7 +100,11 @@ pub(crate) struct Args {
 
 	/// Whether to enable disk persistence for Redis-family databases
 	#[arg(long)]
-	pub(crate) persistence: bool,
+	pub(crate) persisted: bool,
+
+	/// Use optimised database configurations instead of defaults
+	#[arg(long)]
+	pub(crate) optimised: bool,
 
 	/// The type of the key
 	#[arg(short, long, default_value_t = KeyType::Integer, value_enum)]
@@ -339,7 +344,8 @@ mod test {
 			threads: 2,
 			samples: 10000,
 			sync: false,
-			persistence: false,
+			persisted: false,
+			optimised: false,
 			random,
 			key,
 			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),

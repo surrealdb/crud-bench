@@ -41,7 +41,9 @@ pub(crate) struct Benchmark {
 	/// Whether to ensure data is synced
 	pub(crate) sync: bool,
 	/// Whether to enable disk persistence
-	pub(crate) persistence: bool,
+	pub(crate) persisted: bool,
+	/// Whether to enable optimised configurations
+	pub(crate) optimised: bool,
 }
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
@@ -55,7 +57,8 @@ impl Benchmark {
 			samples: args.samples,
 			sync: args.sync,
 			pid: args.pid,
-			persistence: args.persistence,
+			persisted: args.persisted,
+			optimised: args.optimised,
 		}
 	}
 	/// Run the benchmark for the desired benchmark engine

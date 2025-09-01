@@ -16,7 +16,7 @@ use std::hint::black_box;
 
 pub const DEFAULT: &str = "127.0.0.1:7687";
 
-pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "neo4j",
 		pre_args: match options.sync {
@@ -26,7 +26,7 @@ pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
 				// closest option when sync is true, is to
 				// checkpoint after every transaction, and to
 				// checkpoint in the background every second
-				"--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=1"
+				"--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=1".to_string()
 			}
 			false => {
 				// Neo4j does not have the ability to configure
@@ -34,10 +34,10 @@ pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
 				// closest option when sync is false, is to
 				// checkpoint in the background every second,
 				// and to checkpoint every 10,000 transactions
-				"--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=10000"
+				"--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=10000".to_string()
 			}
 		},
-		post_args: "",
+		post_args: "".to_string(),
 	}
 }
 
