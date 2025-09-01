@@ -1,8 +1,8 @@
 use crate::dialect::Dialect;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use log::debug;
 use rand::prelude::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{Rng as RandGen, SeedableRng};
 use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -79,14 +79,14 @@ const CHARSET: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxy
 fn string(rng: &mut SmallRng, size: usize) -> String {
 	(0..size)
 		.map(|_| {
-			let idx = rng.gen_range(0..CHARSET.len());
+			let idx = RandGen::gen_range(&mut *rng, 0..CHARSET.len());
 			CHARSET[idx] as char
 		})
 		.collect()
 }
 
 fn string_range(rng: &mut SmallRng, range: Range<usize>) -> String {
-	let l = rng.gen_range(range);
+	let l = RandGen::gen_range(rng, range);
 	string(rng, l)
 }
 
@@ -106,7 +106,7 @@ fn text(rng: &mut SmallRng, size: usize) -> String {
 }
 
 fn text_range(rng: &mut SmallRng, range: Range<usize>) -> String {
-	let l = rng.gen_range(range);
+	let l = RandGen::gen_range(rng, range);
 	text(rng, l)
 }
 
@@ -195,7 +195,7 @@ impl ValueGenerator {
 	{
 		match self {
 			ValueGenerator::Bool => {
-				let v = rng.gen::<bool>();
+				let v = RandGen::gen_bool(&mut *rng, 0.5);
 				Value::Bool(v)
 			}
 			ValueGenerator::String(l) => {
@@ -213,16 +213,16 @@ impl ValueGenerator {
 				Value::String(val)
 			}
 			ValueGenerator::Integer => {
-				let v = rng.gen::<i32>();
+				let v = RandGen::gen_range(&mut *rng, i32::MIN..i32::MAX);
 				Value::Number(Number::from(v))
 			}
 			ValueGenerator::Float => {
-				let v = rng.gen::<f32>();
+				let v = RandGen::gen_range(&mut *rng, f32::MIN..f32::MAX);
 				Value::Number(Number::from_f64(v as f64).unwrap())
 			}
 			ValueGenerator::DateTime => {
 				// Number of seconds from Epoch to 31/12/2030
-				let s = rng.gen_range(0..1_924_991_999);
+				let s = RandGen::gen_range(&mut *rng, 0..1_924_991_999);
 				D::date_time(s)
 			}
 			ValueGenerator::Uuid => {
@@ -287,15 +287,15 @@ where
 		<Idx as FromStr>::Err: Display,
 	{
 		// Get the length config setting
-		let gen: Vec<&str> = s.split("..").collect();
+		let parts: Vec<&str> = s.split("..").collect();
 		// Check the length parameter
-		let r = match gen.len() {
+		let r = match parts.len() {
 			2 => {
-				let min = Idx::from_str(gen[0]).map_err(|e| anyhow!("{e}"))?;
-				let max = Idx::from_str(gen[1]).map_err(|e| anyhow!("{e}"))?;
+				let min = Idx::from_str(parts[0]).map_err(|e| anyhow!("{e}"))?;
+				let max = Idx::from_str(parts[1]).map_err(|e| anyhow!("{e}"))?;
 				Self::Range(min..max)
 			}
-			1 => Self::Fixed(Idx::from_str(gen[0]).map_err(|e| anyhow!("{e}"))?),
+			1 => Self::Fixed(Idx::from_str(parts[0]).map_err(|e| anyhow!("{e}"))?),
 			v => {
 				bail!("Invalid length generation value: {v}");
 			}

@@ -6,11 +6,11 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
-use neo4rs::query;
+use anyhow::{Result, bail};
 use neo4rs::BoltType;
 use neo4rs::ConfigBuilder;
 use neo4rs::Graph;
+use neo4rs::query;
 use serde_json::Value;
 use std::hint::black_box;
 

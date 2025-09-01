@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::fmt::Display;
 use std::io::Write;
-use std::io::{stdout, IsTerminal, Stdout};
+use std::io::{IsTerminal, Stdout, stdout};
 
 pub(crate) struct Terminal(Option<Stdout>);
 
@@ -29,11 +29,11 @@ impl Terminal {
 		F: FnMut() -> Option<S>,
 		S: Display,
 	{
-		if let Some(ref mut o) = self.0 {
-			if let Some(s) = f() {
-				write!(o, "{s}")?;
-				o.flush()?;
-			}
+		if let Some(ref mut o) = self.0
+			&& let Some(s) = f()
+		{
+			write!(o, "{s}")?;
+			o.flush()?;
 		}
 		Ok(())
 	}

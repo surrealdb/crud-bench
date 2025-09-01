@@ -4,7 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use log::error;
 use rocksdb::{
 	BlockBasedOptions, BottommostLevelCompaction, Cache, CompactOptions, DBCompactionStyle,
@@ -138,12 +138,14 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 				// Clone the database reference
 				let dbc = db.clone();
 				// Create a new background thread
-				std::thread::spawn(move || loop {
-					// Wait for the specified interval
-					std::thread::sleep(Duration::from_millis(200));
-					// Flush the WAL to disk periodically
-					if let Err(err) = dbc.flush_wal(true) {
-						error!("Failed to flush WAL: {err}");
+				std::thread::spawn(move || {
+					loop {
+						// Wait for the specified interval
+						std::thread::sleep(Duration::from_millis(200));
+						// Flush the WAL to disk periodically
+						if let Err(err) = dbc.flush_wal(true) {
+							error!("Failed to flush WAL: {err}");
+						}
 					}
 				});
 				// Return the datastore

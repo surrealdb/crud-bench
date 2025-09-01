@@ -5,7 +5,7 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use arangors::client::reqwest::ReqwestClient;
 use arangors::document::options::InsertOptions;
 use arangors::document::options::RemoveOptions;

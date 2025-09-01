@@ -5,14 +5,14 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use futures::{StreamExt, TryStreamExt};
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
 use mongodb::options::ReadConcern;
 use mongodb::options::{Acknowledgment, WriteConcern};
-use mongodb::{bson, Client, Collection, Cursor, Database};
+use mongodb::{Client, Collection, Cursor, Database, bson};
 use serde_json::Value;
 use std::hint::black_box;
 
