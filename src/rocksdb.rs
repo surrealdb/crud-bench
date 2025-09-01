@@ -245,7 +245,7 @@ impl BenchmarkClient for RocksDBClient {
 impl RocksDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
@@ -287,7 +287,7 @@ impl RocksDBClient {
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);

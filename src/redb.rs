@@ -113,7 +113,7 @@ impl ReDBClient {
 		// Execute on the blocking threadpool
 		affinitypool::spawn_local(|| -> Result<_> {
 			// Serialise the value
-			let val = bincode::serialize(&val)?;
+			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Let the OS handle syncing to disk
@@ -156,7 +156,7 @@ impl ReDBClient {
 		// Execute on the blocking threadpool
 		affinitypool::spawn_local(|| -> Result<_> {
 			// Serialise the value
-			let val = bincode::serialize(&val)?;
+			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Let the OS handle syncing to disk

@@ -52,14 +52,14 @@ pub(crate) struct RedisClient {
 impl BenchmarkClient for RedisClient {
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
@@ -81,14 +81,14 @@ impl BenchmarkClient for RedisClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}

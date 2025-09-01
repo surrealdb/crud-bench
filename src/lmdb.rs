@@ -123,7 +123,7 @@ impl BenchmarkClient for LmDBClient {
 impl LmDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Create a new transaction
 		let mut txn = self.db.0.write_txn()?;
 		// Process the data
@@ -147,7 +147,7 @@ impl LmDBClient {
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Create a new transaction
 		let mut txn = self.db.0.write_txn()?;
 		// Process the data

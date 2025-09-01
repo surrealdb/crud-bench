@@ -137,7 +137,7 @@ impl BenchmarkClient for MDBXClient {
 impl MDBXClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Create a new transaction
 		let txn = self.db.begin_rw_txn()?;
 		// Open the default table
@@ -165,7 +165,7 @@ impl MDBXClient {
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Create a new transaction
 		let txn = self.db.begin_rw_txn()?;
 		// Open the default table

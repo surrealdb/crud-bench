@@ -83,7 +83,7 @@ impl BenchmarkClient for MemoDBClient {
 impl MemoDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Create a new transaction
 		let mut txn = self.db.transaction(true);
 		// Process the data
@@ -107,7 +107,7 @@ impl MemoDBClient {
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Create a new transaction
 		let mut txn = self.db.transaction(true);
 		// Process the data
