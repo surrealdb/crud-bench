@@ -132,6 +132,106 @@ impl BenchmarkClient for MDBXClient {
 	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
 		self.scan_bytes(scan).await
 	}
+
+	async fn batch_create_u32(
+		&self,
+		batch_size: usize,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let mut pairs = Vec::with_capacity(batch_size);
+		for (key, val) in key_vals {
+			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			pairs.push((key.to_ne_bytes().to_vec(), val));
+		}
+		self.batch_create_bytes(pairs).await
+	}
+
+	async fn batch_create_string(
+		&self,
+		batch_size: usize,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let mut pairs = Vec::with_capacity(batch_size);
+		for (key, val) in key_vals {
+			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			pairs.push((key.into_bytes(), val));
+		}
+		self.batch_create_bytes(pairs).await
+	}
+
+	async fn batch_read_u32(
+		&self,
+		batch_size: usize,
+		keys: impl Iterator<Item = u32> + Send,
+	) -> Result<()> {
+		let mut keys_vec = Vec::with_capacity(batch_size);
+		for key in keys {
+			keys_vec.push(key.to_ne_bytes().to_vec());
+		}
+		self.batch_read_bytes(keys_vec).await
+	}
+
+	async fn batch_read_string(
+		&self,
+		batch_size: usize,
+		keys: impl Iterator<Item = String> + Send,
+	) -> Result<()> {
+		let mut keys_vec = Vec::with_capacity(batch_size);
+		for key in keys {
+			keys_vec.push(key.into_bytes());
+		}
+		self.batch_read_bytes(keys_vec).await
+	}
+
+	async fn batch_update_u32(
+		&self,
+		batch_size: usize,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let mut pairs = Vec::with_capacity(batch_size);
+		for (key, val) in key_vals {
+			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			pairs.push((key.to_ne_bytes().to_vec(), val));
+		}
+		self.batch_update_bytes(pairs).await
+	}
+
+	async fn batch_update_string(
+		&self,
+		batch_size: usize,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let mut pairs = Vec::with_capacity(batch_size);
+		for (key, val) in key_vals {
+			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			pairs.push((key.into_bytes(), val));
+		}
+		self.batch_update_bytes(pairs).await
+	}
+
+	async fn batch_delete_u32(
+		&self,
+		batch_size: usize,
+		keys: impl Iterator<Item = u32> + Send,
+	) -> Result<()> {
+		let mut keys_vec = Vec::with_capacity(batch_size);
+		for key in keys {
+			keys_vec.push(key.to_ne_bytes().to_vec());
+		}
+		self.batch_delete_bytes(keys_vec).await
+	}
+
+	async fn batch_delete_string(
+		&self,
+		batch_size: usize,
+		keys: impl Iterator<Item = String> + Send,
+	) -> Result<()> {
+		let mut keys_vec = Vec::with_capacity(batch_size);
+		for key in keys {
+			keys_vec.push(key.into_bytes());
+		}
+		self.batch_delete_bytes(keys_vec).await
+	}
 }
 
 impl MDBXClient {
@@ -183,6 +283,66 @@ impl MDBXClient {
 		let table = txn.open_table(None)?;
 		// Process the data
 		txn.del(&table, key, None)?;
+		txn.commit()?;
+		Ok(())
+	}
+
+	async fn batch_create_bytes(&self, key_vals: Vec<(Vec<u8>, Vec<u8>)>) -> Result<()> {
+		// Create a new transaction
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
+		// Process the data
+		for (key, val) in key_vals {
+			txn.put(&table, &key, &val, WriteFlags::empty())?;
+		}
+		// Commit the batch
+		txn.commit()?;
+		Ok(())
+	}
+
+	async fn batch_read_bytes(&self, keys: Vec<Vec<u8>>) -> Result<()> {
+		// Create a new transaction
+		let txn = self.db.begin_ro_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
+		// Process the data
+		for key in keys {
+			// Get the current value
+			let res: Option<Vec<u8>> = txn.get(&table, &key)?;
+			// Check the value exists
+			assert!(res.is_some());
+			// Deserialise the value
+			black_box(res.unwrap());
+		}
+		// All ok
+		Ok(())
+	}
+
+	async fn batch_update_bytes(&self, key_vals: Vec<(Vec<u8>, Vec<u8>)>) -> Result<()> {
+		// Create a new transaction
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
+		// Process the data
+		for (key, val) in key_vals {
+			txn.put(&table, &key, &val, WriteFlags::empty())?;
+		}
+		// Commit the batch
+		txn.commit()?;
+		Ok(())
+	}
+
+	async fn batch_delete_bytes(&self, keys: Vec<Vec<u8>>) -> Result<()> {
+		// Create a new transaction
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
+		// Process the data
+		for key in keys {
+			txn.del(&table, &key, None)?;
+		}
+		// Commit the batch
 		txn.commit()?;
 		Ok(())
 	}

@@ -19,6 +19,7 @@ pub(crate) struct BenchmarkResult {
 	pub(crate) reads: Option<OperationResult>,
 	pub(crate) updates: Option<OperationResult>,
 	pub(crate) scans: Vec<(String, u32, Option<OperationResult>)>,
+	pub(crate) batches: Vec<(String, u32, usize, Option<OperationResult>)>,
 	pub(crate) deletes: Option<OperationResult>,
 	pub(crate) sample: Value,
 }
@@ -68,6 +69,10 @@ impl Display for BenchmarkResult {
 		if let Some(res) = &self.updates {
 			table.add_row(res.output("[U]pdate"));
 		}
+		// Add the [D]eletes results to the output
+		if let Some(res) = &self.deletes {
+			table.add_row(res.output("[D]elete"));
+		}
 		for (name, samples, result) in &self.scans {
 			let name = format!("[S]can::{name} ({samples})");
 			if let Some(res) = &result {
@@ -78,9 +83,15 @@ impl Display for BenchmarkResult {
 				table.add_row(cells);
 			}
 		}
-		// Add the [D]eletes results to the output
-		if let Some(res) = &self.deletes {
-			table.add_row(res.output("[D]elete"));
+		for (name, samples, groups, result) in &self.batches {
+			let name = format!("[B]atch::{name} ({samples} batches of {groups})");
+			if let Some(res) = &result {
+				table.add_row(res.output(name));
+			} else {
+				let mut cells = vec![name];
+				cells.extend(SKIP.iter().map(|s| s.to_string()));
+				table.add_row(cells);
+			}
 		}
 		// Right align the `CPU` column
 		let column = table.column_mut(13).expect("The table needs at least 14 columns");
@@ -119,6 +130,10 @@ impl BenchmarkResult {
 		if let Some(res) = &self.updates {
 			w.write_record(res.output("[U]pdate"))?;
 		}
+		// Add the [D]eletes results to the output
+		if let Some(res) = &self.deletes {
+			w.write_record(res.output("[D]elete"))?;
+		}
 		// Add the [S]cans results to the output
 		for (name, samples, result) in &self.scans {
 			let name = format!("[S]can::{name} ({samples})");
@@ -130,9 +145,16 @@ impl BenchmarkResult {
 				w.write_record(cells)?;
 			}
 		}
-		// Add the [D]eletes results to the output
-		if let Some(res) = &self.deletes {
-			w.write_record(res.output("[D]elete"))?;
+		// Add the [B]atch results to the output
+		for (name, samples, groups, result) in &self.batches {
+			let name = format!("[B]atch::{name} ({samples} batches of {groups})");
+			if let Some(res) = &result {
+				w.write_record(res.output(name))?;
+			} else {
+				let mut cells = vec![name];
+				cells.extend(SKIP.iter().map(|s| s.to_string()));
+				w.write_record(cells)?;
+			}
 		}
 		// Ensure all data is flushed to the file
 		w.flush()?;

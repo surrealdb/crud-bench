@@ -114,8 +114,10 @@ impl Database {
 		kp: KeyProvider,
 		vp: ValueProvider,
 		scans: &str,
+		batches: &str,
 	) -> Result<BenchmarkResult> {
 		let scans = serde_json::from_str(scans)?;
+		let batches = serde_json::from_str(batches)?;
 		match self {
 			Database::Dry => {
 				benchmark
@@ -124,6 +126,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -136,6 +139,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -152,6 +156,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -164,6 +169,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -176,6 +182,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -188,6 +195,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -199,6 +207,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -210,6 +219,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -220,6 +230,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -232,6 +243,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -244,6 +256,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -256,6 +269,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -268,6 +282,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -280,6 +295,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -291,6 +307,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -303,6 +320,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -315,6 +333,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -327,6 +346,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -339,6 +359,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -355,6 +376,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -371,6 +393,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -387,6 +410,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -403,6 +427,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -419,6 +444,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -436,6 +462,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}

@@ -5,7 +5,7 @@ use crate::keyprovider::KeyProvider;
 use crate::result::{BenchmarkResult, OperationMetric, OperationResult};
 use crate::terminal::Terminal;
 use crate::valueprovider::ValueProvider;
-use crate::{Args, Scan, Scans};
+use crate::{Args, BatchOperation, Batches, Scan, Scans};
 use anyhow::{Result, bail};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
@@ -68,6 +68,7 @@ impl Benchmark {
 		kp: KeyProvider,
 		mut vp: ValueProvider,
 		scans: Scans,
+		batches: Batches,
 	) -> Result<BenchmarkResult>
 	where
 		C: BenchmarkClient + Send + Sync,
@@ -141,8 +142,38 @@ impl Benchmark {
 		}
 		// Run the "deletes" benchmark
 		let deletes = self
-			.run_operation::<C, D>(&clients, BenchmarkOperation::Delete, kp, vp, self.samples)
+			.run_operation::<C, D>(
+				&clients,
+				BenchmarkOperation::Delete,
+				kp,
+				vp.clone(),
+				self.samples,
+			)
 			.await?;
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
+		}
+		// Run the "batch" benchmarks
+		let mut batch_results = Vec::with_capacity(batches.len());
+		for batch in batches {
+			// Get the name of the batch operation
+			let name = batch.name.clone();
+			let groups = batch.batch_size;
+			let samples = batch.samples.map(|s| s as u32).unwrap_or(self.samples);
+			// Determine the batch operation type
+			let operation = match batch.operation {
+				crate::BatchOperationType::Create => BenchmarkOperation::BatchCreate(batch.clone()),
+				crate::BatchOperationType::Read => BenchmarkOperation::BatchRead(batch.clone()),
+				crate::BatchOperationType::Update => BenchmarkOperation::BatchUpdate(batch.clone()),
+				crate::BatchOperationType::Delete => BenchmarkOperation::BatchDelete(batch.clone()),
+			};
+			// Execute the batch benchmark
+			let duration =
+				self.run_operation::<C, D>(&clients, operation, kp, vp.clone(), samples).await?;
+			// Store the batch benchmark result
+			batch_results.push((name, samples, groups, duration));
+		}
 		// Setup the datastore
 		self.wait_for_client(&engine).await?.shutdown().await?;
 		// Return the benchmark results
@@ -151,6 +182,7 @@ impl Benchmark {
 			reads,
 			updates,
 			scans: scan_results,
+			batches: batch_results,
 			deletes,
 			sample,
 		})
@@ -338,6 +370,18 @@ impl Benchmark {
 				}
 				BenchmarkOperation::Scan(s) => client.scan(s, &kp).await?,
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
+				BenchmarkOperation::BatchCreate(batch_op) => {
+					client.batch_create(sample, batch_op, &mut kp, &mut vp).await?
+				}
+				BenchmarkOperation::BatchRead(batch_op) => {
+					client.batch_read(sample, batch_op, &mut kp).await?
+				}
+				BenchmarkOperation::BatchUpdate(batch_op) => {
+					client.batch_update(sample, batch_op, &mut kp, &mut vp).await?
+				}
+				BenchmarkOperation::BatchDelete(batch_op) => {
+					client.batch_delete(sample, batch_op, &mut kp).await?
+				}
 			};
 			// Get the completed sample number
 			let sample = complete.fetch_add(1, Ordering::Relaxed);
@@ -371,6 +415,10 @@ pub(crate) enum BenchmarkOperation {
 	Update,
 	Scan(Scan),
 	Delete,
+	BatchCreate(BatchOperation),
+	BatchRead(BatchOperation),
+	BatchUpdate(BatchOperation),
+	BatchDelete(BatchOperation),
 }
 
 impl Display for BenchmarkOperation {
@@ -381,6 +429,10 @@ impl Display for BenchmarkOperation {
 			Self::Scan(s) => write!(f, "Scan::{}", s.name),
 			Self::Update => write!(f, "Update"),
 			Self::Delete => write!(f, "Delete"),
+			Self::BatchCreate(b) => write!(f, "BatchCreate::{}", b.name),
+			Self::BatchRead(b) => write!(f, "BatchRead::{}", b.name),
+			Self::BatchUpdate(b) => write!(f, "BatchUpdate::{}", b.name),
+			Self::BatchDelete(b) => write!(f, "BatchDelete::{}", b.name),
 		}
 	}
 }

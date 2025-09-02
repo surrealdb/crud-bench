@@ -54,11 +54,11 @@ impl KeyProvider {
 	}
 }
 
-pub(crate) trait IntegerKeyProvider {
+pub(crate) trait IntegerKeyProvider: Send {
 	fn key(&mut self, n: u32) -> u32;
 }
 
-pub(crate) trait StringKeyProvider {
+pub(crate) trait StringKeyProvider: Send {
 	fn key(&mut self, n: u32) -> String;
 }
 

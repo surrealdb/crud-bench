@@ -96,15 +96,15 @@ pub(crate) struct Args {
 	pub(crate) random: bool,
 
 	/// Whether to ensure data is synced and durable
-	#[arg(long)]
+	#[arg(long, default_value = "false")]
 	pub(crate) sync: bool,
 
 	/// Whether to enable disk persistence for Redis-family databases
-	#[arg(long)]
+	#[arg(long, default_value = "false")]
 	pub(crate) persisted: bool,
 
 	/// Use optimised database configurations instead of defaults
-	#[arg(long)]
+	#[arg(long, default_value = "false")]
 	pub(crate) optimised: bool,
 
 	/// The type of the key
@@ -158,6 +158,23 @@ pub(crate) struct Args {
 		]"#
 	)]
 	pub(crate) scans: String,
+
+	/// An array of batch operation specifications
+	#[arg(
+		long,
+		env = "CRUD_BENCH_BATCHES",
+		default_value = r#"[
+			{ "name": "batch_create_100", "operation": "CREATE", "batch_size": 100, "samples": 1000 },
+			{ "name": "batch_read_100", "operation": "READ", "batch_size": 100, "samples": 1000 },
+			{ "name": "batch_update_100", "operation": "UPDATE", "batch_size": 100, "samples": 1000 },
+			{ "name": "batch_delete_100", "operation": "DELETE", "batch_size": 100, "samples": 1000 },
+			{ "name": "batch_create_1000", "operation": "CREATE", "batch_size": 1000, "samples": 1000 },
+			{ "name": "batch_read_1000", "operation": "READ", "batch_size": 1000, "samples": 1000 },
+			{ "name": "batch_update_1000", "operation": "UPDATE", "batch_size": 1000, "samples": 1000 },
+			{ "name": "batch_delete_1000", "operation": "DELETE", "batch_size": 1000, "samples": 1000 }
+		]"#
+	)]
+	pub(crate) batches: String,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -177,6 +194,8 @@ pub(crate) enum KeyType {
 }
 
 pub(crate) type Scans = Vec<Scan>;
+
+pub(crate) type Batches = Vec<BatchOperation>;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct Scan {
@@ -203,6 +222,7 @@ impl Scan {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
 pub(crate) enum Projection {
 	Id,
 	Full,
@@ -217,6 +237,23 @@ pub(crate) struct Condition {
 	mongodb: Option<Value>,
 	arangodb: Option<String>,
 	surrealdb: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct BatchOperation {
+	pub(crate) name: String,
+	pub(crate) operation: BatchOperationType,
+	pub(crate) batch_size: usize,
+	pub(crate) samples: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "UPPERCASE")]
+pub(crate) enum BatchOperationType {
+	Create,
+	Read,
+	Update,
+	Delete,
 }
 
 fn main() -> Result<()> {
@@ -269,8 +306,9 @@ fn run(args: Args) -> Result<()> {
 	// Build the value provider
 	let vp = ValueProvider::new(&args.value)?;
 	// Run the benchmark
-	let res = runtime
-		.block_on(async { args.database.run(&mut benchmark, args.key, kp, vp, &args.scans).await });
+	let res = runtime.block_on(async {
+		args.database.run(&mut benchmark, args.key, kp, vp, &args.scans, &args.batches).await
+	});
 	// Check if we should profile
 	if std::env::var("PROFILE").is_ok() {
 		profiling::process();
@@ -375,6 +413,9 @@ mod test {
 			key,
 			value: r#"{"text":"String:50", "integer":"int"}"#.to_string(),
 			scans: r#"[{"name": "limit", "start": 50, "limit": 100, "expect": 100}]"#.to_string(),
+			batches:
+				r#"[{"name": "batch_test", "operation": "CREATE", "batch_size": 5, "samples": 10}]"#
+					.to_string(),
 			show_sample: false,
 			pid: None,
 		})

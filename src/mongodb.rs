@@ -8,14 +8,16 @@ use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use futures::{StreamExt, TryStreamExt};
+use mongodb::Namespace;
 use mongodb::bson::{Bson, Document, doc};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
 use mongodb::options::ReadConcern;
-use mongodb::options::{Acknowledgment, WriteConcern};
+use mongodb::options::{Acknowledgment, ReplaceOneModel, WriteConcern, WriteModel};
 use mongodb::{Client, Collection, Cursor, Database, bson};
 use serde_json::Value;
 use std::hint::black_box;
+use std::time::Duration;
 
 pub const DEFAULT: &str = "mongodb://root:root@127.0.0.1:27017";
 
@@ -65,6 +67,12 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 		let mut opts = ClientOptions::parse(url).await?;
 		opts.max_pool_size = Some(options.clients);
 		opts.min_pool_size = None;
+		// Set server selection timeout to 60 seconds (default 30s)
+		opts.server_selection_timeout = Some(Duration::from_secs(60));
+		// Set server connect timeout to 30 seconds (default 10s)
+		opts.connect_timeout = Some(Duration::from_secs(30));
+		// Reduce monitoring heartbeats for batch operations (default 10s)
+		opts.heartbeat_freq = Some(Duration::from_secs(30));
 		// Create the client provider
 		Ok(Self {
 			sync: options.sync,
@@ -100,12 +108,14 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 		);
 		Ok(MongoDBClient {
 			db,
+			sync: self.sync,
 		})
 	}
 }
 
 pub(crate) struct MongoDBClient {
 	db: Database,
+	sync: bool,
 }
 
 impl BenchmarkClient for MongoDBClient {
@@ -165,6 +175,102 @@ impl BenchmarkClient for MongoDBClient {
 	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
 		self.scan(scan).await
 	}
+
+	async fn batch_create_u32(
+		&self,
+		batch_size: usize,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let mut key_vals_vec = Vec::with_capacity(batch_size);
+		for (key, val) in key_vals {
+			key_vals_vec.push((key, val));
+		}
+		self.batch_create(key_vals_vec).await
+	}
+
+	async fn batch_create_string(
+		&self,
+		batch_size: usize,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let mut key_vals_vec = Vec::with_capacity(batch_size);
+		for (key, val) in key_vals {
+			key_vals_vec.push((key, val));
+		}
+		self.batch_create(key_vals_vec).await
+	}
+
+	async fn batch_read_u32(
+		&self,
+		batch_size: usize,
+		keys: impl Iterator<Item = u32> + Send,
+	) -> Result<()> {
+		let mut keys_vec = Vec::with_capacity(batch_size);
+		for key in keys {
+			keys_vec.push(key);
+		}
+		self.batch_read(keys_vec).await
+	}
+
+	async fn batch_read_string(
+		&self,
+		batch_size: usize,
+		keys: impl Iterator<Item = String> + Send,
+	) -> Result<()> {
+		let mut keys_vec = Vec::with_capacity(batch_size);
+		for key in keys {
+			keys_vec.push(key);
+		}
+		self.batch_read(keys_vec).await
+	}
+
+	async fn batch_update_u32(
+		&self,
+		batch_size: usize,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let mut key_vals_vec = Vec::with_capacity(batch_size);
+		for (key, val) in key_vals {
+			key_vals_vec.push((key, val));
+		}
+		self.batch_update(key_vals_vec).await
+	}
+
+	async fn batch_update_string(
+		&self,
+		batch_size: usize,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let mut key_vals_vec = Vec::with_capacity(batch_size);
+		for (key, val) in key_vals {
+			key_vals_vec.push((key, val));
+		}
+		self.batch_update(key_vals_vec).await
+	}
+
+	async fn batch_delete_u32(
+		&self,
+		batch_size: usize,
+		keys: impl Iterator<Item = u32> + Send,
+	) -> Result<()> {
+		let mut keys_vec = Vec::with_capacity(batch_size);
+		for key in keys {
+			keys_vec.push(key);
+		}
+		self.batch_delete(keys_vec).await
+	}
+
+	async fn batch_delete_string(
+		&self,
+		batch_size: usize,
+		keys: impl Iterator<Item = String> + Send,
+	) -> Result<()> {
+		let mut keys_vec = Vec::with_capacity(batch_size);
+		for key in keys {
+			keys_vec.push(key);
+		}
+		self.batch_delete(keys_vec).await
+	}
 }
 
 impl MongoDBClient {
@@ -221,6 +327,95 @@ impl MongoDBClient {
 		let filter = doc! { "_id": key };
 		let res = self.collection().delete_one(filter).await?;
 		assert_eq!(res.deleted_count, 1);
+		Ok(())
+	}
+
+	async fn batch_create<K>(&self, key_vals: Vec<(K, Value)>) -> Result<()>
+	where
+		K: Into<Value> + Into<Bson>,
+	{
+		let mut docs = Vec::with_capacity(key_vals.len());
+		for (key, val) in key_vals {
+			let bson = Self::to_doc(key, val)?;
+			docs.push(bson.as_document().unwrap().clone());
+		}
+		let docs_len = docs.len();
+		let res = self.collection().insert_many(docs).await?;
+		assert_eq!(res.inserted_ids.len(), docs_len);
+		Ok(())
+	}
+
+	async fn batch_read<K>(&self, keys: Vec<K>) -> Result<()>
+	where
+		K: Into<Bson>,
+	{
+		let keys_len = keys.len();
+		let ids: Vec<Bson> = keys.into_iter().map(|k| k.into()).collect();
+		let filter = doc! { "_id": { "$in": ids } };
+		let cursor = self.collection().find(filter).await?;
+		let docs: Vec<Document> = cursor.try_collect().await?;
+		assert_eq!(docs.len(), keys_len);
+		for doc in docs {
+			black_box(doc);
+		}
+		Ok(())
+	}
+
+	async fn batch_update<K>(&self, key_vals: Vec<(K, Value)>) -> Result<()>
+	where
+		K: Into<Value> + Into<Bson> + Clone,
+	{
+		let namespace = Namespace {
+			db: self.db.name().to_string(),
+			coll: "record".to_string(),
+		};
+		let mut docs = Vec::with_capacity(key_vals.len());
+		for (key, val) in key_vals {
+			let filter = doc! { "_id": Into::<Bson>::into(key.clone()) };
+			let bson = Self::to_doc(key, val)?;
+			let replacement = bson.as_document().unwrap().clone();
+			let model = ReplaceOneModel::builder()
+				.namespace(namespace.clone())
+				.filter(filter)
+				.replacement(replacement)
+				.build();
+			docs.push(WriteModel::ReplaceOne(model));
+		}
+		let docs_len = docs.len();
+		let res = self
+			.db
+			.client()
+			.bulk_write(docs)
+			.write_concern(
+				// Configure the write options
+				WriteConcern::builder()
+					// Ensure that all writes are written,
+					// replicated, and acknowledged by the
+					// majority of nodes in the cluster.
+					.w(Acknowledgment::Majority)
+					// Configure journal durability based on sync setting.
+					// When `true`: writes are acknowledged only after
+					// being written to the on-disk journal (full durability).
+					// When `false`: writes are acknowledged after being
+					// written to memory (faster, less durable).
+					.journal(self.sync)
+					// Finalise the write options
+					.build(),
+			)
+			.await?;
+		assert_eq!(res.modified_count, docs_len as i64);
+		Ok(())
+	}
+
+	async fn batch_delete<K>(&self, keys: Vec<K>) -> Result<()>
+	where
+		K: Into<Bson>,
+	{
+		let keys_len = keys.len();
+		let ids: Vec<Bson> = keys.into_iter().map(|k| k.into()).collect();
+		let filter = doc! { "_id": { "$in": ids } };
+		let res = self.collection().delete_many(filter).await?;
+		assert_eq!(res.deleted_count, keys_len as u64);
 		Ok(())
 	}
 
