@@ -1,13 +1,13 @@
 define CRUD_BENCH_SCANS
 [
 	{ "name": "count_all", "samples": 100, "projection": "COUNT" },
-	{ "name": "limit_id", "samples": 100, "projection": "ID", "limit": 100, "expect": 100 },
-	{ "name": "limit_all", "samples": 100, "projection": "FULL", "limit": 100, "expect": 100 },
-	{ "name": "limit_count", "samples": 100, "projection": "COUNT", "limit": 100, "expect": 100 },
-	{ "name": "limit_start_id", "samples": 100, "projection": "ID", "start": 5000, "limit": 100, "expect": 100 },
-	{ "name": "limit_start_all", "samples": 100, "projection": "FULL", "start": 5000, "limit": 100, "expect": 100 },
-	{ "name": "limit_start_count", "samples": 100, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 },
-	{ "name": "limit_where_id", "samples": 100, "projection": "COUNT",
+	{ "name": "limit_id", "samples": 1000, "projection": "ID", "limit": 100, "expect": 100 },
+	{ "name": "limit_all", "samples": 1000, "projection": "FULL", "limit": 100, "expect": 100 },
+	{ "name": "limit_count", "samples": 1000, "projection": "COUNT", "limit": 100, "expect": 100 },
+	{ "name": "limit_start_id", "samples": 1000, "projection": "ID", "start": 5000, "limit": 100, "expect": 100 },
+	{ "name": "limit_start_all", "samples": 1000, "projection": "FULL", "start": 5000, "limit": 100, "expect": 100 },
+	{ "name": "limit_start_count", "samples": 1000, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 },
+	{ "name": "limit_where_id", "samples": 1000, "projection": "COUNT",
 		"condition": {
 			"sql": "age >= 18",
 			"mysql": "age >= 18",
