@@ -126,7 +126,7 @@ Options:
   -s, --samples <SAMPLES>    Number of samples to be created, read, updated, and deleted
   -r, --random               Generate the keys in a pseudo-randomized order
   -k, --key <KEY>            The type of the key [default: integer] [possible values: integer, string26, string90, string250, string506, uuid]
-  -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=] [default: "{\n\t\t\t\"text\": \"string:50\",\n\t\t\t\"integer\": \"int\"\n\t\t}"]
+  -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=] [default: "{\n\t\t\t\"text\": \"string:50\",\n\t\t\t\"age\": \"int:1..99\",\n\t\t\t\"integer\": \"int\"\n\t\t}"]
       --show-sample          Print-out an example of a generated value
       --pid <PID>            Collect system information for a given pid
   -a, --scans <SCANS>        An array of scan specifications [env: CRUD_BENCH_SCANS=] [default: "[\n\t\t\t{ \"name\": \"count_all\", \"samples\": 100, \"projection\": \"COUNT\" },\n\t\t\t{ \"name\": \"limit_id\", \"samples\": 100, \"projection\": \"ID\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_all\", \"samples\": 100, \"projection\": \"FULL\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_count\", \"samples\": 100, \"projection\": \"COUNT\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_id\", \"samples\": 100, \"projection\": \"ID\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_all\", \"samples\": 100, \"projection\": \"FULL\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_count\", \"samples\": 100, \"projection\": \"COUNT\", \"start\": 5000, \"limit\": 100, \"expect\": 100 }\n\t\t]"]
@@ -150,21 +150,21 @@ template for generating a randomized value.
 
 Within the JSON structure, the following values are replaced by randomly generated data:
 
-- Every occurrence of `string:XX` will be replaced by a random string with XX characters.
-- Every occurrence of `text:XX` will be replaced by a random string made of words of 2 to 10 characters, for a total of
-  XX characters.
-- Every occurrence of `string:X..Y` will be replaced by a random string between X and Y characters.
+- Every occurrence of `string:X` will be replaced by a random string with `X` characters.
+- Every occurrence of `text:X` will be replaced by a random string made of words of 2 to 10 characters, for a total of
+  `X` characters.
+- Every occurrence of `string:X..Y` will be replaced by a random string between `X` and `Y` characters.
 - Every occurrence of `text:X..Y` will be replaced by a random string made of words of 2 to 10 characters, for a total
-  between X and Y characters.
+  between `X` and `Y` characters.
 - Every `int` will be replaced by a random integer (i32).
-- Every `int:X..Y` will be replaced by a random integer (i32) between X and Y.
+- Every `int:X..Y` will be replaced by a random integer (i32) between `X` and `Y`.
 - Every `float` will be replaced by a random float (f32).
-- Every `float:X..Y` will be replaced by a random float (f32) between X and Y.
+- Every `float:X..Y` will be replaced by a random float (f32) between `X` and `Y`.
 - Every `uuid` will be replaced by a random UUID (v4).
-- Every `bool` will be replaced by a `true` or `false` (v4).
+- Every `bool` will be replaced by a `true` or `false`.
 - Every `string_enum:A,B,C` will be replaced by a string from `A` `B` or `C`.
-- Every `int_enum:A,B,C` will be replaced by a i32 from  `A` `B` or `C`.
-- Every `float_enum:A,B,C` will be replaced by a f32 from  `A` `B` or `C`.
+- Every `int_enum:A,B,C` will be replaced by a i32 from `A` `B` or `C`.
+- Every `float_enum:A,B,C` will be replaced by a f32 from `A` `B` or `C`.
 - Every `datetime` will be replaced by a datetime (ISO 8601).
 
 ```json

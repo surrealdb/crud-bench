@@ -1,6 +1,9 @@
 use crate::KeyType;
 use crate::benchmark::Benchmark;
-use crate::dialect::{AnsiSqlDialect, DefaultDialect, MySqlDialect, Neo4jDialect};
+use crate::dialect::{
+	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MongoDBDialect, MySqlDialect, Neo4jDialect,
+	SurrealDBDialect,
+};
 use crate::docker::{Container, DockerParams};
 use crate::dry::DryClientProvider;
 use crate::engine::BenchmarkEngine;
@@ -127,7 +130,7 @@ impl Database {
 			#[cfg(feature = "arangodb")]
 			Database::Arangodb => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, ArangoDBDialect, _>(
 						crate::arangodb::ArangoDBClientProvider::setup(kt, vp.columns(), benchmark)
 							.await?,
 						kp,
@@ -235,7 +238,7 @@ impl Database {
 			#[cfg(feature = "mongodb")]
 			Database::Mongodb => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, MongoDBDialect, _>(
 						crate::mongodb::MongoDBClientProvider::setup(kt, vp.columns(), benchmark)
 							.await?,
 						kp,
@@ -330,7 +333,7 @@ impl Database {
 			#[cfg(feature = "sqlite")]
 			Database::Sqlite => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, AnsiSqlDialect, _>(
 						crate::sqlite::SqliteClientProvider::setup(kt, vp.columns(), benchmark)
 							.await?,
 						kp,
@@ -342,7 +345,7 @@ impl Database {
 			#[cfg(feature = "surrealdb")]
 			Database::Surrealdb => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, SurrealDBDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -358,7 +361,7 @@ impl Database {
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbMemory => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, SurrealDBDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -374,7 +377,7 @@ impl Database {
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbRocksdb => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, SurrealDBDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -390,7 +393,7 @@ impl Database {
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbSurrealkv => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, SurrealDBDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),

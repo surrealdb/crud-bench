@@ -309,9 +309,9 @@ impl PostgresClient {
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
 		// Extract parameters
-		let s = scan.start.map(|s| format!("OFFSET {s}")).unwrap_or_default();
-		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {s}")).unwrap_or_default();
+		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
+		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
+		let c = AnsiSqlDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
