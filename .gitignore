@@ -50,6 +50,13 @@ Cargo.lock
 /bin/
 /.direnv/
 
+# --- Ignore benchmark database files
+redb
+lmdb/
+mdbx/
+rocksdb/
+surrealkv/
+
 # --- Ignore generated result files
 result.json
 result-*.json
