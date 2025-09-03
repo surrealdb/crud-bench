@@ -5,7 +5,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
-use redb::{Database, Durability, ReadableTable, TableDefinition};
+use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
 use serde_json::Value;
 use std::cmp::max;
 use std::hint::black_box;
@@ -226,10 +226,10 @@ impl ReDBClient {
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Set the transaction durability
-			txn.set_durability(if sync {
+			let _ = txn.set_durability(if sync {
 				Durability::Immediate
 			} else {
-				Durability::Eventual
+				Durability::None
 			});
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;
@@ -275,10 +275,10 @@ impl ReDBClient {
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Set the transaction durability
-			txn.set_durability(if sync {
+			let _ = txn.set_durability(if sync {
 				Durability::Immediate
 			} else {
-				Durability::Eventual
+				Durability::None
 			});
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;
@@ -300,10 +300,10 @@ impl ReDBClient {
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Set the transaction durability
-			txn.set_durability(if sync {
+			let _ = txn.set_durability(if sync {
 				Durability::Immediate
 			} else {
-				Durability::Eventual
+				Durability::None
 			});
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;

@@ -7,7 +7,7 @@ use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use heed::types::Bytes;
 use heed::{Database, EnvOpenOptions};
-use heed::{Env, EnvFlags};
+use heed::{Env, EnvFlags, WithoutTls};
 use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
@@ -24,7 +24,7 @@ static DATABASE_SIZE: LazyLock<usize> = LazyLock::new(|| {
 		.unwrap_or(DEFAULT_SIZE)
 });
 
-pub(crate) struct LmDBClientProvider(Arc<(Env, Database<Bytes, Bytes>)>);
+pub(crate) struct LmDBClientProvider(Arc<(Env<WithoutTls>, Database<Bytes, Bytes>)>);
 
 impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 	/// The number of seconds to wait before connecting
@@ -37,15 +37,27 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Recreate the database directory
 		std::fs::create_dir(DATABASE_DIR)?;
-		// Configure sync flags based on options
-		let flags = if options.sync {
-			EnvFlags::NO_TLS | EnvFlags::MAP_ASYNC
-		} else {
-			EnvFlags::NO_TLS | EnvFlags::MAP_ASYNC | EnvFlags::NO_SYNC | EnvFlags::NO_META_SYNC
-		};
+		// Configure flags based on options
+		let mut flags = EnvFlags::NO_READ_AHEAD | EnvFlags::NO_MEM_INIT;
+		// Configure flags for filesystem sync
+		if !options.sync {
+			flags |= EnvFlags::NO_SYNC | EnvFlags::NO_META_SYNC;
+		}
 		// Create a new environment
 		let env = unsafe {
-			EnvOpenOptions::new().flags(flags).map_size(*DATABASE_SIZE).open(DATABASE_DIR)
+			EnvOpenOptions::new()
+				// Allow more transactions than threads
+				.read_txn_without_tls()
+				// Configure database flags
+				.flags(flags)
+				// We only use one db for benchmarks
+				.max_dbs(1)
+				// Optimize for expected concurrent readers
+				.max_readers(126)
+				// Set the database size
+				.map_size(*DATABASE_SIZE)
+				// Open the database
+				.open(DATABASE_DIR)
 		}?;
 		// Creaye the database
 		let db = {
@@ -66,7 +78,7 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 }
 
 pub(crate) struct LmDBClient {
-	db: Arc<(Env, Database<Bytes, Bytes>)>,
+	db: Arc<(Env<WithoutTls>, Database<Bytes, Bytes>)>,
 }
 
 impl BenchmarkClient for LmDBClient {

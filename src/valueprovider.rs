@@ -28,7 +28,7 @@ impl ValueProvider {
 		Ok(Self {
 			generator,
 			columns,
-			rng: SmallRng::from_entropy(),
+			rng: SmallRng::from_os_rng(),
 		})
 	}
 
@@ -48,7 +48,7 @@ impl Clone for ValueProvider {
 	fn clone(&self) -> Self {
 		Self {
 			generator: self.generator.clone(),
-			rng: SmallRng::from_entropy(),
+			rng: SmallRng::from_os_rng(),
 			columns: self.columns.clone(),
 		}
 	}
@@ -79,14 +79,14 @@ const CHARSET: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxy
 fn string(rng: &mut SmallRng, size: usize) -> String {
 	(0..size)
 		.map(|_| {
-			let idx = RandGen::gen_range(&mut *rng, 0..CHARSET.len());
+			let idx = RandGen::random_range(&mut *rng, 0..CHARSET.len());
 			CHARSET[idx] as char
 		})
 		.collect()
 }
 
 fn string_range(rng: &mut SmallRng, range: Range<usize>) -> String {
-	let l = RandGen::gen_range(rng, range);
+	let l = RandGen::random_range(rng, range);
 	string(rng, l)
 }
 
@@ -106,7 +106,7 @@ fn text(rng: &mut SmallRng, size: usize) -> String {
 }
 
 fn text_range(rng: &mut SmallRng, range: Range<usize>) -> String {
-	let l = RandGen::gen_range(rng, range);
+	let l = RandGen::random_range(rng, range);
 	text(rng, l)
 }
 
@@ -195,7 +195,7 @@ impl ValueGenerator {
 	{
 		match self {
 			ValueGenerator::Bool => {
-				let v = RandGen::gen_bool(&mut *rng, 0.5);
+				let v = RandGen::random_bool(&mut *rng, 0.5);
 				Value::Bool(v)
 			}
 			ValueGenerator::String(l) => {
@@ -213,16 +213,16 @@ impl ValueGenerator {
 				Value::String(val)
 			}
 			ValueGenerator::Integer => {
-				let v = RandGen::gen_range(&mut *rng, i32::MIN..i32::MAX);
+				let v = RandGen::random_range(&mut *rng, i32::MIN..i32::MAX);
 				Value::Number(Number::from(v))
 			}
 			ValueGenerator::Float => {
-				let v = RandGen::gen_range(&mut *rng, f32::MIN..f32::MAX);
+				let v = RandGen::random_range(&mut *rng, f32::MIN..f32::MAX);
 				Value::Number(Number::from_f64(v as f64).unwrap())
 			}
 			ValueGenerator::DateTime => {
 				// Number of seconds from Epoch to 31/12/2030
-				let s = RandGen::gen_range(&mut *rng, 0..1_924_991_999);
+				let s = RandGen::random_range(&mut *rng, 0..1_924_991_999);
 				D::date_time(s)
 			}
 			ValueGenerator::Uuid => {
@@ -230,23 +230,23 @@ impl ValueGenerator {
 				D::uuid(uuid)
 			}
 			ValueGenerator::IntegerRange(r) => {
-				let v = rng.gen_range(r.start..r.end);
+				let v = rng.random_range(r.start..r.end);
 				Value::Number(v.into())
 			}
 			ValueGenerator::FloatRange(r) => {
-				let v = rng.gen_range(r.start..r.end);
+				let v = rng.random_range(r.start..r.end);
 				Value::Number(Number::from_f64(v as f64).unwrap())
 			}
 			ValueGenerator::StringEnum(a) => {
-				let i = rng.gen_range(0..a.len());
+				let i = rng.random_range(0..a.len());
 				Value::String(a[i].to_string())
 			}
 			ValueGenerator::IntegerEnum(a) => {
-				let i = rng.gen_range(0..a.len());
+				let i = rng.random_range(0..a.len());
 				Value::Number(a[i].clone())
 			}
 			ValueGenerator::FloatEnum(a) => {
-				let i = rng.gen_range(0..a.len());
+				let i = rng.random_range(0..a.len());
 				Value::Number(a[i].clone())
 			}
 			ValueGenerator::Array(a) => {
