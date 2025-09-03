@@ -11,7 +11,6 @@ use std::hint::black_box;
 use std::iter::Iterator;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::Duration;
 use surrealkv::Durability;
 use surrealkv::Mode::{ReadOnly, ReadWrite};
@@ -22,19 +21,6 @@ use sysinfo::System;
 const DATABASE_DIR: &str = "surrealkv";
 
 const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB
-
-pub(crate) static SKV_THREADPOOL: OnceLock<affinitypool::Threadpool> = OnceLock::new();
-
-fn get_threadpool() -> &'static affinitypool::Threadpool {
-	SKV_THREADPOOL.get_or_init(|| {
-		affinitypool::Builder::new()
-			.thread_name("surrealkv-threadpool")
-			.thread_stack_size(5 * 1024 * 1024)
-			.thread_per_core(false)
-			.worker_threads(1)
-			.build()
-	})
-}
 
 pub(crate) struct SurrealKVClientProvider {
 	store: Arc<Store>,
@@ -255,7 +241,7 @@ impl SurrealKVClient {
 		});
 		// Process the data
 		txn.set(key, &val)?;
-		get_threadpool().spawn(move || txn.commit()).await?;
+		txn.commit()?;
 		Ok(())
 	}
 
@@ -285,7 +271,7 @@ impl SurrealKVClient {
 		});
 		// Process the data
 		txn.set(key, &val)?;
-		get_threadpool().spawn(move || txn.commit()).await?;
+		txn.commit()?;
 		Ok(())
 	}
 
@@ -300,7 +286,7 @@ impl SurrealKVClient {
 		});
 		// Process the data
 		txn.delete(key)?;
-		get_threadpool().spawn(move || txn.commit()).await?;
+		txn.commit()?;
 		Ok(())
 	}
 
@@ -318,7 +304,7 @@ impl SurrealKVClient {
 			txn.set(&key, &val)?;
 		}
 		// Commit the batch
-		get_threadpool().spawn(move || txn.commit()).await?;
+		txn.commit()?;
 		Ok(())
 	}
 
@@ -352,7 +338,7 @@ impl SurrealKVClient {
 			txn.set(&key, &val)?;
 		}
 		// Commit the batch
-		get_threadpool().spawn(move || txn.commit()).await?;
+		txn.commit()?;
 		Ok(())
 	}
 
@@ -370,7 +356,7 @@ impl SurrealKVClient {
 			txn.delete(&key)?;
 		}
 		// Commit the batch
-		get_threadpool().spawn(move || txn.commit()).await?;
+		txn.commit()?;
 		Ok(())
 	}
 
