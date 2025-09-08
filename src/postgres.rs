@@ -61,7 +61,7 @@ pub(crate) struct PostgresClient {
 }
 
 impl BenchmarkClient for PostgresClient {
-	async fn startup(&self) -> Result<()> {
+	async fn startup(&self, prepare: Option<&String>) -> Result<()> {
 		let id_type = match self.kt {
 			KeyType::Integer => "SERIAL",
 			KeyType::String26 => "VARCHAR(26)",
@@ -90,7 +90,10 @@ impl BenchmarkClient for PostgresClient {
 			})
 			.collect::<Vec<String>>()
 			.join(", ");
-		let stm = format!("DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
+		let mut stm = format!("DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
+		if let Some(prepare) = prepare {
+			stm.push_str(prepare);
+		}
 		self.client.batch_execute(&stm).await?;
 		Ok(())
 	}

@@ -42,6 +42,8 @@ pub(crate) struct Benchmark {
 	pub(crate) sync: bool,
 	/// Whether to enable disk persistence (specific to surrealkv for now)
 	pub(crate) disk_persistence: bool,
+	///
+	pub(crate) prepare: Option<String>,
 }
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
@@ -56,6 +58,7 @@ impl Benchmark {
 			sync: args.sync,
 			pid: args.pid,
 			disk_persistence: true,
+			prepare: args.prepare.to_owned(),
 		}
 	}
 	/// Run the benchmark for the desired benchmark engine
@@ -74,7 +77,7 @@ impl Benchmark {
 		// Generate a value sample for the report
 		let sample = vp.generate_value::<D>();
 		// Setup the datastore
-		self.wait_for_client(&engine).await?.startup().await?;
+		self.wait_for_client(&engine).await?.startup(self.prepare.as_ref()).await?;
 		// Setup the clients
 		let clients = self.setup_clients(&engine).await?;
 		// Run the "creates" benchmark

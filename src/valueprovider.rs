@@ -59,6 +59,7 @@ enum ValueGenerator {
 	Bool,
 	String(Length<usize>),
 	Text(Length<usize>),
+	Words(Length<usize>, Vec<String>),
 	Integer,
 	Float,
 	DateTime,
@@ -110,6 +111,26 @@ fn text_range(rng: &mut SmallRng, range: Range<usize>) -> String {
 	text(rng, l)
 }
 
+fn words(rng: &mut SmallRng, size: usize, dictionary: &[String]) -> String {
+	let mut l = 0;
+	let mut words = Vec::with_capacity(size / 5);
+	let mut i = 0;
+	while l < size {
+		let w = dictionary[rng.gen_range(0..dictionary.len())].as_str();
+		l += w.len();
+		words.push(w);
+		l += i;
+		// We ignore the first whitespace, but not the following ones
+		i = 1;
+	}
+	words.join(" ")
+}
+
+fn words_range(rng: &mut SmallRng, range: Range<usize>, dictionary: &[String]) -> String {
+	let l = rng.gen_range(range);
+	words(rng, l, dictionary)
+}
+
 impl ValueGenerator {
 	fn new(value: Value) -> Result<Self> {
 		match value {
@@ -128,6 +149,14 @@ impl ValueGenerator {
 			Self::String(Length::new(i)?)
 		} else if let Some(i) = s.strip_prefix("text:") {
 			Self::Text(Length::new(i)?)
+		} else if let Some(i) = s.strip_prefix("words:") {
+			let args: Vec<&str> = i.split(";").collect();
+			if args.len() != 2 {
+				bail!("Words takes 2 arguments. Got: {}", args.len());
+			}
+			let l = Length::new(args[0])?;
+			let dictionary = args[1].split(",").map(|s| s.to_string()).collect();
+			Self::Words(l, dictionary)
 		} else if let Some(i) = s.strip_prefix("int:") {
 			if let Length::Range(r) = Length::new(i)? {
 				Self::IntegerRange(r)
@@ -194,62 +223,69 @@ impl ValueGenerator {
 		D: Dialect,
 	{
 		match self {
-			ValueGenerator::Bool => {
+			Self::Bool => {
 				let v = rng.gen::<bool>();
 				Value::Bool(v)
 			}
-			ValueGenerator::String(l) => {
+			Self::String(l) => {
 				let val = match l {
 					Length::Range(r) => string_range(rng, r.clone()),
 					Length::Fixed(l) => string(rng, *l),
 				};
 				Value::String(val)
 			}
-			ValueGenerator::Text(l) => {
+			Self::Text(l) => {
 				let val = match l {
 					Length::Range(r) => text_range(rng, r.clone()),
 					Length::Fixed(l) => text(rng, *l),
 				};
 				Value::String(val)
 			}
-			ValueGenerator::Integer => {
+			Self::Words(l, dictionary) => {
+				let val = match l {
+					Length::Range(r) => words_range(rng, r.clone(), dictionary),
+					Length::Fixed(l) => words(rng, *l, dictionary),
+				};
+				Value::String(val)
+			}
+			Self::Integer => {
 				let v = rng.gen::<i32>();
 				Value::Number(Number::from(v))
 			}
-			ValueGenerator::Float => {
+			Self::Float => {
 				let v = rng.gen::<f32>();
 				Value::Number(Number::from_f64(v as f64).unwrap())
 			}
-			ValueGenerator::DateTime => {
+			Self::DateTime => {
 				// Number of seconds from Epoch to 31/12/2030
 				let s = rng.gen_range(0..1_924_991_999);
 				D::date_time(s)
 			}
-			ValueGenerator::Uuid => {
+			Self::Uuid => {
 				let uuid = Uuid::new_v4();
 				D::uuid(uuid)
 			}
-			ValueGenerator::IntegerRange(r) => {
+			Self::IntegerRange(r) => {
 				let v = rng.gen_range(r.start..r.end);
 				Value::Number(v.into())
 			}
-			ValueGenerator::FloatRange(r) => {
+			Self::FloatRange(r) => {
 				let v = rng.gen_range(r.start..r.end);
 				Value::Number(Number::from_f64(v as f64).unwrap())
 			}
-			ValueGenerator::StringEnum(a) => {
+			Self::StringEnum(a) => {
 				let i = rng.gen_range(0..a.len());
 				Value::String(a[i].to_string())
 			}
-			ValueGenerator::IntegerEnum(a) => {
+			Self::IntegerEnum(a) => {
 				let i = rng.gen_range(0..a.len());
 				Value::Number(a[i].clone())
 			}
-			ValueGenerator::FloatEnum(a) => {
+			Self::FloatEnum(a) => {
 				let i = rng.gen_range(0..a.len());
 				Value::Number(a[i].clone())
 			}
-			ValueGenerator::Array(a) => {
+			Self::Array(a) => {
 				// Generate any array structure values
 				let mut vec = Vec::with_capacity(a.len());
 				for v in a {
@@ -257,7 +293,7 @@ impl ValueGenerator {
 				}
 				Value::Array(vec)
 			}
-			ValueGenerator::Object(o) => {
+			Self::Object(o) => {
 				// Generate any object structure values
 				let mut map = Map::<String, Value>::new();
 				for (k, v) in o {
@@ -338,9 +374,10 @@ impl ColumnType {
 	fn new(v: &ValueGenerator) -> Result<Self> {
 		let r = match v {
 			ValueGenerator::Object(_) => ColumnType::Object,
-			ValueGenerator::StringEnum(_) | ValueGenerator::String(_) | ValueGenerator::Text(_) => {
-				ColumnType::String
-			}
+			ValueGenerator::StringEnum(_)
+			| ValueGenerator::String(_)
+			| ValueGenerator::Text(_)
+			| ValueGenerator::Words(_, _) => ColumnType::String,
 			ValueGenerator::Integer
 			| ValueGenerator::IntegerRange(_)
 			| ValueGenerator::IntegerEnum(_) => ColumnType::Integer,

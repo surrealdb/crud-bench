@@ -71,7 +71,7 @@ impl BenchmarkClient for SqliteClient {
 		Ok(())
 	}
 
-	async fn startup(&self) -> Result<()> {
+	async fn startup(&self, prepare: Option<&String>) -> Result<()> {
 		// Optimise SQLite
 		let stmt = "
             PRAGMA synchronous = OFF;
@@ -109,12 +109,15 @@ impl BenchmarkClient for SqliteClient {
 			})
 			.collect::<Vec<String>>()
 			.join(",");
-		let stmt = format!(
+		let mut stmt = format!(
 			"
 		    DROP TABLE IF EXISTS record;
 		    CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});
 		"
 		);
+		if let Some(prepare) = prepare {
+			stmt.push_str(prepare);
+		}
 		self.execute_batch(Cow::Owned(stmt)).await?;
 		Ok(())
 	}

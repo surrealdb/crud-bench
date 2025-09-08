@@ -68,9 +68,12 @@ pub(crate) struct Neo4jClient {
 }
 
 impl BenchmarkClient for Neo4jClient {
-	async fn startup(&self) -> Result<()> {
-		let stm = "CREATE INDEX FOR (r:Record) ON (r.id);";
-		self.graph.execute(query(stm)).await?.next().await.ok();
+	async fn startup(&self, prepare: Option<&String>) -> Result<()> {
+		let mut stm = "CREATE INDEX FOR (r:Record) ON (r.id);".to_string();
+		if let Some(prepare) = prepare {
+			stm.push_str(prepare);
+		}
+		self.graph.execute(query(&stm)).await?.next().await.ok();
 		Ok(())
 	}
 

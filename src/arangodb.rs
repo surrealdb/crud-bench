@@ -85,13 +85,16 @@ async fn create_arango_client(
 }
 
 impl BenchmarkClient for ArangoDBClient {
-	async fn startup(&self) -> Result<()> {
+	async fn startup(&self, prepare: Option<&String>) -> Result<()> {
 		// Ensure we drop the database first.
 		// We can drop the database initially
 		// because the other clients will be
 		// created subsequently, and will then
 		// create the database as necessary.
 		self.connection.drop_database("crud-bench").await?;
+		if prepare.is_some() {
+			bail!("Prepare not supported");
+		}
 		// Everything ok
 		Ok(())
 	}

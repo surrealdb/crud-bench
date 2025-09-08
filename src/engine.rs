@@ -28,7 +28,10 @@ where
 /// running benchmark tests for a client or connection.
 pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Initialise the store at startup
-	async fn startup(&self) -> Result<()> {
+	async fn startup(&self, prepare: Option<&String>) -> Result<()> {
+		if prepare.is_some() {
+			bail!("Prepare not supported");
+		}
 		Ok(())
 	}
 

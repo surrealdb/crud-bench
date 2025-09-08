@@ -136,6 +136,10 @@ pub(crate) struct Args {
 		]"#
 	)]
 	pub(crate) scans: String,
+
+	///
+	#[arg(long, env = "CRUD_BENCH_PREPARE")]
+	pub(crate) prepare: Option<String>,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -340,6 +344,7 @@ mod test {
 			scans: r#"[{"name": "limit", "start": 50, "limit": 100, "expect": 100}]"#.to_string(),
 			show_sample: false,
 			pid: None,
+			prepare: None,
 		})
 	}
 

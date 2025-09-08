@@ -55,7 +55,7 @@ pub(crate) struct ScylladbClient {
 }
 
 impl BenchmarkClient for ScylladbClient {
-	async fn startup(&self) -> Result<()> {
+	async fn startup(&self, prepare: Option<&String>) -> Result<()> {
 		self.session
 			.query_unpaged(
 				"
@@ -96,6 +96,9 @@ impl BenchmarkClient for ScylladbClient {
 				(),
 			)
 			.await?;
+		if let Some(prepare) = prepare {
+			self.session.query_unpaged(prepare.to_owned(), ()).await?;
+		}
 		Ok(())
 	}
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {

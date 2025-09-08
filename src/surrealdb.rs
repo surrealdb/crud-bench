@@ -117,7 +117,7 @@ struct SurrealRecord {
 }
 
 impl BenchmarkClient for SurrealDBClient {
-	async fn startup(&self) -> Result<()> {
+	async fn startup(&self, prepare: Option<&String>) -> Result<()> {
 		// Ensure the table exists. This wouldn't
 		// normally be an issue, as SurrealDB is
 		// schemaless. However, because we are testing
@@ -131,6 +131,9 @@ impl BenchmarkClient for SurrealDBClient {
 			DEFINE TABLE record;
 		";
 		self.db.query(Raw::from(surql)).await?.check()?;
+		if let Some(prepare) = prepare {
+			self.db.query(Raw::from(prepare.to_owned())).await?.check()?;
+		}
 		Ok(())
 	}
 
