@@ -10,11 +10,11 @@ use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use surrealdb::RecordId;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Raw, Resource};
+use surrealdb::{RecordId, RecordIdKey};
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
 
@@ -182,93 +182,35 @@ impl BenchmarkClient for SurrealDBClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		let res = self
-			.db
-			.query(Raw::from("CREATE type::thing('record', $key) CONTENT $content RETURN NULL"))
-			.bind(Bindings {
-				key,
-				content: val,
-			})
-			.await?
-			.take::<surrealdb::Value>(0)?;
-		assert!(!res.into_inner().is_none());
-		Ok(())
+		self.create(key, val).await
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let res = self
-			.db
-			.query(Raw::from("CREATE type::thing('record', $key) CONTENT $content RETURN NULL"))
-			.bind(Bindings {
-				key,
-				content: val,
-			})
-			.await?
-			.take::<surrealdb::Value>(0)?;
-		assert!(!res.into_inner().is_none());
-		Ok(())
+		self.create(key, val).await
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		let res = self.db.select(Resource::from(("record", key as i64))).await?;
-		assert!(!res.into_inner().is_none());
-		Ok(())
+		self.read(key as i64).await
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
-		let res = self.db.select(Resource::from(("record", key))).await?;
-		assert!(!res.into_inner().is_none());
-		Ok(())
+		self.read(key).await
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let res = self
-			.db
-			.query(Raw::from("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL"))
-			.bind(Bindings {
-				key,
-				content: val,
-			})
-			.await?
-			.take::<surrealdb::Value>(0)?;
-		assert!(!res.into_inner().is_none());
-		Ok(())
+		self.update(key, val).await
 	}
 
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let res = self
-			.db
-			.query(Raw::from("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL"))
-			.bind(Bindings {
-				key,
-				content: val,
-			})
-			.await?
-			.take::<surrealdb::Value>(0)?;
-		assert!(!res.into_inner().is_none());
-		Ok(())
+		self.update(key, val).await
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		let res = self
-			.db
-			.query(Raw::from("DELETE type::thing('record', $key) RETURN NULL"))
-			.bind(("key", key))
-			.await?
-			.take::<surrealdb::Value>(0)?;
-		assert!(!res.into_inner().is_none());
-		Ok(())
+		self.delete(key).await
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
-		let res = self
-			.db
-			.query(Raw::from("DELETE type::thing('record', $key) RETURN NULL"))
-			.bind(("key", key))
-			.await?
-			.take::<surrealdb::Value>(0)?;
-		assert!(!res.into_inner().is_none());
-		Ok(())
+		self.delete(key).await
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
@@ -281,6 +223,63 @@ impl BenchmarkClient for SurrealDBClient {
 }
 
 impl SurrealDBClient {
+	async fn create<T>(&self, key: T, val: Value) -> Result<()>
+	where
+		T: serde::Serialize + 'static,
+	{
+		let res = self
+			.db
+			.query(Raw::from("CREATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
+			.await?
+			.take::<surrealdb::Value>(0)?;
+		assert!(!res.into_inner().is_none());
+		Ok(())
+	}
+
+	async fn read<T>(&self, key: T) -> Result<()>
+	where
+		T: Into<RecordIdKey>,
+	{
+		let res = self.db.select(Resource::from(("record", key))).await?;
+		assert!(!res.into_inner().is_none());
+		Ok(())
+	}
+
+	async fn update<T>(&self, key: T, val: Value) -> Result<()>
+	where
+		T: serde::Serialize + 'static,
+	{
+		let res = self
+			.db
+			.query(Raw::from("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
+			.await?
+			.take::<surrealdb::Value>(0)?;
+		assert!(!res.into_inner().is_none());
+		Ok(())
+	}
+
+	async fn delete<T>(&self, key: T) -> Result<()>
+	where
+		T: serde::Serialize + 'static,
+	{
+		let res = self
+			.db
+			.query(Raw::from("DELETE type::thing('record', $key) RETURN NULL"))
+			.bind(("key", key))
+			.await?
+			.take::<surrealdb::Value>(0)?;
+		assert!(!res.into_inner().is_none());
+		Ok(())
+	}
+
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
 		// Extract parameters
 		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
