@@ -6,7 +6,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
@@ -116,6 +116,12 @@ struct SurrealRecord {
 	id: RecordId,
 }
 
+#[derive(Debug, Serialize)]
+struct Bindings<T> {
+	content: Value,
+	key: T,
+}
+
 impl BenchmarkClient for SurrealDBClient {
 	async fn startup(&self, prepare: Option<&String>) -> Result<()> {
 		// Ensure the table exists. This wouldn't
@@ -138,50 +144,92 @@ impl BenchmarkClient for SurrealDBClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		let res = self.db.create(Resource::from(("record", key as i64))).content(val).await?;
-		assert!(res.into_inner().is_some());
+		let res = self
+			.db
+			.query(Raw::from("CREATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
+			.await?
+			.take::<surrealdb::Value>(0)?;
+		assert!(!res.into_inner().is_none());
 		Ok(())
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let res = self.db.create(Resource::from(("record", key))).content(val).await?;
-		assert!(res.into_inner().is_some());
+		let res = self
+			.db
+			.query(Raw::from("CREATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
+			.await?
+			.take::<surrealdb::Value>(0)?;
+		assert!(!res.into_inner().is_none());
 		Ok(())
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
 		let res = self.db.select(Resource::from(("record", key as i64))).await?;
-		assert!(res.into_inner().is_some());
+		assert!(!res.into_inner().is_none());
 		Ok(())
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
 		let res = self.db.select(Resource::from(("record", key))).await?;
-		assert!(res.into_inner().is_some());
+		assert!(!res.into_inner().is_none());
 		Ok(())
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let res = self.db.update(Resource::from(("record", key as i64))).content(val).await?;
-		assert!(res.into_inner().is_some());
+		let res = self
+			.db
+			.query(Raw::from("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
+			.await?
+			.take::<surrealdb::Value>(0)?;
+		assert!(!res.into_inner().is_none());
 		Ok(())
 	}
 
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let res = self.db.update(Resource::from(("record", key))).content(val).await?;
-		assert!(res.into_inner().is_some());
+		let res = self
+			.db
+			.query(Raw::from("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL"))
+			.bind(Bindings {
+				key,
+				content: val,
+			})
+			.await?
+			.take::<surrealdb::Value>(0)?;
+		assert!(!res.into_inner().is_none());
 		Ok(())
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		let res = self.db.delete(Resource::from(("record", key as i64))).await?;
-		assert!(res.into_inner().is_some());
+		let res = self
+			.db
+			.query(Raw::from("DELETE type::thing('record', $key) RETURN NULL"))
+			.bind(("key", key))
+			.await?
+			.take::<surrealdb::Value>(0)?;
+		assert!(!res.into_inner().is_none());
 		Ok(())
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
-		let res = self.db.delete(Resource::from(("record", key))).await?;
-		assert!(res.into_inner().is_some());
+		let res = self
+			.db
+			.query(Raw::from("DELETE type::thing('record', $key) RETURN NULL"))
+			.bind(("key", key))
+			.await?
+			.take::<surrealdb::Value>(0)?;
+		assert!(!res.into_inner().is_none());
 		Ok(())
 	}
 
@@ -206,7 +254,8 @@ impl SurrealDBClient {
 			Projection::Id => {
 				let sql = format!("SELECT id FROM record {c} {s} {l}");
 				let res: surrealdb::Value = self.db.query(Raw::from(sql)).await?.take(0)?;
-				let surrealdb::expr::Value::Array(arr) = res.into_inner() else {
+				let val = res.into_inner();
+				let Some(arr) = val.as_array() else {
 					panic!("Unexpected response type");
 				};
 				Ok(arr.len())
@@ -214,7 +263,8 @@ impl SurrealDBClient {
 			Projection::Full => {
 				let sql = format!("SELECT * FROM record {c} {s} {l}");
 				let res: surrealdb::Value = self.db.query(Raw::from(sql)).await?.take(0)?;
-				let surrealdb::expr::Value::Array(arr) = res.into_inner() else {
+				let val = res.into_inner();
+				let Some(arr) = val.as_array() else {
 					panic!("Unexpected response type");
 				};
 				Ok(arr.len())
