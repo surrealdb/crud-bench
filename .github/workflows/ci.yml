@@ -448,11 +448,11 @@ jobs:
         env:
           CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
 
-      - name: Run benchmarks (100,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
+      - name: Run benchmarks (1000 samples / 10 clients / 10 threads / key string26 / random / words)
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 100000 -c 128 -t 48 -k string26 -r -n string26-random-1k
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000 -c 10 -t 10 -k string26 -r -n string26-random-1k
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_PREPARE: 'DEFINE ANALYZER IF NOT EXISTS simple TOKENIZERS class FILTERS lowercase,ascii; DEFINE INDEX ft ON record COLUMNS words FULLTEXT ANALYZER simple BM25;'
