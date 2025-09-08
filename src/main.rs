@@ -137,7 +137,7 @@ pub(crate) struct Args {
 	)]
 	pub(crate) scans: String,
 
-	///
+	/// Statement(s) to execute before the benchmark
 	#[arg(long, env = "CRUD_BENCH_PREPARE")]
 	pub(crate) prepare: Option<String>,
 }

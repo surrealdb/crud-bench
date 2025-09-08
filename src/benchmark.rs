@@ -42,7 +42,7 @@ pub(crate) struct Benchmark {
 	pub(crate) sync: bool,
 	/// Whether to enable disk persistence (specific to surrealkv for now)
 	pub(crate) disk_persistence: bool,
-	///
+	/// Statement(s) to run before the benchmark
 	pub(crate) prepare: Option<String>,
 }
 impl Benchmark {
