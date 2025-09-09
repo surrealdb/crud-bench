@@ -477,7 +477,7 @@ jobs:
 
       - name: Run benchmarks (1000 samples / 10 clients / 10 threads / key string26 / random / words)
         timeout-minutes: 30
-        if: ${{ matrix.enabled && (success() || failure()) }}
+        if: ${{ matrix.enabled && matrix.fulltext && (success() || failure()) }}
         run: |
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 1000 -c 10 -t 10 -k string26 -r -n string26-random-1k
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
@@ -488,7 +488,7 @@ jobs:
 
       - name: Upload result artifacts
         uses: actions/upload-artifact@v4
-        if: ${{ matrix.enabled && matrix.fulltext && (success() || failure()) }}
+        if: ${{ matrix.enabled && (success() || failure()) }}
         with:
           name: results ${{ matrix.name }}
           path: |
