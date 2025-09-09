@@ -30,7 +30,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Initialise the store at startup
 	async fn startup(&self, prepare: Option<&String>) -> Result<()> {
 		if prepare.is_some() {
-			bail!("Prepare not supported");
+			bail!(NOT_SUPPORTED_ERROR);
 		}
 		Ok(())
 	}

@@ -5,7 +5,7 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::Result;
 use mysql_async::consts;
 use mysql_async::prelude::Queryable;
 use mysql_async::prelude::ToValue;
@@ -85,12 +85,13 @@ impl BenchmarkClient for MysqlClient {
 			})
 			.collect::<Vec<String>>()
 			.join(", ");
-		let stm =
+		let mut stm =
 			format!("DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields}) ENGINE=InnoDB;");
-		self.conn.lock().await.query_drop(&stm).await?;
-		if prepare.is_some() {
-			bail!("Prepare not supported");
+		if let Some(prepare) = prepare {
+			stm.push_str(prepare);
 		}
+		self.conn.lock().await.query_drop(&stm).await?;
+
 		Ok(())
 	}
 

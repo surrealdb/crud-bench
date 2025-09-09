@@ -204,142 +204,169 @@ jobs:
             database: arangodb
             enabled: true
             description: ArangoDB
+            fulltext: false
           # Cassandra
           - name: cassandra
             database: cassandra
             enabled: false
             description: Cassandra
+            fulltext: false
             skipped: Cassandra benchmark not yet implemented
           # Dragonfly
           - name: dragonfly
             database: dragonfly
             enabled: true
             description: Dragonfly
+            fulltext: false
           # Dry
           - name: dry
             database: dry
             enabled: true
             description: Dry
+            fulltext: false
           # EchoDB
           - name: echodb
             database: echodb
             enabled: true
             description: EchoDB
+            fulltext: false
           # Fjall
           - name: Fjall
             database: fjall
             enabled: true
             description: Fjall
+            fulltext: false
           # KeyDB
           - name: keydb
             database: keydb
             enabled: true
             description: KeyDB
+            fulltext: false
           # LMDB
           - name: lmdb
             database: lmdb
             enabled: true
             description: LMDB
+            fulltext: false
           # Map
           - name: map
             database: map
             enabled: true
             description: Map
+            fulltext: false
           # MemoDB
           - name: memodb
             database: memodb
             enabled: true
             description: MemoDB
+            fulltext: false
           # MongoDB
           - name: mongodb
             database: mongodb
             enabled: true
             description: MongoDB
+            fulltext: false
           # MySQL
           - name: mysql
             database: mysql
             enabled: true
             description: MySQL
+            fulltext: false
           # Neo4j
           - name: neo4j
             database: neo4j
             enabled: true
             description: Neo4j
+            fulltext: false
           # Postgres
           - name: postgres
             database: postgres
             enabled: true
             description: Postgres
+            fulltext: false
           # Redb
           - name: redb
             database: redb
             enabled: false
             description: ReDB
+            fulltext: false
             skipped: ReDB benchmark skipped due to excessive benchmark time
           # Redis
           - name: redis
             database: redis
             enabled: true
             description: Redis
+            fulltext: false
           # RocksDB
           - name: rocksdb
             database: rocksdb
             enabled: true
             description: RocksDB
+            fulltext: false
           # Scylladb
           - name: scylladb
             database: scylladb
             enabled: false
             description: ScyllaDB
+            fulltext: false
             skipped: ScyllaDB benchmark not yet implemented
           # SQLite
           - name: sqlite
             database: sqlite
             enabled: true
             description: SQLite
+            fulltext: false
           # SurrealDB + Memory
           - name: surrealdb-memory
             database: surrealdb-memory
             enabled: true
             description: SurrealDB with in-memory storage
+            fulltext: true
           # SurrealDB + RocksDB
           - name: surrealdb-rocksdb
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
+            fulltext: true
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
             enabled: true
             description: SurrealDB with SurrealKV storage
+            fulltext: true
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
             enabled: true
             endpoint: -e memory
             description: SurrealDB embedded with in-memory storage
+            fulltext: true
           # SurrealDB RocksDB Engine
           - name: surrealdb-embedded-rocksdb
             database: surrealdb
             enabled: true
             endpoint: -e rocksdb:~/crud-bench
             description: SurrealDB embedded with RocksDB storage
+            fulltext: true
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
             enabled: true
             endpoint: -e surrealkv:~/crud-bench
             description: SurrealDB embedded with SurrealKV storage
+            fulltext: true
           # SurrealKV
           - name: surrealkv
             database: surrealkv
             enabled: true
             description: SurrealKV
+            fulltext: false
           # SurrealKV Memory
           - name: surrealkv-memory
             database: surrealkv-memory
             enabled: true
             description: SurrealKV with in-memory storage
+            fulltext: false
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -461,7 +488,7 @@ jobs:
 
       - name: Upload result artifacts
         uses: actions/upload-artifact@v4
-        if: ${{ matrix.enabled && (success() || failure()) }}
+        if: ${{ matrix.enabled && matrix.fulltext && (success() || failure()) }}
         with:
           name: results ${{ matrix.name }}
           path: |

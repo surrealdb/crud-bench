@@ -93,7 +93,7 @@ impl BenchmarkClient for ArangoDBClient {
 		// create the database as necessary.
 		self.connection.drop_database("crud-bench").await?;
 		if prepare.is_some() {
-			bail!("Prepare not supported");
+			bail!(NOT_SUPPORTED_ERROR);
 		}
 		// Everything ok
 		Ok(())
