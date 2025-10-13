@@ -1,42 +1,21 @@
 #![cfg(feature = "surrealkv")]
+use std::path::PathBuf;
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{bail, Result};
-use serde_json::Value;
-use std::cmp::max;
-use std::hint::black_box;
-use std::iter::Iterator;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::OnceLock;
-use std::time::Duration;
-use surrealkv::Durability;
-use surrealkv::Mode::{ReadOnly, ReadWrite};
 use surrealkv::Options;
-use surrealkv::Store;
-use sysinfo::System;
+use surrealkv::{TreeBuilder, Tree as Database};
+use serde_json::Value;
+use std::hint::black_box;
+use std::sync::Arc;
+use std::time::Duration;
 
-const DATABASE_DIR: &str = "surrealkv";
+const DATABASE_DIR: &str = "test-surrealkv";
 
-const MIN_CACHE_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB
-
-pub(crate) static SKV_THREADPOOL: OnceLock<affinitypool::Threadpool> = OnceLock::new();
-
-fn get_threadpool() -> &'static affinitypool::Threadpool {
-	SKV_THREADPOOL.get_or_init(|| {
-		affinitypool::Builder::new()
-			.thread_name("surrealkv-threadpool")
-			.thread_stack_size(5 * 1024 * 1024)
-			.thread_per_core(false)
-			.worker_threads(1)
-			.build()
-	})
-}
-
-pub(crate) struct SurrealKVClientProvider(Arc<Store>);
+pub(crate) struct SurrealKVClientProvider(Arc<Database>);
 
 impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 	/// The number of seconds to wait before connecting
@@ -44,34 +23,21 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
+	async fn setup(_: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
-		// Load the system attributes
-		let system = System::new_all();
-		// Get the total system memory
-		let memory = system.total_memory();
-		// Divide the total memory into half
-		let memory = memory.saturating_div(2);
-		// Subtract 1 GiB from the memory size
-		let memory = memory.saturating_sub(1024 * 1024 * 1024);
-		// Divide the total memory by a 4KiB value size
-		let cache = memory.saturating_div(4096);
-		// Calculate a good cache memory size
-		let cache = max(cache, MIN_CACHE_SIZE);
-		// Configure custom options
-		let mut opts = Options::new();
-		// Disable versioning
-		opts.enable_versions = false;
-		// Enable disk persistence
-		opts.disk_persistence = options.disk_persistence;
-		// Set the directory location
-		opts.dir = PathBuf::from(DATABASE_DIR);
-		// Set the cache to 250,000 entries
-		opts.max_value_cache_size = cache;
 
 		// Create the store
-		Ok(Self(Arc::new(Store::new(opts)?)))
+		let opts = Options::default()
+			.with_path(PathBuf::from(DATABASE_DIR))
+			.with_block_size(64 * 1024)
+			.with_max_memtable_size(256 * 1024 * 1024)
+			.with_block_cache_capacity(1 << 28) // 256 MiB
+			// .with_vlog_cache_capacity(1<<30)
+			// .with_vlog_value_threshold(29)
+			.with_filter_policy(None);
+		let tree = TreeBuilder::with_options(opts).build()?;
+		Ok(Self(Arc::new(tree)))
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SurrealKVClient> {
@@ -82,13 +48,20 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 }
 
 pub(crate) struct SurrealKVClient {
-	db: Arc<Store>,
+	db: Arc<Database>,
 }
 
 impl BenchmarkClient for SurrealKVClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		// Ok
+		Ok(())
+	}
+
+	async fn compact(&self) -> Result<()> {
+		// Compact the database
+		self.db.flush()?;
 		// Ok
 		Ok(())
 	}
@@ -139,18 +112,16 @@ impl SurrealKVClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
+		let mut txn = self.db.begin()?;
 		// Process the data
 		txn.set(key, &val)?;
-		get_threadpool().spawn(move || txn.commit()).await?;
+		txn.commit().await?;
 		Ok(())
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadOnly)?;
+		let txn = self.db.begin()?;
 		// Process the data
 		let res = txn.get(key)?;
 		// Check the value exists
@@ -165,23 +136,19 @@ impl SurrealKVClient {
 		// Serialise the value
 		let val = bincode::serialize(&val)?;
 		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
+		let mut txn = self.db.begin()?;
 		// Process the data
 		txn.set(key, &val)?;
-		get_threadpool().spawn(move || txn.commit()).await?;
+		txn.commit().await?;
 		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadWrite)?;
-		// Let the OS handle syncing to disk
-		txn.set_durability(Durability::Eventual);
+		let mut txn = self.db.begin()?;
 		// Process the data
 		txn.delete(key)?;
-		get_threadpool().spawn(move || txn.commit()).await?;
+		txn.commit().await?;
 		Ok(())
 	}
 
@@ -196,43 +163,43 @@ impl SurrealKVClient {
 		let t = scan.limit.map(|l| s + l);
 		let p = scan.projection()?;
 		// Create a new transaction
-		let mut txn = self.db.begin_with_mode(ReadOnly)?;
-		let beg = [0u8].as_slice();
-		let end = [255u8].as_slice();
+		let txn = self.db.begin()?;
+		let beg = [0u8].to_vec();
+		let end = [255u8].to_vec();
+
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
+				let iter = txn.range(beg.clone(), end.clone(), t)?;
 				// Create an iterator starting at the beginning
-				let iter = txn.keys(beg..end, t);
-				// We use a for loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
+				let iter = iter.into_iter();
+
 				let mut count = 0;
-				for v in iter.skip(s).take(l) {
-					black_box(v);
+				for v in iter.skip(s).take(l).flatten() {
+					black_box(v.0);
 					count += 1;
 				}
 				Ok(count)
 			}
 			Projection::Full => {
+				let iter = txn.range(beg.clone(), end.clone(), t)?;
 				// Create an iterator starting at the beginning
-				let iter = txn.scan(beg..end, t);
-				// We use a for loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
+				let iter = iter.into_iter();
+
+				// Scan the desired range of keys
 				let mut count = 0;
-				for v in iter.skip(s).take(l) {
-					assert!(v.is_ok());
-					black_box(v.unwrap().1);
+				for v in iter.skip(s).take(l).flatten() {
+					black_box(v.1);
 					count += 1;
 				}
 				Ok(count)
 			}
 			Projection::Count => {
-				Ok(txn
-					.keys(beg..end, t)
+				let iter = txn.keys(beg, end, t)?;
+				// Create an iterator starting at the beginning
+				let iter = iter.into_iter();
+
+				Ok(iter
 					.skip(s) // Skip the first `offset` entries
 					.take(l) // Take the next `limit` entries
 					.count())

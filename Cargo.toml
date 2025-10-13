@@ -7,41 +7,10 @@ readme = "README.md"
 
 [features]
 default = [
-    "arangodb",
-    "dragonfly",
-    "echodb",
     "fjall",
-    "keydb",
-    "lmdb",
-    "memodb",
-    "mongodb",
-    "mysql",
-    "neo4j",
-    "postgres",
-    "redb",
-    "redis",
     "rocksdb",
-    "scylladb",
-    "sqlite",
     "surrealkv",
-    "surrealdb",
 ]
-arangodb = ["dep:arangors"]
-dragonfly = ["dep:redis"]
-echodb = ["dep:echodb"]
-keydb = ["dep:redis"]
-fjall = ["dep:fjall"]
-lmdb = ["dep:heed"]
-memodb = ["dep:memodb"]
-mongodb = ["dep:mongodb"]
-mysql = ["dep:mysql_async"]
-neo4j = ["dep:neo4rs"]
-postgres = ["dep:tokio-postgres"]
-redb = ["dep:redb"]
-redis = ["dep:redis"]
-rocksdb = ["dep:rocksdb"]
-scylladb = ["dep:scylla"]
-sqlite = ["dep:tokio-rusqlite"]
 surrealdb = ["dep:surrealdb", "surrealdb/kv-mem", "surrealdb/kv-rocksdb", "surrealdb/kv-surrealkv", "surrealdb/protocol-http", "surrealdb/protocol-ws", "surrealdb/rustls"]
 surrealkv = ["dep:surrealkv"]
 
@@ -87,7 +56,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 serial_test = "3.2.0"
 surrealdb = { version = "3", package = "surrealdb-nightly", default-features = false, optional = true }
-surrealkv = { version = "0.9.1", optional = true }
+surrealkv = { git = "https://github.com/surrealdb/surrealkv", branch = "main" , optional = true}
 sysinfo = { version = "0.34.2", features = ["serde"] }
 tokio = { version = "1.44.2", features = ["macros", "time", "rt-multi-thread"] }
 tokio-postgres = { version = "0.7.13", optional = true, features = ["with-serde_json-1", "with-uuid-1"] }
