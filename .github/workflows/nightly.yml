@@ -152,7 +152,6 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            DOCKER_PRE_ARGS: -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv

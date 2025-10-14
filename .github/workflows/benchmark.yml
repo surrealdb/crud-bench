@@ -253,7 +253,6 @@ jobs:
             enabled: true
             description: SurrealDB with RocksDB storage
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
