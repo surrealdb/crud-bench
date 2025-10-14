@@ -30,8 +30,6 @@ pub(crate) enum Database {
 	Mdbx,
 	#[cfg(feature = "lmdb")]
 	Lmdb,
-	#[cfg(feature = "memodb")]
-	Memodb,
 	#[cfg(feature = "mongodb")]
 	Mongodb,
 	#[cfg(feature = "mysql")]
@@ -50,8 +48,6 @@ pub(crate) enum Database {
 	Scylladb,
 	#[cfg(feature = "sqlite")]
 	Sqlite,
-	#[cfg(feature = "surrealkv")]
-	Surrealkv,
 	#[cfg(feature = "surrealdb")]
 	Surrealdb,
 	#[cfg(feature = "surrealdb")]
@@ -61,7 +57,9 @@ pub(crate) enum Database {
 	#[cfg(feature = "surrealdb")]
 	SurrealdbSurrealkv,
 	#[cfg(feature = "surrealkv")]
-	SurrealkvMemory,
+	Surrealkv,
+	#[cfg(feature = "surrealmx")]
+	Surrealmx,
 }
 
 impl Database {
@@ -212,19 +210,6 @@ impl Database {
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						MapClientProvider::setup(kt, vp.columns(), benchmark).await?,
-						kp,
-						vp,
-						scans,
-						batches,
-					)
-					.await
-			}
-			#[cfg(feature = "memodb")]
-			Database::Memodb => {
-				benchmark
-					.run::<_, DefaultDialect, _>(
-						crate::memodb::MemoDBClientProvider::setup(kt, vp.columns(), benchmark)
-							.await?,
 						kp,
 						vp,
 						scans,
@@ -433,12 +418,12 @@ impl Database {
 					)
 					.await
 			}
-			#[cfg(feature = "surrealkv")]
-			Database::SurrealkvMemory => {
+			#[cfg(feature = "surrealmx")]
+			Database::Surrealmx => {
 				benchmark.persisted = false;
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::surrealkv::SurrealKVClientProvider::setup(
+						crate::surrealmx::SurrealMXClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark,

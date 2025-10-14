@@ -115,7 +115,7 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
   -n, --name <NAME>          An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
+  -d, --database <DATABASE>  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealkv, surrealmx, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
   -i, --image <IMAGE>        Specify a custom Docker image
   -p, --privileged           Whether to run Docker in privileged mode
   -e, --endpoint <ENDPOINT>  Specify a custom endpoint to connect to
@@ -463,11 +463,18 @@ cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r
 
 ### [SurrealKV](https://surrealkv.org)
 
-SurrealKV is a transactional, ACID-compliant, embedded, key-value datastore, written in Rust, and based on concurrent
-adaptive radix trees.
+SurrealKV is a versioned, transactional, ACID-compliant, embedded key-value database implemented in Rust using an LSM (Log-Structured Merge) tree and B+tree architecture.
 
 ```bash
 cargo run -r -- -d surrealkv -s 100000 -c 12 -t 24 -r
+```
+
+### [SurrealMX](https://surrealmx.org)
+
+SurrealKV is an embedded, in-memory, lock-free and wait-free, transactional, embedded key-value database engine implemented in Rust.
+
+```bash
+cargo run -r -- -d surrealmx -s 100000 -c 12 -t 24 -r
 ```
 
 ## SurrealDB local benchmark

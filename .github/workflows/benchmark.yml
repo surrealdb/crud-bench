@@ -19,7 +19,6 @@ on:
           - keydb
           - lmdb
           - map
-          - memodb
           - mongodb
           - mysql
           - neo4j
@@ -36,8 +35,8 @@ on:
           - surrealdb-embedded-memory
           - surrealdb-embedded-rocksdb
           - surrealdb-embedded-surrealkv
-          - surrealkv-memory
           - surrealkv
+          - surrealmx
       samples:
         type: string
         description: Number of samples
@@ -186,12 +185,6 @@ jobs:
             enabled: true
             description: Map
             CLI_ARGS: nice -n -20 ionice -c 1 -n 0
-          # MemoDB
-          - name: memodb
-            database: memodb
-            enabled: true
-            description: MemoDB
-            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # MongoDB
           - name: mongodb
             database: mongodb
@@ -294,11 +287,11 @@ jobs:
             enabled: true
             description: SurrealKV
             CLI_ARGS: nice -n -20 ionice -c 1 -n 0
-          # SurrealKV Memory
-          - name: surrealkv-memory
-            database: surrealkv-memory
+          # SurrealMX
+          - name: surrealmx
+            database: surrealmx
             enabled: true
-            description: SurrealKV with in-memory storage
+            description: SurrealMX
             CLI_ARGS: nice -n -20 ionice -c 1 -n 0
     steps:
       - name: Download artifacts

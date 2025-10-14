@@ -34,7 +34,6 @@ mod keydb;
 mod lmdb;
 mod map;
 mod mdbx;
-mod memodb;
 mod mongodb;
 mod mysql;
 mod neo4j;
@@ -46,6 +45,7 @@ mod scylladb;
 mod sqlite;
 mod surrealdb;
 mod surrealkv;
+mod surrealmx;
 
 #[derive(Parser, Debug)]
 #[command(term_width = 0)]

@@ -1,44 +1,68 @@
-#![cfg(feature = "memodb")]
+#![cfg(feature = "surrealmx")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
-use memodb::Database;
 use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
+use surrealmx::Database;
+use surrealmx::{AolMode, FsyncMode, SnapshotMode};
+use surrealmx::{DatabaseOptions, PersistenceOptions};
+
+const DATABASE_DIR: &str = "surrealmx";
 
 type Key = Vec<u8>;
 type Val = Vec<u8>;
 
-pub(crate) struct MemoDBClientProvider(Arc<Database<Key, Val>>);
+pub(crate) struct SurrealMXClientProvider(Arc<Database<Key, Val>>);
 
-impl BenchmarkEngine<MemoDBClient> for MemoDBClientProvider {
+impl BenchmarkEngine<SurrealMXClient> for SurrealMXClientProvider {
 	/// The number of seconds to wait before connecting
 	fn wait_timeout(&self) -> Option<Duration> {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
+	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
+		// Check if persistence is enabled
+		if options.persisted {
+			// Specify the database options
+			let opts = DatabaseOptions::default();
+			// Specify the persistence options
+			let persistence = match options.sync {
+				// Write to AOL immediatelyand fsync when sync is true
+				true => PersistenceOptions::new(DATABASE_DIR)
+					.with_snapshot_mode(SnapshotMode::Never)
+					.with_aol_mode(AolMode::SynchronousOnCommit)
+					.with_fsync_mode(FsyncMode::EveryAppend),
+				// Write to AOL in the background and don't fsync when sync is false
+				false => PersistenceOptions::new(DATABASE_DIR)
+					.with_snapshot_mode(SnapshotMode::Never)
+					.with_aol_mode(AolMode::AsynchronousAfterCommit)
+					.with_fsync_mode(FsyncMode::Never),
+			};
+			// Create the store
+			return Ok(Self(Arc::new(Database::new_with_persistence(opts, persistence).unwrap())));
+		}
 		// Create the store
 		Ok(Self(Arc::new(Database::new())))
 	}
 	/// Creates a new client for this benchmarking engine
-	async fn create_client(&self) -> Result<MemoDBClient> {
-		Ok(MemoDBClient {
+	async fn create_client(&self) -> Result<SurrealMXClient> {
+		Ok(SurrealMXClient {
 			db: self.0.clone(),
 		})
 	}
 }
 
-pub(crate) struct MemoDBClient {
+pub(crate) struct SurrealMXClient {
 	db: Arc<Database<Key, Val>>,
 }
 
-impl BenchmarkClient for MemoDBClient {
+impl BenchmarkClient for SurrealMXClient {
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.create_bytes(&key.to_ne_bytes(), val).await
 	}
@@ -180,7 +204,7 @@ impl BenchmarkClient for MemoDBClient {
 	}
 }
 
-impl MemoDBClient {
+impl SurrealMXClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;

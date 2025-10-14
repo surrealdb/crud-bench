@@ -14,7 +14,6 @@ default = [
     "keydb",
     "mdbx",
     "lmdb",
-    "memodb",
     "mongodb",
     "mysql",
     "neo4j",
@@ -24,8 +23,9 @@ default = [
     "rocksdb",
     "scylladb",
     "sqlite",
-    "surrealkv",
     "surrealdb",
+    "surrealkv",
+    "surrealmx",
 ]
 arangodb = ["dep:arangors"]
 dragonfly = ["dep:redis"]
@@ -33,7 +33,6 @@ keydb = ["dep:redis"]
 fjall = ["dep:fjall"]
 mdbx = ["dep:libmdbx"]
 lmdb = ["dep:heed"]
-memodb = ["dep:memodb"]
 mongodb = ["dep:mongodb"]
 mysql = ["dep:mysql_async"]
 neo4j = ["dep:neo4rs"]
@@ -53,6 +52,7 @@ surrealdb = [
     "surrealdb/rustls",
 ]
 surrealkv = ["dep:surrealkv"]
+surrealmx = ["dep:surrealmx"]
 
 [profile.release]
 lto = true
@@ -82,7 +82,6 @@ hdrhistogram = "7.5.4"
 heed = { version = "0.22.0", optional = true }
 libmdbx = { version = "0.6.1", optional = true }
 log = "0.4.27"
-memodb = { version = "0.8.0", optional = true }
 mimalloc = "0.1.48"
 mongodb = { version = "3.2.5", optional = true }
 mysql_async = { version = "0.36.1", default-features = false, features = [
@@ -106,6 +105,7 @@ serde_json = "1.0.143"
 serial_test = "3.2.0"
 surrealdb = { version = "3", package = "surrealdb-nightly", default-features = false, optional = true }
 surrealkv = { version = "0.9.2", optional = true }
+surrealmx = { version = "0.10.0", optional = true }
 sysinfo = { version = "0.37.0", features = ["serde"] }
 tokio = { version = "1.47.1", features = ["macros", "time", "rt-multi-thread"] }
 tokio-postgres = { version = "0.7.13", optional = true, features = [
