@@ -220,11 +220,6 @@ jobs:
             database: dry
             enabled: true
             description: Dry
-          # EchoDB
-          - name: echodb
-            database: echodb
-            enabled: true
-            description: EchoDB
           # Fjall
           - name: Fjall
             database: fjall

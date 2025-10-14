@@ -22,8 +22,6 @@ pub(crate) enum Database {
 	Arangodb,
 	#[cfg(feature = "dragonfly")]
 	Dragonfly,
-	#[cfg(feature = "echodb")]
-	Echodb,
 	#[cfg(feature = "fjall")]
 	Fjall,
 	#[cfg(feature = "keydb")]
@@ -153,19 +151,6 @@ impl Database {
 							benchmark,
 						)
 						.await?,
-						kp,
-						vp,
-						scans,
-						batches,
-					)
-					.await
-			}
-			#[cfg(feature = "echodb")]
-			Database::Echodb => {
-				benchmark
-					.run::<_, DefaultDialect, _>(
-						crate::echodb::EchoDBClientProvider::setup(kt, vp.columns(), benchmark)
-							.await?,
 						kp,
 						vp,
 						scans,

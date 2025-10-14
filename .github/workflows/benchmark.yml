@@ -15,7 +15,6 @@ on:
           - cassandra
           - dragonfly
           - dry
-          - echodb
           - fjall
           - keydb
           - lmdb
@@ -162,12 +161,6 @@ jobs:
             database: dry
             enabled: true
             description: Dry
-            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
-          # EchoDB
-          - name: echodb
-            database: echodb
-            enabled: true
-            description: EchoDB
             CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # Fjall
           - name: fjall
