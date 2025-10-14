@@ -528,6 +528,7 @@ impl RocksDBClient {
 		// Configure read options
 		let mut ro = ReadOptions::default();
 		ro.set_snapshot(&txn.snapshot());
+		ro.set_readahead_size(2 * 1024 * 1024);
 		ro.set_iterate_lower_bound([0u8]);
 		ro.set_iterate_upper_bound([255u8]);
 		ro.set_verify_checksums(false);
