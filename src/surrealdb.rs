@@ -8,13 +8,13 @@ use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
+use surrealdb::RecordIdKey;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Raw, Resource};
-use surrealdb::{RecordId, RecordIdKey};
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
 
@@ -149,12 +149,6 @@ impl SurrealDBClient {
 			db,
 		}
 	}
-}
-
-#[derive(Debug, Deserialize)]
-struct SurrealRecord {
-	#[allow(dead_code)]
-	id: RecordId,
 }
 
 #[derive(Debug, Serialize)]
