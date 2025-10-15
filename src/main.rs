@@ -133,7 +133,6 @@ pub(crate) struct Args {
 
 	/// An array of scan specifications
 	#[arg(
-		short = 'a',
 		long,
 		env = "CRUD_BENCH_SCANS",
 		default_value = r#"[
