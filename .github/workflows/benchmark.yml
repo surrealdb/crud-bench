@@ -185,6 +185,12 @@ jobs:
             enabled: true
             description: Map
             CLI_ARGS: nice -n -20 ionice -c 1 -n 0
+          # MDBX
+          - name: mdbx
+            database: mdbx
+            enabled: true
+            description: MDBX
+            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # MongoDB
           - name: mongodb
             database: mongodb

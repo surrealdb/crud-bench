@@ -240,6 +240,11 @@ jobs:
             database: map
             enabled: true
             description: Map
+          # MDBX
+          - name: mdbx
+            database: mdbx
+            enabled: true
+            description: MDBX
           # MongoDB
           - name: mongodb
             database: mongodb
