@@ -2,11 +2,13 @@
 
 use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
 use serde_json::{Map, Value as Json};
 use std::borrow::Cow;
+use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,8 +18,20 @@ use tokio_rusqlite::types::Value;
 
 const DATABASE_DIR: &str = "sqlite";
 
+const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
+
 // We can't just return `tokio_rusqlite::Row` because it's not Send/Sync
 type Row = Vec<(String, Value)>;
+
+/// Calculate SQLite specific memory allocation
+fn calculate_sqlite_memory() -> u64 {
+	// Load the system memory
+	let memory = Config::new();
+	// Get the total cache size in bytes
+	let cache = memory.cache_gb * 1024 * 1024 * 1024;
+	// Ensure minimum cache size of 512MB
+	max(cache, MIN_CACHE_SIZE)
+}
 
 pub(crate) struct SqliteClientProvider {
 	conn: Arc<Connection>,
@@ -76,14 +90,16 @@ impl BenchmarkClient for SqliteClient {
 	}
 
 	async fn startup(&self) -> Result<()> {
-		// Optimize SQLite
+		// Calculate the size of the page cache
+		let cache = (calculate_sqlite_memory() / 16384) as u64;
+		// Configure SQLite with optimized settings
 		let stmt = format!(
 			"
-            PRAGMA synchronous = {};
-            PRAGMA journal_mode = WAL;
-            PRAGMA page_size = 16384;
-            PRAGMA cache_size = 2500;
-            PRAGMA locking_mode = EXCLUSIVE;
+			PRAGMA synchronous = {};
+			PRAGMA journal_mode = WAL;
+			PRAGMA page_size = 16384;
+			PRAGMA cache_size = {cache};
+			PRAGMA locking_mode = EXCLUSIVE;
 		",
 			if self.sync {
 				"ON"
