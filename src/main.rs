@@ -149,7 +149,7 @@ pub(crate) struct Args {
 					"mysql": "age = 21",
 					"neo4j": "r.age = 21",
 					"mongodb": { "age": { "$eq": 21 } },
-					"arangodb": "r.age = 21",
+					"arangodb": "r.age == 21",
 					"surrealdb": "age = 21"
 				}
 			},
