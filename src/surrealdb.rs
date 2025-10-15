@@ -93,10 +93,8 @@ pub(crate) struct SurrealDBClientProvider {
 async fn initialise_db(endpoint: &str, root: Root) -> Result<Surreal<Any>> {
 	// Set the root user
 	let config = Config::new().user(root.clone());
-	println!("config: {endpoint}");
 	// Connect to the database
 	let db = connect((endpoint, config)).await?;
-	println!("Connected to the database");
 	// Signin as a namespace, database, or root user
 	db.signin(root).await?;
 	// Select a specific namespace / database
