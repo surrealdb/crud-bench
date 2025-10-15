@@ -86,7 +86,7 @@ scylla = { version = "0.15.1", optional = true }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 serial_test = "3.2.0"
-surrealdb = { version = "3", package = "surrealdb-nightly", default-features = false, optional = true }
+surrealdb = { git = "https://github.com/surrealdb/surrealdb", default-features = false, optional = true }
 surrealkv = { version = "0.9.1", optional = true }
 sysinfo = { version = "0.34.2", features = ["serde"] }
 tokio = { version = "1.44.2", features = ["macros", "time", "rt-multi-thread"] }
