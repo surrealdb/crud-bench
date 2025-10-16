@@ -190,17 +190,11 @@ impl BenchmarkClient for MongoDBClient {
 		self.batch_create(key_vals.collect()).await
 	}
 
-	async fn batch_read_u32(
-		&self,
-		keys: impl Iterator<Item = u32> + Send,
-	) -> Result<()> {
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
 		self.batch_read(keys.collect()).await
 	}
 
-	async fn batch_read_string(
-		&self,
-		keys: impl Iterator<Item = String> + Send,
-	) -> Result<()> {
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
 		self.batch_read(keys.collect()).await
 	}
 
@@ -218,17 +212,11 @@ impl BenchmarkClient for MongoDBClient {
 		self.batch_update(key_vals.collect()).await
 	}
 
-	async fn batch_delete_u32(
-		&self,
-		keys: impl Iterator<Item = u32> + Send,
-	) -> Result<()> {
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
 		self.batch_delete(keys.collect()).await
 	}
 
-	async fn batch_delete_string(
-		&self,
-		keys: impl Iterator<Item = String> + Send,
-	) -> Result<()> {
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
 		self.batch_delete(keys.collect()).await
 	}
 }

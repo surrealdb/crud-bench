@@ -139,18 +139,12 @@ impl BenchmarkClient for ReDBClient {
 		self.batch_create_bytes(pairs?.into_iter().map(Ok)).await
 	}
 
-	async fn batch_read_u32(
-		&self,
-		keys: impl Iterator<Item = u32> + Send,
-	) -> Result<()> {
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
 		let keys_vec: Vec<_> = keys.map(|key| key.to_ne_bytes().to_vec()).collect();
 		self.batch_read_bytes(keys_vec.into_iter()).await
 	}
 
-	async fn batch_read_string(
-		&self,
-		keys: impl Iterator<Item = String> + Send,
-	) -> Result<()> {
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
 		let keys_vec: Vec<_> = keys.map(|key| key.into_bytes()).collect();
 		self.batch_read_bytes(keys_vec.into_iter()).await
 	}
@@ -181,18 +175,12 @@ impl BenchmarkClient for ReDBClient {
 		self.batch_update_bytes(pairs?.into_iter().map(Ok)).await
 	}
 
-	async fn batch_delete_u32(
-		&self,
-		keys: impl Iterator<Item = u32> + Send,
-	) -> Result<()> {
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
 		let keys_vec: Vec<_> = keys.map(|key| key.to_ne_bytes().to_vec()).collect();
 		self.batch_delete_bytes(keys_vec.into_iter()).await
 	}
 
-	async fn batch_delete_string(
-		&self,
-		keys: impl Iterator<Item = String> + Send,
-	) -> Result<()> {
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
 		let keys_vec: Vec<_> = keys.map(|key| key.into_bytes()).collect();
 		self.batch_delete_bytes(keys_vec.into_iter()).await
 	}

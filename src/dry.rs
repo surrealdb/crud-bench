@@ -96,20 +96,14 @@ impl BenchmarkClient for DryClient {
 		Ok(())
 	}
 
-	async fn batch_read_u32(
-		&self,
-		keys: impl Iterator<Item = u32> + Send,
-	) -> Result<()> {
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
 		for key in keys {
 			black_box(key);
 		}
 		Ok(())
 	}
 
-	async fn batch_read_string(
-		&self,
-		keys: impl Iterator<Item = String> + Send,
-	) -> Result<()> {
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
 		for key in keys {
 			black_box(key);
 		}
@@ -136,20 +130,14 @@ impl BenchmarkClient for DryClient {
 		Ok(())
 	}
 
-	async fn batch_delete_u32(
-		&self,
-		keys: impl Iterator<Item = u32> + Send,
-	) -> Result<()> {
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
 		for key in keys {
 			black_box(key);
 		}
 		Ok(())
 	}
 
-	async fn batch_delete_string(
-		&self,
-		keys: impl Iterator<Item = String> + Send,
-	) -> Result<()> {
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
 		for key in keys {
 			black_box(key);
 		}

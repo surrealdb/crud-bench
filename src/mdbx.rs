@@ -158,18 +158,12 @@ impl BenchmarkClient for MDBXClient {
 		self.batch_create_bytes(pairs_iter).await
 	}
 
-	async fn batch_read_u32(
-		&self,
-		keys: impl Iterator<Item = u32> + Send,
-	) -> Result<()> {
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
 		let keys_iter = keys.map(|key| key.to_ne_bytes().to_vec());
 		self.batch_read_bytes(keys_iter).await
 	}
 
-	async fn batch_read_string(
-		&self,
-		keys: impl Iterator<Item = String> + Send,
-	) -> Result<()> {
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
 		let keys_iter = keys.map(|key| key.into_bytes());
 		self.batch_read_bytes(keys_iter).await
 	}
@@ -196,18 +190,12 @@ impl BenchmarkClient for MDBXClient {
 		self.batch_update_bytes(pairs_iter).await
 	}
 
-	async fn batch_delete_u32(
-		&self,
-		keys: impl Iterator<Item = u32> + Send,
-	) -> Result<()> {
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
 		let keys_iter = keys.map(|key| key.to_ne_bytes().to_vec());
 		self.batch_delete_bytes(keys_iter).await
 	}
 
-	async fn batch_delete_string(
-		&self,
-		keys: impl Iterator<Item = String> + Send,
-	) -> Result<()> {
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
 		let keys_iter = keys.map(|key| key.into_bytes());
 		self.batch_delete_bytes(keys_iter).await
 	}

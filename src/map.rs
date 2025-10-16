@@ -164,10 +164,7 @@ impl BenchmarkClient for MapClient {
 		Ok(())
 	}
 
-	async fn batch_read_u32(
-		&self,
-		keys: impl Iterator<Item = u32> + Send,
-	) -> Result<()> {
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
 			for key in keys {
 				assert!(m.get(&key).is_some());
@@ -178,10 +175,7 @@ impl BenchmarkClient for MapClient {
 		Ok(())
 	}
 
-	async fn batch_read_string(
-		&self,
-		keys: impl Iterator<Item = String> + Send,
-	) -> Result<()> {
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
 		if let MapDatabase::String(m) = &self.0 {
 			for key in keys {
 				assert!(m.get(&key).is_some());
@@ -220,10 +214,7 @@ impl BenchmarkClient for MapClient {
 		Ok(())
 	}
 
-	async fn batch_delete_u32(
-		&self,
-		keys: impl Iterator<Item = u32> + Send,
-	) -> Result<()> {
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
 			for key in keys {
 				assert!(m.remove(&key).is_some());
@@ -234,10 +225,7 @@ impl BenchmarkClient for MapClient {
 		Ok(())
 	}
 
-	async fn batch_delete_string(
-		&self,
-		keys: impl Iterator<Item = String> + Send,
-	) -> Result<()> {
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
 		if let MapDatabase::String(m) = &self.0 {
 			for key in keys {
 				assert!(m.remove(&key).is_some());
