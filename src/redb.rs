@@ -115,102 +115,86 @@ impl BenchmarkClient for ReDBClient {
 
 	async fn batch_create_u32(
 		&self,
-		batch_size: usize,
 		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
 	) -> Result<()> {
-		let mut pairs = Vec::with_capacity(batch_size);
-		for (key, val) in key_vals {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
-			pairs.push((key.to_ne_bytes().to_vec(), val));
-		}
-		self.batch_create_bytes(pairs).await
+		let pairs: Result<Vec<_>> = key_vals
+			.map(|(key, val)| {
+				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				Ok((key.to_ne_bytes().to_vec(), val))
+			})
+			.collect();
+		self.batch_create_bytes(pairs?.into_iter().map(Ok)).await
 	}
 
 	async fn batch_create_string(
 		&self,
-		batch_size: usize,
 		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
 	) -> Result<()> {
-		let mut pairs = Vec::with_capacity(batch_size);
-		for (key, val) in key_vals {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
-			pairs.push((key.into_bytes(), val));
-		}
-		self.batch_create_bytes(pairs).await
+		let pairs: Result<Vec<_>> = key_vals
+			.map(|(key, val)| {
+				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				Ok((key.into_bytes(), val))
+			})
+			.collect();
+		self.batch_create_bytes(pairs?.into_iter().map(Ok)).await
 	}
 
 	async fn batch_read_u32(
 		&self,
-		batch_size: usize,
 		keys: impl Iterator<Item = u32> + Send,
 	) -> Result<()> {
-		let mut keys_vec = Vec::with_capacity(batch_size);
-		for key in keys {
-			keys_vec.push(key.to_ne_bytes().to_vec());
-		}
-		self.batch_read_bytes(keys_vec).await
+		let keys_vec: Vec<_> = keys.map(|key| key.to_ne_bytes().to_vec()).collect();
+		self.batch_read_bytes(keys_vec.into_iter()).await
 	}
 
 	async fn batch_read_string(
 		&self,
-		batch_size: usize,
 		keys: impl Iterator<Item = String> + Send,
 	) -> Result<()> {
-		let mut keys_vec = Vec::with_capacity(batch_size);
-		for key in keys {
-			keys_vec.push(key.into_bytes());
-		}
-		self.batch_read_bytes(keys_vec).await
+		let keys_vec: Vec<_> = keys.map(|key| key.into_bytes()).collect();
+		self.batch_read_bytes(keys_vec.into_iter()).await
 	}
 
 	async fn batch_update_u32(
 		&self,
-		batch_size: usize,
 		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
 	) -> Result<()> {
-		let mut pairs = Vec::with_capacity(batch_size);
-		for (key, val) in key_vals {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
-			pairs.push((key.to_ne_bytes().to_vec(), val));
-		}
-		self.batch_update_bytes(pairs).await
+		let pairs: Result<Vec<_>> = key_vals
+			.map(|(key, val)| {
+				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				Ok((key.to_ne_bytes().to_vec(), val))
+			})
+			.collect();
+		self.batch_update_bytes(pairs?.into_iter().map(Ok)).await
 	}
 
 	async fn batch_update_string(
 		&self,
-		batch_size: usize,
 		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
 	) -> Result<()> {
-		let mut pairs = Vec::with_capacity(batch_size);
-		for (key, val) in key_vals {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
-			pairs.push((key.into_bytes(), val));
-		}
-		self.batch_update_bytes(pairs).await
+		let pairs: Result<Vec<_>> = key_vals
+			.map(|(key, val)| {
+				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				Ok((key.into_bytes(), val))
+			})
+			.collect();
+		self.batch_update_bytes(pairs?.into_iter().map(Ok)).await
 	}
 
 	async fn batch_delete_u32(
 		&self,
-		batch_size: usize,
 		keys: impl Iterator<Item = u32> + Send,
 	) -> Result<()> {
-		let mut keys_vec = Vec::with_capacity(batch_size);
-		for key in keys {
-			keys_vec.push(key.to_ne_bytes().to_vec());
-		}
-		self.batch_delete_bytes(keys_vec).await
+		let keys_vec: Vec<_> = keys.map(|key| key.to_ne_bytes().to_vec()).collect();
+		self.batch_delete_bytes(keys_vec.into_iter()).await
 	}
 
 	async fn batch_delete_string(
 		&self,
-		batch_size: usize,
 		keys: impl Iterator<Item = String> + Send,
 	) -> Result<()> {
-		let mut keys_vec = Vec::with_capacity(batch_size);
-		for key in keys {
-			keys_vec.push(key.into_bytes());
-		}
-		self.batch_delete_bytes(keys_vec).await
+		let keys_vec: Vec<_> = keys.map(|key| key.into_bytes()).collect();
+		self.batch_delete_bytes(keys_vec.into_iter()).await
 	}
 }
 
@@ -316,15 +300,19 @@ impl ReDBClient {
 		.await
 	}
 
-	async fn batch_create_bytes(&self, key_vals: Vec<(Vec<u8>, Vec<u8>)>) -> Result<()> {
+	async fn batch_create_bytes(
+		&self,
+		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + Send + 'static,
+	) -> Result<()> {
 		// Clone the datastore and sync flag
 		let db = self.db.clone();
+		let sync = self.sync;
 		// Execute on the blocking threadpool
 		affinitypool::spawn_local(move || -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Set the transaction durability
-			let _ = txn.set_durability(if self.sync {
+			let _ = txn.set_durability(if sync {
 				Durability::Immediate
 			} else {
 				Durability::None
@@ -332,7 +320,8 @@ impl ReDBClient {
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;
 			// Process all the data in batch
-			for (key, val) in key_vals {
+			for result in key_vals {
+				let (key, val) = result?;
 				tab.insert(&key[..], val)?;
 			}
 			drop(tab);
@@ -342,7 +331,10 @@ impl ReDBClient {
 		.await
 	}
 
-	async fn batch_read_bytes(&self, keys: Vec<Vec<u8>>) -> Result<()> {
+	async fn batch_read_bytes(
+		&self,
+		keys: impl Iterator<Item = Vec<u8>> + Send + 'static,
+	) -> Result<()> {
 		// Clone the datastore
 		let db = self.db.clone();
 		// Execute on the blocking threadpool
@@ -366,15 +358,19 @@ impl ReDBClient {
 		.await
 	}
 
-	async fn batch_update_bytes(&self, key_vals: Vec<(Vec<u8>, Vec<u8>)>) -> Result<()> {
+	async fn batch_update_bytes(
+		&self,
+		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + Send + 'static,
+	) -> Result<()> {
 		// Clone the datastore and sync flag
 		let db = self.db.clone();
+		let sync = self.sync;
 		// Execute on the blocking threadpool
 		affinitypool::spawn_local(move || -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Set the transaction durability
-			let _ = txn.set_durability(if self.sync {
+			let _ = txn.set_durability(if sync {
 				Durability::Immediate
 			} else {
 				Durability::None
@@ -382,7 +378,8 @@ impl ReDBClient {
 			// Open the database table
 			let mut tab = txn.open_table(TABLE)?;
 			// Process all the data in batch
-			for (key, val) in key_vals {
+			for result in key_vals {
+				let (key, val) = result?;
 				tab.insert(&key[..], val)?;
 			}
 			drop(tab);
@@ -392,15 +389,19 @@ impl ReDBClient {
 		.await
 	}
 
-	async fn batch_delete_bytes(&self, keys: Vec<Vec<u8>>) -> Result<()> {
+	async fn batch_delete_bytes(
+		&self,
+		keys: impl Iterator<Item = Vec<u8>> + Send + 'static,
+	) -> Result<()> {
 		// Clone the datastore and sync flag
 		let db = self.db.clone();
+		let sync = self.sync;
 		// Execute on the blocking threadpool
 		affinitypool::spawn_local(move || -> Result<_> {
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Set the transaction durability
-			let _ = txn.set_durability(if self.sync {
+			let _ = txn.set_durability(if sync {
 				Durability::Immediate
 			} else {
 				Durability::None

@@ -168,19 +168,19 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 			match kp {
 				KeyProvider::OrderedInteger(p) => {
 					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
-					self.batch_create_u32(batch_op.batch_size, pairs_iter).await
+					self.batch_create_u32(pairs_iter).await
 				}
 				KeyProvider::UnorderedInteger(p) => {
 					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
-					self.batch_create_u32(batch_op.batch_size, pairs_iter).await
+					self.batch_create_u32(pairs_iter).await
 				}
 				KeyProvider::OrderedString(p) => {
 					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
-					self.batch_create_string(batch_op.batch_size, pairs_iter).await
+					self.batch_create_string(pairs_iter).await
 				}
 				KeyProvider::UnorderedString(p) => {
 					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
-					self.batch_create_string(batch_op.batch_size, pairs_iter).await
+					self.batch_create_string(pairs_iter).await
 				}
 			}
 		}
@@ -197,19 +197,19 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 			match kp {
 				KeyProvider::OrderedInteger(p) => {
 					let keys_iter = generate_integer_keys_iter(n, batch_op, p);
-					self.batch_read_u32(batch_op.batch_size, keys_iter).await
+					self.batch_read_u32(keys_iter).await
 				}
 				KeyProvider::UnorderedInteger(p) => {
 					let keys_iter = generate_integer_keys_iter(n, batch_op, p);
-					self.batch_read_u32(batch_op.batch_size, keys_iter).await
+					self.batch_read_u32(keys_iter).await
 				}
 				KeyProvider::OrderedString(p) => {
 					let keys_iter = generate_string_keys_iter(n, batch_op, p);
-					self.batch_read_string(batch_op.batch_size, keys_iter).await
+					self.batch_read_string(keys_iter).await
 				}
 				KeyProvider::UnorderedString(p) => {
 					let keys_iter = generate_string_keys_iter(n, batch_op, p);
-					self.batch_read_string(batch_op.batch_size, keys_iter).await
+					self.batch_read_string(keys_iter).await
 				}
 			}
 		}
@@ -227,19 +227,19 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 			match kp {
 				KeyProvider::OrderedInteger(p) => {
 					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
-					self.batch_update_u32(batch_op.batch_size, pairs_iter).await
+					self.batch_update_u32(pairs_iter).await
 				}
 				KeyProvider::UnorderedInteger(p) => {
 					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
-					self.batch_update_u32(batch_op.batch_size, pairs_iter).await
+					self.batch_update_u32(pairs_iter).await
 				}
 				KeyProvider::OrderedString(p) => {
 					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
-					self.batch_update_string(batch_op.batch_size, pairs_iter).await
+					self.batch_update_string(pairs_iter).await
 				}
 				KeyProvider::UnorderedString(p) => {
 					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
-					self.batch_update_string(batch_op.batch_size, pairs_iter).await
+					self.batch_update_string(pairs_iter).await
 				}
 			}
 		}
@@ -256,19 +256,19 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 			match kp {
 				KeyProvider::OrderedInteger(p) => {
 					let keys_iter = generate_integer_keys_iter(n, batch_op, p);
-					self.batch_delete_u32(batch_op.batch_size, keys_iter).await
+					self.batch_delete_u32(keys_iter).await
 				}
 				KeyProvider::UnorderedInteger(p) => {
 					let keys_iter = generate_integer_keys_iter(n, batch_op, p);
-					self.batch_delete_u32(batch_op.batch_size, keys_iter).await
+					self.batch_delete_u32(keys_iter).await
 				}
 				KeyProvider::OrderedString(p) => {
 					let keys_iter = generate_string_keys_iter(n, batch_op, p);
-					self.batch_delete_string(batch_op.batch_size, keys_iter).await
+					self.batch_delete_string(keys_iter).await
 				}
 				KeyProvider::UnorderedString(p) => {
 					let keys_iter = generate_string_keys_iter(n, batch_op, p);
-					self.batch_delete_string(batch_op.batch_size, keys_iter).await
+					self.batch_delete_string(keys_iter).await
 				}
 			}
 		}
@@ -277,7 +277,6 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch create operation with numeric keys
 	fn batch_create_u32(
 		&self,
-		_batch_size: usize,
 		_key_value_pairs: impl Iterator<Item = (u32, serde_json::Value)> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
@@ -286,7 +285,6 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch create operation with string keys
 	fn batch_create_string(
 		&self,
-		_batch_size: usize,
 		_key_value_pairs: impl Iterator<Item = (String, serde_json::Value)> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
@@ -295,7 +293,6 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch read operation with numeric keys
 	fn batch_read_u32(
 		&self,
-		_batch_size: usize,
 		_keys: impl Iterator<Item = u32> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
@@ -304,7 +301,6 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch read operation with string keys
 	fn batch_read_string(
 		&self,
-		_batch_size: usize,
 		_keys: impl Iterator<Item = String> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
@@ -313,7 +309,6 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch update operation with numeric keys
 	fn batch_update_u32(
 		&self,
-		_batch_size: usize,
 		_key_value_pairs: impl Iterator<Item = (u32, serde_json::Value)> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
@@ -322,7 +317,6 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch update operation with string keys
 	fn batch_update_string(
 		&self,
-		_batch_size: usize,
 		_key_value_pairs: impl Iterator<Item = (String, serde_json::Value)> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
@@ -331,7 +325,6 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch delete operation with numeric keys
 	fn batch_delete_u32(
 		&self,
-		_batch_size: usize,
 		_keys: impl Iterator<Item = u32> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
@@ -340,7 +333,6 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch delete operation with string keys
 	fn batch_delete_string(
 		&self,
-		_batch_size: usize,
 		_keys: impl Iterator<Item = String> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }

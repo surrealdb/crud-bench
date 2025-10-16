@@ -208,98 +208,58 @@ impl BenchmarkClient for PostgresClient {
 
 	async fn batch_create_u32(
 		&self,
-		batch_size: usize,
 		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
 	) -> Result<()> {
-		let mut pairs = Vec::with_capacity(batch_size);
-		for (key, val) in key_vals {
-			pairs.push((key as i32, val));
-		}
-		self.batch_create(pairs).await
+		self.batch_create(key_vals.map(|(k, v)| (k as i32, v)).collect()).await
 	}
 
 	async fn batch_create_string(
 		&self,
-		batch_size: usize,
 		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
 	) -> Result<()> {
-		let mut key_vals_vec = Vec::with_capacity(batch_size);
-		for (key, val) in key_vals {
-			key_vals_vec.push((key, val));
-		}
-		self.batch_create(key_vals_vec).await
+		self.batch_create(key_vals.collect()).await
 	}
 
 	async fn batch_read_u32(
 		&self,
-		batch_size: usize,
 		keys: impl Iterator<Item = u32> + Send,
 	) -> Result<()> {
-		let mut keys_vec = Vec::with_capacity(batch_size);
-		for key in keys {
-			keys_vec.push(key as i32);
-		}
-		self.batch_read(keys_vec).await
+		self.batch_read(keys.map(|k| k as i32).collect()).await
 	}
 
 	async fn batch_read_string(
 		&self,
-		batch_size: usize,
 		keys: impl Iterator<Item = String> + Send,
 	) -> Result<()> {
-		let mut keys_vec = Vec::with_capacity(batch_size);
-		for key in keys {
-			keys_vec.push(key);
-		}
-		self.batch_read(keys_vec).await
+		self.batch_read(keys.collect()).await
 	}
 
 	async fn batch_update_u32(
 		&self,
-		batch_size: usize,
 		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
 	) -> Result<()> {
-		let mut pairs = Vec::with_capacity(batch_size);
-		for (key, val) in key_vals {
-			pairs.push((key as i32, val));
-		}
-		self.batch_update(pairs).await
+		self.batch_update(key_vals.map(|(k, v)| (k as i32, v)).collect()).await
 	}
 
 	async fn batch_update_string(
 		&self,
-		batch_size: usize,
 		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
 	) -> Result<()> {
-		let mut key_vals_vec = Vec::with_capacity(batch_size);
-		for (key, val) in key_vals {
-			key_vals_vec.push((key, val));
-		}
-		self.batch_update(key_vals_vec).await
+		self.batch_update(key_vals.collect()).await
 	}
 
 	async fn batch_delete_u32(
 		&self,
-		batch_size: usize,
 		keys: impl Iterator<Item = u32> + Send,
 	) -> Result<()> {
-		let mut keys_vec = Vec::with_capacity(batch_size);
-		for key in keys {
-			keys_vec.push(key as i32);
-		}
-		self.batch_delete(keys_vec).await
+		self.batch_delete(keys.map(|k| k as i32).collect()).await
 	}
 
 	async fn batch_delete_string(
 		&self,
-		batch_size: usize,
 		keys: impl Iterator<Item = String> + Send,
 	) -> Result<()> {
-		let mut keys_vec = Vec::with_capacity(batch_size);
-		for key in keys {
-			keys_vec.push(key);
-		}
-		self.batch_delete(keys_vec).await
+		self.batch_delete(keys.collect()).await
 	}
 }
 

@@ -78,7 +78,6 @@ impl BenchmarkClient for DryClient {
 
 	async fn batch_create_u32(
 		&self,
-		_batch_size: usize,
 		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
 	) -> Result<()> {
 		for (key, val) in key_vals {
@@ -89,7 +88,6 @@ impl BenchmarkClient for DryClient {
 
 	async fn batch_create_string(
 		&self,
-		_batch_size: usize,
 		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
 	) -> Result<()> {
 		for (key, val) in key_vals {
@@ -100,7 +98,6 @@ impl BenchmarkClient for DryClient {
 
 	async fn batch_read_u32(
 		&self,
-		_batch_size: usize,
 		keys: impl Iterator<Item = u32> + Send,
 	) -> Result<()> {
 		for key in keys {
@@ -111,7 +108,6 @@ impl BenchmarkClient for DryClient {
 
 	async fn batch_read_string(
 		&self,
-		_batch_size: usize,
 		keys: impl Iterator<Item = String> + Send,
 	) -> Result<()> {
 		for key in keys {
@@ -122,7 +118,6 @@ impl BenchmarkClient for DryClient {
 
 	async fn batch_update_u32(
 		&self,
-		_batch_size: usize,
 		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
 	) -> Result<()> {
 		for (key, val) in key_vals {
@@ -133,7 +128,6 @@ impl BenchmarkClient for DryClient {
 
 	async fn batch_update_string(
 		&self,
-		_batch_size: usize,
 		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
 	) -> Result<()> {
 		for (key, val) in key_vals {
@@ -144,7 +138,6 @@ impl BenchmarkClient for DryClient {
 
 	async fn batch_delete_u32(
 		&self,
-		_batch_size: usize,
 		keys: impl Iterator<Item = u32> + Send,
 	) -> Result<()> {
 		for key in keys {
@@ -155,7 +148,6 @@ impl BenchmarkClient for DryClient {
 
 	async fn batch_delete_string(
 		&self,
-		_batch_size: usize,
 		keys: impl Iterator<Item = String> + Send,
 	) -> Result<()> {
 		for key in keys {
