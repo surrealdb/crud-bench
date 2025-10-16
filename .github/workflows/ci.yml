@@ -398,61 +398,61 @@ jobs:
           ulimit -u unlimited
           ulimit -l unlimited
 
-      - name: Run benchmarks (10,000 samples / 128 clients / 48 threads / key integer / random)
+      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key integer / random)
         timeout-minutes: 15
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 128 -t 48 -k integer -r -n integer-random
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k integer -r -n integer-random
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
-      - name: Run benchmarks (10,000 samples / 128 clients / 48 threads / key string26 / random)
+      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key string26 / random)
         timeout-minutes: 15
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 128 -t 48 -k string26 -r -n string26-random
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k string26 -r -n string26-random
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
-      - name: Run benchmarks (10,000 samples / 128 clients / 48 threads / key string90 / random)
+      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key string90 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 128 -t 48 -k string90 -r -n string90-random
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k string90 -r -n string90-random
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
-      - name: Run benchmarks (10,000 samples / 128 clients / 48 threads / key string250 / random)
+      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key string250 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 128 -t 48 -k string250 -r -n string250-random
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k string250 -r -n string250-random
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
-      - name: Run benchmarks (10,000 samples / 128 clients / 48 threads / key string506 / random)
+      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key string506 / random)
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 128 -t 48 -k string506 -r -n string506-random
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k string506 -r -n string506-random
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
-      - name: Run benchmarks (10,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
+      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 30
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 128 -t 48 -k string26 -r -n string26-random-1k
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k string26 -r -n string26-random-1k
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_VALUE: '{ "text": "text:50", "age": "int:1..99", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
