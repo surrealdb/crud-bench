@@ -91,7 +91,7 @@ impl BenchmarkClient for SqliteClient {
 
 	async fn startup(&self) -> Result<()> {
 		// Calculate the size of the page cache
-		let cache = (calculate_sqlite_memory() / 16384) as u64;
+		let cache = calculate_sqlite_memory() / 16384;
 		// Configure SQLite with optimized settings
 		let stmt = format!(
 			"
