@@ -6,7 +6,7 @@ use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use libmdbx::{
-	Database, DatabaseOptions, Mode, PageSize, ReadWriteOptions, SyncMode, WriteFlags, WriteMap,
+	Database, DatabaseOptions, Mode, NoWriteMap, PageSize, ReadWriteOptions, SyncMode, WriteFlags,
 };
 use serde_json::Value;
 use std::hint::black_box;
@@ -15,7 +15,7 @@ use std::time::Duration;
 
 const DATABASE_DIR: &str = "mdbx";
 
-pub(crate) struct MDBXClientProvider(Arc<Database<WriteMap>>);
+pub(crate) struct MDBXClientProvider(Arc<Database<NoWriteMap>>);
 
 impl BenchmarkEngine<MDBXClient> for MDBXClientProvider {
 	/// The number of seconds to wait before connecting
@@ -33,7 +33,7 @@ impl BenchmarkEngine<MDBXClient> for MDBXClientProvider {
 				sync_mode: if options.sync {
 					SyncMode::Durable
 				} else {
-					SyncMode::SafeNoSync
+					SyncMode::UtterlyNoSync
 				},
 				// No maximum database size
 				max_size: None,
@@ -60,16 +60,19 @@ impl BenchmarkEngine<MDBXClient> for MDBXClientProvider {
 			max_readers: Some(126),
 			// We only use one table for benchmarks
 			max_tables: Some(1),
-			// 1MB limit for dirty pages per transaction
-			txn_dp_limit: Some(1024 * 1024),
-			// Spill when dirty pages > 1/8 of map size
-			spill_max_denominator: Some(8),
-			// Minimum spill threshold
-			spill_min_denominator: Some(16),
+			// Use defaults for transaction limits
 			..Default::default()
 		};
 		// Create the database
 		let db = Database::open_with_options(DATABASE_DIR, options)?;
+		// Begin a new transaction
+		let tx = db.begin_rw_txn()?;
+		// Open the default table
+		let tb = tx.open_table(None)?;
+		// Prime the table for permaopen
+		tx.prime_for_permaopen(tb);
+		// Commit the transaction
+		tx.commit()?;
 		// Create the store
 		Ok(Self(Arc::new(db)))
 	}
@@ -82,7 +85,7 @@ impl BenchmarkEngine<MDBXClient> for MDBXClientProvider {
 }
 
 pub(crate) struct MDBXClient {
-	db: Arc<Database<WriteMap>>,
+	db: Arc<Database<NoWriteMap>>,
 }
 
 impl BenchmarkClient for MDBXClient {

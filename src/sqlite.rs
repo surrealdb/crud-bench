@@ -104,7 +104,7 @@ impl BenchmarkClient for SqliteClient {
 			if self.sync {
 				"ON"
 			} else {
-				"OFF"
+				"NORMAL"
 			}
 		);
 		self.execute_batch(Cow::Owned(stmt)).await?;
