@@ -15,6 +15,9 @@ define CRUD_BENCH_SCANS
 			"mongodb": { "age": { "$$eq": 21 } },
 			"arangodb": "r.age == 21",
 			"surrealdb": "age = 21"
+		},
+		"index": {
+			"fields": ["age"]
 		}
 	},
 	{ "name": "where_field_integer_gte_lte", "samples": 100, "projection": "FULL",
@@ -25,6 +28,9 @@ define CRUD_BENCH_SCANS
 			"mongodb": { "age": { "$$gte": 18, "$$lte": 21 } },
 			"arangodb": "r.age >= 18 AND r.age <= 21",
 			"surrealdb": "age >= 18 AND age <= 21"
+		},
+		"index": {
+			"fields": ["age"]
 		}
 	}
 ]

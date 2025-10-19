@@ -5,7 +5,7 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{Benchmark, KeyType, Projection, Scan};
+use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::Result;
 use serde_json::{Map, Value};
 use std::hint::black_box;
@@ -196,6 +196,30 @@ impl BenchmarkClient for PostgresClient {
 
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.delete(key).await
+	}
+
+	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
+		let fields = spec.fields.join(", ");
+		let index_name = name.to_string();
+		let unique = if spec.unique.unwrap_or(false) {
+			"UNIQUE"
+		} else {
+			""
+		}
+		.to_string();
+		let stmt = format!("CREATE {unique} INDEX {index_name} ON record ({fields})");
+		async move {
+			self.client.execute(&stmt, &[]).await?;
+			Ok(())
+		}
+	}
+
+	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
+		let stmt = format!("DROP INDEX IF EXISTS {name}");
+		async move {
+			self.client.execute(&stmt, &[]).await?;
+			Ok(())
+		}
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {

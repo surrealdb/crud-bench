@@ -151,6 +151,9 @@ pub(crate) struct Args {
 					"mongodb": { "age": { "$eq": 21 } },
 					"arangodb": "r.age == 21",
 					"surrealdb": "age = 21"
+				},
+				"index": {
+					"fields": ["age"]
 				}
 			},
 			{ "name": "where_field_integer_gte_lte", "samples": 100, "projection": "FULL",
@@ -161,6 +164,9 @@ pub(crate) struct Args {
 					"mongodb": { "age": { "$gte": 18, "$lte": 21 } },
 					"arangodb": "r.age >= 18 AND r.age <= 21",
 					"surrealdb": "age >= 18 AND age <= 21"
+				},
+				"index": {
+					"fields": ["age"]
 				}
 			}
 		]"#
@@ -206,6 +212,13 @@ pub(crate) type Scans = Vec<Scan>;
 pub(crate) type Batches = Vec<BatchOperation>;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct Index {
+	pub(crate) fields: Vec<String>,
+	pub(crate) unique: Option<bool>,
+	pub(crate) index_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct Scan {
 	name: String,
 	samples: Option<usize>,
@@ -214,6 +227,7 @@ pub(crate) struct Scan {
 	limit: Option<usize>,
 	expect: Option<usize>,
 	projection: Option<String>,
+	index: Option<Index>,
 }
 
 impl Scan {

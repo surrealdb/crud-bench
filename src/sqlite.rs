@@ -4,7 +4,7 @@ use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{Benchmark, KeyType, Projection, Scan};
+use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::Result;
 use serde_json::{Map, Value as Json};
 use std::borrow::Cow;
@@ -176,6 +176,30 @@ impl BenchmarkClient for SqliteClient {
 
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.delete(key.into()).await
+	}
+
+	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
+		let fields = spec.fields.join(", ");
+		let index_name = name.to_string();
+		let unique = if spec.unique.unwrap_or(false) {
+			"UNIQUE"
+		} else {
+			""
+		}
+		.to_string();
+		let stmt = format!("CREATE {unique} INDEX {index_name} ON record ({fields})");
+		async move {
+			self.execute_batch(Cow::Owned(stmt)).await?;
+			Ok(())
+		}
+	}
+
+	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
+		let stmt = format!("DROP INDEX IF EXISTS {name}");
+		async move {
+			self.execute_batch(Cow::Owned(stmt)).await?;
+			Ok(())
+		}
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {

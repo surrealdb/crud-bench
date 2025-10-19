@@ -18,10 +18,20 @@ pub(crate) struct BenchmarkResult {
 	pub(crate) creates: Option<OperationResult>,
 	pub(crate) reads: Option<OperationResult>,
 	pub(crate) updates: Option<OperationResult>,
-	pub(crate) scans: Vec<(String, u32, Option<OperationResult>)>,
+	pub(crate) scans: Vec<ScanResult>,
 	pub(crate) batches: Vec<(String, u32, usize, Option<OperationResult>)>,
 	pub(crate) deletes: Option<OperationResult>,
 	pub(crate) sample: Value,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ScanResult {
+	pub(crate) name: String,
+	pub(crate) samples: u32,
+	pub(crate) without_index: Option<OperationResult>,
+	pub(crate) index_build: Option<OperationResult>,
+	pub(crate) with_index: Option<OperationResult>,
+	pub(crate) has_index_spec: bool,
 }
 
 const HEADERS: [&str; 18] = [
@@ -73,14 +83,33 @@ impl Display for BenchmarkResult {
 		if let Some(res) = &self.deletes {
 			table.add_row(res.output("[D]elete"));
 		}
-		for (name, samples, result) in &self.scans {
-			let name = format!("[S]can::{name} ({samples})");
-			if let Some(res) = &result {
-				table.add_row(res.output(name));
-			} else {
-				let mut cells = vec![name];
-				cells.extend(SKIP.iter().map(|s| s.to_string()));
-				table.add_row(cells);
+		for scan in &self.scans {
+			// Scan without index
+			if let Some(res) = &scan.without_index {
+				let label = format!("[S]can::{} ({})", scan.name, scan.samples);
+				table.add_row(res.output(label));
+			}
+			// Index build (only for indexed scans)
+			if scan.has_index_spec {
+				let label = format!("[I]ndex::{}", scan.name);
+				if let Some(res) = &scan.index_build {
+					table.add_row(res.output(label));
+				} else {
+					let mut cells = vec![label];
+					cells.extend(SKIP.iter().map(|s| s.to_string()));
+					table.add_row(cells);
+				}
+			}
+			// Scan with index (only for indexed scans)
+			if scan.has_index_spec {
+				let label = format!("[S]can::{}::indexed ({})", scan.name, scan.samples);
+				if let Some(res) = &scan.with_index {
+					table.add_row(res.output(label));
+				} else {
+					let mut cells = vec![label];
+					cells.extend(SKIP.iter().map(|s| s.to_string()));
+					table.add_row(cells);
+				}
 			}
 		}
 		for (name, samples, groups, result) in &self.batches {
@@ -113,11 +142,8 @@ impl Display for BenchmarkResult {
 impl BenchmarkResult {
 	pub(crate) fn to_csv(&self, path: &str) -> Result<(), csv::Error> {
 		let mut w = Writer::from_path(path)?;
-
 		// Write headers
 		w.write_record(HEADERS)?;
-
-		// Write rows
 		// Add the [C]reate results to the output
 		if let Some(res) = &self.creates {
 			w.write_record(res.output("[C]reate"))?;
@@ -135,14 +161,33 @@ impl BenchmarkResult {
 			w.write_record(res.output("[D]elete"))?;
 		}
 		// Add the [S]cans results to the output
-		for (name, samples, result) in &self.scans {
-			let name = format!("[S]can::{name} ({samples})");
-			if let Some(res) = &result {
-				w.write_record(res.output(name))?;
-			} else {
-				let mut cells = vec![name];
-				cells.extend(SKIP.iter().map(|s| s.to_string()));
-				w.write_record(cells)?;
+		for scan in &self.scans {
+			// Scan without index
+			if let Some(res) = &scan.without_index {
+				let label = format!("[S]can::{} ({})", scan.name, scan.samples);
+				w.write_record(res.output(label))?;
+			}
+			// Index build (only for indexed scans)
+			if scan.has_index_spec {
+				let label = format!("[I]ndex::{}", scan.name);
+				if let Some(res) = &scan.index_build {
+					w.write_record(res.output(label))?;
+				} else {
+					let mut cells = vec![label];
+					cells.extend(SKIP.iter().map(|s| s.to_string()));
+					w.write_record(cells)?;
+				}
+			}
+			// Scan with index (only for indexed scans)
+			if scan.has_index_spec {
+				let label = format!("[S]can::{}::indexed ({})", scan.name, scan.samples);
+				if let Some(res) = &scan.with_index {
+					w.write_record(res.output(label))?;
+				} else {
+					let mut cells = vec![label];
+					cells.extend(SKIP.iter().map(|s| s.to_string()));
+					w.write_record(cells)?;
+				}
 			}
 		}
 		// Add the [B]atch results to the output
