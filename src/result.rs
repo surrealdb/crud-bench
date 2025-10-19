@@ -85,9 +85,13 @@ impl Display for BenchmarkResult {
 		}
 		for scan in &self.scans {
 			// Scan without index
+			let label = format!("[S]can::{} ({})", scan.name, scan.samples);
 			if let Some(res) = &scan.without_index {
-				let label = format!("[S]can::{} ({})", scan.name, scan.samples);
 				table.add_row(res.output(label));
+			} else {
+				let mut cells = vec![label];
+				cells.extend(SKIP.iter().map(|s| s.to_string()));
+				table.add_row(cells);
 			}
 			// Index build (only for indexed scans)
 			if scan.has_index_spec {
@@ -163,9 +167,13 @@ impl BenchmarkResult {
 		// Add the [S]cans results to the output
 		for scan in &self.scans {
 			// Scan without index
+			let label = format!("[S]can::{} ({})", scan.name, scan.samples);
 			if let Some(res) = &scan.without_index {
-				let label = format!("[S]can::{} ({})", scan.name, scan.samples);
 				w.write_record(res.output(label))?;
+			} else {
+				let mut cells = vec![label];
+				cells.extend(SKIP.iter().map(|s| s.to_string()));
+				w.write_record(cells)?;
 			}
 			// Index build (only for indexed scans)
 			if scan.has_index_spec {
