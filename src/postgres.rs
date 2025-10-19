@@ -3,6 +3,7 @@
 use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
@@ -13,14 +14,82 @@ use tokio_postgres::{Client, NoTls, Row};
 
 pub const DEFAULT: &str = "host=127.0.0.1 user=postgres password=postgres";
 
-pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
+/// Calculate Postgres specific memory allocation
+fn calculate_postgres_memory() -> (u64, u64, u64, u64, u64, u64) {
+	// Load the system memory
+	let memory = Config::new();
+	// Use ~33% of recommended cache allocation
+	let shared_buffers_gb = (memory.cache_gb / 3).max(1);
+	// Use ~75% of total system memory for caching
+	let effective_cache_gb = memory.cache_gb;
+	// Scale work_mem with shared_buffers
+	let work_mem_mb = (shared_buffers_gb * 64).max(32);
+	// Use 25% of shared_buffers, max 8GB
+	let maintenance_work_mem_gb = (shared_buffers_gb / 4).clamp(1, 8);
+	// Scale WAL with shared_buffers
+	let max_wal_gb = (shared_buffers_gb).clamp(2, 16);
+	let min_wal_gb = (max_wal_gb / 4).max(1);
+	// Return configuration
+	(
+		shared_buffers_gb,
+		effective_cache_gb,
+		work_mem_mb,
+		maintenance_work_mem_gb,
+		max_wal_gb,
+		min_wal_gb,
+	)
+}
+
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// Calculate memory allocation
+	let (
+		shared_buffers_gb,
+		effective_cache_gb,
+		work_mem_mb,
+		maintenance_work_mem_gb,
+		max_wal_gb,
+		min_wal_gb,
+	) = calculate_postgres_memory();
+	// Return Docker parameters
 	DockerParams {
 		image: "postgres",
 		pre_args:
-			"--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres",
-		post_args: match options.sync {
-			true => "postgres -N 1024 -c fsync=on -c synchronous_commit=on",
-			false => "postgres -N 1024 -c fsync=on -c synchronous_commit=off",
+			"--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
+				.to_string(),
+		post_args: match options.optimised {
+			// Optimised configuration
+			true => format!(
+				"postgres -N 1024 \
+				-c shared_buffers={shared_buffers_gb}GB \
+				-c effective_cache_size={effective_cache_gb}GB \
+				-c work_mem={work_mem_mb}MB \
+				-c maintenance_work_mem={maintenance_work_mem_gb}GB \
+				-c wal_buffers=16MB \
+				-c checkpoint_timeout=15min \
+				-c checkpoint_completion_target=0.9 \
+				-c random_page_cost=1.1 \
+				-c effective_io_concurrency=200 \
+				-c min_wal_size={min_wal_gb}GB \
+				-c max_wal_size={max_wal_gb}GB \
+				-c fsync={} \
+				-c synchronous_commit=on",
+				if options.sync {
+					"on"
+				} else {
+					"off"
+				}
+			),
+			// Default configuration
+			false => format!(
+				"postgres -N 1024 \
+				-c fsync={} \
+				-c synchronous_commit=on",
+				if options.sync {
+					"on"
+				} else {
+					"off"
+				}
+			),
 		},
 	}
 }
@@ -90,7 +159,9 @@ impl BenchmarkClient for PostgresClient {
 			})
 			.collect::<Vec<String>>()
 			.join(", ");
-		let stm = format!("DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});");
+		let stm = format!(
+			"DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields});"
+		);
 		self.client.batch_execute(&stm).await?;
 		Ok(())
 	}
@@ -133,6 +204,50 @@ impl BenchmarkClient for PostgresClient {
 
 	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
 		self.scan(scan).await
+	}
+
+	async fn batch_create_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		self.batch_create(key_vals.map(|(k, v)| (k as i32, v)).collect()).await
+	}
+
+	async fn batch_create_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		self.batch_create(key_vals.collect()).await
+	}
+
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		self.batch_read(keys.map(|k| k as i32).collect()).await
+	}
+
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		self.batch_read(keys.collect()).await
+	}
+
+	async fn batch_update_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		self.batch_update(key_vals.map(|(k, v)| (k as i32, v)).collect()).await
+	}
+
+	async fn batch_update_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		self.batch_update(key_vals.collect()).await
+	}
+
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		self.batch_delete(keys.map(|k| k as i32).collect()).await
+	}
+
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		self.batch_delete(keys.collect()).await
 	}
 }
 
@@ -238,9 +353,9 @@ impl PostgresClient {
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
 		// Extract parameters
-		let s = scan.start.map(|s| format!("OFFSET {s}")).unwrap_or_default();
-		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {s}")).unwrap_or_default();
+		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
+		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
+		let c = AnsiSqlDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
@@ -277,6 +392,264 @@ impl PostgresClient {
 				let res = self.client.query(&stm, &[]).await?;
 				let count: i64 = res.first().unwrap().get(0);
 				Ok(count as usize)
+			}
+		}
+	}
+
+	async fn batch_create<T>(&self, key_vals: Vec<(T, Value)>) -> Result<()>
+	where
+		T: ToSql + Sync,
+	{
+		// Fetch the columns to insert
+		let columns = self
+			.columns
+			.0
+			.iter()
+			.map(|(name, _)| AnsiSqlDialect::escape_field(name.clone()))
+			.collect::<Vec<String>>()
+			.join(", ");
+		// Store the records to insert
+		let mut inserts = Vec::with_capacity(key_vals.len());
+		// Store the query parameters
+		let mut params: Vec<&(dyn ToSql + Sync)> = Vec::new();
+		// Store the column values
+		let mut values: Vec<Box<dyn ToSql + Sync + Send>> = Vec::new();
+		// Store the row index
+		let mut index = 1;
+		// Iterate over the key-value pairs
+		for (_, val) in &key_vals {
+			// Add the id placeholder
+			let mut row = vec![format!("${index}")];
+			index += 1;
+			// Process the columns
+			if let Value::Object(obj) = val {
+				for (column, column_type) in &self.columns.0 {
+					// Add the column placeholder
+					row.push(format!("${index}"));
+					index += 1;
+					// Add the column value with proper type conversion
+					if let Some(value) = obj.get(column) {
+						let value = convert_json_to_sql_param(column, column_type, value)?;
+						values.push(value);
+					} else {
+						return Err(anyhow::anyhow!("Missing value for column {column}"));
+					}
+				}
+			}
+			// Add the row to the inserts
+			inserts.push(format!("({})", row.join(", ")));
+		}
+		// Store the param index
+		let mut index = 0;
+		// Iterate over the key-value pairs
+		for (key, val) in &key_vals {
+			params.push(key);
+			if let Value::Object(_) = val {
+				for _ in &self.columns.0 {
+					params.push(values[index].as_ref());
+					index += 1;
+				}
+			}
+		}
+		// Build and execute the INSERT statement
+		let stm = format!("INSERT INTO record (id, {columns}) VALUES {}", inserts.join(", "));
+		let res = self.client.execute(&stm, &params).await?;
+		assert_eq!(res, key_vals.len() as u64);
+		Ok(())
+	}
+
+	async fn batch_read<T>(&self, keys: Vec<T>) -> Result<()>
+	where
+		T: ToSql + Sync,
+	{
+		// Store the record ids
+		let params: Vec<&(dyn ToSql + Sync)> =
+			keys.iter().map(|k| k as &(dyn ToSql + Sync)).collect();
+		// Build the IN clause
+		let ids = (1..=keys.len()).map(|i| format!("${i}")).collect::<Vec<String>>().join(", ");
+		// Build and execute the DELETE statement
+		let stm = format!("SELECT * FROM record WHERE id IN ({ids})");
+		let res = self.client.query(&stm, &params).await?;
+		assert_eq!(res.len(), keys.len());
+		for row in res {
+			black_box(self.consume(row, true).unwrap());
+		}
+		Ok(())
+	}
+
+	async fn batch_update<T>(&self, key_vals: Vec<(T, Value)>) -> Result<()>
+	where
+		T: ToSql + Sync,
+	{
+		// Store the columns to update
+		let columns = self
+			.columns
+			.0
+			.iter()
+			.map(|(name, _)| {
+				format!("{name} = data.{name}", name = AnsiSqlDialect::escape_field(name.clone()),)
+			})
+			.collect::<Vec<String>>()
+			.join(", ");
+		// Store the columns to select
+		let fields = format!(
+			"id, {}",
+			self.columns
+				.0
+				.iter()
+				.map(|(name, _)| AnsiSqlDialect::escape_field(name.clone()))
+				.collect::<Vec<String>>()
+				.join(", ")
+		);
+		// Store the records to insert
+		let mut inserts = Vec::with_capacity(key_vals.len());
+		// Store the query parameters
+		let mut params: Vec<&(dyn ToSql + Sync)> = Vec::new();
+		// Store the column values
+		let mut values: Vec<Box<dyn ToSql + Sync + Send>> = Vec::new();
+		// Store the row index
+		let mut index = 1;
+		// Iterate over the key-value pairs
+		for (_, val) in &key_vals {
+			// Start with the key parameter placeholder
+			let mut row = vec![format!("${index}::{}", get_key_type(&self.kt))];
+			index += 1;
+			// Process each column value in the record
+			if let Value::Object(obj) = val {
+				for (column, column_type) in &self.columns.0 {
+					// Add parameter placeholder for this column
+					row.push(format!("${index}::{}", get_column_type(column_type)));
+					index += 1;
+					// Add the column value with proper type conversion
+					if let Some(value) = obj.get(column) {
+						let value = convert_json_to_sql_param(column, column_type, value)?;
+						values.push(value);
+					} else {
+						return Err(anyhow::anyhow!("Missing value for column {column}"));
+					}
+				}
+			}
+			// Add the complete row to the VALUES construct
+			inserts.push(format!("({})", row.join(", ")));
+		}
+		// Store the param index
+		let mut index = 0;
+		// Iterate over the key-value pairs
+		for (key, val) in &key_vals {
+			// Add the key as the first parameter
+			params.push(key);
+			// Add all column values as subsequent parameters
+			if let Value::Object(_) = val {
+				for _ in &self.columns.0 {
+					params.push(values[index].as_ref());
+					index += 1;
+				}
+			}
+		}
+		// Build and execute the UPDATE statement
+		let stm = format!(
+			"UPDATE record SET {columns} FROM (VALUES {}) AS data({fields}) WHERE record.id = data.id",
+			inserts.join(", "),
+		);
+		let res = self.client.execute(&stm, &params).await?;
+		assert_eq!(res, key_vals.len() as u64);
+		Ok(())
+	}
+
+	async fn batch_delete<T>(&self, keys: Vec<T>) -> Result<()>
+	where
+		T: ToSql + Sync,
+	{
+		// Store the record ids
+		let params: Vec<&(dyn ToSql + Sync)> =
+			keys.iter().map(|k| k as &(dyn ToSql + Sync)).collect();
+		// Build the IN clause
+		let ids = (1..=keys.len()).map(|i| format!("${i}")).collect::<Vec<String>>().join(", ");
+		// Build and execute the DELETE statement
+		let stm = format!("DELETE FROM record WHERE id IN ({ids})");
+		let res = self.client.execute(&stm, &params).await?;
+		assert_eq!(res as usize, keys.len());
+		Ok(())
+	}
+}
+
+/// Get PostgreSQL type name for explicit casting
+fn get_key_type(key_type: &KeyType) -> &'static str {
+	match key_type {
+		KeyType::Integer => "INTEGER",
+		KeyType::String26 => "TEXT",
+		KeyType::String90 => "TEXT",
+		KeyType::String250 => "TEXT",
+		KeyType::String506 => "TEXT",
+		KeyType::Uuid => "UUID",
+	}
+}
+
+/// Get PostgreSQL type name for explicit casting
+fn get_column_type(column_type: &ColumnType) -> &'static str {
+	match column_type {
+		ColumnType::Integer => "INTEGER",
+		ColumnType::Float => "REAL",
+		ColumnType::Bool => "BOOLEAN",
+		ColumnType::String => "TEXT",
+		ColumnType::Object => "JSONB",
+		ColumnType::DateTime => "TIMESTAMP",
+		ColumnType::Uuid => "UUID",
+	}
+}
+
+/// Convert a JSON value to a PostgreSQL parameter based on column type
+fn convert_json_to_sql_param(
+	column_name: &str,
+	column_type: &ColumnType,
+	json_value: &Value,
+) -> Result<Box<dyn ToSql + Sync + Send>> {
+	match column_type {
+		ColumnType::Integer => {
+			if let Some(int_val) = json_value.as_i64() {
+				Ok(Box::new(int_val as i32))
+			} else {
+				Err(anyhow::anyhow!("Expected integer for column {column_name}"))
+			}
+		}
+		ColumnType::Float => {
+			if let Some(float_val) = json_value.as_f64() {
+				Ok(Box::new(float_val as f32))
+			} else {
+				Err(anyhow::anyhow!("Expected float for column {column_name}"))
+			}
+		}
+		ColumnType::Bool => {
+			if let Some(bool_val) = json_value.as_bool() {
+				Ok(Box::new(bool_val))
+			} else {
+				Err(anyhow::anyhow!("Expected boolean for column {column_name}"))
+			}
+		}
+		ColumnType::String => {
+			if let Some(str_val) = json_value.as_str() {
+				Ok(Box::new(str_val.to_string()))
+			} else {
+				Err(anyhow::anyhow!("Expected string for column {column_name}"))
+			}
+		}
+		ColumnType::Object => Ok(Box::new(Json(json_value.clone()))),
+		ColumnType::DateTime => {
+			if let Some(str_val) = json_value.as_str() {
+				Ok(Box::new(str_val.to_string()))
+			} else {
+				Err(anyhow::anyhow!("Expected datetime string for column {column_name}"))
+			}
+		}
+		ColumnType::Uuid => {
+			if let Some(str_val) = json_value.as_str() {
+				if let Ok(uuid) = uuid::Uuid::parse_str(str_val) {
+					Ok(Box::new(uuid))
+				} else {
+					Err(anyhow::anyhow!("Invalid UUID for column {column_name}"))
+				}
+			} else {
+				Err(anyhow::anyhow!("Expected UUID string for column {column_name}"))
 			}
 		}
 	}

@@ -1,11 +1,12 @@
 #![cfg(feature = "arangodb")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
+use crate::dialect::ArangoDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use arangors::client::reqwest::ReqwestClient;
 use arangors::document::options::InsertOptions;
 use arangors::document::options::RemoveOptions;
@@ -17,11 +18,14 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "http://127.0.0.1:8529";
 
-pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "arangodb",
-		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1",
-		post_args: "--server.scheduler-queue-size 8192 --server.prio1-size 8192 --server.prio2-size 8192 --server.maximal-queue-size 8192",
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1".to_string(),
+		post_args: match options.optimised {
+			true => "--server.scheduler-queue-size 8192 --server.prio1-size 8192 --server.prio2-size 8192 --server.maximal-queue-size 8192".to_string(),
+			false => "".to_string(),
+		},
 	}
 }
 
@@ -213,18 +217,19 @@ impl ArangoDBClient {
 	}
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
-		// Contional scans are not supported
-		if scan.condition.is_some() {
-			bail!(NOT_SUPPORTED_ERROR);
-		}
 		// Extract parameters
-		let s = scan.start.unwrap_or(0);
-		let l = scan.limit.unwrap_or(i64::MAX as usize);
+		let l = match (scan.start, scan.limit) {
+			(Some(s), Some(l)) => format!("LIMIT {s}, {l}"),
+			(Some(s), None) => format!("LIMIT {s}, 1000000000"),
+			(None, Some(l)) => format!("LIMIT {l}"),
+			(None, None) => "".to_string(),
+		};
+		let c = ArangoDBDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stm = format!("FOR doc IN record LIMIT {s}, {l} RETURN {{ _id: doc._id }}");
+				let stm = format!("FOR r IN record {c} {l} RETURN {{ _id: r._id }}");
 				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
@@ -238,7 +243,7 @@ impl ArangoDBClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("FOR doc IN record LIMIT {s}, {l} RETURN doc");
+				let stm = format!("FOR r IN record {c} {l} RETURN r");
 				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
@@ -252,9 +257,8 @@ impl ArangoDBClient {
 				Ok(count)
 			}
 			Projection::Count => {
-				let stm = format!(
-					"FOR doc IN record LIMIT {s}, {l} COLLECT WITH COUNT INTO count RETURN count"
-				);
+				let stm =
+					format!("FOR r IN record {c} {l} COLLECT WITH COUNT INTO count RETURN count");
 				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
 				let count = res.first().unwrap().as_i64().unwrap();
 				Ok(count as usize)

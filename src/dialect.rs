@@ -1,8 +1,12 @@
+use crate::Scan;
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::valueprovider::Columns;
-use anyhow::Result;
+use anyhow::{Result, bail};
 use chrono::{DateTime, TimeZone, Utc};
 use flatten_json_object::ArrayFormatting;
 use flatten_json_object::Flattener;
+#[cfg(feature = "mongodb")]
+use mongodb::bson::{Document, doc, to_document};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -26,17 +30,17 @@ pub(crate) trait Dialect {
 	}
 }
 
-//
-//
-//
+// --------------------------------------------------
+// Default
+// --------------------------------------------------
 
 pub(crate) struct DefaultDialect();
 
 impl Dialect for DefaultDialect {}
 
-//
-//
-//
+// --------------------------------------------------
+// SQL
+// --------------------------------------------------
 
 pub(crate) struct AnsiSqlDialect();
 
@@ -84,11 +88,22 @@ impl AnsiSqlDialect {
 		}
 		updates.join(", ")
 	}
+	/// Constructs the WHERE clause for [S]elect tests
+	pub fn filter_clause(scan: &Scan) -> Result<String> {
+		if let Some(ref c) = scan.condition {
+			if let Some(ref c) = c.sql {
+				return Ok(format!("WHERE {c}"));
+			} else {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+		}
+		Ok(String::new())
+	}
 }
 
-//
-//
-//
+// --------------------------------------------------
+// MySQL
+// --------------------------------------------------
 
 pub(crate) struct MySqlDialect();
 
@@ -136,11 +151,22 @@ impl MySqlDialect {
 		}
 		updates.join(", ")
 	}
+	/// Constructs the WHERE clause for [S]elect tests
+	pub fn filter_clause(scan: &Scan) -> Result<String> {
+		if let Some(ref c) = scan.condition {
+			if let Some(ref c) = c.mysql {
+				return Ok(format!("WHERE {c}"));
+			} else {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+		}
+		Ok(String::new())
+	}
 }
 
-//
-//
-//
+// --------------------------------------------------
+// Neo4j
+// --------------------------------------------------
 
 pub(crate) struct Neo4jDialect();
 
@@ -190,5 +216,84 @@ impl Neo4jDialect {
 			}
 		}
 		Ok(fields.join(", "))
+	}
+	/// Constructs the WHERE clause for [S]elect tests
+	pub fn filter_clause(scan: &Scan) -> Result<String> {
+		if let Some(ref c) = scan.condition {
+			if let Some(ref c) = c.neo4j {
+				return Ok(format!("WHERE {c}"));
+			} else {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+		}
+		Ok(String::new())
+	}
+}
+
+// --------------------------------------------------
+// SurrealDB
+// --------------------------------------------------
+
+pub(crate) struct SurrealDBDialect();
+
+impl Dialect for SurrealDBDialect {}
+
+impl SurrealDBDialect {
+	/// Constructs the WHERE clause for [S]elect tests
+	pub fn filter_clause(scan: &Scan) -> Result<String> {
+		if let Some(ref c) = scan.condition {
+			if let Some(ref c) = c.surrealdb {
+				return Ok(format!("WHERE {c}"));
+			} else {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+		}
+		Ok(String::new())
+	}
+}
+
+// --------------------------------------------------
+// ArangoDB
+// --------------------------------------------------
+
+pub(crate) struct ArangoDBDialect();
+
+impl Dialect for ArangoDBDialect {}
+
+impl ArangoDBDialect {
+	/// Constructs the WHERE clause for [S]elect tests
+	pub fn filter_clause(scan: &Scan) -> Result<String> {
+		if let Some(ref c) = scan.condition {
+			if let Some(ref c) = c.arangodb {
+				return Ok(format!("FILTER {c}"));
+			} else {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+		}
+		Ok(String::new())
+	}
+}
+
+// --------------------------------------------------
+// MongoDB
+// --------------------------------------------------
+
+pub(crate) struct MongoDBDialect();
+
+#[cfg(feature = "mongodb")]
+impl Dialect for MongoDBDialect {}
+
+#[cfg(feature = "mongodb")]
+impl MongoDBDialect {
+	/// Constructs the filter document for [S]elect tests
+	pub fn filter_clause(scan: &Scan) -> Result<Document> {
+		if let Some(ref c) = scan.condition {
+			if let Some(ref c) = c.mongodb {
+				return Ok(to_document(c)?);
+			} else {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+		}
+		Ok(doc! {})
 	}
 }

@@ -115,7 +115,7 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
   -n, --name <NAME>          An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealkv, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv]
+  -d, --database <DATABASE>  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, surrealkv, surrealmx]
   -i, --image <IMAGE>        Specify a custom Docker image
   -p, --privileged           Whether to run Docker in privileged mode
   -e, --endpoint <ENDPOINT>  Specify a custom endpoint to connect to
@@ -125,12 +125,17 @@ Options:
   -t, --threads <THREADS>    Number of concurrent threads per client [default: 1]
   -s, --samples <SAMPLES>    Number of samples to be created, read, updated, and deleted
   -r, --random               Generate the keys in a pseudo-randomized order
+      --sync                 Whether to ensure data is synced and durable
+      --persisted            Whether to enable disk persistence for Redis-family databases
+      --optimised            Use optimised database configurations instead of defaults
   -k, --key <KEY>            The type of the key [default: integer] [possible values: integer, string26, string90, string250, string506, uuid]
-  -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=] [default: "{\n\t\t\t\"text\": \"string:50\",\n\t\t\t\"integer\": \"int\"\n\t\t}"]
+  -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=] [default: "{\n\t\t\t\"text\": \"string:50\",\n\t\t\t\"age\": \"int:1..99\",\n\t\t\t\"integer\": \"int\"\n\t\t}"]
       --show-sample          Print-out an example of a generated value
       --pid <PID>            Collect system information for a given pid
-  -a, --scans <SCANS>        An array of scan specifications [env: CRUD_BENCH_SCANS=] [default: "[\n\t\t\t{ \"name\": \"count_all\", \"samples\": 100, \"projection\": \"COUNT\" },\n\t\t\t{ \"name\": \"limit_id\", \"samples\": 100, \"projection\": \"ID\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_all\", \"samples\": 100, \"projection\": \"FULL\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_count\", \"samples\": 100, \"projection\": \"COUNT\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_id\", \"samples\": 100, \"projection\": \"ID\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_all\", \"samples\": 100, \"projection\": \"FULL\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_count\", \"samples\": 100, \"projection\": \"COUNT\", \"start\": 5000, \"limit\": 100, \"expect\": 100 }\n\t\t]"]
-  -h, --help                 Print help (see more with '--help')```
+      --scans <SCANS>        An array of scan specifications [env: CRUD_BENCH_SCANS=] [default: "[\n\t\t\t{ \"name\": \"count_all\", \"samples\": 100, \"projection\": \"COUNT\" },\n\t\t\t{ \"name\": \"limit_id\", \"samples\": 10000, \"projection\": \"ID\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_all\", \"samples\": 10000, \"projection\": \"FULL\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_count\", \"samples\": 10000, \"projection\": \"COUNT\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_id\", \"samples\": 10000, \"projection\": \"ID\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_all\", \"samples\": 10000, \"projection\": \"FULL\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_count\", \"samples\": 10000, \"projection\": \"COUNT\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"where_field_integer_eq\", \"samples\": 100, \"projection\": \"FULL\",\n\t\t\t\t\"condition\": {\n\t\t\t\t\t\"sql\": \"age = 21\",\n\t\t\t\t\t\"mysql\": \"age = 21\",\n\t\t\t\t\t\"neo4j\": \"r.age = 21\",\n\t\t\t\t\t\"mongodb\": { \"age\": { \"$eq\": 21 } },\n\t\t\t\t\t\"arangodb\": \"r.age = 21\",\n\t\t\t\t\t\"surrealdb\": \"age = 21\"\n\t\t\t\t}\n\t\t\t},\n\t\t\t{ \"name\": \"where_field_integer_gte_lte\", \"samples\": 100, \"projection\": \"FULL\",\n\t\t\t\t\"condition\": {\n\t\t\t\t\t\"sql\": \"age >= 18 AND age <= 21\",\n\t\t\t\t\t\"mysql\": \"age >= 18 AND age <= 21\",\n\t\t\t\t\t\"neo4j\": \"r.age >= 18 AND r.age <= 21\",\n\t\t\t\t\t\"mongodb\": { \"age\": { \"$gte\": 18, \"$lte\": 21 } },\n\t\t\t\t\t\"arangodb\": \"r.age >= 18 AND r.age <= 21\",\n\t\t\t\t\t\"surrealdb\": \"age >= 18 AND age <= 21\"\n\t\t\t\t}\n\t\t\t}\n\t\t]"]
+      --batches <BATCHES>    An array of batch operation specifications [env: CRUD_BENCH_BATCHES=] [default: "[\n\t\t\t{ \"name\": \"batch_create_100\", \"operation\": \"CREATE\", \"batch_size\": 100, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_read_100\", \"operation\": \"READ\", \"batch_size\": 100, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_update_100\", \"operation\": \"UPDATE\", \"batch_size\": 100, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_delete_100\", \"operation\": \"DELETE\", \"batch_size\": 100, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_create_1000\", \"operation\": \"CREATE\", \"batch_size\": 1000, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_read_1000\", \"operation\": \"READ\", \"batch_size\": 1000, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_update_1000\", \"operation\": \"UPDATE\", \"batch_size\": 1000, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_delete_1000\", \"operation\": \"DELETE\", \"batch_size\": 1000, \"samples\": 1000 }\n\t\t]"]
+  -h, --help                 Print help (see more with '--help')
+  ```
 
 For more detailed help information run the following command:
 
@@ -150,21 +155,21 @@ template for generating a randomized value.
 
 Within the JSON structure, the following values are replaced by randomly generated data:
 
-- Every occurrence of `string:XX` will be replaced by a random string with XX characters.
-- Every occurrence of `text:XX` will be replaced by a random string made of words of 2 to 10 characters, for a total of
-  XX characters.
-- Every occurrence of `string:X..Y` will be replaced by a random string between X and Y characters.
+- Every occurrence of `string:X` will be replaced by a random string with `X` characters.
+- Every occurrence of `text:X` will be replaced by a random string made of words of 2 to 10 characters, for a total of
+  `X` characters.
+- Every occurrence of `string:X..Y` will be replaced by a random string between `X` and `Y` characters.
 - Every occurrence of `text:X..Y` will be replaced by a random string made of words of 2 to 10 characters, for a total
-  between X and Y characters.
+  between `X` and `Y` characters.
 - Every `int` will be replaced by a random integer (i32).
-- Every `int:X..Y` will be replaced by a random integer (i32) between X and Y.
+- Every `int:X..Y` will be replaced by a random integer (i32) between `X` and `Y`.
 - Every `float` will be replaced by a random float (f32).
-- Every `float:X..Y` will be replaced by a random float (f32) between X and Y.
+- Every `float:X..Y` will be replaced by a random float (f32) between `X` and `Y`.
 - Every `uuid` will be replaced by a random UUID (v4).
-- Every `bool` will be replaced by a `true` or `false` (v4).
+- Every `bool` will be replaced by a `true` or `false`.
 - Every `string_enum:A,B,C` will be replaced by a string from `A` `B` or `C`.
-- Every `int_enum:A,B,C` will be replaced by a i32 from  `A` `B` or `C`.
-- Every `float_enum:A,B,C` will be replaced by a f32 from  `A` `B` or `C`.
+- Every `int_enum:A,B,C` will be replaced by a i32 from `A` `B` or `C`.
+- Every `float_enum:A,B,C` will be replaced by a f32 from `A` `B` or `C`.
 - Every `datetime` will be replaced by a datetime (ISO 8601).
 
 ```json
@@ -463,11 +468,18 @@ cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r
 
 ### [SurrealKV](https://surrealkv.org)
 
-SurrealKV is a transactional, ACID-compliant, embedded, key-value datastore, written in Rust, and based on concurrent
-adaptive radix trees.
+SurrealKV is a versioned, transactional, ACID-compliant, embedded key-value database implemented in Rust using an LSM (Log-Structured Merge) tree and B+tree architecture.
 
 ```bash
 cargo run -r -- -d surrealkv -s 100000 -c 12 -t 24 -r
+```
+
+### [SurrealMX](https://surrealmx.org)
+
+SurrealKV is an embedded, in-memory, lock-free and wait-free, transactional, embedded key-value database engine implemented in Rust.
+
+```bash
+cargo run -r -- -d surrealmx -s 100000 -c 12 -t 24 -r
 ```
 
 ## SurrealDB local benchmark

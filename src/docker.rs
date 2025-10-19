@@ -1,7 +1,7 @@
 use crate::benchmark::Benchmark;
 use log::{debug, error, info};
 use std::fmt;
-use std::process::{exit, Command};
+use std::process::{Command, exit};
 use std::time::Duration;
 
 const RETRIES: i32 = 10;
@@ -10,8 +10,8 @@ const TIMEOUT: Duration = Duration::from_secs(6);
 
 pub(crate) struct DockerParams {
 	pub(crate) image: &'static str,
-	pub(crate) pre_args: &'static str,
-	pub(crate) post_args: &'static str,
+	pub(crate) pre_args: String,
+	pub(crate) post_args: String,
 }
 
 pub(crate) struct Container {

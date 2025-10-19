@@ -1,5 +1,9 @@
+use crate::KeyType;
 use crate::benchmark::Benchmark;
-use crate::dialect::{AnsiSqlDialect, DefaultDialect, MySqlDialect, Neo4jDialect};
+use crate::dialect::{
+	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MongoDBDialect, MySqlDialect, Neo4jDialect,
+	SurrealDBDialect,
+};
 use crate::docker::{Container, DockerParams};
 use crate::dry::DryClientProvider;
 use crate::engine::BenchmarkEngine;
@@ -7,7 +11,6 @@ use crate::keyprovider::KeyProvider;
 use crate::map::MapClientProvider;
 use crate::result::BenchmarkResult;
 use crate::valueprovider::ValueProvider;
-use crate::KeyType;
 use anyhow::Result;
 use clap::ValueEnum;
 
@@ -19,16 +22,14 @@ pub(crate) enum Database {
 	Arangodb,
 	#[cfg(feature = "dragonfly")]
 	Dragonfly,
-	#[cfg(feature = "echodb")]
-	Echodb,
 	#[cfg(feature = "fjall")]
 	Fjall,
 	#[cfg(feature = "keydb")]
 	Keydb,
+	#[cfg(feature = "mdbx")]
+	Mdbx,
 	#[cfg(feature = "lmdb")]
 	Lmdb,
-	#[cfg(feature = "memodb")]
-	Memodb,
 	#[cfg(feature = "mongodb")]
 	Mongodb,
 	#[cfg(feature = "mysql")]
@@ -47,8 +48,6 @@ pub(crate) enum Database {
 	Scylladb,
 	#[cfg(feature = "sqlite")]
 	Sqlite,
-	#[cfg(feature = "surrealkv")]
-	Surrealkv,
 	#[cfg(feature = "surrealdb")]
 	Surrealdb,
 	#[cfg(feature = "surrealdb")]
@@ -58,7 +57,9 @@ pub(crate) enum Database {
 	#[cfg(feature = "surrealdb")]
 	SurrealdbSurrealkv,
 	#[cfg(feature = "surrealkv")]
-	SurrealkvMemory,
+	Surrealkv,
+	#[cfg(feature = "surrealmx")]
+	Surrealmx,
 }
 
 impl Database {
@@ -96,7 +97,7 @@ impl Database {
 		// Check if a custom image has been specified
 		let image = options.image.clone().unwrap_or(params.image.to_string());
 		// Start the specified container with arguments
-		let container = Container::start(image, params.pre_args, params.post_args, options);
+		let container = Container::start(image, &params.pre_args, &params.post_args, options);
 		// Return the container reference
 		Some(container)
 	}
@@ -109,8 +110,10 @@ impl Database {
 		kp: KeyProvider,
 		vp: ValueProvider,
 		scans: &str,
+		batches: &str,
 	) -> Result<BenchmarkResult> {
 		let scans = serde_json::from_str(scans)?;
+		let batches = serde_json::from_str(batches)?;
 		match self {
 			Database::Dry => {
 				benchmark
@@ -119,18 +122,20 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
 			#[cfg(feature = "arangodb")]
 			Database::Arangodb => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, ArangoDBDialect, _>(
 						crate::arangodb::ArangoDBClientProvider::setup(kt, vp.columns(), benchmark)
 							.await?,
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -147,18 +152,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
-					)
-					.await
-			}
-			#[cfg(feature = "echodb")]
-			Database::Echodb => {
-				benchmark
-					.run::<_, DefaultDialect, _>(
-						crate::echodb::EchoDBClientProvider::setup(kt, vp.columns(), benchmark)
-							.await?,
-						kp,
-						vp,
-						scans,
+						batches,
 					)
 					.await
 			}
@@ -171,6 +165,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -183,6 +178,19 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
+					)
+					.await
+			}
+			#[cfg(feature = "mdbx")]
+			Database::Mdbx => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::mdbx::MDBXClientProvider::setup(kt, vp.columns(), benchmark).await?,
+						kp,
+						vp,
+						scans,
+						batches,
 					)
 					.await
 			}
@@ -194,6 +202,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -204,30 +213,20 @@ impl Database {
 						kp,
 						vp,
 						scans,
-					)
-					.await
-			}
-			#[cfg(feature = "memodb")]
-			Database::Memodb => {
-				benchmark
-					.run::<_, DefaultDialect, _>(
-						crate::memodb::MemoDBClientProvider::setup(kt, vp.columns(), benchmark)
-							.await?,
-						kp,
-						vp,
-						scans,
+						batches,
 					)
 					.await
 			}
 			#[cfg(feature = "mongodb")]
 			Database::Mongodb => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, MongoDBDialect, _>(
 						crate::mongodb::MongoDBClientProvider::setup(kt, vp.columns(), benchmark)
 							.await?,
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -240,6 +239,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -252,6 +252,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -264,6 +265,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -275,6 +277,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -287,6 +290,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -299,6 +303,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -311,25 +316,27 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
 			#[cfg(feature = "sqlite")]
 			Database::Sqlite => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, AnsiSqlDialect, _>(
 						crate::sqlite::SqliteClientProvider::setup(kt, vp.columns(), benchmark)
 							.await?,
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
 			#[cfg(feature = "surrealdb")]
 			Database::Surrealdb => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, SurrealDBDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -339,13 +346,14 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbMemory => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, SurrealDBDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -355,13 +363,14 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbRocksdb => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, SurrealDBDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -371,13 +380,14 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbSurrealkv => {
 				benchmark
-					.run::<_, DefaultDialect, _>(
+					.run::<_, SurrealDBDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -387,6 +397,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
@@ -403,15 +414,16 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}
-			#[cfg(feature = "surrealkv")]
-			Database::SurrealkvMemory => {
-				benchmark.disk_persistence = false;
+			#[cfg(feature = "surrealmx")]
+			Database::Surrealmx => {
+				benchmark.persisted = false;
 				benchmark
 					.run::<_, DefaultDialect, _>(
-						crate::surrealkv::SurrealKVClientProvider::setup(
+						crate::surrealmx::SurrealMXClientProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark,
@@ -420,6 +432,7 @@ impl Database {
 						kp,
 						vp,
 						scans,
+						batches,
 					)
 					.await
 			}

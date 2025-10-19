@@ -1,32 +1,23 @@
-#![cfg(feature = "lmdb")]
+#![cfg(feature = "mdbx")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
-use heed::types::Bytes;
-use heed::{Database, EnvOpenOptions};
-use heed::{Env, EnvFlags, WithoutTls};
+use libmdbx::{
+	Database, DatabaseOptions, Mode, NoWriteMap, PageSize, ReadWriteOptions, SyncMode, WriteFlags,
+};
 use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::time::Duration;
 
-const DATABASE_DIR: &str = "lmdb";
+const DATABASE_DIR: &str = "mdbx";
 
-const DEFAULT_SIZE: usize = 4_294_967_296; // 4GiB
+pub(crate) struct MDBXClientProvider(Arc<Database<NoWriteMap>>);
 
-static DATABASE_SIZE: LazyLock<usize> = LazyLock::new(|| {
-	std::env::var("CRUD_BENCH_LMDB_DATABASE_SIZE")
-		.map(|s| s.parse::<usize>().unwrap_or(DEFAULT_SIZE))
-		.unwrap_or(DEFAULT_SIZE)
-});
-
-pub(crate) struct LmDBClientProvider(Arc<(Env<WithoutTls>, Database<Bytes, Bytes>)>);
-
-impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
+impl BenchmarkEngine<MDBXClient> for MDBXClientProvider {
 	/// The number of seconds to wait before connecting
 	fn wait_timeout(&self) -> Option<Duration> {
 		None
@@ -35,53 +26,69 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
-		// Recreate the database directory
-		std::fs::create_dir(DATABASE_DIR)?;
-		// Configure flags based on options
-		let mut flags = EnvFlags::NO_READ_AHEAD | EnvFlags::NO_MEM_INIT;
-		// Configure flags for filesystem sync
-		if !options.sync {
-			flags |= EnvFlags::NO_SYNC | EnvFlags::NO_META_SYNC;
-		}
-		// Create a new environment
-		let env = unsafe {
-			EnvOpenOptions::new()
-				// Allow more transactions than threads
-				.read_txn_without_tls()
-				// Configure database flags
-				.flags(flags)
-				// We only use one db for benchmarks
-				.max_dbs(1)
-				// Optimize for expected concurrent readers
-				.max_readers(126)
-				// Set the database size
-				.map_size(*DATABASE_SIZE)
-				// Open the database
-				.open(DATABASE_DIR)
-		}?;
-		// Creaye the database
-		let db = {
-			// Open a new transaction
-			let mut txn = env.write_txn()?;
-			// Initiate the database
-			env.create_database::<Bytes, Bytes>(&mut txn, None)?
+		// Configure database options
+		let options = DatabaseOptions {
+			// Configure the read-write options
+			mode: Mode::ReadWrite(ReadWriteOptions {
+				sync_mode: if options.sync {
+					SyncMode::Durable
+				} else {
+					SyncMode::UtterlyNoSync
+				},
+				// No maximum database size
+				max_size: None,
+				// 64MB minimum database size
+				min_size: Some(64 * 1024 * 1024),
+				// Grow in 256MB steps
+				growth_step: Some(256 * 1024 * 1024),
+				// Disable shrinking in benchmarks
+				shrink_threshold: None,
+			}),
+			// 16KB pages for better sequential performance
+			page_size: Some(PageSize::Set(16384)),
+			// Exclusive mode - no inter-process locking overhead
+			exclusive: true,
+			// LIFO garbage collection for better cache performance
+			liforeclaim: true,
+			// Disable readahead for better random access
+			no_rdahead: true,
+			// Skip memory initialization for performance
+			no_meminit: true,
+			// Coalesce transactions for better write performance
+			coalesce: true,
+			// Optimize for expected concurrent readers
+			max_readers: Some(126),
+			// We only use one table for benchmarks
+			max_tables: Some(1),
+			// Use defaults for transaction limits
+			..Default::default()
 		};
+		// Create the database
+		let db = Database::open_with_options(DATABASE_DIR, options)?;
+		// Begin a new transaction
+		let tx = db.begin_rw_txn()?;
+		// Open the default table
+		let tb = tx.open_table(None)?;
+		// Prime the table for permaopen
+		tx.prime_for_permaopen(tb);
+		// Commit the transaction
+		tx.commit()?;
 		// Create the store
-		Ok(Self(Arc::new((env, db))))
+		Ok(Self(Arc::new(db)))
 	}
 	/// Creates a new client for this benchmarking engine
-	async fn create_client(&self) -> Result<LmDBClient> {
-		Ok(LmDBClient {
+	async fn create_client(&self) -> Result<MDBXClient> {
+		Ok(MDBXClient {
 			db: self.0.clone(),
 		})
 	}
 }
 
-pub(crate) struct LmDBClient {
-	db: Arc<(Env<WithoutTls>, Database<Bytes, Bytes>)>,
+pub(crate) struct MDBXClient {
+	db: Arc<Database<NoWriteMap>>,
 }
 
-impl BenchmarkClient for LmDBClient {
+impl BenchmarkClient for MDBXClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
@@ -194,23 +201,27 @@ impl BenchmarkClient for LmDBClient {
 	}
 }
 
-impl LmDBClient {
+impl MDBXClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Create a new transaction
-		let mut txn = self.db.0.write_txn()?;
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
-		self.db.1.put(&mut txn, key, val.as_ref())?;
+		txn.put(&table, key, &val, WriteFlags::empty())?;
 		txn.commit()?;
 		Ok(())
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let txn = self.db.0.read_txn()?;
+		let txn = self.db.begin_ro_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
-		let res: Option<_> = self.db.1.get(&txn, key)?;
+		let res: Option<Vec<u8>> = txn.get(&table, key)?;
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value
@@ -223,18 +234,22 @@ impl LmDBClient {
 		// Serialise the value
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Create a new transaction
-		let mut txn = self.db.0.write_txn()?;
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
-		self.db.1.put(&mut txn, key, &val)?;
+		txn.put(&table, key, &val, WriteFlags::empty())?;
 		txn.commit()?;
 		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.0.write_txn()?;
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
-		self.db.1.delete(&mut txn, key)?;
+		txn.del(&table, key, None)?;
 		txn.commit()?;
 		Ok(())
 	}
@@ -244,11 +259,13 @@ impl LmDBClient {
 		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>>,
 	) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.0.write_txn()?;
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
 		for result in key_vals {
 			let (key, val) = result?;
-			self.db.1.put(&mut txn, &key, &val)?;
+			txn.put(&table, &key, &val, WriteFlags::empty())?;
 		}
 		// Commit the batch
 		txn.commit()?;
@@ -257,11 +274,13 @@ impl LmDBClient {
 
 	async fn batch_read_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
 		// Create a new transaction
-		let txn = self.db.0.read_txn()?;
+		let txn = self.db.begin_ro_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
 		for key in keys {
 			// Get the current value
-			let res: Option<_> = self.db.1.get(&txn, &key)?;
+			let res: Option<Vec<u8>> = txn.get(&table, &key)?;
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
@@ -276,11 +295,13 @@ impl LmDBClient {
 		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>>,
 	) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.0.write_txn()?;
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
 		for result in key_vals {
 			let (key, val) = result?;
-			self.db.1.put(&mut txn, &key, &val)?;
+			txn.put(&table, &key, &val, WriteFlags::empty())?;
 		}
 		// Commit the batch
 		txn.commit()?;
@@ -289,10 +310,12 @@ impl LmDBClient {
 
 	async fn batch_delete_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.0.write_txn()?;
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
 		for key in keys {
-			self.db.1.delete(&mut txn, &key)?;
+			txn.del(&table, &key, None)?;
 		}
 		// Commit the batch
 		txn.commit()?;
@@ -300,7 +323,7 @@ impl LmDBClient {
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
-		// Contional scans are not supported
+		// Conditional scans are not supported
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
@@ -309,9 +332,11 @@ impl LmDBClient {
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
 		// Create a new transaction
-		let txn = self.db.0.read_txn()?;
-		// Create an iterator starting at the beginning
-		let iter = self.db.1.iter(&txn)?;
+		let txn = self.db.begin_ro_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
+		// Create a cursor for iteration
+		let iter = txn.cursor(&table)?.into_iter();
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {

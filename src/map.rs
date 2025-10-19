@@ -2,7 +2,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use dashmap::DashMap;
 use serde_json::Value;
 use std::hash::Hash;
@@ -134,6 +134,106 @@ impl BenchmarkClient for MapClient {
 		} else {
 			bail!("Invalid MapDatabase variant");
 		}
+	}
+
+	async fn batch_create_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		if let MapDatabase::Integer(m) = &self.0 {
+			for (key, val) in key_vals {
+				assert!(m.insert(key, val).is_none());
+			}
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
+		Ok(())
+	}
+
+	async fn batch_create_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		if let MapDatabase::String(m) = &self.0 {
+			for (key, val) in key_vals {
+				assert!(m.insert(key, val).is_none());
+			}
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
+		Ok(())
+	}
+
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		if let MapDatabase::Integer(m) = &self.0 {
+			for key in keys {
+				assert!(m.get(&key).is_some());
+			}
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
+		Ok(())
+	}
+
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		if let MapDatabase::String(m) = &self.0 {
+			for key in keys {
+				assert!(m.get(&key).is_some());
+			}
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
+		Ok(())
+	}
+
+	async fn batch_update_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		if let MapDatabase::Integer(m) = &self.0 {
+			for (key, val) in key_vals {
+				assert!(m.insert(key, val).is_some());
+			}
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
+		Ok(())
+	}
+
+	async fn batch_update_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		if let MapDatabase::String(m) = &self.0 {
+			for (key, val) in key_vals {
+				assert!(m.insert(key, val).is_some());
+			}
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
+		Ok(())
+	}
+
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		if let MapDatabase::Integer(m) = &self.0 {
+			for key in keys {
+				assert!(m.remove(&key).is_some());
+			}
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
+		Ok(())
+	}
+
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		if let MapDatabase::String(m) = &self.0 {
+			for key in keys {
+				assert!(m.remove(&key).is_some());
+			}
+		} else {
+			bail!("Invalid MapDatabase variant");
+		}
+		Ok(())
 	}
 }
 

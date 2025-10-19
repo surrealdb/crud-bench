@@ -15,12 +15,10 @@ on:
           - cassandra
           - dragonfly
           - dry
-          - echodb
           - fjall
           - keydb
           - lmdb
           - map
-          - memodb
           - mongodb
           - mysql
           - neo4j
@@ -37,8 +35,8 @@ on:
           - surrealdb-embedded-memory
           - surrealdb-embedded-rocksdb
           - surrealdb-embedded-surrealkv
-          - surrealkv-memory
           - surrealkv
+          - surrealmx
       samples:
         type: string
         description: Number of samples
@@ -69,7 +67,7 @@ on:
         type: string
         description: Item content
         required: true
-        default: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+        default: '{ "text": "text:50", "age": "int:1..99", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
       sync:
         type: choice
         description: Acknowledge disk writes
@@ -163,12 +161,6 @@ jobs:
             enabled: true
             description: Dry
             CLI_ARGS: nice -n -20 ionice -c 1 -n 0
-          # EchoDB
-          - name: echodb
-            database: echodb
-            enabled: true
-            description: EchoDB
-            CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # Fjall
           - name: fjall
             database: fjall
@@ -193,11 +185,11 @@ jobs:
             enabled: true
             description: Map
             CLI_ARGS: nice -n -20 ionice -c 1 -n 0
-          # MemoDB
-          - name: memodb
-            database: memodb
+          # MDBX
+          - name: mdbx
+            database: mdbx
             enabled: true
-            description: MemoDB
+            description: MDBX
             CLI_ARGS: nice -n -20 ionice -c 1 -n 0
           # MongoDB
           - name: mongodb
@@ -267,7 +259,6 @@ jobs:
             enabled: true
             description: SurrealDB with RocksDB storage
             CLI_ARGS: nice -n -10 ionice -c 2 -n 0
-            DOCKER_PRE_ARGS: -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
@@ -301,11 +292,11 @@ jobs:
             enabled: true
             description: SurrealKV
             CLI_ARGS: nice -n -20 ionice -c 1 -n 0
-          # SurrealKV Memory
-          - name: surrealkv-memory
-            database: surrealkv-memory
+          # SurrealMX
+          - name: surrealmx
+            database: surrealmx
             enabled: true
-            description: SurrealKV with in-memory storage
+            description: SurrealMX
             CLI_ARGS: nice -n -20 ionice -c 1 -n 0
     steps:
       - name: Download artifacts

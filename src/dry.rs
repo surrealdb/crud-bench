@@ -75,4 +75,72 @@ impl BenchmarkClient for DryClient {
 		black_box(scan);
 		Ok(scan.expect.unwrap_or(0))
 	}
+
+	async fn batch_create_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		for (key, val) in key_vals {
+			black_box((key, val));
+		}
+		Ok(())
+	}
+
+	async fn batch_create_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		for (key, val) in key_vals {
+			black_box((key, val));
+		}
+		Ok(())
+	}
+
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		for key in keys {
+			black_box(key);
+		}
+		Ok(())
+	}
+
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		for key in keys {
+			black_box(key);
+		}
+		Ok(())
+	}
+
+	async fn batch_update_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		for (key, val) in key_vals {
+			black_box((key, val));
+		}
+		Ok(())
+	}
+
+	async fn batch_update_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		for (key, val) in key_vals {
+			black_box((key, val));
+		}
+		Ok(())
+	}
+
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		for key in keys {
+			black_box(key);
+		}
+		Ok(())
+	}
+
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		for key in keys {
+			black_box(key);
+		}
+		Ok(())
+	}
 }

@@ -75,11 +75,6 @@ jobs:
             database: dry
             enabled: true
             description: Dry
-          # EchoDB
-          - name: echodb
-            database: echodb
-            enabled: true
-            description: EchoDB
           # Fjall
           - name: fjall
             database: fjall
@@ -100,11 +95,11 @@ jobs:
             database: map
             enabled: true
             description: Map
-          # MemoDB
-          - name: memodb
-            database: memodb
+          # MDBX
+          - name: mdbx
+            database: mdbx
             enabled: true
-            description: MemoDB
+            description: MDBX
           # MongoDB
           - name: mongodb
             database: mongodb
@@ -162,7 +157,6 @@ jobs:
             database: surrealdb-rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
-            DOCKER_PRE_ARGS: -e SURREAL_ROCKSDB_BACKGROUND_FLUSH=true
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
@@ -191,11 +185,11 @@ jobs:
             database: surrealkv
             enabled: true
             description: SurrealKV
-          # SurrealKV Memory
-          - name: surrealkv-memory
-            database: surrealkv-memory
+          # SurrealMX
+          - name: surrealmx
+            database: surrealmx
             enabled: true
-            description: SurrealKV with in-memory storage
+            description: SurrealMX
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -260,6 +254,8 @@ jobs:
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
+          DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
+          DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
       - name: Run benchmarks (1,000,000 samples / 128 clients / 48 threads / key string26 / random)
         timeout-minutes: 60
@@ -269,6 +265,8 @@ jobs:
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 1073741824 # 1 GiB
+          DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
+          DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
       - name: Run benchmarks (5,000,000 samples / 128 clients / 48 threads / key string26 / random / 1.5KiB row and object size)
         timeout-minutes: 60
@@ -278,7 +276,9 @@ jobs:
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
-          CRUD_BENCH_VALUE: '{ "text": "text:50", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+          CRUD_BENCH_VALUE: '{ "text": "text:50", "age": "int:1..99", "integer": "int", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+          DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
+          DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
       - name: Wait for system cool down
         if: ${{ matrix.enabled && (success() || failure()) }}

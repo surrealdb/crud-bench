@@ -1,26 +1,42 @@
 #![cfg(feature = "neo4j")]
 
-use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::Neo4jDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
-use neo4rs::query;
+use anyhow::Result;
 use neo4rs::BoltType;
 use neo4rs::ConfigBuilder;
 use neo4rs::Graph;
+use neo4rs::query;
 use serde_json::Value;
 use std::hint::black_box;
 
 pub const DEFAULT: &str = "127.0.0.1:7687";
 
-pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "neo4j",
-		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none",
-		post_args: "",
+		pre_args: match options.sync {
+			true => {
+				// Neo4j does not have the ability to configure
+				// per-transaction on-disk sync control, so the
+				// closest option when sync is true, is to
+				// checkpoint after every transaction, and to
+				// checkpoint in the background every second
+				"--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=1".to_string()
+			}
+			false => {
+				// Neo4j does not have the ability to configure
+				// per-transaction on-disk sync control, so the
+				// closest option when sync is false, is to
+				// checkpoint in the background every second,
+				// and to checkpoint every 10,000 transactions
+				"--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=10000".to_string()
+			}
+		},
+		post_args: "".to_string(),
 	}
 }
 
@@ -167,18 +183,15 @@ impl Neo4jClient {
 	}
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
-		// Contional scans are not supported
-		if scan.condition.is_some() {
-			bail!(NOT_SUPPORTED_ERROR);
-		}
 		// Extract parameters
-		let s = scan.start.unwrap_or(0);
-		let l = scan.limit.unwrap_or(i64::MAX as usize);
+		let s = scan.start.map(|s| format!("SKIP {s}")).unwrap_or_default();
+		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
+		let c = Neo4jDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stm = format!("MATCH (r) SKIP {s} LIMIT {l} RETURN r.id");
+				let stm = format!("MATCH (r) {c} {s} {l} RETURN r.id");
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let mut count = 0;
 				while let Ok(Some(v)) = res.next().await {
@@ -188,7 +201,7 @@ impl Neo4jClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("MATCH (r) SKIP {s} LIMIT {l} RETURN r");
+				let stm = format!("MATCH (r) {c} {s} {l} RETURN r");
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let mut count = 0;
 				while let Ok(Some(v)) = res.next().await {
@@ -198,7 +211,7 @@ impl Neo4jClient {
 				Ok(count)
 			}
 			Projection::Count => {
-				let stm = format!("MATCH (r) SKIP {s} LIMIT {l} RETURN count(r) as count");
+				let stm = format!("MATCH (r) {c} {s} {l} RETURN count(r) as count");
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let count = res.next().await.unwrap().unwrap().get("count").unwrap();
 				Ok(count)
