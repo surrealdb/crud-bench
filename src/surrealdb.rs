@@ -6,7 +6,7 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
-use crate::{Benchmark, KeyType, Projection, Scan};
+use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::Result;
 use serde_json::Value;
 use surrealdb::Surreal;
@@ -205,6 +205,33 @@ impl BenchmarkClient for SurrealDBClient {
 
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.delete(key).await
+	}
+
+	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
+		let fields = spec.fields.join(", ");
+		let index_name = name.to_string();
+		let unique = if spec.unique.unwrap_or(false) {
+			"UNIQUE"
+		} else {
+			""
+		}
+		.to_string();
+
+		let sql = format!("DEFINE INDEX {index_name} ON TABLE record FIELDS {fields} {unique}");
+		let db = self.db.clone();
+		async move {
+			db.query(sql).await?;
+			Ok(())
+		}
+	}
+
+	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
+		let sql = format!("REMOVE INDEX {name} ON TABLE record");
+		let db = self.db.clone();
+		async move {
+			db.query(sql).await?;
+			Ok(())
+		}
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {

@@ -4,7 +4,7 @@ use crate::dialect::Neo4jDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::valueprovider::Columns;
-use crate::{Benchmark, KeyType, Projection, Scan};
+use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::Result;
 use neo4rs::BoltType;
 use neo4rs::ConfigBuilder;
@@ -120,6 +120,36 @@ impl BenchmarkClient for Neo4jClient {
 
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.delete(key).await
+	}
+
+	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
+		// Neo4j supports single-field and composite indexes
+		let index_name = name.to_string();
+
+		let stmt = if spec.fields.len() == 1 {
+			// Single field index
+			format!("CREATE INDEX {} FOR (r:Record) ON (r.{})", index_name, spec.fields[0])
+		} else {
+			// Composite index (Neo4j 4.1+)
+			let fields_list =
+				spec.fields.iter().map(|f| format!("r.{}", f)).collect::<Vec<_>>().join(", ");
+			format!("CREATE INDEX {index_name} FOR (r:Record) ON ({fields_list})")
+		};
+
+		let graph = self.graph.clone();
+		async move {
+			graph.execute(query(&stmt)).await?.next().await.ok();
+			Ok(())
+		}
+	}
+
+	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
+		let stmt = format!("DROP INDEX {name} IF EXISTS");
+		let graph = self.graph.clone();
+		async move {
+			graph.execute(query(&stmt)).await?.next().await.ok();
+			Ok(())
+		}
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {

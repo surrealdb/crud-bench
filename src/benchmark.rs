@@ -2,10 +2,10 @@ use crate::database::Database;
 use crate::dialect::Dialect;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::keyprovider::KeyProvider;
-use crate::result::{BenchmarkResult, OperationMetric, OperationResult};
+use crate::result::{BenchmarkResult, OperationMetric, OperationResult, ScanResult};
 use crate::terminal::Terminal;
 use crate::valueprovider::ValueProvider;
-use crate::{Args, BatchOperation, Batches, Scan, Scans};
+use crate::{Args, BatchOperation, Batches, Index, Scan, Scans};
 use anyhow::{Result, bail};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
@@ -123,18 +123,80 @@ impl Benchmark {
 			// Get the name of the scan
 			let name = scan.name.clone();
 			let samples = scan.samples.map(|s| s as u32).unwrap_or(self.samples);
-			// Execute the scan benchmark
-			let duration = self
-				.run_operation::<C, D>(
-					&clients,
-					BenchmarkOperation::Scan(scan),
-					kp,
-					vp.clone(),
+			// Check if an index is specified
+			let result = if let Some(index_spec) = &scan.index {
+				// Perform the scan without the index
+				let without_index = self
+					.run_operation::<C, D>(
+						&clients,
+						BenchmarkOperation::Scan(scan.clone()),
+						kp,
+						vp.clone(),
+						samples,
+					)
+					.await?;
+				// Build the index
+				let index_build = self
+					.run_operation::<C, D>(
+						&clients[..1],
+						BenchmarkOperation::BuildIndex(index_spec.clone(), name.clone()),
+						kp,
+						vp.clone(),
+						1,
+					)
+					.await?;
+				// Check if the index was built
+				let with_index = if index_build.is_some() {
+					// Perform the scan with the index
+					let result = self
+						.run_operation::<C, D>(
+							&clients,
+							BenchmarkOperation::Scan(scan.clone()),
+							kp,
+							vp.clone(),
+							samples,
+						)
+						.await?;
+					// Remove the index
+					self.wait_for_client(&engine).await?.drop_index(&name).await?;
+					// Return the scan results
+					result
+				} else {
+					// Skip the scan with the index
+					None
+				};
+				// Return the scan results
+				ScanResult {
+					name,
 					samples,
-				)
-				.await?;
+					without_index,
+					index_build,
+					with_index,
+					has_index_spec: true,
+				}
+			} else {
+				// Perform the scan without any index
+				let result = self
+					.run_operation::<C, D>(
+						&clients,
+						BenchmarkOperation::Scan(scan),
+						kp,
+						vp.clone(),
+						samples,
+					)
+					.await?;
+				// Return the scan results
+				ScanResult {
+					name,
+					samples,
+					without_index: result,
+					index_build: None,
+					with_index: None,
+					has_index_spec: false,
+				}
+			};
 			// Store the scan benchmark result
-			scan_results.push((name, samples, duration));
+			scan_results.push(result);
 		}
 		// Compact the datastore
 		if std::env::var("COMPACTION").is_ok() {
@@ -369,6 +431,9 @@ impl Benchmark {
 					client.update(sample, value, &mut kp).await?
 				}
 				BenchmarkOperation::Scan(s) => client.scan(s, &kp).await?,
+				BenchmarkOperation::BuildIndex(spec, name) => {
+					client.build_index(spec, name.as_str()).await?
+				}
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 				BenchmarkOperation::BatchCreate(batch_op) => {
 					client.batch_create(sample, batch_op, &mut kp, &mut vp).await?
@@ -414,6 +479,7 @@ pub(crate) enum BenchmarkOperation {
 	Read,
 	Update,
 	Scan(Scan),
+	BuildIndex(Index, String),
 	Delete,
 	BatchCreate(BatchOperation),
 	BatchRead(BatchOperation),
@@ -427,6 +493,7 @@ impl Display for BenchmarkOperation {
 			Self::Create => write!(f, "Create"),
 			Self::Read => write!(f, "Read"),
 			Self::Scan(s) => write!(f, "Scan::{}", s.name),
+			Self::BuildIndex(_, name) => write!(f, "BuildIndex::{name}"),
 			Self::Update => write!(f, "Update"),
 			Self::Delete => write!(f, "Delete"),
 			Self::BatchCreate(b) => write!(f, "BatchCreate::{}", b.name),

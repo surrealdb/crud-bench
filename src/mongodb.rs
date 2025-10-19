@@ -5,7 +5,7 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::memory::Config;
 use crate::valueprovider::Columns;
-use crate::{Benchmark, KeyType, Projection, Scan};
+use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use futures::{StreamExt, TryStreamExt};
 use mongodb::Namespace;
@@ -166,6 +166,38 @@ impl BenchmarkClient for MongoDBClient {
 
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.delete(key).await
+	}
+
+	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
+		use mongodb::IndexModel;
+		use mongodb::options::IndexOptions;
+
+		let mut index_doc = Document::new();
+		for field in &spec.fields {
+			index_doc.insert(field, 1);
+		}
+
+		let mut options = IndexOptions::default();
+		options.name = Some(name.to_string());
+		if let Some(unique) = spec.unique {
+			options.unique = Some(unique);
+		}
+
+		let index_model = IndexModel::builder().keys(index_doc).options(options).build();
+		let collection = self.collection();
+		async move {
+			collection.create_index(index_model).await?;
+			Ok(())
+		}
+	}
+
+	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
+		let name = name.to_string();
+		let collection = self.collection();
+		async move {
+			collection.drop_index(&name).await?;
+			Ok(())
+		}
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {

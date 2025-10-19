@@ -2,7 +2,7 @@ use crate::Benchmark;
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::valueprovider::Columns;
-use crate::{BatchOperation, KeyType, Scan};
+use crate::{BatchOperation, Index, KeyType, Scan};
 use anyhow::{Result, bail};
 use serde_json::Value;
 use std::future::Future;
@@ -154,6 +154,16 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Scan a range of entries with string ids
 	fn scan_string(&self, _scan: &Scan) -> impl Future<Output = Result<usize>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
+	}
+
+	/// Build an index on specified fields
+	fn build_index(&self, _spec: &Index, _name: &str) -> impl Future<Output = Result<()>> + Send {
+		async { bail!(NOT_SUPPORTED_ERROR) }
+	}
+
+	/// Drop an index by name
+	fn drop_index(&self, _name: &str) -> impl Future<Output = Result<()>> + Send {
+		async { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
 	/// Perform a batch create operation

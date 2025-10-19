@@ -5,7 +5,7 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine};
 use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{Benchmark, KeyType, Projection, Scan};
+use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::Result;
 use mysql_async::consts;
 use mysql_async::prelude::Queryable;
@@ -188,6 +188,32 @@ impl BenchmarkClient for MysqlClient {
 
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.delete(key).await
+	}
+
+	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
+		let fields = spec.fields.join(", ");
+		let index_name = name.to_string();
+		let unique = if spec.unique.unwrap_or(false) {
+			"UNIQUE"
+		} else {
+			""
+		}
+		.to_string();
+		let stmt = format!("CREATE {unique} INDEX {index_name} ON record ({fields})");
+		let conn = self.conn.clone();
+		async move {
+			conn.lock().await.query_drop(&stmt).await?;
+			Ok(())
+		}
+	}
+
+	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
+		let stmt = format!("DROP INDEX {name} ON record");
+		let conn = self.conn.clone();
+		async move {
+			conn.lock().await.query_drop(&stmt).await?;
+			Ok(())
+		}
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
