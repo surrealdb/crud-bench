@@ -1,4 +1,4 @@
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Scan};
 use anyhow::Result;
@@ -66,12 +66,12 @@ impl BenchmarkClient for DryClient {
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		black_box(scan);
 		Ok(scan.expect.unwrap_or(0))
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		black_box(scan);
 		Ok(scan.expect.unwrap_or(0))
 	}

@@ -59,6 +59,7 @@ enum ValueGenerator {
 	Bool,
 	String(Length<usize>),
 	Text(Length<usize>),
+	Words(Length<usize>, Vec<String>),
 	Integer,
 	Float,
 	DateTime,
@@ -110,6 +111,26 @@ fn text_range(rng: &mut SmallRng, range: Range<usize>) -> String {
 	text(rng, l)
 }
 
+fn words(rng: &mut SmallRng, size: usize, dictionary: &[String]) -> String {
+	let mut l = 0;
+	let mut words = Vec::with_capacity(size / 5);
+	let mut i = 0;
+	while l < size {
+		let w = dictionary[rng.random_range(0..dictionary.len())].as_str();
+		l += w.len();
+		words.push(w);
+		l += i;
+		// We ignore the first whitespace, but not the following ones
+		i = 1;
+	}
+	words.join(" ")
+}
+
+fn words_range(rng: &mut SmallRng, range: Range<usize>, dictionary: &[String]) -> String {
+	let l = rng.random_range(range);
+	words(rng, l, dictionary)
+}
+
 impl ValueGenerator {
 	fn new(value: Value) -> Result<Self> {
 		match value {
@@ -128,6 +149,20 @@ impl ValueGenerator {
 			Self::String(Length::new(i)?)
 		} else if let Some(i) = s.strip_prefix("text:") {
 			Self::Text(Length::new(i)?)
+		} else if let Some(i) = s.strip_prefix("words:") {
+			// Parse format: "words:50;word1,word2,word3"
+			let parts: Vec<&str> = i.splitn(2, ';').collect();
+			if parts.len() != 2 {
+				bail!(
+					"Words format requires length and dictionary separated by semicolon: words:50;word1,word2"
+				);
+			}
+			let length = Length::new(parts[0])?;
+			let dictionary: Vec<String> = parts[1].split(',').map(|s| s.to_string()).collect();
+			if dictionary.is_empty() {
+				bail!("Words dictionary cannot be empty");
+			}
+			Self::Words(length, dictionary)
 		} else if let Some(i) = s.strip_prefix("int:") {
 			if let Length::Range(r) = Length::new(i)? {
 				Self::IntegerRange(r)
@@ -209,6 +244,13 @@ impl ValueGenerator {
 				let val = match l {
 					Length::Range(r) => text_range(rng, r.clone()),
 					Length::Fixed(l) => text(rng, *l),
+				};
+				Value::String(val)
+			}
+			ValueGenerator::Words(l, dictionary) => {
+				let val = match l {
+					Length::Range(r) => words_range(rng, r.clone(), dictionary),
+					Length::Fixed(l) => words(rng, *l, dictionary),
 				};
 				Value::String(val)
 			}
@@ -338,9 +380,10 @@ impl ColumnType {
 	fn new(v: &ValueGenerator) -> Result<Self> {
 		let r = match v {
 			ValueGenerator::Object(_) => ColumnType::Object,
-			ValueGenerator::StringEnum(_) | ValueGenerator::String(_) | ValueGenerator::Text(_) => {
-				ColumnType::String
-			}
+			ValueGenerator::StringEnum(_)
+			| ValueGenerator::String(_)
+			| ValueGenerator::Text(_)
+			| ValueGenerator::Words(_, _) => ColumnType::String,
 			ValueGenerator::Integer
 			| ValueGenerator::IntegerRange(_)
 			| ValueGenerator::IntegerEnum(_) => ColumnType::Integer,

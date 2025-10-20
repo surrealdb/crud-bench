@@ -1,5 +1,5 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -120,7 +120,7 @@ impl BenchmarkClient for MapClient {
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		if let MapDatabase::Integer(m) = &self.0 {
 			Self::scan(m, scan).await
 		} else {
@@ -128,7 +128,7 @@ impl BenchmarkClient for MapClient {
 		}
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		if let MapDatabase::String(m) = &self.0 {
 			Self::scan(m, scan).await
 		} else {

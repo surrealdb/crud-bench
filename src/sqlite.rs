@@ -1,11 +1,12 @@
 #![cfg(feature = "sqlite")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::{AnsiSqlDialect, Dialect};
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde_json::{Map, Value as Json};
 use std::borrow::Cow;
 use std::cmp::max;
@@ -178,36 +179,43 @@ impl BenchmarkClient for SqliteClient {
 		self.delete(key.into()).await
 	}
 
-	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
-		let fields = spec.fields.join(", ");
-		let index_name = name.to_string();
+	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Get the unique flag
 		let unique = if spec.unique.unwrap_or(false) {
 			"UNIQUE"
 		} else {
 			""
 		}
 		.to_string();
-		let stmt = format!("CREATE {unique} INDEX {index_name} ON record ({fields})");
-		async move {
-			self.execute_batch(Cow::Owned(stmt)).await?;
-			Ok(())
-		}
+		// Get the fields
+		let fields = spec.fields.join(", ");
+		// Check if an index type is specified
+		let stmt = match &spec.index_type {
+			Some(kind) if kind == "fulltext" => {
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			_ => {
+				format!("CREATE {unique} INDEX {name} ON record ({fields})")
+			}
+		};
+		// Create the index
+		self.execute_batch(Cow::Owned(stmt)).await?;
+		// All ok
+		Ok(())
 	}
 
-	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
+	async fn drop_index(&self, name: &str) -> Result<()> {
 		let stmt = format!("DROP INDEX IF EXISTS {name}");
-		async move {
-			self.execute_batch(Cow::Owned(stmt)).await?;
-			Ok(())
-		}
+		self.execute_batch(Cow::Owned(stmt)).await?;
+		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_u32(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 
 	async fn batch_create_u32(
@@ -346,7 +354,14 @@ impl SqliteClient {
 		val.into()
 	}
 
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
+	async fn scan(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
+		// SQLite doesn't yet support full-text indexes
+		if let Some(index) = &scan.index
+			&& let Some(kind) = &index.index_type
+			&& kind == "fulltext"
+		{
+			bail!(NOT_SUPPORTED_ERROR);
+		}
 		// Extract parameters
 		let s = scan.start.map(|s| format!("OFFSET {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();

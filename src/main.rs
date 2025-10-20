@@ -118,7 +118,8 @@ pub(crate) struct Args {
 		default_value = r#"{
 			"text": "string:50",
 			"age": "int:1..99",
-			"integer": "int"
+			"integer": "int",
+			"words": "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
 		}"#
 	)]
 	pub(crate) value: String,
@@ -167,6 +168,42 @@ pub(crate) struct Args {
 				},
 				"index": {
 					"fields": ["age"]
+				}
+			},
+			{ "name": "where_field_fulltext_single", "samples": 100, "projection": "FULL",
+				"condition": {
+					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello')",
+					"mysql": "MATCH(words) AGAINST('hello' IN NATURAL LANGUAGE MODE)",
+					"mongodb": { "$text": { "$search": "hello" } },
+					"surrealdb": "words @@ 'hello'"
+				},
+				"index": {
+					"fields": ["words"],
+					"index_type": "fulltext"
+				}
+			},
+			{ "name": "where_field_fulltext_multi_and", "samples": 100, "projection": "FULL",
+				"condition": {
+					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello & world')",
+					"mysql": "MATCH(words) AGAINST('+hello +world' IN NATURAL LANGUAGE MODE)",
+					"mongodb": { "$text": { "$search": "hello world" } },
+					"surrealdb": "words @@ 'hello' AND words @@ 'world'"
+				},
+				"index": {
+					"fields": ["words"],
+					"index_type": "fulltext"
+				}
+			},
+			{ "name": "where_field_fulltext_multi_or", "samples": 100, "projection": "FULL",
+				"condition": {
+					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'foo | bar')",
+					"mysql": "MATCH(words) AGAINST('foo bar' IN NATURAL LANGUAGE MODE)",
+					"mongodb": { "$text": { "$search": "foo bar" } },
+					"surrealdb": "words @@ 'foo' OR words @@ 'bar'"
+				},
+				"index": {
+					"fields": ["words"],
+					"index_type": "fulltext"
 				}
 			}
 		]"#

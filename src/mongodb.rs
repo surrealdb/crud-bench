@@ -1,17 +1,20 @@
 #![cfg(feature = "mongodb")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::MongoDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use futures::{StreamExt, TryStreamExt};
+use mongodb::IndexModel;
 use mongodb::Namespace;
 use mongodb::bson::{Bson, Document, doc};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
+use mongodb::options::IndexOptions;
 use mongodb::options::ReadConcern;
 use mongodb::options::{Acknowledgment, ReplaceOneModel, WriteConcern, WriteModel};
 use mongodb::{Client, Collection, Cursor, Database, bson};
@@ -168,44 +171,55 @@ impl BenchmarkClient for MongoDBClient {
 		self.delete(key).await
 	}
 
-	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
-		use mongodb::IndexModel;
-		use mongodb::options::IndexOptions;
-
-		let mut index_doc = Document::new();
-		for field in &spec.fields {
-			index_doc.insert(field, 1);
-		}
-
+	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Define the index document
+		let mut doc = Document::new();
+		// Check if an index type is specified
+		match &spec.index_type {
+			Some(kind) if kind == "fulltext" => {
+				// Create a text index
+				for field in &spec.fields {
+					doc.insert(field, "text");
+				}
+			}
+			Some(kind) => {
+				// Other index types (e.g., "2d", "2dsphere", "hashed")
+				for field in &spec.fields {
+					doc.insert(field, kind.as_str());
+				}
+			}
+			None => {
+				// Standard ascending index
+				for field in &spec.fields {
+					doc.insert(field, 1);
+				}
+			}
+		};
+		// Define the index options
 		let mut options = IndexOptions::default();
 		options.name = Some(name.to_string());
 		if let Some(unique) = spec.unique {
 			options.unique = Some(unique);
 		}
-
-		let index_model = IndexModel::builder().keys(index_doc).options(options).build();
-		let collection = self.collection();
-		async move {
-			collection.create_index(index_model).await?;
-			Ok(())
-		}
+		// Create the index model
+		let index_model = IndexModel::builder().keys(doc).options(options).build();
+		// Create the index
+		self.collection().create_index(index_model).await?;
+		// All ok
+		Ok(())
 	}
 
-	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
-		let name = name.to_string();
-		let collection = self.collection();
-		async move {
-			collection.drop_index(&name).await?;
-			Ok(())
-		}
+	async fn drop_index(&self, name: &str) -> Result<()> {
+		self.collection().drop_index(name).await?;
+		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_u32(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 
 	async fn batch_create_u32(
@@ -399,7 +413,15 @@ impl MongoDBClient {
 		Ok(())
 	}
 
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
+	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		// MongoDB requires a full-text index to use a $text query
+		if ctx == ScanContext::WithoutIndex
+			&& let Some(index) = &scan.index
+			&& let Some(kind) = &index.index_type
+			&& kind == "fulltext"
+		{
+			bail!(NOT_SUPPORTED_ERROR);
+		}
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(i64::MAX as usize);

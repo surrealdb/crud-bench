@@ -2,7 +2,7 @@
 
 use crate::dialect::{AnsiSqlDialect, Dialect};
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
@@ -198,35 +198,51 @@ impl BenchmarkClient for PostgresClient {
 		self.delete(key).await
 	}
 
-	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
-		let fields = spec.fields.join(", ");
-		let index_name = name.to_string();
+	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Get the unique flag
 		let unique = if spec.unique.unwrap_or(false) {
 			"UNIQUE"
 		} else {
 			""
 		}
 		.to_string();
-		let stmt = format!("CREATE {unique} INDEX {index_name} ON record ({fields})");
-		async move {
-			self.client.execute(&stmt, &[]).await?;
-			Ok(())
-		}
+		// Get the fields
+		let fields = spec.fields.join(", ");
+		// Check if an index type is specified
+		let stmt = match &spec.index_type {
+			Some(kind) if kind == "fulltext" => {
+				// Create a GIN index for full-text search
+				let tsvector_expr = if spec.fields.len() == 1 {
+					format!("to_tsvector('english', {})", spec.fields[0])
+				} else {
+					format!("to_tsvector('english', {})", spec.fields.join(" || ' ' || "))
+				};
+				format!("CREATE INDEX {name} ON record USING GIN ({tsvector_expr})")
+			}
+			Some(kind) => {
+				format!("CREATE {unique} INDEX {name} ON record USING {kind} ({fields})")
+			}
+			None => {
+				format!("CREATE {unique} INDEX {name} ON record ({fields})")
+			}
+		};
+		// Create the index
+		self.client.execute(&stmt, &[]).await?;
+		// All ok
+		Ok(())
 	}
 
-	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
+	async fn drop_index(&self, name: &str) -> Result<()> {
 		let stmt = format!("DROP INDEX IF EXISTS {name}");
-		async move {
-			self.client.execute(&stmt, &[]).await?;
-			Ok(())
-		}
+		self.client.execute(&stmt, &[]).await?;
+		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
 	}
 

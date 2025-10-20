@@ -1,13 +1,14 @@
 #![cfg(feature = "surrealdb")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::database::Database;
 use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde_json::Value;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
@@ -207,39 +208,57 @@ impl BenchmarkClient for SurrealDBClient {
 		self.delete(key).await
 	}
 
-	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
-		let fields = spec.fields.join(", ");
-		let index_name = name.to_string();
+	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Get the unique flag
 		let unique = if spec.unique.unwrap_or(false) {
 			"UNIQUE"
 		} else {
 			""
 		}
 		.to_string();
-
-		let sql = format!("DEFINE INDEX {index_name} ON TABLE record FIELDS {fields} {unique}");
-		let db = self.db.clone();
-		async move {
-			db.query(sql).await?;
-			Ok(())
-		}
+		// Get the fields
+		let fields = spec.fields.join(", ");
+		// Check if an index type is specified
+		match &spec.index_type {
+			Some(kind) if kind == "fulltext" => {
+				// Define the analyzer
+				let sql = format!(
+					"DEFINE ANALYZER IF NOT EXISTS {name} TOKENIZERS blank,class FILTERS lowercase,ascii;"
+				);
+				self.db.query(sql).await?;
+				// Define the index
+				let sql = format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25"
+				);
+				self.db.query(sql).await?;
+			}
+			_ => {
+				let sql = format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique}");
+				// Create the index
+				self.db.query(sql).await?;
+			}
+		};
+		// All ok
+		Ok(())
 	}
 
-	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
-		let sql = format!("REMOVE INDEX {name} ON TABLE record");
-		let db = self.db.clone();
-		async move {
-			db.query(sql).await?;
-			Ok(())
-		}
+	async fn drop_index(&self, name: &str) -> Result<()> {
+		// Remove the index
+		let sql = format!("REMOVE INDEX IF EXISTS {name} ON TABLE record");
+		self.db.query(sql).await?.check()?;
+		// Remove the analyzer
+		let sql = format!("REMOVE ANALYZER IF EXISTS {name}");
+		self.db.query(sql).await?.check()?;
+		// All ok
+		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_u32(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 }
 
@@ -301,7 +320,15 @@ impl SurrealDBClient {
 		Ok(())
 	}
 
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
+	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		// SurrealDB requires a full-text index to use the @@ operator
+		if ctx == ScanContext::WithoutIndex
+			&& let Some(index) = &scan.index
+			&& let Some(kind) = &index.index_type
+			&& kind == "fulltext"
+		{
+			bail!(NOT_SUPPORTED_ERROR);
+		}
 		// Extract parameters
 		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
