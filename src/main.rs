@@ -118,7 +118,8 @@ pub(crate) struct Args {
 		default_value = r#"{
 			"text": "string:50",
 			"age": "int:1..99",
-			"integer": "int"
+			"integer": "int",
+			"words": "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
 		}"#
 	)]
 	pub(crate) value: String,
