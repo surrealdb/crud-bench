@@ -1,5 +1,6 @@
 #![cfg(feature = "mongodb")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::MongoDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
@@ -213,12 +214,12 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_u32(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 
-	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 
 	async fn batch_create_u32(
@@ -412,7 +413,15 @@ impl MongoDBClient {
 		Ok(())
 	}
 
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
+	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		// MongoDB requires a full-text index to use a $text query
+		if ctx == ScanContext::WithoutIndex
+			&& let Some(index) = &scan.index
+			&& let Some(kind) = &index.index_type
+			&& kind == "fulltext"
+		{
+			bail!(NOT_SUPPORTED_ERROR);
+		}
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(i64::MAX as usize);
