@@ -375,7 +375,7 @@ jobs:
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: sudo -E taskset -c 0-$(($(nproc) - 1)) ${{ matrix.CLI_ARGS || '' }} ${{ github.workspace }}/artifacts/crud-bench --privileged ${{ github.event.inputs.sync == 'true' && '--sync' || '' }} -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s ${{ github.event.inputs.samples }} -c ${{ github.event.inputs.clients }} -t ${{ github.event.inputs.threads }} -k ${{ github.event.inputs.key-type }} -n benchmark -r
         env:
-          CRUD_BENCH_LMDB_DATABASE_SIZE: 32212254720 # 30 GiB
+          CRUD_BENCH_LMDB_DATABASE_SIZE: 53687091200 # 50 GiB
           CRUD_BENCH_VALUE: ${{ github.event.inputs.value }}
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
