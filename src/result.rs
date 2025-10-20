@@ -36,25 +36,19 @@ pub(crate) struct ScanResult {
 	pub(crate) has_index_spec: bool,
 }
 
-const HEADERS: [&str; 18] = [
+const HEADERS: [&str; 12] = [
 	"Test",
 	"Total time",
 	"Mean",
 	"Max",
 	"99th",
 	"95th",
-	"75th",
-	"50th",
-	"25th",
-	"1st",
 	"Min",
-	"IQR",
 	"OPS",
 	"CPU",
 	"Memory",
 	"Reads",
 	"Writes",
-	"System load",
 ];
 
 const CSV_HEADERS: [&str; 22] = [
@@ -82,7 +76,7 @@ const CSV_HEADERS: [&str; 22] = [
 	"System load (1m/5m/15m)",
 ];
 
-const SKIP: [&str; 17] = ["-"; 17];
+const SKIP: [&str; 11] = ["-"; 11];
 const CSV_SKIP: [&str; 21] = ["-"; 21];
 
 impl Display for BenchmarkResult {
@@ -155,16 +149,16 @@ impl Display for BenchmarkResult {
 			}
 		}
 		// Right align the `CPU` column
-		let column = table.column_mut(13).expect("The table needs at least 14 columns");
+		let column = table.column_mut(8).expect("The table needs at least 9 columns");
 		column.set_cell_alignment(CellAlignment::Right);
 		// Right align the `Memory` column
-		let column = table.column_mut(14).expect("The table needs at least 15 columns");
+		let column = table.column_mut(9).expect("The table needs at least 10 columns");
 		column.set_cell_alignment(CellAlignment::Right);
 		// Right align the `Reads` column
-		let column = table.column_mut(15).expect("The table needs at least 16 columns");
+		let column = table.column_mut(10).expect("The table needs at least 11 columns");
 		column.set_cell_alignment(CellAlignment::Right);
 		// Right align the `Writes` column
-		let column = table.column_mut(16).expect("The table needs at least 17 columns");
+		let column = table.column_mut(11).expect("The table needs at least 12 columns");
 		column.set_cell_alignment(CellAlignment::Right);
 		// Output the formatted table
 		write!(f, "{table}")
@@ -548,9 +542,9 @@ impl OperationResult {
 		} else {
 			format!("{:.2}%", self.cpu_usage)
 		};
-		// Format Memory as "peak (avg)" or just the used memory if no samples
+		// Format Memory as "peak" only (without average)
 		let memory_display = if self.memory_max > 0 {
-			format!("{} ({})", ByteSize(self.memory_max), ByteSize(self.memory_avg))
+			format!("{}", ByteSize(self.memory_max))
 		} else {
 			format!("{}", ByteSize(self.used_memory))
 		};
@@ -562,21 +556,12 @@ impl OperationResult {
 			format!("{:.2} ms", self.max as f64 / 1000.0),
 			format!("{:.2} ms", self.q99 as f64 / 1000.0),
 			format!("{:.2} ms", self.q95 as f64 / 1000.0),
-			format!("{:.2} ms", self.q75 as f64 / 1000.0),
-			format!("{:.2} ms", self.q50 as f64 / 1000.0),
-			format!("{:.2} ms", self.q25 as f64 / 1000.0),
-			format!("{:.2} ms", self.q01 as f64 / 1000.0),
 			format!("{:.2} ms", self.min as f64 / 1000.0),
-			format!("{:.2} ms", self.iqr as f64 / 1000.0),
 			format!("{:.2}", self.ops),
 			cpu_display,
 			memory_display,
 			format!("{}", ByteSize(self.disk_usage.total_written_bytes)),
 			format!("{}", ByteSize(self.disk_usage.total_read_bytes)),
-			format!(
-				"{:.2}/{:.2}/{:.2}",
-				self.load_avg.one, self.load_avg.five, self.load_avg.fifteen
-			),
 		]
 	}
 
