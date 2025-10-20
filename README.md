@@ -56,10 +56,10 @@ and lists those which are planned in the future.
 - [x] Reading single records in individual transactions
 - [x] Updating single records in individual transactions
 - [x] Deleting single records in individual transactions
-- [ ] Batch creating multiple records in a transaction
-- [ ] Batch reading multiple records in a transactions
-- [ ] Batch updating multiple records in a transactions
-- [ ] Batch deleting multiple records in a transactions
+- [x] Batch creating multiple records in a transaction
+- [x] Batch reading multiple records in a transactions
+- [x] Batch updating multiple records in a transactions
+- [x] Batch deleting multiple records in a transactions
 
 **Scans**
 
@@ -75,15 +75,24 @@ and lists those which are planned in the future.
 
 **Filters**
 
-- [ ] Full table query, using filter condition, projecting all fields
-- [ ] Full table query, using filter condition, projecting id field
-- [ ] Full table query, using filter condition, counting rows
+- [x] Full table query, using filter condition, projecting all fields
+- [x] Full table query, using filter condition, projecting id field
+- [x] Full table query, using filter condition, counting rows
 
 **Indexes**
 
-- [ ] Indexed table query, using filter condition, projecting all fields
-- [ ] Indexed table query, using filter condition, projecting id field
-- [ ] Indexed table query, using filter condition, counting rows
+- [x] Indexed table query, using filter condition, projecting all fields
+- [x] Indexed table query, using filter condition, projecting id field
+- [x] Indexed table query, using filter condition, counting rows
+- [x] Full-text search query, using single search term, projecting all fields
+- [x] Full-text search query, using single search term, projecting id field
+- [x] Full-text search query, using single search term, counting rows
+- [x] Full-text search query, using boolean AND search terms, projecting all fields
+- [x] Full-text search query, using boolean AND search terms, projecting id field
+- [x] Full-text search query, using boolean AND search terms, counting rows
+- [x] Full-text search query, using boolean OR search terms, projecting all fields
+- [x] Full-text search query, using boolean OR search terms, projecting id field
+- [x] Full-text search query, using boolean OR search terms, counting rows
 
 **Relationships**
 
@@ -314,6 +323,14 @@ An in-memory concurrent, associative HashMap in Rust.
 
 ```bash
 cargo run -r -- -d map -s 100000 -c 12 -t 24 -r
+```
+
+### [MDBX](https://github.com/erthink/libmdbx)
+
+MDBX is a transactional, key-value, memory-mapped, B-Tree storage engine without WAL.
+
+```bash
+cargo run -r -- -d mdbx -s 100000 -c 12 -t 24 -r
 ```
 
 ### [MongoDB](https://www.mongodb.com/)
