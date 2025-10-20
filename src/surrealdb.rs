@@ -207,31 +207,53 @@ impl BenchmarkClient for SurrealDBClient {
 		self.delete(key).await
 	}
 
-	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
-		let fields = spec.fields.join(", ");
-		let index_name = name.to_string();
+	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Get the unique flag
 		let unique = if spec.unique.unwrap_or(false) {
 			"UNIQUE"
 		} else {
 			""
 		}
 		.to_string();
-
-		let sql = format!("DEFINE INDEX {index_name} ON TABLE record FIELDS {fields} {unique}");
-		let db = self.db.clone();
-		async move {
-			db.query(sql).await?;
-			Ok(())
-		}
+		// Get the fields
+		let fields = spec.fields.join(", ");
+		// Check if an index type is specified
+		match &spec.index_type {
+			Some(kind) if kind == "fulltext" => {
+				// Define the analyzer
+				let sql = format!(
+					"DEFINE ANALYZER {name} TOKENIZERS blank,class FILTERS lowercase,snowball(english);"
+				);
+				self.db.query(sql).await?;
+				// Define the index
+				let sql = format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} SEARCH ANALYZER {name} BM25"
+				);
+				self.db.query(sql).await?;
+			}
+			_ => {
+				let sql = format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique}");
+				// Create the index
+				self.db.query(sql).await?;
+			}
+		};
+		// All ok
+		Ok(())
 	}
 
-	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
-		let sql = format!("REMOVE INDEX {name} ON TABLE record");
+	async fn drop_index(&self, name: &str) -> Result<()> {
+		let index_name = name.to_string();
 		let db = self.db.clone();
-		async move {
-			db.query(sql).await?;
-			Ok(())
-		}
+		// Remove the index
+		let sql = format!("REMOVE INDEX {index_name} ON TABLE record");
+		db.query(sql).await?;
+
+		// Also try to remove the analyzer (if it exists)
+		// We don't error if it doesn't exist
+		let analyzer_name = format!("{index_name}_analyzer");
+		let analyzer_sql = format!("REMOVE ANALYZER IF EXISTS {analyzer_name}");
+		let _ = db.query(analyzer_sql).await;
+		Ok(())
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {

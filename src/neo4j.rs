@@ -122,34 +122,28 @@ impl BenchmarkClient for Neo4jClient {
 		self.delete(key).await
 	}
 
-	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
-		// Neo4j supports single-field and composite indexes
-		let index_name = name.to_string();
-
-		let stmt = if spec.fields.len() == 1 {
-			// Single field index
-			format!("CREATE INDEX {} FOR (r:Record) ON (r.{})", index_name, spec.fields[0])
-		} else {
-			// Composite index (Neo4j 4.1+)
-			let fields_list =
-				spec.fields.iter().map(|f| format!("r.{}", f)).collect::<Vec<_>>().join(", ");
-			format!("CREATE INDEX {index_name} FOR (r:Record) ON ({fields_list})")
+	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Get the fields
+		let fields = spec.fields.iter().map(|f| format!("r.{f}")).collect::<Vec<_>>().join(", ");
+		// Check if an index type is specified
+		let stmt = match &spec.index_type {
+			Some(kind) if kind == "fulltext" => {
+				format!("CREATE FULLTEXT INDEX {name} FOR (r:Record) ON EACH ({fields})")
+			}
+			_ => {
+				format!("CREATE INDEX {name} FOR (r:Record) ON ({fields})")
+			}
 		};
-
-		let graph = self.graph.clone();
-		async move {
-			graph.execute(query(&stmt)).await?.next().await.ok();
-			Ok(())
-		}
+		// Create the index
+		self.graph.execute(query(&stmt)).await?.next().await?;
+		// All ok
+		Ok(())
 	}
 
-	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
+	async fn drop_index(&self, name: &str) -> Result<()> {
 		let stmt = format!("DROP INDEX {name} IF EXISTS");
-		let graph = self.graph.clone();
-		async move {
-			graph.execute(query(&stmt)).await?.next().await.ok();
-			Ok(())
-		}
+		self.graph.execute(query(&stmt)).await?.next().await?;
+		Ok(())
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {

@@ -190,30 +190,38 @@ impl BenchmarkClient for MysqlClient {
 		self.delete(key).await
 	}
 
-	fn build_index(&self, spec: &Index, name: &str) -> impl Future<Output = Result<()>> + Send {
-		let fields = spec.fields.join(", ");
-		let index_name = name.to_string();
+	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Get the unique flag
 		let unique = if spec.unique.unwrap_or(false) {
 			"UNIQUE"
 		} else {
 			""
 		}
 		.to_string();
-		let stmt = format!("CREATE {unique} INDEX {index_name} ON record ({fields})");
-		let conn = self.conn.clone();
-		async move {
-			conn.lock().await.query_drop(&stmt).await?;
-			Ok(())
-		}
+		// Get the fields
+		let fields = spec.fields.join(", ");
+		// Check if an index type is specified
+		let stmt = match &spec.index_type {
+			Some(kind) if kind == "fulltext" => {
+				format!("CREATE FULLTEXT INDEX {name} ON record ({fields})")
+			}
+			Some(kind) => {
+				format!("CREATE INDEX {name} USING {kind} ON record ({fields})")
+			}
+			None => {
+				format!("CREATE {unique} INDEX {name} ON record ({fields})")
+			}
+		};
+		// Create the index
+		self.conn.lock().await.query_drop(&stmt).await?;
+		// All ok
+		Ok(())
 	}
 
-	fn drop_index(&self, name: &str) -> impl Future<Output = Result<()>> + Send {
+	async fn drop_index(&self, name: &str) -> Result<()> {
 		let stmt = format!("DROP INDEX {name} ON record");
-		let conn = self.conn.clone();
-		async move {
-			conn.lock().await.query_drop(&stmt).await?;
-			Ok(())
-		}
+		self.conn.lock().await.query_drop(&stmt).await?;
+		Ok(())
 	}
 
 	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
