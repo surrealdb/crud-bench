@@ -2,7 +2,7 @@
 
 use crate::dialect::MongoDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
@@ -209,15 +209,15 @@ impl BenchmarkClient for MongoDBClient {
 	}
 
 	async fn drop_index(&self, name: &str) -> Result<()> {
-		self.collection().drop_index(&name).await?;
+		self.collection().drop_index(name).await?;
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
 	}
 

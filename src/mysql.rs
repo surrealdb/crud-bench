@@ -2,7 +2,7 @@
 
 use crate::dialect::{Dialect, MySqlDialect};
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
@@ -224,11 +224,11 @@ impl BenchmarkClient for MysqlClient {
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
 	}
 }

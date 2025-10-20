@@ -2,7 +2,7 @@
 
 use crate::dialect::Neo4jDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::Result;
@@ -146,11 +146,11 @@ impl BenchmarkClient for Neo4jClient {
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
 	}
 }

@@ -3,7 +3,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::ArangoDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -156,14 +156,14 @@ impl BenchmarkClient for ArangoDBClient {
 		}
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
 			_ => self.scan(scan).await,
 		}
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
 			_ => self.scan(scan).await,

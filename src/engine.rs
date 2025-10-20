@@ -8,6 +8,15 @@ use serde_json::Value;
 use std::future::Future;
 use std::time::Duration;
 
+/// Indicates whether a scan is running with or without an index
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanContext {
+	/// Scan is running without an index (baseline measurement)
+	WithoutIndex,
+	/// Scan is running with an index
+	WithIndex,
+}
+
 /// A trait for a database benchmark implementation
 /// setting up a database, and creating clients.
 pub(crate) trait BenchmarkEngine<C>: Sized
@@ -101,14 +110,19 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	}
 
 	/// Scan a range of entries with the current client
-	fn scan(&self, scan: &Scan, kp: &KeyProvider) -> impl Future<Output = Result<()>> + Send {
+	fn scan(
+		&self,
+		scan: &Scan,
+		kp: &KeyProvider,
+		ctx: ScanContext,
+	) -> impl Future<Output = Result<()>> + Send {
 		async move {
 			let result = match kp {
 				KeyProvider::OrderedInteger(_) | KeyProvider::UnorderedInteger(_) => {
-					self.scan_u32(scan).await?
+					self.scan_u32(scan, ctx).await?
 				}
 				KeyProvider::OrderedString(_) | KeyProvider::UnorderedString(_) => {
-					self.scan_string(scan).await?
+					self.scan_string(scan, ctx).await?
 				}
 			};
 			if let Some(expect) = scan.expect {
@@ -147,12 +161,20 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	fn delete_string(&self, key: String) -> impl Future<Output = Result<()>> + Send;
 
 	/// Scan a range of entries with numeric ids
-	fn scan_u32(&self, _scan: &Scan) -> impl Future<Output = Result<usize>> + Send {
+	fn scan_u32(
+		&self,
+		_scan: &Scan,
+		_ctx: ScanContext,
+	) -> impl Future<Output = Result<usize>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
 	/// Scan a range of entries with string ids
-	fn scan_string(&self, _scan: &Scan) -> impl Future<Output = Result<usize>> + Send {
+	fn scan_string(
+		&self,
+		_scan: &Scan,
+		_ctx: ScanContext,
+	) -> impl Future<Output = Result<usize>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
 

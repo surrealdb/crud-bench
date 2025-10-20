@@ -1,6 +1,6 @@
 use crate::database::Database;
 use crate::dialect::Dialect;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::keyprovider::KeyProvider;
 use crate::result::{BenchmarkResult, OperationMetric, OperationResult, ScanResult};
 use crate::terminal::Terminal;
@@ -129,7 +129,7 @@ impl Benchmark {
 				let without_index = self
 					.run_operation::<C, D>(
 						&clients,
-						BenchmarkOperation::Scan(scan.clone()),
+						BenchmarkOperation::Scan(scan.clone(), ScanContext::WithoutIndex),
 						kp,
 						vp.clone(),
 						samples,
@@ -151,7 +151,7 @@ impl Benchmark {
 					let result = self
 						.run_operation::<C, D>(
 							&clients,
-							BenchmarkOperation::Scan(scan.clone()),
+							BenchmarkOperation::Scan(scan.clone(), ScanContext::WithIndex),
 							kp,
 							vp.clone(),
 							samples,
@@ -179,7 +179,7 @@ impl Benchmark {
 				let result = self
 					.run_operation::<C, D>(
 						&clients,
-						BenchmarkOperation::Scan(scan),
+						BenchmarkOperation::Scan(scan, ScanContext::WithoutIndex),
 						kp,
 						vp.clone(),
 						samples,
@@ -430,7 +430,7 @@ impl Benchmark {
 					let value = vp.generate_value::<D>();
 					client.update(sample, value, &mut kp).await?
 				}
-				BenchmarkOperation::Scan(s) => client.scan(s, &kp).await?,
+				BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await?,
 				BenchmarkOperation::BuildIndex(spec, name) => {
 					client.build_index(spec, name.as_str()).await?
 				}
@@ -478,7 +478,7 @@ pub(crate) enum BenchmarkOperation {
 	Create,
 	Read,
 	Update,
-	Scan(Scan),
+	Scan(Scan, ScanContext),
 	BuildIndex(Index, String),
 	Delete,
 	BatchCreate(BatchOperation),
@@ -492,7 +492,7 @@ impl Display for BenchmarkOperation {
 		match self {
 			Self::Create => write!(f, "Create"),
 			Self::Read => write!(f, "Read"),
-			Self::Scan(s) => write!(f, "Scan::{}", s.name),
+			Self::Scan(s, _) => write!(f, "Scan::{}", s.name),
 			Self::BuildIndex(_, name) => write!(f, "BuildIndex::{name}"),
 			Self::Update => write!(f, "Update"),
 			Self::Delete => write!(f, "Delete"),

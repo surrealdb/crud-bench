@@ -1,13 +1,14 @@
 #![cfg(feature = "surrealdb")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::database::Database;
 use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde_json::Value;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
@@ -222,12 +223,12 @@ impl BenchmarkClient for SurrealDBClient {
 			Some(kind) if kind == "fulltext" => {
 				// Define the analyzer
 				let sql = format!(
-					"DEFINE ANALYZER {name} TOKENIZERS blank,class FILTERS lowercase,snowball(english);"
+					"DEFINE ANALYZER IF NOT EXISTS {name} TOKENIZERS blank,class FILTERS lowercase,ascii;"
 				);
 				self.db.query(sql).await?;
 				// Define the index
 				let sql = format!(
-					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} SEARCH ANALYZER {name} BM25"
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25"
 				);
 				self.db.query(sql).await?;
 			}
@@ -242,26 +243,22 @@ impl BenchmarkClient for SurrealDBClient {
 	}
 
 	async fn drop_index(&self, name: &str) -> Result<()> {
-		let index_name = name.to_string();
-		let db = self.db.clone();
 		// Remove the index
-		let sql = format!("REMOVE INDEX {index_name} ON TABLE record");
-		db.query(sql).await?;
-
-		// Also try to remove the analyzer (if it exists)
-		// We don't error if it doesn't exist
-		let analyzer_name = format!("{index_name}_analyzer");
-		let analyzer_sql = format!("REMOVE ANALYZER IF EXISTS {analyzer_name}");
-		let _ = db.query(analyzer_sql).await;
+		let sql = format!("REMOVE INDEX IF EXISTS {name} ON TABLE record");
+		self.db.query(sql).await?.check()?;
+		// Remove the analyzer
+		let sql = format!("REMOVE ANALYZER IF EXISTS {name}");
+		self.db.query(sql).await?.check()?;
+		// All ok
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_u32(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 }
 
@@ -323,7 +320,15 @@ impl SurrealDBClient {
 		Ok(())
 	}
 
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
+	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		// SurrealDB requires a full-text index to use the @@ operator
+		if ctx == ScanContext::WithoutIndex
+			&& let Some(index) = &scan.index
+			&& let Some(kind) = &index.index_type
+			&& kind == "fulltext"
+		{
+			bail!(NOT_SUPPORTED_ERROR);
+		}
 		// Extract parameters
 		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
