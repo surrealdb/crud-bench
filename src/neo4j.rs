@@ -128,7 +128,7 @@ impl BenchmarkClient for Neo4jClient {
 		// Check if an index type is specified
 		let stmt = match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
-				format!("CREATE FULLTEXT INDEX {name} FOR (r:Record) ON EACH ({fields})")
+				format!("CREATE FULLTEXT INDEX {name} FOR (r:Record) ON EACH [{fields}]")
 			}
 			_ => {
 				format!("CREATE INDEX {name} FOR (r:Record) ON ({fields})")
