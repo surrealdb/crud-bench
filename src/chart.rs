@@ -60,16 +60,16 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
             margin-bottom: 30px;
         }}
         .stat-card {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #9600FF 0%, #7000CC 100%);
             color: white;
             padding: 20px;
             border-radius: 8px;
             text-align: center;
         }}
-        .stat-card.green {{ background: linear-gradient(135deg, #10B981 0%, #059669 100%); }}
-        .stat-card.blue {{ background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); }}
-        .stat-card.orange {{ background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%); }}
-        .stat-card.red {{ background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%); }}
+        .stat-card.blue {{ background: linear-gradient(135deg, #9600FF 0%, #7000CC 100%); }}
+        .stat-card.green {{ background: linear-gradient(135deg, #FF00A0 0%, #CC0080 100%); }}
+        .stat-card.orange {{ background: linear-gradient(135deg, #C000FF 0%, #9600FF 100%); }}
+        .stat-card.red {{ background: linear-gradient(135deg, #FF33B8 0%, #FF00A0 100%); }}
         .stat-label {{
             font-size: 0.9em;
             opacity: 0.9;
@@ -237,7 +237,7 @@ var opsChart = new ApexCharts(document.querySelector("#opsChart"), {{
             borderRadius: 4
         }}
     }},
-    colors: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444'],
+    colors: ['#9600FF', '#FF00A0', '#C000FF', '#FF33B8'],
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
@@ -279,7 +279,7 @@ var latencyChart = new ApexCharts(document.querySelector("#latencyChart"), {{
             borderRadius: 4
         }}
     }},
-    colors: ['#8B5CF6', '#A78BFA', '#C4B5FD', '#DDD6FE'],
+    colors: ['#9600FF', '#B84FFF', '#C97FFF', '#DA9FFF'],
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
@@ -316,7 +316,7 @@ var percentileChart = new ApexCharts(document.querySelector("#percentileChart"),
         width: 3,
         curve: 'smooth'
     }},
-    colors: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444'],
+    colors: ['#9600FF', '#FF00A0', '#C000FF', '#FF33B8'],
     dataLabels: {{ enabled: false }},
     legend: {{
         position: 'top',
@@ -371,7 +371,7 @@ var resourceChart = new ApexCharts(document.querySelector("#resourceChart"), {{
             borderRadius: 4
         }}
     }},
-    colors: ['#F59E0B', '#8B5CF6'],
+    colors: ['#FF00A0', '#9600FF'],
     dataLabels: {{ enabled: false }},
     legend: {{
         position: 'top',
@@ -425,7 +425,7 @@ var diskChart = new ApexCharts(document.querySelector("#diskChart"), {{
             borderRadius: 4
         }}
     }},
-    colors: ['#EF4444', '#10B981'],
+    colors: ['#FF00A0', '#9600FF'],
     dataLabels: {{ enabled: false }},
     legend: {{
         position: 'top',
@@ -470,7 +470,7 @@ var scanChart = new ApexCharts(document.querySelector("#scanChart"), {{
             borderRadius: 4
         }}
     }},
-    colors: ['#3B82F6'],
+    colors: ['#9600FF'],
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
@@ -510,7 +510,7 @@ var batchChart = new ApexCharts(document.querySelector("#batchChart"), {{
             borderRadius: 4
         }}
     }},
-    colors: ['#10B981'],
+    colors: ['#FF00A0'],
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
