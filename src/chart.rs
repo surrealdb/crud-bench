@@ -89,6 +89,19 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
         .full-width {{
             grid-column: 1 / -1;
         }}
+        .apexcharts-tooltip-box {{
+            padding: 10px;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        .apexcharts-tooltip-box > div {{
+            padding: 3px 0;
+        }}
+        .apexcharts-tooltip-box strong {{
+            color: #333;
+        }}
     </style>
 </head>
 <body>
@@ -126,14 +139,24 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
                 <div id="diskChart"></div>
             </div>
 
-            <div class="chart-container full-width">
-                <div class="chart-title">Scan Performance</div>
-                <div id="scanChart"></div>
+            <div class="chart-container">
+                <div class="chart-title">Scan Throughput</div>
+                <div id="scanThroughputChart"></div>
             </div>
 
-            <div class="chart-container full-width">
-                <div class="chart-title">Batch Operations</div>
-                <div id="batchChart"></div>
+            <div class="chart-container">
+                <div class="chart-title">Scan Latency Distribution</div>
+                <div id="scanLatencyChart"></div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Batch Throughput</div>
+                <div id="batchThroughputChart"></div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Batch Latency Distribution</div>
+                <div id="batchLatencyChart"></div>
             </div>
         </div>
     </div>
@@ -452,11 +475,11 @@ var diskChart = new ApexCharts(document.querySelector("#diskChart"), {{
 }});
 diskChart.render();
 
-// Scan Performance Chart
-var scanChart = new ApexCharts(document.querySelector("#scanChart"), {{
+// Scan Throughput Chart
+var scanThroughputChart = new ApexCharts(document.querySelector("#scanThroughputChart"), {{
     series: [{{
         name: 'Operations/Second',
-        data: {scan_data}
+        data: {scan_ops_array}
     }}],
     chart: {{
         type: 'bar',
@@ -467,10 +490,11 @@ var scanChart = new ApexCharts(document.querySelector("#scanChart"), {{
     plotOptions: {{
         bar: {{
             horizontal: true,
-            borderRadius: 4
+            borderRadius: 4,
+            distributed: true
         }}
     }},
-    colors: ['#9600FF'],
+    colors: ['#9600FF', '#FF00A0', '#C000FF', '#FF33B8', '#9600FF', '#FF00A0', '#C000FF'],
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
@@ -490,10 +514,83 @@ var scanChart = new ApexCharts(document.querySelector("#scanChart"), {{
         }}
     }}
 }});
-scanChart.render();
+scanThroughputChart.render();
 
-// Batch Operations Chart
-var batchChart = new ApexCharts(document.querySelector("#batchChart"), {{
+// Scan Latency Distribution Chart
+// Create ops lookup for tooltips
+var scanOpsLookup = {scan_ops_lookup};
+
+var scanLatencyChart = new ApexCharts(document.querySelector("#scanLatencyChart"), {{
+    series: [
+        {{
+            name: 'Latency Distribution',
+            type: 'boxPlot',
+            data: {scan_boxplot_data}
+        }}
+    ],
+    chart: {{
+        type: 'boxPlot',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
+    }},
+    plotOptions: {{
+        bar: {{
+            horizontal: true,
+            barHeight: '60%'
+        }},
+        boxPlot: {{
+            colors: {{
+                upper: '#9600FF',
+                lower: '#C97FFF'
+            }}
+        }}
+    }},
+    colors: ['#9600FF'],
+    dataLabels: {{ enabled: false }},
+    legend: {{ show: false }},
+    xaxis: {{
+        title: {{ text: 'Latency (microseconds)' }},
+        labels: {{
+            formatter: function(val) {{
+                return formatNumber(val);
+            }}
+        }}
+    }},
+    yaxis: {{
+        title: {{ text: 'Scan Type' }}
+    }},
+    tooltip: {{
+        shared: false,
+        custom: function(options) {{
+            const dataPointIndex = options.dataPointIndex;
+            const w = options.w;
+            const data = w.globals.initialSeries[0].data[dataPointIndex];
+
+            const min = data.y[0];
+            const q1 = data.y[1];
+            const median = data.y[2];
+            const q3 = data.y[3];
+            const max = data.y[4];
+            const ops = scanOpsLookup[data.x] || 0;
+
+            return '<div class="apexcharts-tooltip-box" style="min-width: 200px;">' +
+                '<div style="font-weight: 600; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #e0e0e0;">' + data.x + '</div>' +
+                '<div style="margin-bottom: 4px;"><strong>Latency Distribution:</strong></div>' +
+                '<div style="margin-left: 10px;">Min: ' + (min / 1000).toFixed(2) + ' ms</div>' +
+                '<div style="margin-left: 10px;">Q1: ' + (q1 / 1000).toFixed(2) + ' ms</div>' +
+                '<div style="margin-left: 10px;">Median: ' + (median / 1000).toFixed(2) + ' ms</div>' +
+                '<div style="margin-left: 10px;">Q3: ' + (q3 / 1000).toFixed(2) + ' ms</div>' +
+                '<div style="margin-left: 10px;">Max: ' + (max / 1000).toFixed(2) + ' ms</div>' +
+                '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e0e0e0;"><strong>Throughput:</strong> ' + formatNumber(ops) + ' ops/s</div>' +
+                '</div>';
+        }}
+    }}
+}});
+scanLatencyChart.render();
+
+// Batch Throughput Chart
+var batchThroughputChart = new ApexCharts(document.querySelector("#batchThroughputChart"), {{
     series: [{{
         name: 'Operations/Second',
         data: {batch_data}
@@ -530,7 +627,80 @@ var batchChart = new ApexCharts(document.querySelector("#batchChart"), {{
         }}
     }}
 }});
-batchChart.render();
+batchThroughputChart.render();
+
+// Batch Latency Distribution Chart
+// Create ops lookup for batch tooltips
+var batchOpsLookup = {batch_ops_lookup};
+
+var batchLatencyChart = new ApexCharts(document.querySelector("#batchLatencyChart"), {{
+    series: [
+        {{
+            name: 'Latency Distribution',
+            type: 'boxPlot',
+            data: {batch_boxplot_data}
+        }}
+    ],
+    chart: {{
+        type: 'boxPlot',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
+    }},
+    plotOptions: {{
+        bar: {{
+            horizontal: true,
+            barHeight: '60%'
+        }},
+        boxPlot: {{
+            colors: {{
+                upper: '#FF00A0',
+                lower: '#FF99D6'
+            }}
+        }}
+    }},
+    colors: ['#FF00A0'],
+    dataLabels: {{ enabled: false }},
+    legend: {{ show: false }},
+    xaxis: {{
+        title: {{ text: 'Latency (microseconds)' }},
+        labels: {{
+            formatter: function(val) {{
+                return formatNumber(val);
+            }}
+        }}
+    }},
+    yaxis: {{
+        title: {{ text: 'Batch Type' }}
+    }},
+    tooltip: {{
+        shared: false,
+        custom: function(options) {{
+            const dataPointIndex = options.dataPointIndex;
+            const w = options.w;
+            const data = w.globals.initialSeries[0].data[dataPointIndex];
+
+            const min = data.y[0];
+            const q1 = data.y[1];
+            const median = data.y[2];
+            const q3 = data.y[3];
+            const max = data.y[4];
+            const ops = batchOpsLookup[data.x] || 0;
+
+            return '<div class="apexcharts-tooltip-box" style="min-width: 200px;">' +
+                '<div style="font-weight: 600; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #e0e0e0;">' + data.x + '</div>' +
+                '<div style="margin-bottom: 4px;"><strong>Latency Distribution:</strong></div>' +
+                '<div style="margin-left: 10px;">Min: ' + (min / 1000).toFixed(2) + ' ms</div>' +
+                '<div style="margin-left: 10px;">Q1: ' + (q1 / 1000).toFixed(2) + ' ms</div>' +
+                '<div style="margin-left: 10px;">Median: ' + (median / 1000).toFixed(2) + ' ms</div>' +
+                '<div style="margin-left: 10px;">Q3: ' + (q3 / 1000).toFixed(2) + ' ms</div>' +
+                '<div style="margin-left: 10px;">Max: ' + (max / 1000).toFixed(2) + ' ms</div>' +
+                '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e0e0e0;"><strong>Throughput:</strong> ' + formatNumber(ops) + ' ops/s</div>' +
+                '</div>';
+        }}
+    }}
+}});
+batchLatencyChart.render();
 "##,
 		ops_labels = get_ops_labels(result),
 		ops_data = get_ops_data(result),
@@ -544,9 +714,13 @@ batchChart.render();
 		disk_writes = get_disk_writes(result),
 		disk_reads = get_disk_reads(result),
 		scan_labels = get_scan_labels(result),
-		scan_data = get_scan_data(result),
+		scan_ops_array = get_scan_ops_array(result),
+		scan_boxplot_data = get_scan_boxplot_data(result),
+		scan_ops_lookup = get_scan_ops_lookup(result),
 		batch_labels = get_batch_labels(result),
 		batch_data = get_batch_data(result),
+		batch_boxplot_data = get_batch_boxplot_data(result),
+		batch_ops_lookup = get_batch_ops_lookup(result),
 	)
 }
 
@@ -711,7 +885,7 @@ fn get_scan_labels(result: &BenchmarkResult) -> String {
 	format!("[{}]", labels.join(", "))
 }
 
-fn get_scan_data(result: &BenchmarkResult) -> String {
+fn get_scan_ops_array(result: &BenchmarkResult) -> String {
 	let data: Vec<String> = result
 		.scans
 		.iter()
@@ -723,6 +897,41 @@ fn get_scan_data(result: &BenchmarkResult) -> String {
 		})
 		.collect();
 	format!("[{}]", data.join(", "))
+}
+
+fn get_scan_boxplot_data(result: &BenchmarkResult) -> String {
+	let data: Vec<String> = result
+		.scans
+		.iter()
+		.filter_map(|scan| {
+			scan.without_index.as_ref().or(scan.with_index.as_ref()).map(|r| {
+				format!(
+					r##"{{ x: '{}', y: [{}, {}, {}, {}, {}] }}"##,
+					scan.name,
+					r.min(),
+					r.q25(),
+					r.q50(),
+					r.q75(),
+					r.max()
+				)
+			})
+		})
+		.collect();
+	format!("[{}]", data.join(", "))
+}
+
+fn get_scan_ops_lookup(result: &BenchmarkResult) -> String {
+	let data: Vec<String> = result
+		.scans
+		.iter()
+		.filter_map(|scan| {
+			scan.without_index
+				.as_ref()
+				.or(scan.with_index.as_ref())
+				.map(|r| format!(r##"'{}': {:.2}"##, scan.name, r.ops()))
+		})
+		.collect();
+	format!("{{{}}}", data.join(", "))
 }
 
 fn get_batch_labels(result: &BenchmarkResult) -> String {
@@ -741,4 +950,36 @@ fn get_batch_data(result: &BenchmarkResult) -> String {
 		.filter_map(|(_, _, _, result)| result.as_ref().map(|r| format!("{:.2}", r.ops())))
 		.collect();
 	format!("[{}]", data.join(", "))
+}
+
+fn get_batch_boxplot_data(result: &BenchmarkResult) -> String {
+	let data: Vec<String> = result
+		.batches
+		.iter()
+		.filter_map(|(name, _, _, result)| {
+			result.as_ref().map(|r| {
+				format!(
+					r##"{{ x: '{}', y: [{}, {}, {}, {}, {}] }}"##,
+					name,
+					r.min(),
+					r.q25(),
+					r.q50(),
+					r.q75(),
+					r.max()
+				)
+			})
+		})
+		.collect();
+	format!("[{}]", data.join(", "))
+}
+
+fn get_batch_ops_lookup(result: &BenchmarkResult) -> String {
+	let data: Vec<String> = result
+		.batches
+		.iter()
+		.filter_map(|(name, _, _, result)| {
+			result.as_ref().map(|r| format!(r##"'{}': {:.2}"##, name, r.ops()))
+		})
+		.collect();
+	format!("{{{}}}", data.join(", "))
 }
