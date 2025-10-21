@@ -3,13 +3,13 @@ use crate::result::BenchmarkResult;
 /// Generate an HTML file with interactive charts for a single benchmark result
 pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> String {
 	format!(
-		r#"<!DOCTYPE html>
+		r##"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CRUD Benchmark Results - {database_name}</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.45.0/dist/apexcharts.min.js"></script>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
@@ -83,7 +83,7 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
             font-size: 0.7em;
             opacity: 0.8;
         }}
-        canvas {{
+        .chart {{
             max-height: 400px;
         }}
         .full-width {{
@@ -103,49 +103,46 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
         <div class="chart-grid">
             <div class="chart-container">
                 <div class="chart-title">Operations Per Second</div>
-                <canvas id="opsChart"></canvas>
+                <div id="opsChart"></div>
             </div>
 
             <div class="chart-container">
                 <div class="chart-title">Latency Distribution (ms)</div>
-                <canvas id="latencyChart"></canvas>
+                <div id="latencyChart"></div>
             </div>
 
             <div class="chart-container full-width">
                 <div class="chart-title">Percentile Comparison</div>
-                <canvas id="percentileChart"></canvas>
+                <div id="percentileChart"></div>
             </div>
 
             <div class="chart-container">
                 <div class="chart-title">Resource Usage</div>
-                <canvas id="resourceChart"></canvas>
+                <div id="resourceChart"></div>
             </div>
 
             <div class="chart-container">
                 <div class="chart-title">Disk I/O</div>
-                <canvas id="diskChart"></canvas>
+                <div id="diskChart"></div>
             </div>
 
             <div class="chart-container full-width">
                 <div class="chart-title">Scan Performance</div>
-                <canvas id="scanChart"></canvas>
+                <div id="scanChart"></div>
             </div>
 
             <div class="chart-container full-width">
                 <div class="chart-title">Batch Operations</div>
-                <canvas id="batchChart"></canvas>
+                <div id="batchChart"></div>
             </div>
         </div>
     </div>
 
     <script>
-        Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-        Chart.defaults.color = '#666';
-
         {chart_scripts}
     </script>
 </body>
-</html>"#,
+</html>"##,
 		database_name = database_name,
 		stats_cards = generate_stat_cards(result),
 		chart_scripts = generate_chart_scripts(result)
@@ -173,40 +170,40 @@ fn generate_stat_cards(result: &BenchmarkResult) -> String {
 
 	if let Some(creates) = &result.creates {
 		cards.push_str(&format!(
-			r#"<div class="stat-card blue">
+			r##"<div class="stat-card blue">
                     <div class="stat-label">Create Operations</div>
                     <div class="stat-value">{}<span class="stat-unit"> ops/s</span></div>
-                </div>"#,
+                </div>"##,
 			format_number_with_commas(creates.ops())
 		));
 	}
 
 	if let Some(reads) = &result.reads {
 		cards.push_str(&format!(
-			r#"<div class="stat-card green">
+			r##"<div class="stat-card green">
                     <div class="stat-label">Read Operations</div>
                     <div class="stat-value">{}<span class="stat-unit"> ops/s</span></div>
-                </div>"#,
+                </div>"##,
 			format_number_with_commas(reads.ops())
 		));
 	}
 
 	if let Some(updates) = &result.updates {
 		cards.push_str(&format!(
-			r#"<div class="stat-card orange">
+			r##"<div class="stat-card orange">
                     <div class="stat-label">Update Operations</div>
                     <div class="stat-value">{}<span class="stat-unit"> ops/s</span></div>
-                </div>"#,
+                </div>"##,
 			format_number_with_commas(updates.ops())
 		));
 	}
 
 	if let Some(deletes) = &result.deletes {
 		cards.push_str(&format!(
-			r#"<div class="stat-card red">
+			r##"<div class="stat-card red">
                     <div class="stat-label">Delete Operations</div>
                     <div class="stat-value">{}<span class="stat-unit"> ops/s</span></div>
-                </div>"#,
+                </div>"##,
 			format_number_with_commas(deletes.ops())
 		));
 	}
@@ -216,273 +213,330 @@ fn generate_stat_cards(result: &BenchmarkResult) -> String {
 
 fn generate_chart_scripts(result: &BenchmarkResult) -> String {
 	format!(
-		r#"
+		r##"
+// Helper function to format numbers with commas
+function formatNumber(num) {{
+    return num.toFixed(0).replace(/\B(?=(\d{{3}})+(?!\d))/g, ",");
+}}
+
 // Operations Per Second Chart
-new Chart(document.getElementById('opsChart'), {{
-    type: 'bar',
-    data: {{
-        labels: {ops_labels},
-        datasets: [{{
-            label: 'Operations/Second',
-            data: {ops_data},
-            backgroundColor: [
-                'rgba(59, 130, 246, 0.8)',
-                'rgba(16, 185, 129, 0.8)',
-                'rgba(245, 158, 11, 0.8)',
-                'rgba(239, 68, 68, 0.8)',
-            ],
-            borderColor: [
-                'rgb(59, 130, 246)',
-                'rgb(16, 185, 129)',
-                'rgb(245, 158, 11)',
-                'rgb(239, 68, 68)',
-            ],
-            borderWidth: 2
-        }}]
+var opsChart = new ApexCharts(document.querySelector("#opsChart"), {{
+    series: [{{
+        name: 'Operations/Second',
+        data: {ops_data}
+    }}],
+    chart: {{
+        type: 'bar',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
     }},
-    options: {{
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {{
-            legend: {{ display: false }},
-            tooltip: {{
-                callbacks: {{
-                    label: function(context) {{
-                        return context.parsed.y.toFixed(2) + ' ops/s';
-                    }}
-                }}
+    plotOptions: {{
+        bar: {{
+            distributed: true,
+            borderRadius: 4
+        }}
+    }},
+    colors: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444'],
+    dataLabels: {{ enabled: false }},
+    legend: {{ show: false }},
+    xaxis: {{
+        categories: {ops_labels}
+    }},
+    yaxis: {{
+        title: {{ text: 'Operations per Second' }},
+        labels: {{
+            formatter: function(val) {{
+                return formatNumber(val);
             }}
-        }},
-        scales: {{
-            y: {{
-                beginAtZero: true,
-                title: {{
-                    display: true,
-                    text: 'Operations per Second'
-                }}
+        }}
+    }},
+    tooltip: {{
+        y: {{
+            formatter: function(val) {{
+                return formatNumber(val) + ' ops/s';
             }}
         }}
     }}
 }});
+opsChart.render();
 
 // Latency Distribution Chart
-new Chart(document.getElementById('latencyChart'), {{
-    type: 'bar',
-    data: {{
-        labels: {latency_labels},
-        datasets: [{{
-            label: 'Mean Latency (ms)',
-            data: {latency_data},
-            backgroundColor: 'rgba(139, 92, 246, 0.6)',
-            borderColor: 'rgb(139, 92, 246)',
-            borderWidth: 2
-        }}]
+var latencyChart = new ApexCharts(document.querySelector("#latencyChart"), {{
+    series: [{{
+        name: 'Mean Latency (ms)',
+        data: {latency_data}
+    }}],
+    chart: {{
+        type: 'bar',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
     }},
-    options: {{
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {{
-            legend: {{ display: true }},
-            tooltip: {{
-                callbacks: {{
-                    label: function(context) {{
-                        return context.parsed.y.toFixed(2) + ' ms';
-                    }}
-                }}
+    plotOptions: {{
+        bar: {{
+            distributed: true,
+            borderRadius: 4
+        }}
+    }},
+    colors: ['#8B5CF6', '#A78BFA', '#C4B5FD', '#DDD6FE'],
+    dataLabels: {{ enabled: false }},
+    legend: {{ show: false }},
+    xaxis: {{
+        categories: {latency_labels}
+    }},
+    yaxis: {{
+        title: {{ text: 'Latency (milliseconds)' }},
+        labels: {{
+            formatter: function(val) {{
+                return val.toFixed(2);
             }}
-        }},
-        scales: {{
-            y: {{
-                beginAtZero: true,
-                title: {{
-                    display: true,
-                    text: 'Latency (milliseconds)'
-                }}
+        }}
+    }},
+    tooltip: {{
+        y: {{
+            formatter: function(val) {{
+                return val.toFixed(2) + ' ms';
             }}
         }}
     }}
 }});
+latencyChart.render();
 
 // Percentile Comparison Chart
-new Chart(document.getElementById('percentileChart'), {{
-    type: 'line',
-    data: {{
-        labels: ['Min', 'P01', 'P25', 'P50', 'P75', 'P95', 'P99', 'Max'],
-        datasets: {percentile_datasets}
+var percentileChart = new ApexCharts(document.querySelector("#percentileChart"), {{
+    series: {percentile_series},
+    chart: {{
+        type: 'line',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
     }},
-    options: {{
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {{
-            legend: {{ display: true, position: 'top' }},
-            tooltip: {{
-                callbacks: {{
-                    label: function(context) {{
-                        return context.dataset.label + ': ' + (context.parsed.y / 1000).toFixed(2) + ' ms';
-                    }}
-                }}
+    stroke: {{
+        width: 3,
+        curve: 'smooth'
+    }},
+    colors: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444'],
+    dataLabels: {{ enabled: false }},
+    legend: {{
+        position: 'top',
+        horizontalAlign: 'left'
+    }},
+    xaxis: {{
+        categories: ['Min', 'P01', 'P25', 'P50', 'P75', 'P95', 'P99', 'Max']
+    }},
+    yaxis: {{
+        title: {{ text: 'Latency (microseconds)' }},
+        labels: {{
+            formatter: function(val) {{
+                return formatNumber(val);
             }}
-        }},
-        scales: {{
-            y: {{
-                beginAtZero: true,
-                title: {{
-                    display: true,
-                    text: 'Latency (microseconds)'
-                }}
+        }}
+    }},
+    tooltip: {{
+        y: {{
+            formatter: function(val) {{
+                return formatNumber(val / 1000) + ' ms';
             }}
         }}
     }}
 }});
+percentileChart.render();
 
 // Resource Usage Chart
-new Chart(document.getElementById('resourceChart'), {{
-    type: 'bar',
-    data: {{
-        labels: {resource_labels},
-        datasets: [
-            {{
-                label: 'CPU Usage (%)',
-                data: {cpu_data},
-                backgroundColor: 'rgba(245, 158, 11, 0.6)',
-                borderColor: 'rgb(245, 158, 11)',
-                borderWidth: 2,
-                yAxisID: 'y'
-            }},
-            {{
-                label: 'Memory (MB)',
-                data: {memory_data},
-                backgroundColor: 'rgba(139, 92, 246, 0.6)',
-                borderColor: 'rgb(139, 92, 246)',
-                borderWidth: 2,
-                yAxisID: 'y1'
-            }}
-        ]
-    }},
-    options: {{
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {{
-            legend: {{ display: true }}
+var resourceChart = new ApexCharts(document.querySelector("#resourceChart"), {{
+    series: [
+        {{
+            name: 'CPU Usage (%)',
+            type: 'column',
+            data: {cpu_data}
         }},
-        scales: {{
-            y: {{
-                type: 'linear',
-                display: true,
-                position: 'left',
-                title: {{ display: true, text: 'CPU (%)' }}
-            }},
-            y1: {{
-                type: 'linear',
-                display: true,
-                position: 'right',
-                title: {{ display: true, text: 'Memory (MB)' }},
-                grid: {{ drawOnChartArea: false }}
+        {{
+            name: 'Memory (MB)',
+            type: 'column',
+            data: {memory_data}
+        }}
+    ],
+    chart: {{
+        type: 'line',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
+    }},
+    stroke: {{
+        width: [0, 0]
+    }},
+    plotOptions: {{
+        bar: {{
+            borderRadius: 4
+        }}
+    }},
+    colors: ['#F59E0B', '#8B5CF6'],
+    dataLabels: {{ enabled: false }},
+    legend: {{
+        position: 'top',
+        horizontalAlign: 'left'
+    }},
+    xaxis: {{
+        categories: {resource_labels}
+    }},
+    yaxis: [
+        {{
+            title: {{ text: 'CPU (%)' }},
+            labels: {{
+                formatter: function(val) {{
+                    return val.toFixed(1);
+                }}
+            }}
+        }},
+        {{
+            opposite: true,
+            title: {{ text: 'Memory (MB)' }},
+            labels: {{
+                formatter: function(val) {{
+                    return formatNumber(val);
+                }}
             }}
         }}
-    }}
+    ]
 }});
+resourceChart.render();
 
 // Disk I/O Chart
-new Chart(document.getElementById('diskChart'), {{
-    type: 'bar',
-    data: {{
-        labels: {disk_labels},
-        datasets: [
-            {{
-                label: 'Writes (MB)',
-                data: {disk_writes},
-                backgroundColor: 'rgba(239, 68, 68, 0.6)',
-                borderColor: 'rgb(239, 68, 68)',
-                borderWidth: 2
-            }},
-            {{
-                label: 'Reads (MB)',
-                data: {disk_reads},
-                backgroundColor: 'rgba(16, 185, 129, 0.6)',
-                borderColor: 'rgb(16, 185, 129)',
-                borderWidth: 2
-            }}
-        ]
-    }},
-    options: {{
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {{
-            legend: {{ display: true }}
+var diskChart = new ApexCharts(document.querySelector("#diskChart"), {{
+    series: [
+        {{
+            name: 'Writes (MB)',
+            data: {disk_writes}
         }},
-        scales: {{
-            y: {{
-                beginAtZero: true,
-                title: {{ display: true, text: 'Data (MB)' }}
+        {{
+            name: 'Reads (MB)',
+            data: {disk_reads}
+        }}
+    ],
+    chart: {{
+        type: 'bar',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
+    }},
+    plotOptions: {{
+        bar: {{
+            borderRadius: 4
+        }}
+    }},
+    colors: ['#EF4444', '#10B981'],
+    dataLabels: {{ enabled: false }},
+    legend: {{
+        position: 'top',
+        horizontalAlign: 'left'
+    }},
+    xaxis: {{
+        categories: {disk_labels}
+    }},
+    yaxis: {{
+        title: {{ text: 'Data (MB)' }},
+        labels: {{
+            formatter: function(val) {{
+                return formatNumber(val);
+            }}
+        }}
+    }},
+    tooltip: {{
+        y: {{
+            formatter: function(val) {{
+                return formatNumber(val) + ' MB';
             }}
         }}
     }}
 }});
+diskChart.render();
 
 // Scan Performance Chart
-new Chart(document.getElementById('scanChart'), {{
-    type: 'bar',
-    data: {{
-        labels: {scan_labels},
-        datasets: [{{
-            label: 'Operations/Second',
-            data: {scan_data},
-            backgroundColor: 'rgba(59, 130, 246, 0.6)',
-            borderColor: 'rgb(59, 130, 246)',
-            borderWidth: 2
-        }}]
+var scanChart = new ApexCharts(document.querySelector("#scanChart"), {{
+    series: [{{
+        name: 'Operations/Second',
+        data: {scan_data}
+    }}],
+    chart: {{
+        type: 'bar',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
     }},
-    options: {{
-        responsive: true,
-        maintainAspectRatio: true,
-        indexAxis: 'y',
-        plugins: {{
-            legend: {{ display: false }}
-        }},
-        scales: {{
-            x: {{
-                beginAtZero: true,
-                title: {{ display: true, text: 'Operations/Second' }}
+    plotOptions: {{
+        bar: {{
+            horizontal: true,
+            borderRadius: 4
+        }}
+    }},
+    colors: ['#3B82F6'],
+    dataLabels: {{ enabled: false }},
+    legend: {{ show: false }},
+    xaxis: {{
+        categories: {scan_labels},
+        title: {{ text: 'Operations/Second' }},
+        labels: {{
+            formatter: function(val) {{
+                return formatNumber(val);
+            }}
+        }}
+    }},
+    tooltip: {{
+        y: {{
+            formatter: function(val) {{
+                return formatNumber(val) + ' ops/s';
             }}
         }}
     }}
 }});
+scanChart.render();
 
 // Batch Operations Chart
-new Chart(document.getElementById('batchChart'), {{
-    type: 'bar',
-    data: {{
-        labels: {batch_labels},
-        datasets: [{{
-            label: 'Operations/Second',
-            data: {batch_data},
-            backgroundColor: 'rgba(16, 185, 129, 0.6)',
-            borderColor: 'rgb(16, 185, 129)',
-            borderWidth: 2
-        }}]
+var batchChart = new ApexCharts(document.querySelector("#batchChart"), {{
+    series: [{{
+        name: 'Operations/Second',
+        data: {batch_data}
+    }}],
+    chart: {{
+        type: 'bar',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
     }},
-    options: {{
-        responsive: true,
-        maintainAspectRatio: true,
-        indexAxis: 'y',
-        plugins: {{
-            legend: {{ display: false }}
-        }},
-        scales: {{
-            x: {{
-                beginAtZero: true,
-                title: {{ display: true, text: 'Operations/Second' }}
+    plotOptions: {{
+        bar: {{
+            horizontal: true,
+            borderRadius: 4
+        }}
+    }},
+    colors: ['#10B981'],
+    dataLabels: {{ enabled: false }},
+    legend: {{ show: false }},
+    xaxis: {{
+        categories: {batch_labels},
+        title: {{ text: 'Operations/Second' }},
+        labels: {{
+            formatter: function(val) {{
+                return formatNumber(val);
+            }}
+        }}
+    }},
+    tooltip: {{
+        y: {{
+            formatter: function(val) {{
+                return formatNumber(val) + ' ops/s';
             }}
         }}
     }}
 }});
-"#,
+batchChart.render();
+"##,
 		ops_labels = get_ops_labels(result),
 		ops_data = get_ops_data(result),
 		latency_labels = get_ops_labels(result),
 		latency_data = get_latency_data(result),
-		percentile_datasets = get_percentile_datasets(result),
+		percentile_series = get_percentile_series(result),
 		resource_labels = get_ops_labels(result),
 		cpu_data = get_cpu_data(result),
 		memory_data = get_memory_data(result),
@@ -547,31 +601,19 @@ fn get_latency_data(result: &BenchmarkResult) -> String {
 	format!("[{}]", data.join(", "))
 }
 
-fn get_percentile_datasets(result: &BenchmarkResult) -> String {
-	let mut datasets = vec![];
-	let colors = [
-		("59, 130, 246", "Create"),
-		("16, 185, 129", "Read"),
-		("245, 158, 11", "Update"),
-		("239, 68, 68", "Delete"),
-	];
-
+fn get_percentile_series(result: &BenchmarkResult) -> String {
+	let mut series = vec![];
+	let labels = ["Create", "Read", "Update", "Delete"];
 	let ops = [&result.creates, &result.reads, &result.updates, &result.deletes];
 
 	for (i, op) in ops.iter().enumerate() {
 		if let Some(r) = op {
-			let (color, label) = colors[i];
-			datasets.push(format!(
-				r#"{{
-                        label: '{}',
-                        data: [{}, {}, {}, {}, {}, {}, {}, {}],
-                        borderColor: 'rgb({})',
-                        backgroundColor: 'rgba({}, 0.1)',
-                        borderWidth: 2,
-                        fill: false,
-                        tension: 0.4
-                    }}"#,
-				label,
+			series.push(format!(
+				r##"{{
+                        name: '{}',
+                        data: [{}, {}, {}, {}, {}, {}, {}, {}]
+                    }}"##,
+				labels[i],
 				r.min(),
 				r.q01(),
 				r.q25(),
@@ -579,14 +621,12 @@ fn get_percentile_datasets(result: &BenchmarkResult) -> String {
 				r.q75(),
 				r.q95(),
 				r.q99(),
-				r.max(),
-				color,
-				color
+				r.max()
 			));
 		}
 	}
 
-	format!("[{}]", datasets.join(", "))
+	format!("[{}]", series.join(", "))
 }
 
 fn get_cpu_data(result: &BenchmarkResult) -> String {
