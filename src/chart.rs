@@ -115,22 +115,22 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
 
         <div class="chart-grid">
             <div class="chart-container">
-                <div class="chart-title">Operations Per Second</div>
+                <div class="chart-title">Operations per second</div>
                 <div id="opsChart"></div>
             </div>
 
             <div class="chart-container">
-                <div class="chart-title">Latency Distribution (ms)</div>
+                <div class="chart-title">Latency distribution (ms)</div>
                 <div id="latencyChart"></div>
             </div>
 
             <div class="chart-container full-width">
-                <div class="chart-title">Percentile Comparison</div>
+                <div class="chart-title">Percentile comparison</div>
                 <div id="percentileChart"></div>
             </div>
 
             <div class="chart-container">
-                <div class="chart-title">Resource Usage</div>
+                <div class="chart-title">Resource usage</div>
                 <div id="resourceChart"></div>
             </div>
 
@@ -140,23 +140,33 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
             </div>
 
             <div class="chart-container">
-                <div class="chart-title">Scan Throughput</div>
+                <div class="chart-title">Scan throughput</div>
                 <div id="scanThroughputChart"></div>
             </div>
 
             <div class="chart-container">
-                <div class="chart-title">Scan Latency Distribution</div>
+                <div class="chart-title">Scan latency distribution</div>
                 <div id="scanLatencyChart"></div>
             </div>
 
+            <div class="chart-container full-width">
+                <div class="chart-title">Scan percentile comparison</div>
+                <div id="scanPercentileChart"></div>
+            </div>
+
             <div class="chart-container">
-                <div class="chart-title">Batch Throughput</div>
+                <div class="chart-title">Batch throughput</div>
                 <div id="batchThroughputChart"></div>
             </div>
 
             <div class="chart-container">
-                <div class="chart-title">Batch Latency Distribution</div>
+                <div class="chart-title">Batch latency distribution</div>
                 <div id="batchLatencyChart"></div>
+            </div>
+
+            <div class="chart-container full-width">
+                <div class="chart-title">Batch percentile comparison</div>
+                <div id="batchPercentileChart"></div>
             </div>
         </div>
     </div>
@@ -359,7 +369,7 @@ var percentileChart = new ApexCharts(document.querySelector("#percentileChart"),
     tooltip: {{
         y: {{
             formatter: function(val) {{
-                return formatNumber(val / 1000) + ' ms';
+                return (val / 1000).toFixed(3) + ' ms';
             }}
         }}
     }}
@@ -589,6 +599,46 @@ var scanLatencyChart = new ApexCharts(document.querySelector("#scanLatencyChart"
 }});
 scanLatencyChart.render();
 
+// Scan Percentile Comparison Chart
+var scanPercentileChart = new ApexCharts(document.querySelector("#scanPercentileChart"), {{
+    series: {scan_percentile_series},
+    chart: {{
+        type: 'line',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
+    }},
+    stroke: {{
+        width: 3,
+        curve: 'smooth'
+    }},
+    colors: ['#9600FF', '#FF00A0', '#C000FF', '#FF33B8', '#B84FFF', '#FF66CC', '#DA9FFF'],
+    dataLabels: {{ enabled: false }},
+    legend: {{
+        position: 'top',
+        horizontalAlign: 'left'
+    }},
+    xaxis: {{
+        categories: ['Min', 'P01', 'P25', 'P50', 'P75', 'P95', 'P99', 'Max']
+    }},
+    yaxis: {{
+        title: {{ text: 'Latency (microseconds)' }},
+        labels: {{
+            formatter: function(val) {{
+                return formatNumber(val);
+            }}
+        }}
+    }},
+    tooltip: {{
+        y: {{
+            formatter: function(val) {{
+                return (val / 1000).toFixed(3) + ' ms';
+            }}
+        }}
+    }}
+}});
+scanPercentileChart.render();
+
 // Batch Throughput Chart
 var batchThroughputChart = new ApexCharts(document.querySelector("#batchThroughputChart"), {{
     series: [{{
@@ -701,6 +751,46 @@ var batchLatencyChart = new ApexCharts(document.querySelector("#batchLatencyChar
     }}
 }});
 batchLatencyChart.render();
+
+// Batch Percentile Comparison Chart
+var batchPercentileChart = new ApexCharts(document.querySelector("#batchPercentileChart"), {{
+    series: {batch_percentile_series},
+    chart: {{
+        type: 'line',
+        height: 350,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        toolbar: {{ show: false }}
+    }},
+    stroke: {{
+        width: 3,
+        curve: 'smooth'
+    }},
+    colors: ['#FF00A0', '#9600FF', '#FF33B8', '#C000FF', '#FF66CC', '#B84FFF', '#FF99D6', '#DA9FFF'],
+    dataLabels: {{ enabled: false }},
+    legend: {{
+        position: 'top',
+        horizontalAlign: 'left'
+    }},
+    xaxis: {{
+        categories: ['Min', 'P01', 'P25', 'P50', 'P75', 'P95', 'P99', 'Max']
+    }},
+    yaxis: {{
+        title: {{ text: 'Latency (microseconds)' }},
+        labels: {{
+            formatter: function(val) {{
+                return formatNumber(val);
+            }}
+        }}
+    }},
+    tooltip: {{
+        y: {{
+            formatter: function(val) {{
+                return (val / 1000).toFixed(3) + ' ms';
+            }}
+        }}
+    }}
+}});
+batchPercentileChart.render();
 "##,
 		ops_labels = get_ops_labels(result),
 		ops_data = get_ops_data(result),
@@ -717,10 +807,12 @@ batchLatencyChart.render();
 		scan_ops_array = get_scan_ops_array(result),
 		scan_boxplot_data = get_scan_boxplot_data(result),
 		scan_ops_lookup = get_scan_ops_lookup(result),
+		scan_percentile_series = get_scan_percentile_series(result),
 		batch_labels = get_batch_labels(result),
 		batch_data = get_batch_data(result),
 		batch_boxplot_data = get_batch_boxplot_data(result),
 		batch_ops_lookup = get_batch_ops_lookup(result),
+		batch_percentile_series = get_batch_percentile_series(result),
 	)
 }
 
@@ -934,6 +1026,32 @@ fn get_scan_ops_lookup(result: &BenchmarkResult) -> String {
 	format!("{{{}}}", data.join(", "))
 }
 
+fn get_scan_percentile_series(result: &BenchmarkResult) -> String {
+	let mut series = vec![];
+
+	for scan in &result.scans {
+		if let Some(r) = scan.without_index.as_ref().or(scan.with_index.as_ref()) {
+			series.push(format!(
+				r##"{{
+                        name: '{}',
+                        data: [{}, {}, {}, {}, {}, {}, {}, {}]
+                    }}"##,
+				scan.name,
+				r.min(),
+				r.q01(),
+				r.q25(),
+				r.q50(),
+				r.q75(),
+				r.q95(),
+				r.q99(),
+				r.max()
+			));
+		}
+	}
+
+	format!("[{}]", series.join(", "))
+}
+
 fn get_batch_labels(result: &BenchmarkResult) -> String {
 	let labels: Vec<String> = result
 		.batches
@@ -982,4 +1100,30 @@ fn get_batch_ops_lookup(result: &BenchmarkResult) -> String {
 		})
 		.collect();
 	format!("{{{}}}", data.join(", "))
+}
+
+fn get_batch_percentile_series(result: &BenchmarkResult) -> String {
+	let mut series = vec![];
+
+	for (name, _, _, batch_result) in &result.batches {
+		if let Some(r) = batch_result {
+			series.push(format!(
+				r##"{{
+                        name: '{}',
+                        data: [{}, {}, {}, {}, {}, {}, {}, {}]
+                    }}"##,
+				name,
+				r.min(),
+				r.q01(),
+				r.q25(),
+				r.q50(),
+				r.q75(),
+				r.q95(),
+				r.q99(),
+				r.max()
+			));
+		}
+	}
+
+	format!("[{}]", series.join(", "))
 }
