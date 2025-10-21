@@ -1,3 +1,4 @@
+use crate::system::SystemInfo;
 use bytesize::ByteSize;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_FULL;
@@ -15,8 +16,23 @@ use sysinfo::{
 };
 use tokio::task::JoinHandle;
 
+#[derive(Clone, Serialize)]
+pub(crate) struct BenchmarkMetadata {
+	pub(crate) samples: u32,
+	pub(crate) clients: u32,
+	pub(crate) threads: u32,
+	pub(crate) key_type: String,
+	pub(crate) random: bool,
+	pub(crate) sync: bool,
+	pub(crate) persisted: bool,
+	pub(crate) optimised: bool,
+}
+
 #[derive(Serialize)]
 pub(crate) struct BenchmarkResult {
+	pub(crate) database: Option<String>,
+	pub(crate) system: Option<SystemInfo>,
+	pub(crate) metadata: Option<BenchmarkMetadata>,
 	pub(crate) creates: Option<OperationResult>,
 	pub(crate) reads: Option<OperationResult>,
 	pub(crate) updates: Option<OperationResult>,
@@ -234,6 +250,15 @@ impl BenchmarkResult {
 		// Ensure all data is flushed to the file
 		w.flush()?;
 		Ok(())
+	}
+
+	pub(crate) fn to_html_charts(
+		&self,
+		path: &str,
+		database_name: &str,
+	) -> Result<(), std::io::Error> {
+		let html = crate::chart::generate_html(self, database_name);
+		std::fs::write(path, html)
 	}
 }
 
@@ -624,6 +649,71 @@ impl OperationResult {
 				self.load_avg.one, self.load_avg.five, self.load_avg.fifteen
 			),
 		]
+	}
+
+	/// Get the operations per second
+	pub(crate) fn ops(&self) -> f64 {
+		self.ops
+	}
+
+	/// Get the mean duration
+	pub(crate) fn mean(&self) -> f64 {
+		self.mean
+	}
+
+	/// Get the minimum duration
+	pub(crate) fn min(&self) -> u64 {
+		self.min
+	}
+
+	/// Get the maximum duration
+	pub(crate) fn max(&self) -> u64 {
+		self.max
+	}
+
+	/// Get the 99th percentile duration
+	pub(crate) fn q99(&self) -> u64 {
+		self.q99
+	}
+
+	/// Get the 95th percentile duration
+	pub(crate) fn q95(&self) -> u64 {
+		self.q95
+	}
+
+	/// Get the 75th percentile duration
+	pub(crate) fn q75(&self) -> u64 {
+		self.q75
+	}
+
+	/// Get the 50th percentile duration
+	pub(crate) fn q50(&self) -> u64 {
+		self.q50
+	}
+
+	/// Get the 25th percentile duration
+	pub(crate) fn q25(&self) -> u64 {
+		self.q25
+	}
+
+	/// Get the 1st percentile duration
+	pub(crate) fn q01(&self) -> u64 {
+		self.q01
+	}
+
+	/// Get the CPU usage
+	pub(crate) fn cpu_usage(&self) -> f32 {
+		self.cpu_usage
+	}
+
+	/// Get the used memory
+	pub(crate) fn used_memory(&self) -> u64 {
+		self.used_memory
+	}
+
+	/// Get the disk usage
+	pub(crate) fn disk_usage(&self) -> &DiskUsage {
+		&self.disk_usage
 	}
 }
 

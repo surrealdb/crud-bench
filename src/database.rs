@@ -102,6 +102,7 @@ impl Database {
 		Some(container)
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	/// Run the benchmarks for the chosen database
 	pub(crate) async fn run(
 		&self,
@@ -111,6 +112,9 @@ impl Database {
 		vp: ValueProvider,
 		scans: &str,
 		batches: &str,
+		database: Option<String>,
+		system: Option<crate::system::SystemInfo>,
+		metadata: Option<crate::result::BenchmarkMetadata>,
 	) -> Result<BenchmarkResult> {
 		let scans = serde_json::from_str(scans)?;
 		let batches = serde_json::from_str(batches)?;
@@ -123,6 +127,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database,
+						system,
+						metadata,
 					)
 					.await
 			}
@@ -136,6 +143,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -153,6 +163,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -166,6 +179,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -179,6 +195,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -191,6 +210,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -203,6 +225,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -214,6 +239,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -227,6 +255,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -240,6 +271,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -253,6 +287,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -266,6 +303,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -278,6 +318,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -291,6 +334,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -304,6 +350,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -317,6 +366,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -330,6 +382,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -347,6 +402,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -364,6 +422,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -381,6 +442,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -398,6 +462,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -415,6 +482,9 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
@@ -433,9 +503,63 @@ impl Database {
 						vp,
 						scans,
 						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
 					)
 					.await
 			}
+		}
+	}
+
+	pub fn name(&self) -> &'static str {
+		match self {
+			Database::Dry => "Dry run",
+			Database::Map => "DashMap",
+			#[cfg(feature = "redis")]
+			Database::Redis => "Redis",
+			#[cfg(feature = "keydb")]
+			Database::Keydb => "KeyDB",
+			#[cfg(feature = "dragonfly")]
+			Database::Dragonfly => "Dragonfly",
+			#[cfg(feature = "rocksdb")]
+			Database::Rocksdb => "RocksDB",
+			#[cfg(feature = "lmdb")]
+			Database::Lmdb => "LMDB",
+			#[cfg(feature = "mdbx")]
+			Database::Mdbx => "MDBX",
+			#[cfg(feature = "mongodb")]
+			Database::Mongodb => "MongoDB",
+			#[cfg(feature = "mysql")]
+			Database::Mysql => "MySQL",
+			#[cfg(feature = "postgres")]
+			Database::Postgres => "PostgreSQL",
+			#[cfg(feature = "sqlite")]
+			Database::Sqlite => "SQLite",
+			#[cfg(feature = "neo4j")]
+			Database::Neo4j => "Neo4j",
+			#[cfg(feature = "arangodb")]
+			Database::Arangodb => "ArangoDB",
+			#[cfg(feature = "scylladb")]
+			Database::Scylladb => "ScyllaDB",
+			#[cfg(feature = "fjall")]
+			Database::Fjall => "Fjall",
+			#[cfg(feature = "redb")]
+			Database::Redb => "Redb",
+			#[cfg(feature = "surrealkv")]
+			Database::Surrealkv => "SurrealKV",
+			#[cfg(feature = "surrealmx")]
+			Database::Surrealmx => "SurrealMX",
+			#[cfg(feature = "surrealdb")]
+			Database::Surrealdb => "SurrealDB",
+			#[cfg(feature = "surrealdb")]
+			Database::SurrealdbMemory => "SurrealDB (Memory)",
+			#[cfg(feature = "surrealdb")]
+			Database::SurrealdbRocksdb => "SurrealDB (RocksDB)",
+			#[cfg(feature = "surrealdb")]
+			Database::SurrealdbSurrealkv => "SurrealDB (SurrealKV)",
+			#[allow(unreachable_patterns)]
+			_ => "Unknown",
 		}
 	}
 }
