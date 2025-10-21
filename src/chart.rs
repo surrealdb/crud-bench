@@ -93,7 +93,7 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
 </head>
 <body>
     <div class="container">
-        <h1>📊 Benchmark Results</h1>
+        <h1>Benchmark Results</h1>
         <div class="subtitle">{database_name}</div>
 
         <div class="stats-grid">
@@ -152,6 +152,22 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
 	)
 }
 
+fn format_number_with_commas(num: f64) -> String {
+	let num_str = format!("{:.0}", num);
+	let mut result = String::new();
+	let chars: Vec<char> = num_str.chars().collect();
+	let len = chars.len();
+
+	for (i, ch) in chars.iter().enumerate() {
+		if i > 0 && (len - i) % 3 == 0 {
+			result.push(',');
+		}
+		result.push(*ch);
+	}
+
+	result
+}
+
 fn generate_stat_cards(result: &BenchmarkResult) -> String {
 	let mut cards = String::new();
 
@@ -159,9 +175,9 @@ fn generate_stat_cards(result: &BenchmarkResult) -> String {
 		cards.push_str(&format!(
 			r#"<div class="stat-card blue">
                     <div class="stat-label">Create Operations</div>
-                    <div class="stat-value">{:.0}<span class="stat-unit"> ops/s</span></div>
+                    <div class="stat-value">{}<span class="stat-unit"> ops/s</span></div>
                 </div>"#,
-			creates.ops()
+			format_number_with_commas(creates.ops())
 		));
 	}
 
@@ -169,9 +185,9 @@ fn generate_stat_cards(result: &BenchmarkResult) -> String {
 		cards.push_str(&format!(
 			r#"<div class="stat-card green">
                     <div class="stat-label">Read Operations</div>
-                    <div class="stat-value">{:.0}<span class="stat-unit"> ops/s</span></div>
+                    <div class="stat-value">{}<span class="stat-unit"> ops/s</span></div>
                 </div>"#,
-			reads.ops()
+			format_number_with_commas(reads.ops())
 		));
 	}
 
@@ -179,9 +195,9 @@ fn generate_stat_cards(result: &BenchmarkResult) -> String {
 		cards.push_str(&format!(
 			r#"<div class="stat-card orange">
                     <div class="stat-label">Update Operations</div>
-                    <div class="stat-value">{:.0}<span class="stat-unit"> ops/s</span></div>
+                    <div class="stat-value">{}<span class="stat-unit"> ops/s</span></div>
                 </div>"#,
-			updates.ops()
+			format_number_with_commas(updates.ops())
 		));
 	}
 
@@ -189,9 +205,9 @@ fn generate_stat_cards(result: &BenchmarkResult) -> String {
 		cards.push_str(&format!(
 			r#"<div class="stat-card red">
                     <div class="stat-label">Delete Operations</div>
-                    <div class="stat-value">{:.0}<span class="stat-unit"> ops/s</span></div>
+                    <div class="stat-value">{}<span class="stat-unit"> ops/s</span></div>
                 </div>"#,
-			deletes.ops()
+			format_number_with_commas(deletes.ops())
 		));
 	}
 
