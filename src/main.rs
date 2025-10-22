@@ -226,14 +226,14 @@ pub(crate) struct Args {
 		long,
 		env = "CRUD_BENCH_BATCHES",
 		default_value = r#"[
-			{ "name": "batch_create_100", "operation": "CREATE", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_read_100", "operation": "READ", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_update_100", "operation": "UPDATE", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_delete_100", "operation": "DELETE", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_create_1000", "operation": "CREATE", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_read_1000", "operation": "READ", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_update_1000", "operation": "UPDATE", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_delete_1000", "operation": "DELETE", "batch_size": 100, "samples": 1000 }
+			{ "name": "batch_create_100", "operation": "CREATE", "batch_size": 100, "samples": 250 },
+			{ "name": "batch_read_100", "operation": "READ", "batch_size": 100, "samples": 250 },
+			{ "name": "batch_update_100", "operation": "UPDATE", "batch_size": 100, "samples": 250 },
+			{ "name": "batch_delete_100", "operation": "DELETE", "batch_size": 100, "samples": 250 },
+			{ "name": "batch_create_1000", "operation": "CREATE", "batch_size": 1000, "samples": 250 },
+			{ "name": "batch_read_1000", "operation": "READ", "batch_size": 1000, "samples": 250 },
+			{ "name": "batch_update_1000", "operation": "UPDATE", "batch_size": 1000, "samples": 250 },
+			{ "name": "batch_delete_1000", "operation": "DELETE", "batch_size": 1000, "samples": 250 }
 		]"#
 	)]
 	pub(crate) batches: String,
