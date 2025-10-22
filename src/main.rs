@@ -14,6 +14,7 @@ use tokio::runtime;
 // Benchmark modules
 mod allocator;
 mod benchmark;
+mod chart;
 mod database;
 mod dialect;
 mod docker;
@@ -22,6 +23,8 @@ mod keyprovider;
 mod memory;
 mod profiling;
 mod result;
+mod storage;
+mod system;
 mod terminal;
 mod valueprovider;
 
@@ -132,6 +135,14 @@ pub(crate) struct Args {
 	#[arg(long, value_parser=clap::value_parser!(u32).range(0..))]
 	pub(crate) pid: Option<u32>,
 
+	/// Store benchmark results in SurrealDB
+	#[arg(long)]
+	pub(crate) store_results: bool,
+
+	/// SurrealDB endpoint for storing results
+	#[arg(long, env = "CRUD_BENCH_STORAGE_ENDPOINT", default_value = "ws://localhost:8000")]
+	pub(crate) storage_endpoint: String,
+
 	/// An array of scan specifications
 	#[arg(
 		long,
@@ -215,14 +226,14 @@ pub(crate) struct Args {
 		long,
 		env = "CRUD_BENCH_BATCHES",
 		default_value = r#"[
-			{ "name": "batch_create_100", "operation": "CREATE", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_read_100", "operation": "READ", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_update_100", "operation": "UPDATE", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_delete_100", "operation": "DELETE", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_create_1000", "operation": "CREATE", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_read_1000", "operation": "READ", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_update_1000", "operation": "UPDATE", "batch_size": 100, "samples": 1000 },
-			{ "name": "batch_delete_1000", "operation": "DELETE", "batch_size": 100, "samples": 1000 }
+			{ "name": "batch_create_100", "operation": "CREATE", "batch_size": 100, "samples": 250 },
+			{ "name": "batch_read_100", "operation": "READ", "batch_size": 100, "samples": 250 },
+			{ "name": "batch_update_100", "operation": "UPDATE", "batch_size": 100, "samples": 250 },
+			{ "name": "batch_delete_100", "operation": "DELETE", "batch_size": 100, "samples": 250 },
+			{ "name": "batch_create_1000", "operation": "CREATE", "batch_size": 1000, "samples": 250 },
+			{ "name": "batch_read_1000", "operation": "READ", "batch_size": 1000, "samples": 250 },
+			{ "name": "batch_update_1000", "operation": "UPDATE", "batch_size": 1000, "samples": 250 },
+			{ "name": "batch_delete_1000", "operation": "DELETE", "batch_size": 1000, "samples": 250 }
 		]"#
 	)]
 	pub(crate) batches: String,
@@ -360,13 +371,40 @@ fn run(args: Args) -> Result<()> {
 	if std::io::stdout().is_terminal() {
 		println!("--------------------------------------------------");
 	}
+	// Collect system information
+	let system = system::collect();
+	// Create benchmark metadata
+	let metadata = result::BenchmarkMetadata {
+		samples: args.samples,
+		clients: args.clients,
+		threads: args.threads,
+		key_type: format!("{:?}", args.key),
+		random: args.random,
+		sync: args.sync,
+		persisted: args.persisted,
+		optimised: args.optimised,
+	};
+	// Get database display name
+	let name = args.database.name().to_string();
 	// Build the key provider
 	let kp = KeyProvider::new(args.key, args.random);
 	// Build the value provider
 	let vp = ValueProvider::new(&args.value)?;
 	// Run the benchmark
 	let res = runtime.block_on(async {
-		args.database.run(&mut benchmark, args.key, kp, vp, &args.scans, &args.batches).await
+		args.database
+			.run(
+				&mut benchmark,
+				args.key,
+				kp,
+				vp,
+				&args.scans,
+				&args.batches,
+				Some(name.clone()),
+				Some(system),
+				Some(metadata),
+			)
+			.await
 	});
 	// Check if we should profile
 	if std::env::var("PROFILE").is_ok() {
@@ -427,6 +465,29 @@ fn run(args: Args) -> Result<()> {
 				.map(|s| format!("result-{s}.csv"))
 				.unwrap_or_else(|| "result.csv".to_string());
 			res.to_csv(&result_csv_name)?;
+
+			// Write the HTML chart file
+			let result_html_name = args
+				.name
+				.as_ref()
+				.map(|s| format!("result-{s}.html"))
+				.unwrap_or_else(|| "result.html".to_string());
+			res.to_html_charts(&result_html_name, &name)?;
+			println!("📊 Interactive charts saved to: {}", result_html_name);
+
+			// Store results in SurrealDB if requested
+			if args.store_results {
+				match runtime.block_on(async {
+					let client = storage::StorageClient::connect(&args.storage_endpoint).await?;
+					client.store_result(&res).await
+				}) {
+					Ok(_) => {
+						println!("💾 Results stored in SurrealDB at: {}", args.storage_endpoint)
+					}
+					Err(e) => eprintln!("⚠️ Failed to store results in SurrealDB: {e}"),
+				}
+			}
+
 			Ok(())
 		}
 		// Output the errors
@@ -477,6 +538,8 @@ mod test {
 					.to_string(),
 			show_sample: false,
 			pid: None,
+			store_results: false,
+			storage_endpoint: "ws://localhost:8000".to_string(),
 		})
 	}
 

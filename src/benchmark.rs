@@ -2,7 +2,9 @@ use crate::database::Database;
 use crate::dialect::Dialect;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::keyprovider::KeyProvider;
+use crate::result::BenchmarkMetadata;
 use crate::result::{BenchmarkResult, OperationMetric, OperationResult, ScanResult};
+use crate::system::SystemInfo;
 use crate::terminal::Terminal;
 use crate::valueprovider::ValueProvider;
 use crate::{Args, BatchOperation, Batches, Index, Scan, Scans};
@@ -61,6 +63,8 @@ impl Benchmark {
 			optimised: args.optimised,
 		}
 	}
+
+	#[allow(clippy::too_many_arguments)]
 	/// Run the benchmark for the desired benchmark engine
 	pub(crate) async fn run<C, D, E>(
 		&self,
@@ -69,6 +73,9 @@ impl Benchmark {
 		mut vp: ValueProvider,
 		scans: Scans,
 		batches: Batches,
+		database: Option<String>,
+		system: Option<SystemInfo>,
+		metadata: Option<BenchmarkMetadata>,
 	) -> Result<BenchmarkResult>
 	where
 		C: BenchmarkClient + Send + Sync,
@@ -240,6 +247,9 @@ impl Benchmark {
 		self.wait_for_client(&engine).await?.shutdown().await?;
 		// Return the benchmark results
 		Ok(BenchmarkResult {
+			database,
+			system,
+			metadata,
 			creates,
 			reads,
 			updates,
