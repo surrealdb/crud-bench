@@ -2,6 +2,8 @@ use crate::result::BenchmarkResult;
 
 /// Generate an HTML file with interactive charts for a single benchmark result
 pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> String {
+	let system_info_html = generate_system_info(result);
+
 	format!(
 		r##"<!DOCTYPE html>
 <html lang="en">
@@ -89,6 +91,43 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
         .full-width {{
             grid-column: 1 / -1;
         }}
+        .system-info {{
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 30px;
+            border: 1px solid #e0e0e0;
+        }}
+        .system-info-title {{
+            font-size: 1.4em;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #333;
+        }}
+        .system-info-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+        }}
+        .system-info-item {{
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #e8e8e8;
+        }}
+        .system-info-label {{
+            font-weight: 600;
+            color: #666;
+            margin-right: 8px;
+            min-width: 120px;
+        }}
+        .system-info-value {{
+            color: #333;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 0.95em;
+        }}
         .apexcharts-tooltip-box {{
             padding: 10px;
             background: white;
@@ -108,6 +147,8 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
     <div class="container">
         <h1>Benchmark Results</h1>
         <div class="subtitle">{database_name}</div>
+
+        {system_info}
 
         <div class="stats-grid">
             {stats_cards}
@@ -177,6 +218,7 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
 </body>
 </html>"##,
 		database_name = database_name,
+		system_info = system_info_html,
 		stats_cards = generate_stat_cards(result),
 		chart_scripts = generate_chart_scripts(result)
 	)
@@ -196,6 +238,71 @@ fn format_number_with_commas(num: f64) -> String {
 	}
 
 	result
+}
+
+fn generate_system_info(result: &BenchmarkResult) -> String {
+	if let Some(system) = &result.system {
+		// Convert timestamp to readable format
+		let datetime = chrono::DateTime::from_timestamp(system.timestamp, 0)
+			.map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+			.unwrap_or_else(|| "Unknown".to_string());
+
+		// Convert memory to GB
+		let total_memory_gb = system.total_memory as f64 / 1024.0 / 1024.0 / 1024.0;
+		let available_memory_gb = system.available_memory as f64 / 1024.0 / 1024.0 / 1024.0;
+
+		format!(
+			r##"<div class="system-info">
+            <div class="system-info-title">System Information</div>
+            <div class="system-info-grid">
+                <div class="system-info-item">
+                    <span class="system-info-label">Hostname:</span>
+                    <span class="system-info-value">{}</span>
+                </div>
+                <div class="system-info-item">
+                    <span class="system-info-label">Timestamp:</span>
+                    <span class="system-info-value">{}</span>
+                </div>
+                <div class="system-info-item">
+                    <span class="system-info-label">Operating System:</span>
+                    <span class="system-info-value">{} {}</span>
+                </div>
+                <div class="system-info-item">
+                    <span class="system-info-label">Kernel Version:</span>
+                    <span class="system-info-value">{}</span>
+                </div>
+                <div class="system-info-item">
+                    <span class="system-info-label">CPU Architecture:</span>
+                    <span class="system-info-value">{}</span>
+                </div>
+                <div class="system-info-item">
+                    <span class="system-info-label">CPU Cores:</span>
+                    <span class="system-info-value">{} ({} physical)</span>
+                </div>
+                <div class="system-info-item">
+                    <span class="system-info-label">Total Memory:</span>
+                    <span class="system-info-value">{:.2} GB</span>
+                </div>
+                <div class="system-info-item">
+                    <span class="system-info-label">Available Memory:</span>
+                    <span class="system-info-value">{:.2} GB</span>
+                </div>
+            </div>
+        </div>"##,
+			system.hostname,
+			datetime,
+			system.os_name,
+			system.os_version,
+			system.kernel_version,
+			system.cpu_arch,
+			system.cpu_cores,
+			system.cpu_physical_cores,
+			total_memory_gb,
+			available_memory_gb
+		)
+	} else {
+		String::new()
+	}
 }
 
 fn generate_stat_cards(result: &BenchmarkResult) -> String {
