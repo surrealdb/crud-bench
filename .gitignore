@@ -51,6 +51,7 @@ Cargo.lock
 /.direnv/
 
 # --- Ignore benchmark database files
+data/
 redb
 lmdb/
 mdbx/
@@ -59,7 +60,8 @@ surrealkv/
 surrealmx/
 
 # --- Ignore generated result files
-result.json
-result-*.json
 result.csv
+result.json
 result-*.csv
+result-*.json
+result-*.html
