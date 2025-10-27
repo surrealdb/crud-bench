@@ -269,6 +269,7 @@ jobs:
         with:
           name: results ${{ matrix.name }}
           path: |
+            result*.html
             result*.json
             result*.csv
 
