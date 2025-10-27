@@ -185,6 +185,7 @@ pub(crate) struct Args {
 				"condition": {
 					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello')",
 					"mysql": "MATCH(words) AGAINST('hello' IN NATURAL LANGUAGE MODE)",
+					"neo4j": "hello",
 					"mongodb": { "$text": { "$search": "hello" } },
 					"surrealdb": "words @@ 'hello'"
 				},
@@ -197,6 +198,7 @@ pub(crate) struct Args {
 				"condition": {
 					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello & world')",
 					"mysql": "MATCH(words) AGAINST('+hello +world' IN NATURAL LANGUAGE MODE)",
+					"neo4j": "hello AND world",
 					"mongodb": { "$text": { "$search": "hello world" } },
 					"surrealdb": "words @@ 'hello' AND words @@ 'world'"
 				},
@@ -209,6 +211,7 @@ pub(crate) struct Args {
 				"condition": {
 					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'foo | bar')",
 					"mysql": "MATCH(words) AGAINST('foo bar' IN NATURAL LANGUAGE MODE)",
+					"neo4j": "foo OR bar",
 					"mongodb": { "$text": { "$search": "foo bar" } },
 					"surrealdb": "words @@ 'foo' OR words @@ 'bar'"
 				},
