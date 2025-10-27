@@ -1,11 +1,12 @@
 #![cfg(feature = "neo4j")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::Neo4jDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use neo4rs::BoltType;
 use neo4rs::ConfigBuilder;
 use neo4rs::Graph;
@@ -136,6 +137,10 @@ impl BenchmarkClient for Neo4jClient {
 		};
 		// Create the index
 		self.graph.execute(query(&stmt)).await?.next().await?;
+		// Wait for the index to finish building in the background.
+		// Neo4j indexes build asynchronously, so we need to wait
+		// for the index to be fully online before proceeding.
+		self.graph.execute(query("CALL db.awaitIndexes()")).await?.next().await?;
 		// All ok
 		Ok(())
 	}
@@ -146,12 +151,12 @@ impl BenchmarkClient for Neo4jClient {
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_u32(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 
-	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
-		self.scan(scan).await
+	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 }
 
@@ -206,16 +211,37 @@ impl Neo4jClient {
 		Ok(())
 	}
 
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
+	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		// Neo4j requires a full-text index to exist
+		if ctx == ScanContext::WithoutIndex
+			&& let Some(index) = &scan.index
+			&& let Some(kind) = &index.index_type
+			&& kind == "fulltext"
+		{
+			bail!(NOT_SUPPORTED_ERROR);
+		}
 		// Extract parameters
 		let s = scan.start.map(|s| format!("SKIP {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
 		let c = Neo4jDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
+		let n = &scan.name;
+		// Check if this is a fulltext scan
+		let fts = scan
+			.index
+			.as_ref()
+			.and_then(|idx| idx.index_type.as_ref())
+			.map(|t| t == "fulltext")
+			.unwrap_or(false);
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stm = format!("MATCH (r) {c} {s} {l} RETURN r.id");
+				let stm = match fts {
+					true => format!(
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r {s} {l} RETURN r.id"
+					),
+					false => format!("MATCH (r) {c} {s} {l} RETURN r.id"),
+				};
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let mut count = 0;
 				while let Ok(Some(v)) = res.next().await {
@@ -225,7 +251,12 @@ impl Neo4jClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("MATCH (r) {c} {s} {l} RETURN r");
+				let stm = match fts {
+					true => format!(
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r {s} {l} RETURN r"
+					),
+					false => format!("MATCH (r) {c} {s} {l} RETURN r"),
+				};
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let mut count = 0;
 				while let Ok(Some(v)) = res.next().await {
@@ -235,7 +266,12 @@ impl Neo4jClient {
 				Ok(count)
 			}
 			Projection::Count => {
-				let stm = format!("MATCH (r) {c} {s} {l} RETURN count(r) as count");
+				let stm = match fts {
+					true => format!(
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r {s} {l} RETURN count(r) as count"
+					),
+					false => format!("MATCH (r) {c} {s} {l} RETURN count(r) as count"),
+				};
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let count = res.next().await.unwrap().unwrap().get("count").unwrap();
 				Ok(count)

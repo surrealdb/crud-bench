@@ -221,7 +221,14 @@ impl Neo4jDialect {
 	pub fn filter_clause(scan: &Scan) -> Result<String> {
 		if let Some(ref c) = scan.condition {
 			if let Some(ref c) = c.neo4j {
-				return Ok(format!("WHERE {c}"));
+				if let Some(index) = &scan.index
+					&& let Some(kind) = &index.index_type
+					&& kind == "fulltext"
+				{
+					return Ok(c.to_string());
+				} else {
+					return Ok(format!("WHERE {c}"));
+				}
 			} else {
 				bail!(NOT_SUPPORTED_ERROR);
 			}
