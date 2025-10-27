@@ -2,7 +2,7 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
-// No longer need IntegerKeyProvider and StringKeyProvider imports
+use crate::memory::Config;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -13,15 +13,21 @@ use rocksdb::{
 	OptimisticTransactionOptions, Options, ReadOptions, WaitForCompactOptions, WriteOptions,
 };
 use serde_json::Value;
-use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
-use sysinfo::System;
 
 const DATABASE_DIR: &str = "rocksdb";
 
-const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
+/// Calculate RocksDB specific memory allocation
+fn calculate_rocksdb_memory() -> u64 {
+	// Load the system memory
+	let memory = Config::new();
+	// Calculate total available cache memory in bytes
+	let total_cache_bytes = memory.cache_gb * 1024 * 1024 * 1024;
+	// Return configuration
+	total_cache_bytes
+}
 
 pub(crate) struct RocksDBClientProvider {
 	db: Arc<OptimisticTransactionDB>,
@@ -37,16 +43,8 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
-		// Load the system attributes
-		let system = System::new_all();
-		// Get the total system memory
-		let memory = system.total_memory();
-		// Divide the total memory into half
-		let memory = memory.saturating_div(2);
-		// Subtract 1 GiB from the memory size
-		let memory = memory.saturating_sub(1024 * 1024 * 1024);
-		// Fallback to the minimum memory cache size
-		let memory = max(memory, MIN_CACHE_SIZE);
+		// Calculate memory allocation
+		let memory = calculate_rocksdb_memory();
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync

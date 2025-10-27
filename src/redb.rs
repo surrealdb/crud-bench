@@ -2,20 +2,27 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::memory::Config;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
 use serde_json::Value;
-use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
-use sysinfo::System;
 
 const DATABASE_DIR: &str = "redb";
 
-const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
+/// Calculate ReDB specific memory allocation
+fn calculate_redb_memory() -> u64 {
+	// Load the system memory
+	let memory = Config::new();
+	// Calculate total available cache memory in bytes
+	let total_cache_bytes = memory.cache_gb * 1024 * 1024 * 1024;
+	// Return configuration
+	total_cache_bytes
+}
 
 const TABLE: TableDefinition<&[u8], Vec<u8>> = TableDefinition::new("test");
 
@@ -33,15 +40,11 @@ impl BenchmarkEngine<ReDBClient> for ReDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_file(DATABASE_DIR).ok();
-		// Load the system attributes
-		let system = System::new_all();
-		// Get the total system memory
-		let memory = system.total_memory();
-		// Calculate a good cache memory size
-		let memory = max(memory / 2, MIN_CACHE_SIZE);
+		// Calculate memory allocation
+		let memory = calculate_redb_memory();
 		// Configure and create the database
 		let db = Database::builder()
-			// Set the cache size to 512 MiB
+			// Set the cache size
 			.set_cache_size(memory as usize)
 			// Create the database directory
 			.create(DATABASE_DIR)?;

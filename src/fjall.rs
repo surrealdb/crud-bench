@@ -2,6 +2,7 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -10,15 +11,21 @@ use fjall::{
 	TxPartitionHandle,
 };
 use serde_json::Value;
-use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
-use sysinfo::System;
 
 const DATABASE_DIR: &str = "fjall";
 
-const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
+/// Calculate Fjall specific memory allocation
+fn calculate_fjall_memory() -> u64 {
+	// Load the system memory
+	let memory = MemoryConfig::new();
+	// Calculate total available cache memory in bytes
+	let total_cache_bytes = memory.cache_gb * 1024 * 1024 * 1024;
+	// Return configuration
+	total_cache_bytes
+}
 
 // Durability will be set dynamically based on sync flag
 
@@ -37,16 +44,8 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
-		// Load the system attributes
-		let system = System::new_all();
-		// Get the total system memory
-		let memory = system.total_memory();
-		// Divide the total memory into half
-		let memory = memory.saturating_div(2);
-		// Subtract 1 GiB from the memory size
-		let memory = memory.saturating_sub(1024 * 1024 * 1024);
-		// Fallback to the minimum memory cache size
-		let memory = max(memory, MIN_CACHE_SIZE);
+		// Calculate memory allocation
+		let memory = calculate_fjall_memory();
 		// Configure the key-value separation
 		let blobopts = KvSeparationOptions::default()
 			// Separate values if larger than 1 KiB
@@ -63,7 +62,7 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			.manual_journal_persist(!options.sync)
 			// Set the amount of data to build up in memory
 			.max_write_buffer_size(u64::MAX)
-			// Set the cache size to 512 MiB
+			// Set the cache size
 			.cache_size(memory)
 			// Open a transactional keyspace
 			.open_transactional()?;
