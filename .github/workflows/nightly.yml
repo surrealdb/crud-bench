@@ -254,7 +254,7 @@ jobs:
           docker container kill crud-bench &>/dev/null || docker container prune --force &>/dev/null || docker volume prune --all --force &>/dev/null || true
         env:
           CRUD_BENCH_LMDB_DATABASE_SIZE: 53687091200 # 50 GiB
-          CRUD_BENCH_VALUE: '{ "text": "text:50", "age": "int:1..99", "integer": "int", "words": "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
+          CRUD_BENCH_VALUE: '{ "text": "text:50", "number": "int:1..5000", "integer": "int", "words": "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance", "nested": { "text": "text:1000", "array": [ "string:50", "string:50", "string:50", "string:50", "string:50" ] } }'
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 

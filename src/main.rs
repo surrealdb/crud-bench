@@ -120,7 +120,7 @@ pub(crate) struct Args {
 		env = "CRUD_BENCH_VALUE",
 		default_value = r#"{
 			"text": "string:50",
-			"age": "int:1..99",
+			"number": "int:1..5000",
 			"integer": "int",
 			"words": "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
 		}"#
