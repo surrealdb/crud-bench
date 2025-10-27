@@ -2,7 +2,7 @@ define CRUD_BENCH_VALUE
 {
 	"text": "text:50",
 	"integer": "int",
-	"age": "int:1..99",
+	"number": "int:1..5000",
 	"nested": {
 		"text": "text:1000",
 		"array": [

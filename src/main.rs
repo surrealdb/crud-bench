@@ -120,7 +120,7 @@ pub(crate) struct Args {
 		env = "CRUD_BENCH_VALUE",
 		default_value = r#"{
 			"text": "string:50",
-			"age": "int:1..99",
+			"number": "int:1..5000",
 			"integer": "int",
 			"words": "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
 		}"#
@@ -157,28 +157,28 @@ pub(crate) struct Args {
 			{ "name": "limit_start_count", "samples": 10000, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 },
 			{ "name": "where_field_integer_eq", "samples": 100, "projection": "FULL",
 				"condition": {
-					"sql": "age = 21",
-					"mysql": "age = 21",
-					"neo4j": "r.age = 21",
-					"mongodb": { "age": { "$eq": 21 } },
-					"arangodb": "r.age == 21",
-					"surrealdb": "age = 21"
+					"sql": "number = 21",
+					"mysql": "number = 21",
+					"neo4j": "r.number = 21",
+					"mongodb": { "number": { "$eq": 21 } },
+					"arangodb": "r.number == 21",
+					"surrealdb": "number = 21"
 				},
 				"index": {
-					"fields": ["age"]
+					"fields": ["number"]
 				}
 			},
 			{ "name": "where_field_integer_gte_lte", "samples": 100, "projection": "FULL",
 				"condition": {
-					"sql": "age >= 18 AND age <= 21",
-					"mysql": "age >= 18 AND age <= 21",
-					"neo4j": "r.age >= 18 AND r.age <= 21",
-					"mongodb": { "age": { "$gte": 18, "$lte": 21 } },
-					"arangodb": "r.age >= 18 AND r.age <= 21",
-					"surrealdb": "age >= 18 AND age <= 21"
+					"sql": "number >= 18 AND number <= 21",
+					"mysql": "number >= 18 AND number <= 21",
+					"neo4j": "r.number >= 18 AND r.number <= 21",
+					"mongodb": { "number": { "$gte": 18, "$lte": 21 } },
+					"arangodb": "r.number >= 18 AND r.number <= 21",
+					"surrealdb": "number >= 18 AND number <= 21"
 				},
 				"index": {
-					"fields": ["age"]
+					"fields": ["number"]
 				}
 			},
 			{ "name": "where_field_fulltext_single", "samples": 100, "projection": "FULL",

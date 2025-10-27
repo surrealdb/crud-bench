@@ -59,7 +59,7 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 				// Open the database
 				.open(DATABASE_DIR)
 		}?;
-		// Creaye the database
+		// Create the database
 		let db = {
 			// Open a new transaction
 			let mut txn = env.write_txn()?;

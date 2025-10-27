@@ -77,7 +77,7 @@ impl Database {
 			Self::Mongodb => crate::mongodb::docker(options),
 			#[cfg(feature = "mysql")]
 			Self::Mysql => crate::mysql::docker(options),
-			#[cfg(feature = "mysql")]
+			#[cfg(feature = "neo4j")]
 			Self::Neo4j => crate::neo4j::docker(options),
 			#[cfg(feature = "postgres")]
 			Self::Postgres => crate::postgres::docker(options),
