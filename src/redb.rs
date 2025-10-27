@@ -18,10 +18,8 @@ const DATABASE_DIR: &str = "redb";
 fn calculate_redb_memory() -> u64 {
 	// Load the system memory
 	let memory = Config::new();
-	// Calculate total available cache memory in bytes
-	let total_cache_bytes = memory.cache_gb * 1024 * 1024 * 1024;
 	// Return configuration
-	total_cache_bytes
+	memory.cache_gb * 1024 * 1024 * 1024
 }
 
 const TABLE: TableDefinition<&[u8], Vec<u8>> = TableDefinition::new("test");

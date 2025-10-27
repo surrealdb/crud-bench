@@ -21,10 +21,8 @@ const DATABASE_DIR: &str = "fjall";
 fn calculate_fjall_memory() -> u64 {
 	// Load the system memory
 	let memory = MemoryConfig::new();
-	// Calculate total available cache memory in bytes
-	let total_cache_bytes = memory.cache_gb * 1024 * 1024 * 1024;
 	// Return configuration
-	total_cache_bytes
+	memory.cache_gb * 1024 * 1024 * 1024
 }
 
 // Durability will be set dynamically based on sync flag
