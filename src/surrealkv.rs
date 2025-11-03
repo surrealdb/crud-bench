@@ -19,6 +19,8 @@ use surrealkv::TreeBuilder;
 
 const DATABASE_DIR: &str = "surrealkv";
 
+const BLOCK_SIZE: usize = 64 * 1024;
+
 /// Calculate SurrealKV specific memory allocation
 fn calculate_surrealkv_memory() -> (u64, u64) {
 	// Load the system memory
@@ -59,6 +61,8 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		let builder = builder.with_versioning(false, 0);
 		// Enable separated keys and values
 		let builder = builder.with_enable_vlog(true);
+		// Set the block size to 64 KiB
+		let builder = builder.with_block_size(BLOCK_SIZE);
 		// Set the directory location
 		let builder = builder.with_path(PathBuf::from(DATABASE_DIR));
 		// Create the datastore
