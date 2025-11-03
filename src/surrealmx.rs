@@ -15,10 +15,7 @@ use surrealmx::{DatabaseOptions, PersistenceOptions};
 
 const DATABASE_DIR: &str = "surrealmx";
 
-type Key = Vec<u8>;
-type Val = Vec<u8>;
-
-pub(crate) struct SurrealMXClientProvider(Arc<Database<Key, Val>>);
+pub(crate) struct SurrealMXClientProvider(Arc<Database>);
 
 impl BenchmarkEngine<SurrealMXClient> for SurrealMXClientProvider {
 	/// The number of seconds to wait before connecting
@@ -59,7 +56,7 @@ impl BenchmarkEngine<SurrealMXClient> for SurrealMXClientProvider {
 }
 
 pub(crate) struct SurrealMXClient {
-	db: Arc<Database<Key, Val>>,
+	db: Arc<Database>,
 }
 
 impl BenchmarkClient for SurrealMXClient {
