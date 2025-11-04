@@ -367,7 +367,7 @@ impl SurrealKVClient {
 				let mut count = 0;
 				for v in iter.skip(s).take(l) {
 					assert!(v.is_ok());
-					black_box(v.unwrap().0);
+					black_box(v.unwrap());
 					count += 1;
 				}
 				Ok(count)
