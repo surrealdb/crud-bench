@@ -214,7 +214,7 @@ impl SurrealKVClient {
 		});
 		// Process the data
 		txn.set(key, &val)?;
-		txn.commit().await?;
+		txn.commit()?;
 		Ok(())
 	}
 
@@ -244,7 +244,7 @@ impl SurrealKVClient {
 		});
 		// Process the data
 		txn.set(key, &val)?;
-		txn.commit().await?;
+		txn.commit()?;
 		Ok(())
 	}
 
@@ -259,7 +259,7 @@ impl SurrealKVClient {
 		});
 		// Process the data
 		txn.delete(key)?;
-		txn.commit().await?;
+		txn.commit()?;
 		Ok(())
 	}
 
@@ -281,7 +281,7 @@ impl SurrealKVClient {
 			txn.set(&key, &val)?;
 		}
 		// Commit the batch
-		txn.commit().await?;
+		txn.commit()?;
 		Ok(())
 	}
 
@@ -319,7 +319,7 @@ impl SurrealKVClient {
 			txn.set(&key, &val)?;
 		}
 		// Commit the batch
-		txn.commit().await?;
+		txn.commit()?;
 		Ok(())
 	}
 
@@ -337,7 +337,7 @@ impl SurrealKVClient {
 			txn.delete(&key)?;
 		}
 		// Commit the batch
-		txn.commit().await?;
+		txn.commit()?;
 		Ok(())
 	}
 
