@@ -367,7 +367,7 @@ impl SurrealKVClient {
 				let mut count = 0;
 				for v in iter.skip(s).take(l) {
 					assert!(v.is_ok());
-					black_box(v.unwrap().0);
+					black_box(v.unwrap());
 					count += 1;
 				}
 				Ok(count)
@@ -387,13 +387,10 @@ impl SurrealKVClient {
 				}
 				Ok(count)
 			}
-			Projection::Count => {
-				Ok(txn
-					.keys(beg, end, t)?
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.count())
-			}
+			Projection::Count => match t {
+				Some(t) => Ok(std::cmp::min(txn.count(beg, end)?, t)),
+				None => Ok(txn.count(beg, end)?),
+			},
 		}
 	}
 }
