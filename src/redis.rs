@@ -2,10 +2,10 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use futures::StreamExt;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client, ScanOptions};
@@ -15,11 +15,19 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
-pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "redis",
-		pre_args: "-p 127.0.0.1:6379:6379",
-		post_args: "redis-server --requirepass root",
+		pre_args: "-p 127.0.0.1:6379:6379".to_string(),
+		post_args: match (options.persisted, options.sync) {
+			(false, _) => "redis-server --requirepass root --appendonly no --save ''".to_string(),
+			(true, false) => {
+				"redis-server --requirepass root --appendonly yes --appendfsync no".to_string()
+			}
+			(true, true) => {
+				"redis-server --requirepass root --appendonly yes --appendfsync always".to_string()
+			}
+		},
 	}
 }
 
@@ -52,15 +60,15 @@ pub(crate) struct RedisClient {
 impl BenchmarkClient for RedisClient {
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
@@ -81,35 +89,35 @@ impl BenchmarkClient for RedisClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.conn_record.lock().await.del(key).await?;
+		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_string(&self, key: String) -> Result<()> {
-		self.conn_record.lock().await.del(key).await?;
+		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan_bytes(scan).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan_bytes(scan).await
 	}
 }

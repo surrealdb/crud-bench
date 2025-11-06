@@ -1,10 +1,11 @@
 #![cfg(feature = "rocksdb")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::memory::Config;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use log::error;
 use rocksdb::{
 	BlockBasedOptions, BottommostLevelCompaction, Cache, CompactOptions, DBCompactionStyle,
@@ -12,17 +13,24 @@ use rocksdb::{
 	OptimisticTransactionOptions, Options, ReadOptions, WaitForCompactOptions, WriteOptions,
 };
 use serde_json::Value;
-use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
-use sysinfo::System;
 
 const DATABASE_DIR: &str = "rocksdb";
 
-const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
+/// Calculate RocksDB specific memory allocation
+fn calculate_rocksdb_memory() -> u64 {
+	// Load the system memory
+	let memory = Config::new();
+	// Return configuration
+	memory.cache_gb * 1024 * 1024 * 1024
+}
 
-pub(crate) struct RocksDBClientProvider(Arc<OptimisticTransactionDB>);
+pub(crate) struct RocksDBClientProvider {
+	db: Arc<OptimisticTransactionDB>,
+	sync: bool,
+}
 
 impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 	/// The number of seconds to wait before connecting
@@ -30,19 +38,11 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		None
 	}
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, _options: &Benchmark) -> Result<Self> {
+	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
-		// Load the system attributes
-		let system = System::new_all();
-		// Get the total system memory
-		let memory = system.total_memory();
-		// Divide the total memory into half
-		let memory = memory.saturating_div(2);
-		// Subtract 1 GiB from the memory size
-		let memory = memory.saturating_sub(1024 * 1024 * 1024);
-		// Fallback to the minimum memory cache size
-		let memory = max(memory, MIN_CACHE_SIZE);
+		// Calculate memory allocation
+		let memory = calculate_rocksdb_memory();
 		// Configure custom options
 		let mut opts = Options::default();
 		// Ensure we use fdatasync
@@ -138,12 +138,14 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 				// Clone the database reference
 				let dbc = db.clone();
 				// Create a new background thread
-				std::thread::spawn(move || loop {
-					// Wait for the specified interval
-					std::thread::sleep(Duration::from_millis(200));
-					// Flush the WAL to disk periodically
-					if let Err(err) = dbc.flush_wal(true) {
-						error!("Failed to flush WAL: {err}");
+				std::thread::spawn(move || {
+					loop {
+						// Wait for the specified interval
+						std::thread::sleep(Duration::from_millis(200));
+						// Flush the WAL to disk periodically
+						if let Err(err) = dbc.flush_wal(true) {
+							error!("Failed to flush WAL: {err}");
+						}
 					}
 				});
 				// Return the datastore
@@ -151,18 +153,23 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 			}
 		};
 		// Create the store
-		Ok(Self(db))
+		Ok(Self {
+			db,
+			sync: options.sync,
+		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<RocksDBClient> {
 		Ok(RocksDBClient {
-			db: self.0.clone(),
+			db: self.db.clone(),
+			sync: self.sync,
 		})
 	}
 }
 
 pub(crate) struct RocksDBClient {
 	db: Arc<OptimisticTransactionDB>,
+	sync: bool,
 }
 
 impl BenchmarkClient for RocksDBClient {
@@ -231,25 +238,89 @@ impl BenchmarkClient for RocksDBClient {
 		self.delete_bytes(&key.into_bytes()).await
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan_bytes(scan).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan_bytes(scan).await
+	}
+
+	async fn batch_create_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let pairs_iter = key_vals.map(|(key, val)| {
+			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			Ok((key.to_ne_bytes().to_vec(), val))
+		});
+		self.batch_create_bytes(pairs_iter).await
+	}
+
+	async fn batch_create_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let pairs_iter = key_vals.map(|(key, val)| {
+			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			Ok((key.into_bytes(), val))
+		});
+		self.batch_create_bytes(pairs_iter).await
+	}
+
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		let keys_iter = keys.map(|key| key.to_ne_bytes().to_vec());
+		self.batch_read_bytes(keys_iter).await
+	}
+
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		let keys_iter = keys.map(|key| key.into_bytes());
+		self.batch_read_bytes(keys_iter).await
+	}
+
+	async fn batch_update_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let pairs_iter = key_vals.map(|(key, val)| {
+			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			Ok((key.to_ne_bytes().to_vec(), val))
+		});
+		self.batch_update_bytes(pairs_iter).await
+	}
+
+	async fn batch_update_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		let pairs_iter = key_vals.map(|(key, val)| {
+			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			Ok((key.into_bytes(), val))
+		});
+		self.batch_update_bytes(pairs_iter).await
+	}
+
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		let keys_iter = keys.map(|key| key.to_ne_bytes().to_vec());
+		self.batch_delete_bytes(keys_iter).await
+	}
+
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		let keys_iter = keys.map(|key| key.into_bytes());
+		self.batch_delete_bytes(keys_iter).await
 	}
 }
 
 impl RocksDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
+		wo.set_sync(self.sync);
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
@@ -264,7 +335,7 @@ impl RocksDBClient {
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
+		wo.set_sync(self.sync);
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Configure read options
@@ -285,13 +356,13 @@ impl RocksDBClient {
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serialize(&val)?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
+		wo.set_sync(self.sync);
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
@@ -306,11 +377,101 @@ impl RocksDBClient {
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
+		wo.set_sync(self.sync);
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
 		txn.delete(key)?;
+		txn.commit()?;
+		Ok(())
+	}
+
+	async fn batch_create_bytes(
+		&self,
+		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>>,
+	) -> Result<()> {
+		// Set the transaction options
+		let mut to = OptimisticTransactionOptions::default();
+		to.set_snapshot(true);
+		// Set the write options
+		let mut wo = WriteOptions::default();
+		wo.set_sync(self.sync);
+		// Create a new transaction
+		let txn = self.db.transaction_opt(&wo, &to);
+		// Process the data
+		for result in key_vals {
+			let (key, val) = result?;
+			txn.put(&key, val)?;
+		}
+		// Commit the batch
+		txn.commit()?;
+		Ok(())
+	}
+
+	async fn batch_read_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
+		// Set the transaction options
+		let mut to = OptimisticTransactionOptions::default();
+		to.set_snapshot(true);
+		// Set the write options
+		let mut wo = WriteOptions::default();
+		wo.set_sync(self.sync);
+		// Create a new transaction
+		let txn = self.db.transaction_opt(&wo, &to);
+		// Configure read options
+		let mut ro = ReadOptions::default();
+		ro.set_snapshot(&txn.snapshot());
+		ro.set_verify_checksums(false);
+		ro.set_async_io(true);
+		ro.fill_cache(true);
+		// Process the data
+		for key in keys {
+			// Get the current value
+			let res = txn.get_pinned_opt(&key, &ro)?;
+			// Check the value exists
+			assert!(res.is_some());
+			// Deserialise the value
+			black_box(res.unwrap());
+		}
+		// All ok
+		Ok(())
+	}
+
+	async fn batch_update_bytes(
+		&self,
+		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>>,
+	) -> Result<()> {
+		// Set the transaction options
+		let mut to = OptimisticTransactionOptions::default();
+		to.set_snapshot(true);
+		// Set the write options
+		let mut wo = WriteOptions::default();
+		wo.set_sync(self.sync);
+		// Create a new transaction
+		let txn = self.db.transaction_opt(&wo, &to);
+		// Process the data
+		for result in key_vals {
+			let (key, val) = result?;
+			txn.put(&key, val)?;
+		}
+		// Commit the batch
+		txn.commit()?;
+		Ok(())
+	}
+
+	async fn batch_delete_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
+		// Set the transaction options
+		let mut to = OptimisticTransactionOptions::default();
+		to.set_snapshot(true);
+		// Set the write options
+		let mut wo = WriteOptions::default();
+		wo.set_sync(self.sync);
+		// Create a new transaction
+		let txn = self.db.transaction_opt(&wo, &to);
+		// Process the data
+		for key in keys {
+			txn.delete(&key)?;
+		}
+		// Commit the batch
 		txn.commit()?;
 		Ok(())
 	}
@@ -329,12 +490,13 @@ impl RocksDBClient {
 		to.set_snapshot(true);
 		// Set the write options
 		let mut wo = WriteOptions::default();
-		wo.set_sync(false);
+		wo.set_sync(self.sync);
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Configure read options
 		let mut ro = ReadOptions::default();
 		ro.set_snapshot(&txn.snapshot());
+		ro.set_readahead_size(2 * 1024 * 1024);
 		ro.set_iterate_lower_bound([0u8]);
 		ro.set_iterate_upper_bound([255u8]);
 		ro.set_verify_checksums(false);

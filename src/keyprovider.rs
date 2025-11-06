@@ -54,11 +54,11 @@ impl KeyProvider {
 	}
 }
 
-pub(crate) trait IntegerKeyProvider {
+pub(crate) trait IntegerKeyProvider: Send {
 	fn key(&mut self, n: u32) -> u32;
 }
 
-pub(crate) trait StringKeyProvider {
+pub(crate) trait StringKeyProvider: Send {
 	fn key(&mut self, n: u32) -> String;
 }
 
@@ -118,7 +118,7 @@ fn hash_string(n: u32, repeat: usize) -> String {
 	let mut hex_string = String::with_capacity(repeat * 16 + 10);
 	for s in 0..repeat as u64 {
 		let hash_result = XxHash64::oneshot(s, &n.to_be_bytes());
-		hex_string.push_str(&format!("{:x}", hash_result));
+		hex_string.push_str(&format!("{hash_result:x}"));
 	}
 	hex_string
 }
@@ -135,7 +135,7 @@ impl OrderedString {
 impl StringKeyProvider for OrderedString {
 	fn key(&mut self, n: u32) -> String {
 		let hex_string = hash_string(n, self.0);
-		format!("{:010}{hex_string}", n)
+		format!("{n:010}{hex_string}")
 	}
 }
 
@@ -151,7 +151,7 @@ impl UnorderedString {
 impl StringKeyProvider for UnorderedString {
 	fn key(&mut self, n: u32) -> String {
 		let hex_string = hash_string(n, self.0);
-		format!("{hex_string}{:010}", n)
+		format!("{hex_string}{n:010}")
 	}
 }
 
@@ -180,7 +180,10 @@ mod test {
 		let mut o = OrderedString::new(5);
 		let s = o.key(12345678);
 		assert_eq!(s.len(), 90);
-		assert_eq!(s, "0012345678d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d3");
+		assert_eq!(
+			s,
+			"0012345678d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d3"
+		);
 	}
 
 	#[test]
@@ -188,7 +191,10 @@ mod test {
 		let mut o = UnorderedString::new(5);
 		let s = o.key(12345678);
 		assert_eq!(s.len(), 90);
-		assert_eq!(s, "d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d30012345678");
+		assert_eq!(
+			s,
+			"d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d30012345678"
+		);
 	}
 
 	#[test]
@@ -196,7 +202,10 @@ mod test {
 		let mut o = OrderedString::new(15);
 		let s = o.key(12345678);
 		assert_eq!(s.len(), 250);
-		assert_eq!(s, "0012345678d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d31bc0feb2815d5c908f5a4633b8a9d5d6ec1c074d5d64ab296c6495f784f8294ac42b828a9c4ef45d3decc0a8dff00062adfb547fea6132f38afda36acf629cc15413acfe35a50fecbec285e9ee42b136");
+		assert_eq!(
+			s,
+			"0012345678d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d31bc0feb2815d5c908f5a4633b8a9d5d6ec1c074d5d64ab296c6495f784f8294ac42b828a9c4ef45d3decc0a8dff00062adfb547fea6132f38afda36acf629cc15413acfe35a50fecbec285e9ee42b136"
+		);
 	}
 
 	#[test]
@@ -204,7 +213,10 @@ mod test {
 		let mut o = UnorderedString::new(15);
 		let s = o.key(12345678);
 		assert_eq!(s.len(), 250);
-		assert_eq!(s, "d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d31bc0feb2815d5c908f5a4633b8a9d5d6ec1c074d5d64ab296c6495f784f8294ac42b828a9c4ef45d3decc0a8dff00062adfb547fea6132f38afda36acf629cc15413acfe35a50fecbec285e9ee42b1360012345678");
+		assert_eq!(
+			s,
+			"d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d31bc0feb2815d5c908f5a4633b8a9d5d6ec1c074d5d64ab296c6495f784f8294ac42b828a9c4ef45d3decc0a8dff00062adfb547fea6132f38afda36acf629cc15413acfe35a50fecbec285e9ee42b1360012345678"
+		);
 	}
 
 	#[test]
@@ -212,7 +224,10 @@ mod test {
 		let mut o = OrderedString::new(31);
 		let s = o.key(12345678);
 		assert_eq!(s.len(), 506);
-		assert_eq!(s, "0012345678d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d31bc0feb2815d5c908f5a4633b8a9d5d6ec1c074d5d64ab296c6495f784f8294ac42b828a9c4ef45d3decc0a8dff00062adfb547fea6132f38afda36acf629cc15413acfe35a50fecbec285e9ee42b13691088df6c3740c87c3d003e3addf1888a582ac5cb408feec138fe9a43c9fda574006e770bb0b5e84edcbeecc6f723960ed7d02591a7b2487bb317f83bfd95e44a69d957deb6b10e22d895a375acfa54143137feeb53921625bc9d582166477e562454fecc90f130662338c070bd709c27d8478abaa825dc69bc3aa89dc7ce076");
+		assert_eq!(
+			s,
+			"0012345678d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d31bc0feb2815d5c908f5a4633b8a9d5d6ec1c074d5d64ab296c6495f784f8294ac42b828a9c4ef45d3decc0a8dff00062adfb547fea6132f38afda36acf629cc15413acfe35a50fecbec285e9ee42b13691088df6c3740c87c3d003e3addf1888a582ac5cb408feec138fe9a43c9fda574006e770bb0b5e84edcbeecc6f723960ed7d02591a7b2487bb317f83bfd95e44a69d957deb6b10e22d895a375acfa54143137feeb53921625bc9d582166477e562454fecc90f130662338c070bd709c27d8478abaa825dc69bc3aa89dc7ce076"
+		);
 	}
 
 	#[test]
@@ -220,6 +235,9 @@ mod test {
 		let mut o = UnorderedString::new(31);
 		let s = o.key(12345678);
 		assert_eq!(s.len(), 506);
-		assert_eq!(s, "d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d31bc0feb2815d5c908f5a4633b8a9d5d6ec1c074d5d64ab296c6495f784f8294ac42b828a9c4ef45d3decc0a8dff00062adfb547fea6132f38afda36acf629cc15413acfe35a50fecbec285e9ee42b13691088df6c3740c87c3d003e3addf1888a582ac5cb408feec138fe9a43c9fda574006e770bb0b5e84edcbeecc6f723960ed7d02591a7b2487bb317f83bfd95e44a69d957deb6b10e22d895a375acfa54143137feeb53921625bc9d582166477e562454fecc90f130662338c070bd709c27d8478abaa825dc69bc3aa89dc7ce0760012345678");
+		assert_eq!(
+			s,
+			"d79235c904e704c6c379c25fea98cd11b4d0f71900f91df2ecc87c25d7fff4b03be1bd13590485d31bc0feb2815d5c908f5a4633b8a9d5d6ec1c074d5d64ab296c6495f784f8294ac42b828a9c4ef45d3decc0a8dff00062adfb547fea6132f38afda36acf629cc15413acfe35a50fecbec285e9ee42b13691088df6c3740c87c3d003e3addf1888a582ac5cb408feec138fe9a43c9fda574006e770bb0b5e84edcbeecc6f723960ed7d02591a7b2487bb317f83bfd95e44a69d957deb6b10e22d895a375acfa54143137feeb53921625bc9d582166477e562454fecc90f130662338c070bd709c27d8478abaa825dc69bc3aa89dc7ce0760012345678"
+		);
 	}
 }

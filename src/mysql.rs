@@ -1,11 +1,13 @@
 #![cfg(feature = "mysql")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::{Dialect, MySqlDialect};
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::Result;
+use crate::{Benchmark, Index, KeyType, Projection, Scan};
+use anyhow::{Result, bail};
 use mysql_async::consts;
 use mysql_async::prelude::Queryable;
 use mysql_async::prelude::ToValue;
@@ -17,14 +19,79 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "mysql://root:mysql@127.0.0.1:3306/bench";
 
-pub(crate) const fn docker(options: &Benchmark) -> DockerParams {
+/// Calculate MySQL specific memory allocation
+fn calculate_mysql_memory() -> (u64, u64, u64) {
+	// Load the system memory
+	let memory = Config::new();
+	// Use ~100% of recommended cache allocation
+	let buffer_pool_gb = memory.cache_gb;
+	// Use ~10% of buffer pool, min 1GB, max 8GB
+	let log_file_gb = (memory.cache_gb / 10).clamp(1, 8);
+	// Use 1 buffer pool instance per 2GB, max 64
+	let buffer_pool_instances = (buffer_pool_gb / 2).clamp(1, 64);
+	// Return configuration
+	(buffer_pool_gb, log_file_gb, buffer_pool_instances)
+}
+
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// Calculate memory allocation
+	let (buffer_pool_gb, log_file_gb, buffer_pool_instances) = calculate_mysql_memory();
+	// Return Docker parameters
 	DockerParams {
 		image: "mysql",
-		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_HOST=% -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=bench",
-		post_args: match options.sync {
-			true => "--max-connections=1024 --innodb-buffer-pool-size=16G --innodb-buffer-pool-instances=32 --sync_binlog=1 --innodb-flush-log-at-trx-commit=1",
-			false => "--max-connections=1024 --innodb-buffer-pool-size=16G --innodb-buffer-pool-instances=32 --sync_binlog=0 --innodb-flush-log-at-trx-commit=0",
-		}
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_HOST=% -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=bench".to_string(),
+		post_args: match options.optimised {
+			// Optimised configuration
+			true => format!(
+				"--max-connections=1024 \
+				--innodb-buffer-pool-size={buffer_pool_gb}G \
+				--innodb-buffer-pool-instances={buffer_pool_instances} \
+				--innodb-log-file-size={log_file_gb}G \
+				--innodb-log-buffer-size=256M \
+				--innodb-flush-method=O_DIRECT \
+				--innodb-io-capacity=2000 \
+				--innodb-io-capacity-max=4000 \
+				--innodb-read-io-threads=8 \
+				--innodb-write-io-threads=8 \
+				--innodb-thread-concurrency=32 \
+				--innodb-purge-threads=4 \
+				--table-open-cache=4000 \
+				--sort-buffer-size=32M \
+				--read-buffer-size=8M \
+				--join-buffer-size=32M \
+				--tmp-table-size=1G \
+				--max-heap-table-size=1G \
+				--query-cache-size=0 \
+				--sync_binlog={} \
+				--innodb-flush-log-at-trx-commit={}",
+				if options.sync {
+					"1"
+				} else {
+					"0"
+				},
+				if options.sync {
+					"1"
+				} else {
+					"0"
+				}
+			),
+			// Default configuration
+			false => format!(
+				"--max-connections=1024 \
+				--sync_binlog={} \
+				--innodb-flush-log-at-trx-commit={}",
+				if options.sync {
+					"1"
+				} else {
+					"0"
+				},
+				if options.sync {
+					"1"
+				} else {
+					"0"
+				}
+			),
+		},
 	}
 }
 
@@ -85,8 +152,9 @@ impl BenchmarkClient for MysqlClient {
 			})
 			.collect::<Vec<String>>()
 			.join(", ");
-		let stm =
-			format!("DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields}) ENGINE=InnoDB;");
+		let stm = format!(
+			"DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields}) ENGINE=InnoDB;"
+		);
 		self.conn.lock().await.query_drop(&stm).await?;
 		Ok(())
 	}
@@ -123,12 +191,46 @@ impl BenchmarkClient for MysqlClient {
 		self.delete(key).await
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Get the unique flag
+		let unique = if spec.unique.unwrap_or(false) {
+			"UNIQUE"
+		} else {
+			""
+		}
+		.to_string();
+		// Get the fields
+		let fields = spec.fields.join(", ");
+		// Check if an index type is specified
+		let stmt = match &spec.index_type {
+			Some(kind) if kind == "fulltext" => {
+				format!("CREATE FULLTEXT INDEX {name} ON record ({fields})")
+			}
+			Some(kind) => {
+				format!("CREATE INDEX {name} USING {kind} ON record ({fields})")
+			}
+			None => {
+				format!("CREATE {unique} INDEX {name} ON record ({fields})")
+			}
+		};
+		// Create the index
+		self.conn.lock().await.query_drop(&stmt).await?;
+		// All ok
+		Ok(())
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn drop_index(&self, name: &str) -> Result<()> {
+		let stmt = format!("DROP INDEX {name} ON record");
+		self.conn.lock().await.query_drop(&stmt).await?;
+		Ok(())
+	}
+
+	async fn scan_u32(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
+	}
+
+	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 }
 
@@ -233,11 +335,19 @@ impl MysqlClient {
 		Ok(())
 	}
 
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
+	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		// MySQL requires a full-text index to run a MATCH query
+		if ctx == ScanContext::WithoutIndex
+			&& let Some(index) = &scan.index
+			&& let Some(kind) = &index.index_type
+			&& kind == "fulltext"
+		{
+			bail!(NOT_SUPPORTED_ERROR);
+		}
 		// Extract parameters
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or_default();
+		let c = MySqlDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {

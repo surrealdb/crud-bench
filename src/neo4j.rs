@@ -3,24 +3,41 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::Neo4jDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::Columns;
-use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
-use neo4rs::query;
+use crate::{Benchmark, Index, KeyType, Projection, Scan};
+use anyhow::{Result, bail};
 use neo4rs::BoltType;
 use neo4rs::ConfigBuilder;
 use neo4rs::Graph;
+use neo4rs::query;
 use serde_json::Value;
 use std::hint::black_box;
 
 pub const DEFAULT: &str = "127.0.0.1:7687";
 
-pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "neo4j",
-		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none",
-		post_args: "",
+		pre_args: match options.sync {
+			true => {
+				// Neo4j does not have the ability to configure
+				// per-transaction on-disk sync control, so the
+				// closest option when sync is true, is to
+				// checkpoint after every transaction, and to
+				// checkpoint in the background every second
+				"--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=1".to_string()
+			}
+			false => {
+				// Neo4j does not have the ability to configure
+				// per-transaction on-disk sync control, so the
+				// closest option when sync is false, is to
+				// checkpoint in the background every second,
+				// and to checkpoint every 10,000 transactions
+				"--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=10000".to_string()
+			}
+		},
+		post_args: "".to_string(),
 	}
 }
 
@@ -106,12 +123,40 @@ impl BenchmarkClient for Neo4jClient {
 		self.delete(key).await
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Get the fields
+		let fields = spec.fields.iter().map(|f| format!("r.{f}")).collect::<Vec<_>>().join(", ");
+		// Check if an index type is specified
+		let stmt = match &spec.index_type {
+			Some(kind) if kind == "fulltext" => {
+				format!("CREATE FULLTEXT INDEX {name} FOR (r:Record) ON EACH [{fields}]")
+			}
+			_ => {
+				format!("CREATE INDEX {name} FOR (r:Record) ON ({fields})")
+			}
+		};
+		// Create the index
+		self.graph.execute(query(&stmt)).await?.next().await?;
+		// Wait for the index to finish building in the background.
+		// Neo4j indexes build asynchronously, so we need to wait
+		// for the index to be fully online before proceeding.
+		self.graph.execute(query("CALL db.awaitIndexes()")).await?.next().await?;
+		// All ok
+		Ok(())
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
-		self.scan(scan).await
+	async fn drop_index(&self, name: &str) -> Result<()> {
+		let stmt = format!("DROP INDEX {name} IF EXISTS");
+		self.graph.execute(query(&stmt)).await?.next().await?;
+		Ok(())
+	}
+
+	async fn scan_u32(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
+	}
+
+	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
 	}
 }
 
@@ -166,19 +211,37 @@ impl Neo4jClient {
 		Ok(())
 	}
 
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
-		// Contional scans are not supported
-		if scan.condition.is_some() {
+	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		// Neo4j requires a full-text index to exist
+		if ctx == ScanContext::WithoutIndex
+			&& let Some(index) = &scan.index
+			&& let Some(kind) = &index.index_type
+			&& kind == "fulltext"
+		{
 			bail!(NOT_SUPPORTED_ERROR);
 		}
 		// Extract parameters
-		let s = scan.start.unwrap_or(0);
-		let l = scan.limit.unwrap_or(i64::MAX as usize);
+		let s = scan.start.map(|s| format!("SKIP {s}")).unwrap_or_default();
+		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
+		let c = Neo4jDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
+		let n = &scan.name;
+		// Check if this is a fulltext scan
+		let fts = scan
+			.index
+			.as_ref()
+			.and_then(|idx| idx.index_type.as_ref())
+			.map(|t| t == "fulltext")
+			.unwrap_or(false);
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stm = format!("MATCH (r) SKIP {s} LIMIT {l} RETURN r.id");
+				let stm = match fts {
+					true => format!(
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r {s} {l} RETURN r.id"
+					),
+					false => format!("MATCH (r) {c} {s} {l} RETURN r.id"),
+				};
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let mut count = 0;
 				while let Ok(Some(v)) = res.next().await {
@@ -188,7 +251,12 @@ impl Neo4jClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("MATCH (r) SKIP {s} LIMIT {l} RETURN r");
+				let stm = match fts {
+					true => format!(
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r {s} {l} RETURN r"
+					),
+					false => format!("MATCH (r) {c} {s} {l} RETURN r"),
+				};
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let mut count = 0;
 				while let Ok(Some(v)) = res.next().await {
@@ -198,7 +266,12 @@ impl Neo4jClient {
 				Ok(count)
 			}
 			Projection::Count => {
-				let stm = format!("MATCH (r) SKIP {s} LIMIT {l} RETURN count(r) as count");
+				let stm = match fts {
+					true => format!(
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r {s} {l} RETURN count(r) as count"
+					),
+					false => format!("MATCH (r) {c} {s} {l} RETURN count(r) as count"),
+				};
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let count = res.next().await.unwrap().unwrap().get("count").unwrap();
 				Ok(count)

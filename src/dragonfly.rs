@@ -2,10 +2,10 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use futures::StreamExt;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client, ScanOptions};
@@ -15,11 +15,11 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
-pub(crate) const fn docker(_: &Benchmark) -> DockerParams {
+pub(crate) fn docker(_: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "docker.dragonflydb.io/dragonflydb/dragonfly",
-		pre_args: "-p 127.0.0.1:6379:6379 --ulimit memlock=-1",
-		post_args: "--requirepass root",
+		pre_args: "-p 127.0.0.1:6379:6379 --ulimit memlock=-1".to_string(),
+		post_args: "--requirepass root".to_string(),
 	}
 }
 
@@ -54,15 +54,15 @@ pub(crate) struct DragonflyClient {
 impl BenchmarkClient for DragonflyClient {
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
@@ -84,35 +84,35 @@ impl BenchmarkClient for DragonflyClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let val = bincode::serialize(&val)?;
-		self.conn_record.lock().await.set(key, val).await?;
+		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.conn_record.lock().await.del(key).await?;
+		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_string(&self, key: String) -> Result<()> {
-		self.conn_record.lock().await.del(key).await?;
+		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan_bytes(scan).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan_bytes(scan).await
 	}
 }

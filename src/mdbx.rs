@@ -1,39 +1,23 @@
-#![cfg(feature = "fjall")]
+#![cfg(feature = "mdbx")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
-use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
-use fjall::{
-	Config, KvSeparationOptions, PartitionCreateOptions, PersistMode, TransactionalKeyspace,
-	TxPartitionHandle,
+use libmdbx::{
+	Database, DatabaseOptions, Mode, NoWriteMap, PageSize, ReadWriteOptions, SyncMode, WriteFlags,
 };
 use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
-const DATABASE_DIR: &str = "fjall";
+const DATABASE_DIR: &str = "mdbx";
 
-/// Calculate Fjall specific memory allocation
-fn calculate_fjall_memory() -> u64 {
-	// Load the system memory
-	let memory = MemoryConfig::new();
-	// Return configuration
-	memory.cache_gb * 1024 * 1024 * 1024
-}
+pub(crate) struct MDBXClientProvider(Arc<Database<NoWriteMap>>);
 
-// Durability will be set dynamically based on sync flag
-
-pub(crate) struct FjallClientProvider {
-	keyspace: Arc<TransactionalKeyspace>,
-	partition: Arc<TxPartitionHandle>,
-	sync: bool,
-}
-
-impl BenchmarkEngine<FjallClient> for FjallClientProvider {
+impl BenchmarkEngine<MDBXClient> for MDBXClientProvider {
 	/// The number of seconds to wait before connecting
 	fn wait_timeout(&self) -> Option<Duration> {
 		None
@@ -42,62 +26,69 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
-		// Calculate memory allocation
-		let memory = calculate_fjall_memory();
-		// Configure the key-value separation
-		let blobopts = KvSeparationOptions::default()
-			// Separate values if larger than 1 KiB
-			.separation_threshold(1024);
-		// Configure and create the keyspace
-		let keyspace = Config::new(DATABASE_DIR)
-			// Fsync data every 100 milliseconds
-			.fsync_ms(if options.sync {
-				Some(100)
-			} else {
-				None
-			})
-			// Handle transaction flushed automatically
-			.manual_journal_persist(!options.sync)
-			// Set the amount of data to build up in memory
-			.max_write_buffer_size(u64::MAX)
-			// Set the cache size
-			.cache_size(memory)
-			// Open a transactional keyspace
-			.open_transactional()?;
-		// Configure and create the partition
-		let partition = PartitionCreateOptions::default()
-			// Set the data block size to 32 KiB
-			.block_size(16 * 1_024)
-			// Set the max memtable size to 256 MiB
-			.max_memtable_size(256 * 1_024 * 1_024)
-			// Separate values if larger than 4 KiB
-			.with_kv_separation(blobopts);
-		// Create a default data partition
-		let partition = keyspace.open_partition("default", partition)?;
+		// Configure database options
+		let options = DatabaseOptions {
+			// Configure the read-write options
+			mode: Mode::ReadWrite(ReadWriteOptions {
+				sync_mode: if options.sync {
+					SyncMode::Durable
+				} else {
+					SyncMode::UtterlyNoSync
+				},
+				// No maximum database size
+				max_size: None,
+				// 64MB minimum database size
+				min_size: Some(64 * 1024 * 1024),
+				// Grow in 256MB steps
+				growth_step: Some(256 * 1024 * 1024),
+				// Disable shrinking in benchmarks
+				shrink_threshold: None,
+			}),
+			// 16KB pages for better sequential performance
+			page_size: Some(PageSize::Set(16384)),
+			// Exclusive mode - no inter-process locking overhead
+			exclusive: true,
+			// LIFO garbage collection for better cache performance
+			liforeclaim: true,
+			// Disable readahead for better random access
+			no_rdahead: true,
+			// Skip memory initialization for performance
+			no_meminit: true,
+			// Coalesce transactions for better write performance
+			coalesce: true,
+			// Optimize for expected concurrent readers
+			max_readers: Some(126),
+			// We only use one table for benchmarks
+			max_tables: Some(1),
+			// Use defaults for transaction limits
+			..Default::default()
+		};
+		// Create the database
+		let db = Database::open_with_options(DATABASE_DIR, options)?;
+		// Begin a new transaction
+		let tx = db.begin_rw_txn()?;
+		// Open the default table
+		let tb = tx.open_table(None)?;
+		// Prime the table for permaopen
+		tx.prime_for_permaopen(tb);
+		// Commit the transaction
+		tx.commit()?;
 		// Create the store
-		Ok(Self {
-			keyspace: Arc::new(keyspace),
-			partition: Arc::new(partition),
-			sync: options.sync,
-		})
+		Ok(Self(Arc::new(db)))
 	}
 	/// Creates a new client for this benchmarking engine
-	async fn create_client(&self) -> Result<FjallClient> {
-		Ok(FjallClient {
-			keyspace: self.keyspace.clone(),
-			partition: self.partition.clone(),
-			sync: self.sync,
+	async fn create_client(&self) -> Result<MDBXClient> {
+		Ok(MDBXClient {
+			db: self.0.clone(),
 		})
 	}
 }
 
-pub(crate) struct FjallClient {
-	keyspace: Arc<TransactionalKeyspace>,
-	partition: Arc<TxPartitionHandle>,
-	sync: bool,
+pub(crate) struct MDBXClient {
+	db: Arc<Database<NoWriteMap>>,
 }
 
-impl BenchmarkClient for FjallClient {
+impl BenchmarkClient for MDBXClient {
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
@@ -210,29 +201,27 @@ impl BenchmarkClient for FjallClient {
 	}
 }
 
-impl FjallClient {
+impl MDBXClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
-		// Set the transaction durability
-		let durability = if self.sync {
-			None
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
-		txn.insert(&self.partition, key, val);
+		txn.put(&table, key, &val, WriteFlags::empty())?;
 		txn.commit()?;
 		Ok(())
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let txn = self.keyspace.read_tx();
+		let txn = self.db.begin_ro_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
-		let res = txn.get(&self.partition, key)?;
+		let res: Option<Vec<u8>> = txn.get(&table, key)?;
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value
@@ -244,31 +233,23 @@ impl FjallClient {
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
-		// Set the transaction durability
-		let durability = if self.sync {
-			None
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
-		txn.insert(&self.partition, key, val);
+		txn.put(&table, key, &val, WriteFlags::empty())?;
 		txn.commit()?;
 		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Set the transaction durability
-		let durability = if self.sync {
-			None
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
-		txn.remove(&self.partition, key);
+		txn.del(&table, key, None)?;
 		txn.commit()?;
 		Ok(())
 	}
@@ -277,18 +258,14 @@ impl FjallClient {
 		&self,
 		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>>,
 	) -> Result<()> {
-		// Set the transaction durability
-		let durability = if self.sync {
-			None
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
 		for result in key_vals {
 			let (key, val) = result?;
-			txn.insert(&self.partition, &key, val);
+			txn.put(&table, &key, &val, WriteFlags::empty())?;
 		}
 		// Commit the batch
 		txn.commit()?;
@@ -297,11 +274,13 @@ impl FjallClient {
 
 	async fn batch_read_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
 		// Create a new transaction
-		let txn = self.keyspace.read_tx();
+		let txn = self.db.begin_ro_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
 		for key in keys {
 			// Get the current value
-			let res = txn.get(&self.partition, &key)?;
+			let res: Option<Vec<u8>> = txn.get(&table, &key)?;
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
@@ -315,18 +294,14 @@ impl FjallClient {
 		&self,
 		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>>,
 	) -> Result<()> {
-		// Set the transaction durability
-		let durability = if self.sync {
-			None
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
 		for result in key_vals {
 			let (key, val) = result?;
-			txn.insert(&self.partition, &key, val);
+			txn.put(&table, &key, &val, WriteFlags::empty())?;
 		}
 		// Commit the batch
 		txn.commit()?;
@@ -334,17 +309,13 @@ impl FjallClient {
 	}
 
 	async fn batch_delete_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
-		// Set the transaction durability
-		let durability = if self.sync {
-			None
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let txn = self.db.begin_rw_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
 		// Process the data
 		for key in keys {
-			txn.remove(&self.partition, &key);
+			txn.del(&table, &key, None)?;
 		}
 		// Commit the batch
 		txn.commit()?;
@@ -352,7 +323,7 @@ impl FjallClient {
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
-		// Contional scans are not supported
+		// Conditional scans are not supported
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
@@ -361,26 +332,27 @@ impl FjallClient {
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
 		// Create a new transaction
-		let txn = self.keyspace.read_tx();
+		let txn = self.db.begin_ro_txn()?;
+		// Open the default table
+		let table = txn.open_table(None)?;
+		// Create a cursor for iteration
+		let iter = txn.cursor(&table)?.into_iter();
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				// Create an iterator starting at the beginning
-				let iter = txn.keys(&self.partition);
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
 				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
 				for v in iter.skip(s).take(l) {
-					black_box(v.unwrap());
+					black_box(v.unwrap().0);
 					count += 1;
 				}
 				Ok(count)
 			}
 			Projection::Full => {
-				// Create an iterator starting at the beginning
-				let iter = txn.iter(&self.partition);
+				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
 				// out by the compiler when calling `count` at the end.
@@ -392,8 +364,7 @@ impl FjallClient {
 				Ok(count)
 			}
 			Projection::Count => {
-				Ok(txn
-					.keys(&self.partition)
+				Ok(iter
 					.skip(s) // Skip the first `offset` entries
 					.take(l) // Take the next `limit` entries
 					.count())

@@ -2,25 +2,31 @@
 
 use crate::dialect::AnsiSqlDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::Result;
 use futures::StreamExt;
 use scylla::_macro_internal::SerializeValue;
-use scylla::transport::session::PoolSize;
-use scylla::{Session, SessionBuilder};
+use scylla::client::{PoolSize, session::Session, session_builder::SessionBuilder};
 use serde_json::Value;
 use std::hint::black_box;
 use std::num::NonZeroUsize;
 
 pub const DEFAULT: &str = "127.0.0.1:9042";
 
-pub(crate) const fn docker(_options: &Benchmark) -> DockerParams {
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "scylladb/scylla",
-		pre_args: "-p 9042:9042",
-		post_args: "",
+		pre_args: match options.sync {
+			true => {
+				"-p 9042:9042 -e SCYLLA_ARGS='--commitlog-sync=batch --commitlog-sync-batch-window-in-ms=1'".to_string()
+			}
+			false => {
+				"-p 9042:9042 -e SCYLLA_ARGS='--commitlog-sync=periodic --commitlog-sync-period-in-ms=1000'".to_string()
+			}
+		},
+		post_args: "".to_string(),
 	}
 }
 
@@ -114,11 +120,11 @@ impl BenchmarkClient for ScylladbClient {
 		self.read(key).await
 	}
 
-	async fn scan_u32(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
 	}
 
-	async fn scan_string(&self, scan: &Scan) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
 	}
 
@@ -185,7 +191,7 @@ impl ScylladbClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or_default();
 		let l = scan.limit.map(|l| format!("LIMIT {}", l + s)).unwrap_or_default();
-		let c = scan.condition.as_ref().map(|s| format!("WHERE {}", s)).unwrap_or_default();
+		let c = AnsiSqlDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {

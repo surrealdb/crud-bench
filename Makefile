@@ -1,19 +1,8 @@
-define CRUD_BENCH_SCANS
-[
-	{ "name": "count_all", "samples": 100, "projection": "COUNT" },
-	{ "name": "limit_id", "samples": 100, "projection": "ID", "limit": 100, "expect": 100 },
-	{ "name": "limit_all", "samples": 100, "projection": "FULL", "limit": 100, "expect": 100 },
-	{ "name": "limit_count", "samples": 100, "projection": "COUNT", "limit": 100, "expect": 100 },
-	{ "name": "limit_start_id", "samples": 100, "projection": "ID", "start": 5000, "limit": 100, "expect": 100 },
-	{ "name": "limit_start_all", "samples": 100, "projection": "FULL", "start": 5000, "limit": 100, "expect": 100 },
-	{ "name": "limit_start_count", "samples": 100, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 }
-]
-endef
-
 define CRUD_BENCH_VALUE
 {
 	"text": "text:50",
 	"integer": "int",
+	"number": "int:1..5000",
 	"nested": {
 		"text": "text:1000",
 		"array": [
@@ -38,13 +27,11 @@ default:
 build:
 	cargo build -r
 
-export CRUD_BENCH_SCANS
 export CRUD_BENCH_VALUE
 .PHONY: dev
 dev:
 	cargo run -- -d $(database) -s 100000 -c 128 -t 48 -k string26 -r
 
-export CRUD_BENCH_SCANS
 export CRUD_BENCH_VALUE
 .PHONY: test
 test:

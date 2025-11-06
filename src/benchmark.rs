@@ -1,18 +1,20 @@
 use crate::database::Database;
 use crate::dialect::Dialect;
-use crate::engine::{BenchmarkClient, BenchmarkEngine};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::keyprovider::KeyProvider;
-use crate::result::{BenchmarkResult, OperationMetric, OperationResult};
+use crate::result::BenchmarkMetadata;
+use crate::result::{BenchmarkResult, OperationMetric, OperationResult, ScanResult};
+use crate::system::SystemInfo;
 use crate::terminal::Terminal;
 use crate::valueprovider::ValueProvider;
-use crate::{Args, Scan, Scans};
-use anyhow::{bail, Result};
+use crate::{Args, BatchOperation, Batches, Index, Scan, Scans};
+use anyhow::{Result, bail};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
 use log::{debug, info};
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::task;
 use tokio::time::Instant;
@@ -40,8 +42,10 @@ pub(crate) struct Benchmark {
 	pub(crate) pid: Option<u32>,
 	/// Whether to ensure data is synced
 	pub(crate) sync: bool,
-	/// Whether to enable disk persistence (specific to surrealkv for now)
-	pub(crate) disk_persistence: bool,
+	/// Whether to enable disk persistence
+	pub(crate) persisted: bool,
+	/// Whether to enable optimised configurations
+	pub(crate) optimised: bool,
 }
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
@@ -55,9 +59,12 @@ impl Benchmark {
 			samples: args.samples,
 			sync: args.sync,
 			pid: args.pid,
-			disk_persistence: true,
+			persisted: args.persisted,
+			optimised: args.optimised,
 		}
 	}
+
+	#[allow(clippy::too_many_arguments)]
 	/// Run the benchmark for the desired benchmark engine
 	pub(crate) async fn run<C, D, E>(
 		&self,
@@ -65,6 +72,10 @@ impl Benchmark {
 		kp: KeyProvider,
 		mut vp: ValueProvider,
 		scans: Scans,
+		batches: Batches,
+		database: Option<String>,
+		system: Option<SystemInfo>,
+		metadata: Option<BenchmarkMetadata>,
 	) -> Result<BenchmarkResult>
 	where
 		C: BenchmarkClient + Send + Sync,
@@ -119,18 +130,80 @@ impl Benchmark {
 			// Get the name of the scan
 			let name = scan.name.clone();
 			let samples = scan.samples.map(|s| s as u32).unwrap_or(self.samples);
-			// Execute the scan benchmark
-			let duration = self
-				.run_operation::<C, D>(
-					&clients,
-					BenchmarkOperation::Scan(scan),
-					kp,
-					vp.clone(),
+			// Check if an index is specified
+			let result = if let Some(index_spec) = &scan.index {
+				// Perform the scan without the index
+				let without_index = self
+					.run_operation::<C, D>(
+						&clients,
+						BenchmarkOperation::Scan(scan.clone(), ScanContext::WithoutIndex),
+						kp,
+						vp.clone(),
+						samples,
+					)
+					.await?;
+				// Build the index
+				let index_build = self
+					.run_operation::<C, D>(
+						&clients[..1],
+						BenchmarkOperation::BuildIndex(index_spec.clone(), name.clone()),
+						kp,
+						vp.clone(),
+						1,
+					)
+					.await?;
+				// Check if the index was built
+				let with_index = if index_build.is_some() {
+					// Perform the scan with the index
+					let result = self
+						.run_operation::<C, D>(
+							&clients,
+							BenchmarkOperation::Scan(scan.clone(), ScanContext::WithIndex),
+							kp,
+							vp.clone(),
+							samples,
+						)
+						.await?;
+					// Remove the index
+					self.wait_for_client(&engine).await?.drop_index(&name).await?;
+					// Return the scan results
+					result
+				} else {
+					// Skip the scan with the index
+					None
+				};
+				// Return the scan results
+				ScanResult {
+					name,
 					samples,
-				)
-				.await?;
+					without_index,
+					index_build,
+					with_index,
+					has_index_spec: true,
+				}
+			} else {
+				// Perform the scan without any index
+				let result = self
+					.run_operation::<C, D>(
+						&clients,
+						BenchmarkOperation::Scan(scan, ScanContext::WithoutIndex),
+						kp,
+						vp.clone(),
+						samples,
+					)
+					.await?;
+				// Return the scan results
+				ScanResult {
+					name,
+					samples,
+					without_index: result,
+					index_build: None,
+					with_index: None,
+					has_index_spec: false,
+				}
+			};
 			// Store the scan benchmark result
-			scan_results.push((name, samples, duration));
+			scan_results.push(result);
 		}
 		// Compact the datastore
 		if std::env::var("COMPACTION").is_ok() {
@@ -138,16 +211,50 @@ impl Benchmark {
 		}
 		// Run the "deletes" benchmark
 		let deletes = self
-			.run_operation::<C, D>(&clients, BenchmarkOperation::Delete, kp, vp, self.samples)
+			.run_operation::<C, D>(
+				&clients,
+				BenchmarkOperation::Delete,
+				kp,
+				vp.clone(),
+				self.samples,
+			)
 			.await?;
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
+		}
+		// Run the "batch" benchmarks
+		let mut batch_results = Vec::with_capacity(batches.len());
+		for batch in batches {
+			// Get the name of the batch operation
+			let name = batch.name.clone();
+			let groups = batch.batch_size;
+			let samples = batch.samples.map(|s| s as u32).unwrap_or(self.samples);
+			// Determine the batch operation type
+			let operation = match batch.operation {
+				crate::BatchOperationType::Create => BenchmarkOperation::BatchCreate(batch.clone()),
+				crate::BatchOperationType::Read => BenchmarkOperation::BatchRead(batch.clone()),
+				crate::BatchOperationType::Update => BenchmarkOperation::BatchUpdate(batch.clone()),
+				crate::BatchOperationType::Delete => BenchmarkOperation::BatchDelete(batch.clone()),
+			};
+			// Execute the batch benchmark
+			let duration =
+				self.run_operation::<C, D>(&clients, operation, kp, vp.clone(), samples).await?;
+			// Store the batch benchmark result
+			batch_results.push((name, samples, groups, duration));
+		}
 		// Setup the datastore
 		self.wait_for_client(&engine).await?.shutdown().await?;
 		// Return the benchmark results
 		Ok(BenchmarkResult {
+			database,
+			system,
+			metadata,
 			creates,
 			reads,
 			updates,
 			scans: scan_results,
+			batches: batch_results,
 			deletes,
 			sample,
 		})
@@ -333,8 +440,23 @@ impl Benchmark {
 					let value = vp.generate_value::<D>();
 					client.update(sample, value, &mut kp).await?
 				}
-				BenchmarkOperation::Scan(s) => client.scan(s, &kp).await?,
+				BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await?,
+				BenchmarkOperation::BuildIndex(spec, name) => {
+					client.build_index(spec, name.as_str()).await?
+				}
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
+				BenchmarkOperation::BatchCreate(batch_op) => {
+					client.batch_create(sample, batch_op, &mut kp, &mut vp).await?
+				}
+				BenchmarkOperation::BatchRead(batch_op) => {
+					client.batch_read(sample, batch_op, &mut kp).await?
+				}
+				BenchmarkOperation::BatchUpdate(batch_op) => {
+					client.batch_update(sample, batch_op, &mut kp, &mut vp).await?
+				}
+				BenchmarkOperation::BatchDelete(batch_op) => {
+					client.batch_delete(sample, batch_op, &mut kp).await?
+				}
 			};
 			// Get the completed sample number
 			let sample = complete.fetch_add(1, Ordering::Relaxed);
@@ -361,12 +483,18 @@ impl Benchmark {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum BenchmarkOperation {
 	Create,
 	Read,
 	Update,
-	Scan(Scan),
+	Scan(Scan, ScanContext),
+	BuildIndex(Index, String),
 	Delete,
+	BatchCreate(BatchOperation),
+	BatchRead(BatchOperation),
+	BatchUpdate(BatchOperation),
+	BatchDelete(BatchOperation),
 }
 
 impl Display for BenchmarkOperation {
@@ -374,9 +502,14 @@ impl Display for BenchmarkOperation {
 		match self {
 			Self::Create => write!(f, "Create"),
 			Self::Read => write!(f, "Read"),
-			Self::Scan(s) => write!(f, "Scan::{}", s.name),
+			Self::Scan(s, _) => write!(f, "Scan::{}", s.name),
+			Self::BuildIndex(_, name) => write!(f, "BuildIndex::{name}"),
 			Self::Update => write!(f, "Update"),
 			Self::Delete => write!(f, "Delete"),
+			Self::BatchCreate(b) => write!(f, "BatchCreate::{}", b.name),
+			Self::BatchRead(b) => write!(f, "BatchRead::{}", b.name),
+			Self::BatchUpdate(b) => write!(f, "BatchUpdate::{}", b.name),
+			Self::BatchDelete(b) => write!(f, "BatchDelete::{}", b.name),
 		}
 	}
 }
