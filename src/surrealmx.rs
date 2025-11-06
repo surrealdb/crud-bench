@@ -30,7 +30,7 @@ impl BenchmarkEngine<SurrealMXClient> for SurrealMXClientProvider {
 			let opts = DatabaseOptions::default();
 			// Specify the persistence options
 			let persistence = match options.sync {
-				// Write to AOL immediatelyand fsync when sync is true
+				// Write to AOL immediately and fsync when sync is true
 				true => PersistenceOptions::new(DATABASE_DIR)
 					.with_snapshot_mode(SnapshotMode::Never)
 					.with_aol_mode(AolMode::SynchronousOnCommit)
