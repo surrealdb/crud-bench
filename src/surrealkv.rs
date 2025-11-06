@@ -387,8 +387,8 @@ impl SurrealKVClient {
 				}
 				Ok(count)
 			}
-			Projection::Count => match t {
-				Some(t) => Ok(std::cmp::min(txn.count(beg, end)?, t)),
+			Projection::Count => match scan.limit {
+				Some(l) => Ok(std::cmp::min(txn.count(beg, end)?, l)),
 				None => Ok(txn.count(beg, end)?),
 			},
 		}
