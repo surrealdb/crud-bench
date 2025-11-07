@@ -346,9 +346,9 @@ jobs:
           # Disable swap memory
           sudo swapoff -a
           # Increase max limits
-          ulimit -n 65536
-          ulimit -u unlimited
-          ulimit -l unlimited
+          ulimit -n 65536 || true
+          ulimit -u unlimited || true
+          ulimit -l unlimited || true
 
       - name: Wait for system cool down
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}

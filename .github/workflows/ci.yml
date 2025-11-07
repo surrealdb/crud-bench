@@ -390,9 +390,9 @@ jobs:
           # Flush disk writes
           sync
           # Increase max limits
-          ulimit -n 65536
-          ulimit -u unlimited
-          ulimit -l unlimited
+          ulimit -n 65536 || true
+          ulimit -u unlimited || true
+          ulimit -l unlimited || true
 
       - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key integer / random)
         timeout-minutes: 5
