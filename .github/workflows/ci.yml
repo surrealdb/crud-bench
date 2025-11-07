@@ -354,14 +354,6 @@ jobs:
           username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        run: |
-          REGION=${{ secrets.REGISTRY_AWS_REGION }}
-          REGISTRY=${{ secrets.REGISTRY_AWS_ACCOUNT_ID }}.dkr.ecr.$REGION.amazonaws.com
-          aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
-          echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
-
       - name: System Information
         run: |
           echo "=== Environment Variables ==="
