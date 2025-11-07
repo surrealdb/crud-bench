@@ -28,9 +28,9 @@ fn calculate_surrealkv_memory() -> (u64, u64) {
 	// Calculate total available cache memory in bytes
 	let total_cache_bytes = memory.cache_gb * 1024 * 1024 * 1024;
 	// Allocate 40% for block cache
-	let block_cache_bytes = (total_cache_bytes * 40) / 100;
+	let block_cache_bytes = (total_cache_bytes * 70) / 100;
 	// Allocate 60% for value cache
-	let value_cache_bytes = (total_cache_bytes * 60) / 100;
+	let value_cache_bytes = (total_cache_bytes * 30) / 100;
 	// Return configuration
 	(block_cache_bytes, value_cache_bytes)
 }
@@ -367,7 +367,7 @@ impl SurrealKVClient {
 				let mut count = 0;
 				for v in iter.skip(s).take(l) {
 					assert!(v.is_ok());
-					black_box(v.unwrap().0);
+					black_box(v.unwrap());
 					count += 1;
 				}
 				Ok(count)
@@ -387,13 +387,10 @@ impl SurrealKVClient {
 				}
 				Ok(count)
 			}
-			Projection::Count => {
-				Ok(txn
-					.keys(beg, end, t)?
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.count())
-			}
+			Projection::Count => match scan.limit {
+				Some(l) => Ok(std::cmp::min(txn.count(beg, end)?, l)),
+				None => Ok(txn.count(beg, end)?),
+			},
 		}
 	}
 }
