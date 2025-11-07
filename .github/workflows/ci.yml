@@ -147,14 +147,6 @@ jobs:
       - name: Make crud-bench executable
         run: chmod +x ${{ github.workspace }}/artifacts/crud-bench-amd64/crud-bench ${{ github.workspace }}/artifacts/crud-bench-arm64/crud-bench
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        run: |
-          REGION=${{ secrets.REGISTRY_AWS_REGION }}
-          REGISTRY=${{ secrets.REGISTRY_AWS_ACCOUNT_ID }}.dkr.ecr.$REGION.amazonaws.com
-          aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
-          echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
