@@ -321,13 +321,23 @@ jobs:
       - name: Clean up environment
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
         run: |
+          # Kill and remove any existing crud-bench container
           docker container kill crud-bench &>/dev/null || true
-          docker container prune --force
-          docker volume prune --all --force
-          docker system prune --force
+          docker container rm crud-bench &>/dev/null || true
+          # Prune stopped containers and volumes
+          docker container prune --force &>/dev/null || true
+          docker volume prune --all --force &>/dev/null || true
+          # Clean up system
+          docker system prune --force &>/dev/null || true
+          # Clean up data directory
           rm -rf /data/crud-bench
           mkdir -p /data/crud-bench
           chmod 777 /data/crud-bench
+          # Remove old results
+          rm -f result*.html
+          rm -f result*.json
+          rm -f result*.csv
+          # Create volume
           docker volume create crud-bench
 
       - name: Optimise system
@@ -393,6 +403,22 @@ jobs:
           echo 3 | sudo tee /proc/sys/vm/drop_caches
           # Enable Transparent Hugh Pages
           echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+
+      - name: Clean up environment
+        if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
+        run: |
+          # Kill and remove any existing crud-bench container
+          docker container kill crud-bench &>/dev/null || true
+          docker container rm crud-bench &>/dev/null || true
+          # Prune stopped containers and volumes
+          docker container prune --force &>/dev/null || true
+          docker volume prune --all --force &>/dev/null || true
+          # Clean up system
+          docker system prune --force &>/dev/null || true
+          # Clean up data directory
+          rm -rf /data/crud-bench
+          mkdir -p /data/crud-bench
+          chmod 777 /data/crud-bench
 
       - name: Upload result artifacts
         uses: actions/upload-artifact@v4
