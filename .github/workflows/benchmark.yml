@@ -76,11 +76,6 @@ on:
         options:
           - "true"
           - "false"
-      cooldown:
-        type: string
-        description: Cooldown in minutes
-        required: true
-        default: "15"
       timeout:
         type: string
         description: Timeout in minutes
@@ -360,9 +355,25 @@ jobs:
           ulimit -u unlimited || true
           ulimit -l unlimited || true
 
-      - name: Wait for system cool down
+      - name: Wait for system to be ready
         if: ${{ matrix.enabled && ( github.event.inputs.datastore == 'all' || contains(matrix.name, github.event.inputs.datastore) ) && (success() || failure()) }}
-        run: sleep ${{ github.event.inputs.cooldown }}m
+        run: |
+          timeout=900  # 15 minutes
+          elapsed=0
+          while true; do
+            load=$(awk '{print $1}' /proc/loadavg)
+            if (( $(echo "$load < 2.0" | bc -l) )); then
+              echo "System ready - load: $load"
+              break
+            fi
+            if [ $elapsed -ge $timeout ]; then
+              echo "ERROR: Timeout waiting for system load to decrease"
+              exit 1
+            fi
+            echo "Waiting for load to decrease (current: $load, target: < 2.0)..."
+            sleep 15
+            elapsed=$((elapsed + 15))
+          done
 
       - name: System Information
         run: |
