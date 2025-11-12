@@ -181,7 +181,7 @@ pub(crate) struct Args {
 					"fields": ["number"]
 				}
 			},
-			{ "name": "where_field_fulltext_single", "samples": 100, "projection": "FULL",
+			{ "name": "where_field_fulltext_single", "samples": 100, "projection": "FULL", "limit": 1000,
 				"condition": {
 					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello')",
 					"mysql": "MATCH(words) AGAINST('hello' IN NATURAL LANGUAGE MODE)",
@@ -194,7 +194,7 @@ pub(crate) struct Args {
 					"index_type": "fulltext"
 				}
 			},
-			{ "name": "where_field_fulltext_multi_and", "samples": 100, "projection": "FULL",
+			{ "name": "where_field_fulltext_multi_and", "samples": 100, "projection": "FULL", "limit": 1000,
 				"condition": {
 					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello & world')",
 					"mysql": "MATCH(words) AGAINST('+hello +world' IN NATURAL LANGUAGE MODE)",
@@ -207,7 +207,7 @@ pub(crate) struct Args {
 					"index_type": "fulltext"
 				}
 			},
-			{ "name": "where_field_fulltext_multi_or", "samples": 100, "projection": "FULL",
+			{ "name": "where_field_fulltext_multi_or", "samples": 100, "projection": "FULL", "limit": 1000,
 				"condition": {
 					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'foo | bar')",
 					"mysql": "MATCH(words) AGAINST('foo bar' IN NATURAL LANGUAGE MODE)",
