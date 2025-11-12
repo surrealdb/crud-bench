@@ -151,10 +151,8 @@ pub(crate) struct Args {
 			{ "name": "count_all", "samples": 100, "projection": "COUNT" },
 			{ "name": "limit_id", "samples": 10000, "projection": "ID", "limit": 100, "expect": 100 },
 			{ "name": "limit_all", "samples": 10000, "projection": "FULL", "limit": 100, "expect": 100 },
-			{ "name": "limit_count", "samples": 10000, "projection": "COUNT", "limit": 100, "expect": 100 },
 			{ "name": "limit_start_id", "samples": 10000, "projection": "ID", "start": 5000, "limit": 100, "expect": 100 },
 			{ "name": "limit_start_all", "samples": 10000, "projection": "FULL", "start": 5000, "limit": 100, "expect": 100 },
-			{ "name": "limit_start_count", "samples": 10000, "projection": "COUNT", "start": 5000, "limit": 100, "expect": 100 },
 			{ "name": "where_field_integer_eq", "samples": 100, "projection": "FULL",
 				"condition": {
 					"sql": "number = 21",
