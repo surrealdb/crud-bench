@@ -123,27 +123,29 @@ cargo run -r -- -h
 Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
-  -n, --name <NAME>          An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, surrealkv, surrealmx]
-  -i, --image <IMAGE>        Specify a custom Docker image
-  -p, --privileged           Whether to run Docker in privileged mode
-  -e, --endpoint <ENDPOINT>  Specify a custom endpoint to connect to
-  -b, --blocking <BLOCKING>  Maximum number of blocking threads (default is the number of CPU cores) [default: 12]
-  -w, --workers <WORKERS>    Number of async runtime workers (default is the number of CPU cores) [default: 12]
-  -c, --clients <CLIENTS>    Number of concurrent clients [default: 1]
-  -t, --threads <THREADS>    Number of concurrent threads per client [default: 1]
-  -s, --samples <SAMPLES>    Number of samples to be created, read, updated, and deleted
-  -r, --random               Generate the keys in a pseudo-randomized order
-      --sync                 Whether to ensure data is synced and durable
-      --persisted            Whether to enable disk persistence for Redis-family databases
-      --optimised            Use optimised database configurations instead of defaults
-  -k, --key <KEY>            The type of the key [default: integer] [possible values: integer, string26, string90, string250, string506, uuid]
-  -v, --value <VALUE>        Size of the text value [env: CRUD_BENCH_VALUE=] [default: "{\n\t\t\t\"text\": \"string:50\",\n\t\t\t\"number\": \"int:1..5000\",\n\t\t\t\"integer\": \"int\"\n\t\t}"]
-      --show-sample          Print-out an example of a generated value
-      --pid <PID>            Collect system information for a given pid
-      --scans <SCANS>        An array of scan specifications [env: CRUD_BENCH_SCANS=] [default: "[\n\t\t\t{ \"name\": \"count_all\", \"samples\": 100, \"projection\": \"COUNT\" },\n\t\t\t{ \"name\": \"limit_id\", \"samples\": 10000, \"projection\": \"ID\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_all\", \"samples\": 10000, \"projection\": \"FULL\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_count\", \"samples\": 10000, \"projection\": \"COUNT\", \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_id\", \"samples\": 10000, \"projection\": \"ID\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_all\", \"samples\": 10000, \"projection\": \"FULL\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"limit_start_count\", \"samples\": 10000, \"projection\": \"COUNT\", \"start\": 5000, \"limit\": 100, \"expect\": 100 },\n\t\t\t{ \"name\": \"where_field_integer_eq\", \"samples\": 100, \"projection\": \"FULL\",\n\t\t\t\t\"condition\": {\n\t\t\t\t\t\"sql\": \"number = 21\",\n\t\t\t\t\t\"mysql\": \"number = 21\",\n\t\t\t\t\t\"neo4j\": \"r.number = 21\",\n\t\t\t\t\t\"mongodb\": { \"number\": { \"$eq\": 21 } },\n\t\t\t\t\t\"arangodb\": \"r.number = 21\",\n\t\t\t\t\t\"surrealdb\": \"number = 21\"\n\t\t\t\t}\n\t\t\t},\n\t\t\t{ \"name\": \"where_field_integer_gte_lte\", \"samples\": 100, \"projection\": \"FULL\",\n\t\t\t\t\"condition\": {\n\t\t\t\t\t\"sql\": \"number >= 18 AND number <= 21\",\n\t\t\t\t\t\"mysql\": \"number >= 18 AND number <= 21\",\n\t\t\t\t\t\"neo4j\": \"r.number >= 18 AND r.number <= 21\",\n\t\t\t\t\t\"mongodb\": { \"number\": { \"$gte\": 18, \"$lte\": 21 } },\n\t\t\t\t\t\"arangodb\": \"r.number >= 18 AND r.number <= 21\",\n\t\t\t\t\t\"surrealdb\": \"number >= 18 AND number <= 21\"\n\t\t\t\t}\n\t\t\t}\n\t\t]"]
-      --batches <BATCHES>    An array of batch operation specifications [env: CRUD_BENCH_BATCHES=] [default: "[\n\t\t\t{ \"name\": \"batch_create_100\", \"operation\": \"CREATE\", \"batch_size\": 100, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_read_100\", \"operation\": \"READ\", \"batch_size\": 100, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_update_100\", \"operation\": \"UPDATE\", \"batch_size\": 100, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_delete_100\", \"operation\": \"DELETE\", \"batch_size\": 100, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_create_1000\", \"operation\": \"CREATE\", \"batch_size\": 1000, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_read_1000\", \"operation\": \"READ\", \"batch_size\": 1000, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_update_1000\", \"operation\": \"UPDATE\", \"batch_size\": 1000, \"samples\": 1000 },\n\t\t\t{ \"name\": \"batch_delete_1000\", \"operation\": \"DELETE\", \"batch_size\": 1000, \"samples\": 1000 }\n\t\t]"]
-  -h, --help                 Print help (see more with '--help')
+  -n, --name <NAME>                          An optional name for the test, used as a suffix for the JSON result file name
+  -d, --database <DATABASE>                  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, surrealkv, surrealmx]
+  -i, --image <IMAGE>                        Specify a custom Docker image
+  -p, --privileged                           Whether to run Docker in privileged mode
+  -e, --endpoint <ENDPOINT>                  Specify a custom endpoint to connect to
+  -b, --blocking <BLOCKING>                  Maximum number of blocking threads (default is the number of CPU cores) [default: 12]
+  -w, --workers <WORKERS>                    Number of async runtime workers (default is the number of CPU cores) [default: 12]
+  -c, --clients <CLIENTS>                    Number of concurrent clients [default: 1]
+  -t, --threads <THREADS>                    Number of concurrent threads per client [default: 1]
+  -s, --samples <SAMPLES>                    Number of samples to be created, read, updated, and deleted
+  -r, --random                               Generate the keys in a pseudo-randomized order
+      --sync                                 Whether to ensure data is synced and durable
+      --persisted                            Whether to enable disk persistence for Redis-family databases
+      --optimised                            Use optimised database configurations instead of defaults
+  -k, --key <KEY>                            The type of the key [default: integer] [possible values: integer, string26, string90, string250, string506, uuid]
+      --show-sample                          Print-out an example of a generated value
+      --pid <PID>                            Collect system information for a given pid
+      --store-results                        Store benchmark results in SurrealDB
+      --storage-endpoint <STORAGE_ENDPOINT>  SurrealDB endpoint for storing results [env: CRUD_BENCH_STORAGE_ENDPOINT=] [default: ws://localhost:8000]
+  -v, --value <VALUE>                        Size of the text value [env: CRUD_BENCH_VALUE=]
+      --scans <SCANS>                        An array of scan specifications [env: CRUD_BENCH_SCANS=]
+      --batches <BATCHES>                    An array of batch operation specifications [env: CRUD_BENCH_BATCHES=]
+  -h, --help                                 Print help (see more with '--help')
   ```
 
 For more detailed help information run the following command:

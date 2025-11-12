@@ -113,20 +113,6 @@ pub(crate) struct Args {
 	#[arg(short, long, default_value_t = KeyType::Integer, value_enum)]
 	pub(crate) key: KeyType,
 
-	/// Size of the text value
-	#[arg(
-		short,
-		long,
-		env = "CRUD_BENCH_VALUE",
-		default_value = r#"{
-			"text": "string:50",
-			"number": "int:1..5000",
-			"integer": "int",
-			"words": "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
-		}"#
-	)]
-	pub(crate) value: String,
-
 	/// Print-out an example of a generated value
 	#[arg(long)]
 	pub(crate) show_sample: bool,
@@ -143,10 +129,26 @@ pub(crate) struct Args {
 	#[arg(long, env = "CRUD_BENCH_STORAGE_ENDPOINT", default_value = "ws://localhost:8000")]
 	pub(crate) storage_endpoint: String,
 
+	/// Size of the text value
+	#[arg(
+		short,
+		long,
+		env = "CRUD_BENCH_VALUE",
+		hide_default_value = true,
+		default_value = r#"{
+			"text": "string:50",
+			"number": "int:1..5000",
+			"integer": "int",
+			"words": "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
+		}"#
+	)]
+	pub(crate) value: String,
+
 	/// An array of scan specifications
 	#[arg(
 		long,
 		env = "CRUD_BENCH_SCANS",
+		hide_default_value = true,
 		default_value = r#"[
 			{ "name": "count_all", "samples": 100, "projection": "COUNT" },
 			{ "name": "limit_id", "samples": 10000, "projection": "ID", "limit": 100, "expect": 100 },
@@ -226,6 +228,7 @@ pub(crate) struct Args {
 	#[arg(
 		long,
 		env = "CRUD_BENCH_BATCHES",
+		hide_default_value = true,
 		default_value = r#"[
 			{ "name": "batch_create_100", "operation": "CREATE", "batch_size": 100, "samples": 250 },
 			{ "name": "batch_read_100", "operation": "READ", "batch_size": 100, "samples": 250 },
