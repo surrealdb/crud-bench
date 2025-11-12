@@ -2,7 +2,7 @@ use crate::benchmark::Benchmark;
 use crate::database::Database;
 use crate::keyprovider::KeyProvider;
 use crate::valueprovider::ValueProvider;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use docker::Container;
 use serde::{Deserialize, Serialize};
@@ -168,7 +168,7 @@ pub(crate) struct Args {
 					"fields": ["number"]
 				}
 			},
-			{ "name": "where_field_integer_gte_lte", "samples": 100, "projection": "FULL",
+			{ "name": "where_field_integer_gte_lte", "samples": 100, "projection": "FULL", "limit": 100,
 				"condition": {
 					"sql": "number >= 18 AND number <= 21",
 					"mysql": "number >= 18 AND number <= 21",
@@ -181,7 +181,7 @@ pub(crate) struct Args {
 					"fields": ["number"]
 				}
 			},
-			{ "name": "where_field_fulltext_single", "samples": 100, "projection": "FULL",
+			{ "name": "where_field_fulltext_single", "samples": 100, "projection": "FULL", "limit": 100,
 				"condition": {
 					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello')",
 					"mysql": "MATCH(words) AGAINST('hello' IN NATURAL LANGUAGE MODE)",
@@ -194,7 +194,7 @@ pub(crate) struct Args {
 					"index_type": "fulltext"
 				}
 			},
-			{ "name": "where_field_fulltext_multi_and", "samples": 100, "projection": "FULL",
+			{ "name": "where_field_fulltext_multi_and", "samples": 100, "projection": "FULL", "limit": 100,
 				"condition": {
 					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello & world')",
 					"mysql": "MATCH(words) AGAINST('+hello +world' IN NATURAL LANGUAGE MODE)",
@@ -207,7 +207,7 @@ pub(crate) struct Args {
 					"index_type": "fulltext"
 				}
 			},
-			{ "name": "where_field_fulltext_multi_or", "samples": 100, "projection": "FULL",
+			{ "name": "where_field_fulltext_multi_or", "samples": 100, "projection": "FULL", "limit": 100,
 				"condition": {
 					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'foo | bar')",
 					"mysql": "MATCH(words) AGAINST('foo bar' IN NATURAL LANGUAGE MODE)",
@@ -514,7 +514,7 @@ fn run(args: Args) -> Result<()> {
 
 #[cfg(test)]
 mod test {
-	use crate::{Args, Database, KeyType, run};
+	use crate::{run, Args, Database, KeyType};
 	use anyhow::Result;
 	use serial_test::serial;
 
