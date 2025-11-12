@@ -8,14 +8,16 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use serde_json::Value;
-use surrealdb::Surreal;
-use surrealdb::engine::any::{Any, connect};
+use std::time::Duration;
+use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
 use surrealdb::types::RecordIdKey;
+use surrealdb::Surreal;
 use surrealdb_types::SurrealValue;
+use tokio::time::sleep;
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
 
@@ -226,14 +228,24 @@ impl BenchmarkClient for SurrealDBClient {
 					"DEFINE ANALYZER IF NOT EXISTS {name} TOKENIZERS blank,class FILTERS lowercase,ascii;"
 				);
 				self.db.query(sql).await?.check()?;
-				// Define the index
+				// Define the index concurrently (so we don't maintain an open transaction during the indexing
 				let sql = format!(
-					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25"
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
 				);
 				self.db.query(sql).await?.check()?;
-				// Check the index
-				let sql = format!("INFO FOR INDEX {name} ON record");
-				self.db.query(sql).await?.check()?;
+				// Wait until the index is ready
+				loop {
+					let sql = format!("INFO FOR INDEX {name} ON record");
+					let r: surrealdb::types::Value = self.db.query(sql).await?.take(0)?;
+					let building = r.get("building");
+					let status = building.get("status").as_string().unwrap();
+					match status.as_str() {
+						"ready" => break,
+						"indexing" => {}
+						_ => bail!("Unexpected status: {}", r.into_json_value()),
+					}
+					sleep(Duration::from_millis(500)).await;
+				}
 			}
 			_ => {
 				let sql = format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique}");

@@ -1,9 +1,9 @@
 use crate::result::BenchmarkResult;
 use anyhow::Result;
-use surrealdb::Surreal;
 use surrealdb::engine::remote::ws::Client;
 use surrealdb::engine::remote::ws::Ws;
 use surrealdb::opt::auth::Root;
+use surrealdb::Surreal;
 
 pub struct StorageClient {
 	db: Surreal<Client>,
@@ -51,7 +51,7 @@ impl StorageClient {
 		// Convert to serde_json::Value for insertion
 		let result = serde_json::to_value(result)?;
 		// Insert the result using a query
-		self.db.query("CREATE result CONTENT $result").bind(("result", result)).await?;
+		self.db.query("CREATE result CONTENT $result").bind(("result", result)).await?.check()?;
 		// All ok
 		Ok(())
 	}
