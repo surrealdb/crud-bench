@@ -62,6 +62,7 @@ surrealmx/
 # --- Ignore generated result files
 result.csv
 result.json
+result.html
 result-*.csv
 result-*.json
 result-*.html

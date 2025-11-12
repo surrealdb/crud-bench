@@ -51,7 +51,7 @@ impl StorageClient {
 		// Convert to serde_json::Value for insertion
 		let result = serde_json::to_value(result)?;
 		// Insert the result using a query
-		self.db.query("CREATE result CONTENT $result").bind(("result", result)).await?;
+		self.db.query("CREATE result CONTENT $result").bind(("result", result)).await?.check()?;
 		// All ok
 		Ok(())
 	}
