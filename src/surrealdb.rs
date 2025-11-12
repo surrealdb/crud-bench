@@ -8,13 +8,13 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use serde_json::Value;
-use surrealdb::Surreal;
-use surrealdb::engine::any::{Any, connect};
+use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
 use surrealdb::types::RecordIdKey;
+use surrealdb::Surreal;
 use surrealdb_types::SurrealValue;
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
@@ -230,7 +230,12 @@ impl BenchmarkClient for SurrealDBClient {
 				let sql = format!(
 					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25"
 				);
-				self.db.query(sql).await?;
+				let res = self.db.query(sql).await?;
+				println!("{res:?}");
+				// Check the index
+				let sql = format!("INFO FOR INDEX {name} ON record");
+				let res = self.db.query(sql).await?;
+				println!("{res:?}");
 			}
 			_ => {
 				let sql = format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique}");
