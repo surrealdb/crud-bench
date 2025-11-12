@@ -125,7 +125,7 @@ jobs:
   benchmark:
     name: Benchmark ${{ matrix.description }}
     needs: build
-    runs-on: [runner-benchmarking]
+    runs-on: [benchmarking]
     continue-on-error: true
     strategy:
       fail-fast: false
