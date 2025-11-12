@@ -84,7 +84,7 @@ OPTIONS:
     -h, --help                Show this help message
 
 EXAMPLES:
-	# Run all database benchmarks
+    # Run all database benchmarks
     $0 -d all
 
     # Run benchmark for postgres
@@ -93,7 +93,7 @@ EXAMPLES:
     # Run with optimised configurations
     $0 -d postgres --optimised
 
-	# Run with a 2 hour timeout
+    # Run with a 2 hour timeout
     $0 -d postgres --timeout 120
 
     # Run multiple specific databases
