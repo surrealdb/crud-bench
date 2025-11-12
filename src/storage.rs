@@ -1,9 +1,9 @@
 use crate::result::BenchmarkResult;
 use anyhow::Result;
+use surrealdb::Surreal;
 use surrealdb::engine::remote::ws::Client;
 use surrealdb::engine::remote::ws::Ws;
 use surrealdb::opt::auth::Root;
-use surrealdb::Surreal;
 
 pub struct StorageClient {
 	db: Surreal<Client>,
