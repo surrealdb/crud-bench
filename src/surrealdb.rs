@@ -8,13 +8,13 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde_json::Value;
-use surrealdb::engine::any::{connect, Any};
+use surrealdb::Surreal;
+use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
 use surrealdb::types::RecordIdKey;
-use surrealdb::Surreal;
 use surrealdb_types::SurrealValue;
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
@@ -225,22 +225,20 @@ impl BenchmarkClient for SurrealDBClient {
 				let sql = format!(
 					"DEFINE ANALYZER IF NOT EXISTS {name} TOKENIZERS blank,class FILTERS lowercase,ascii;"
 				);
-				self.db.query(sql).await?;
+				self.db.query(sql).await?.check()?;
 				// Define the index
 				let sql = format!(
 					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25"
 				);
-				let res = self.db.query(sql).await?;
-				println!("{res:?}");
+				self.db.query(sql).await?.check()?;
 				// Check the index
 				let sql = format!("INFO FOR INDEX {name} ON record");
-				let res = self.db.query(sql).await?;
-				println!("{res:?}");
+				self.db.query(sql).await?.check()?;
 			}
 			_ => {
 				let sql = format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique}");
 				// Create the index
-				self.db.query(sql).await?;
+				self.db.query(sql).await?.check()?;
 			}
 		};
 		// All ok

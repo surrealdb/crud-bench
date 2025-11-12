@@ -1,9 +1,9 @@
+use crate::Benchmark;
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::valueprovider::Columns;
-use crate::Benchmark;
 use crate::{BatchOperation, Index, KeyType, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde_json::Value;
 use std::future::Future;
 use std::time::Duration;
