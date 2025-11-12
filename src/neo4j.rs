@@ -238,7 +238,7 @@ impl Neo4jClient {
 			Projection::Id => {
 				let stm = match fts {
 					true => format!(
-						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r {s} {l} RETURN r.id"
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r WITH r {s} {l} RETURN r.id"
 					),
 					false => format!("MATCH (r) {c} {s} {l} RETURN r.id"),
 				};
@@ -253,7 +253,7 @@ impl Neo4jClient {
 			Projection::Full => {
 				let stm = match fts {
 					true => format!(
-						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r {s} {l} RETURN r"
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r WITH r {s} {l} RETURN r"
 					),
 					false => format!("MATCH (r) {c} {s} {l} RETURN r"),
 				};
@@ -268,7 +268,7 @@ impl Neo4jClient {
 			Projection::Count => {
 				let stm = match fts {
 					true => format!(
-						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r {s} {l} RETURN count(r) as count"
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r WITH r {s} {l} RETURN count(r) as count"
 					),
 					false => format!("MATCH (r) {c} {s} {l} RETURN count(r) as count"),
 				};
