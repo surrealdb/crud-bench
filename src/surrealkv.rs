@@ -349,7 +349,6 @@ impl SurrealKVClient {
 		// Extract parameters
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
-		let t = scan.limit.map(|l| s + l);
 		let p = scan.projection()?;
 		// Create a new transaction
 		let txn = self.db.begin_with_mode(ReadOnly)?;
@@ -359,7 +358,7 @@ impl SurrealKVClient {
 		match p {
 			Projection::Id => {
 				// Create an iterator starting at the beginning
-				let iter = txn.keys(beg, end, t)?;
+				let iter = txn.keys(beg, end)?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -374,7 +373,7 @@ impl SurrealKVClient {
 			}
 			Projection::Full => {
 				// Create an iterator starting at the beginning
-				let iter = txn.range(beg, end, t)?;
+				let iter = txn.range(beg, end)?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -388,7 +387,7 @@ impl SurrealKVClient {
 				Ok(count)
 			}
 			Projection::Count => match scan.limit {
-				Some(l) => Ok(std::cmp::min(txn.count(beg, end)?, l)),
+				Some(_) => bail!(NOT_SUPPORTED_ERROR),
 				None => Ok(txn.count(beg, end)?),
 			},
 		}
