@@ -165,7 +165,14 @@ impl Benchmark {
 						)
 						.await?;
 					// Remove the index
-					self.wait_for_client(&engine).await?.drop_index(&name).await?;
+					self.run_operation::<C, D>(
+						&clients[..1],
+						BenchmarkOperation::RemoveIndex(name.clone()),
+						kp,
+						vp.clone(),
+						1,
+					)
+					.await?;
 					// Return the scan results
 					result
 				} else {
@@ -444,6 +451,7 @@ impl Benchmark {
 				BenchmarkOperation::BuildIndex(spec, name) => {
 					client.build_index(spec, name.as_str()).await?
 				}
+				BenchmarkOperation::RemoveIndex(name) => client.drop_index(name.as_str()).await?,
 				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
 				BenchmarkOperation::BatchCreate(batch_op) => {
 					client.batch_create(sample, batch_op, &mut kp, &mut vp).await?
@@ -490,6 +498,7 @@ pub(crate) enum BenchmarkOperation {
 	Update,
 	Scan(Scan, ScanContext),
 	BuildIndex(Index, String),
+	RemoveIndex(String),
 	Delete,
 	BatchCreate(BatchOperation),
 	BatchRead(BatchOperation),
@@ -504,6 +513,7 @@ impl Display for BenchmarkOperation {
 			Self::Read => write!(f, "Read"),
 			Self::Scan(s, _) => write!(f, "Scan::{}", s.name),
 			Self::BuildIndex(_, name) => write!(f, "BuildIndex::{name}"),
+			Self::RemoveIndex(name) => write!(f, "RemoveIndex::{name}"),
 			Self::Update => write!(f, "Update"),
 			Self::Delete => write!(f, "Delete"),
 			Self::BatchCreate(b) => write!(f, "BatchCreate::{}", b.name),

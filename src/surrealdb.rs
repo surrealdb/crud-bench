@@ -10,12 +10,14 @@ use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use serde_json::Value;
+use std::time::Duration;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
 use surrealdb::types::RecordIdKey;
-use surrealdb_types::SurrealValue;
+use surrealdb_types::{SurrealValue, ToSql};
+use tokio::time::sleep;
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
 
@@ -219,25 +221,38 @@ impl BenchmarkClient for SurrealDBClient {
 		// Get the fields
 		let fields = spec.fields.join(", ");
 		// Check if an index type is specified
-		match &spec.index_type {
+		let sql = match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
 				// Define the analyzer
 				let sql = format!(
 					"DEFINE ANALYZER IF NOT EXISTS {name} TOKENIZERS blank,class FILTERS lowercase,ascii;"
 				);
-				self.db.query(sql).await?;
-				// Define the index
-				let sql = format!(
-					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25"
-				);
-				self.db.query(sql).await?;
+				self.db.query(sql).await?.check()?;
+				// Define the index concurrently (so we don't maintain an open transaction during the indexing
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
+				)
 			}
 			_ => {
-				let sql = format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique}");
-				// Create the index
-				self.db.query(sql).await?;
+				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique} CONCURRENTLY")
 			}
 		};
+		// Create the index
+		self.db.query(sql).await?.check()?;
+		// Wait until the index is ready
+		loop {
+			let sql = format!("INFO FOR INDEX {name} ON record");
+			let r: surrealdb::types::Value = self.db.query(sql).await?.take(0)?;
+			let j = r.to_sql();
+			let building = r.get("building");
+			let status = building.get("status").as_string().expect(&j);
+			match status.as_str() {
+				"ready" => break,
+				"indexing" | "cleaning" | "started" => {}
+				_ => bail!("Unexpected status: {}", r.into_json_value()),
+			}
+			sleep(Duration::from_millis(500)).await;
+		}
 		// All ok
 		Ok(())
 	}
