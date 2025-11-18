@@ -56,7 +56,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 serial_test = "3.2.0"
 surrealdb = { version = "3", package = "surrealdb-nightly", default-features = false, optional = true }
-surrealkv = { git = "https://github.com/surrealdb/surrealkv", branch = "main" , optional = true}
+surrealkv = { version = "0.15.0", optional = true}
 sysinfo = { version = "0.34.2", features = ["serde"] }
 tokio = { version = "1.44.2", features = ["macros", "time", "rt-multi-thread"] }
 tokio-postgres = { version = "0.7.13", optional = true, features = ["with-serde_json-1", "with-uuid-1"] }

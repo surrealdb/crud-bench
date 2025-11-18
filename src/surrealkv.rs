@@ -170,7 +170,7 @@ impl SurrealKVClient {
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let iter = txn.range(beg.clone(), end.clone(), t)?;
+				let iter = txn.range(beg.clone(), end.clone())?;
 				// Create an iterator starting at the beginning
 				let iter = iter.into_iter();
 
@@ -182,7 +182,7 @@ impl SurrealKVClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let iter = txn.range(beg.clone(), end.clone(), t)?;
+				let iter = txn.range(beg.clone(), end.clone())?;
 				// Create an iterator starting at the beginning
 				let iter = iter.into_iter();
 
@@ -195,7 +195,7 @@ impl SurrealKVClient {
 				Ok(count)
 			}
 			Projection::Count => {
-				let iter = txn.keys(beg, end, t)?;
+				let iter = txn.keys(beg, end)?;
 				// Create an iterator starting at the beginning
 				let iter = iter.into_iter();
 
