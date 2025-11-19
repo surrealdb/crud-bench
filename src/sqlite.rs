@@ -6,7 +6,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde_json::{Map, Value as Json};
 use std::borrow::Cow;
 use std::cmp::max;
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_rusqlite::types::ToSqlOutput;
 use tokio_rusqlite::types::Value;
-use tokio_rusqlite::{rusqlite, Connection};
+use tokio_rusqlite::{Connection, rusqlite};
 
 const DATABASE_DIR: &str = "sqlite";
 
