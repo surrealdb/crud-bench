@@ -516,3 +516,83 @@ Then run crud-bench with the `surrealdb` database option:
 ```bash
 cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 -s 100000 -c 12 -t 24 -r
 ```
+
+## SurrealDS - Multi-Instance Distributed Benchmark
+
+SurrealDS (SurrealDB Distributed System) enables benchmarking against multiple SurrealDB instances simultaneously. This is particularly useful for testing distributed deployments, load balancing scenarios, and assessing the performance characteristics of multi-node SurrealDB clusters.
+
+### Features
+
+- **Multi-Instance Support**: Connect to multiple SurrealDB instances using a single endpoint configuration
+- **Round-Robin Load Balancing**: Automatically distributes client connections evenly across all configured instances
+- **Networked Connections Only**: Designed for remote SurrealDB instances (supports ws://, wss://, http://, https://)
+
+### Prerequisites
+
+Before running SurrealDS benchmarks, you need to have multiple SurrealDB instances running. Here's how to start three local instances for testing:
+
+```bash
+# Terminal 1 - Start first instance on port 8001
+surreal start --allow-all -u root -p root --bind 127.0.0.1:8001 rocksdb:/tmp/db1
+
+# Terminal 2 - Start second instance on port 8002
+surreal start --allow-all -u root -p root --bind 127.0.0.1:8002 rocksdb:/tmp/db2
+
+# Terminal 3 - Start third instance on port 8003
+surreal start --allow-all -u root -p root --bind 127.0.0.1:8003 rocksdb:/tmp/db3
+```
+
+### Usage
+
+To benchmark against multiple SurrealDB instances, specify the endpoints separated by semicolons:
+
+```bash
+cargo run -r -- -d surrealdb -e "ws://127.0.0.1:8001;ws://127.0.0.1:8002;ws://127.0.0.1:8003" -s 100000 -c 12 -t 24 -r
+```
+
+### How It Works
+
+SurrealDS uses a round-robin algorithm to distribute client connections across all configured endpoints:
+
+1. When the benchmark engine starts, it parses the endpoint configuration string
+2. For each concurrent client creation, the engine selects the next endpoint in sequence
+3. Connections cycle through endpoints evenly (client 0 → endpoint 0, client 1 → endpoint 1, etc.)
+4. This ensures balanced load distribution across all SurrealDB instances
+
+**Example with 3 endpoints and 6 concurrent clients:**
+
+- Client 0 → `ws://127.0.0.1:8001`
+- Client 1 → `ws://127.0.0.1:8002`
+- Client 2 → `ws://127.0.0.1:8003`
+- Client 3 → `ws://127.0.0.1:8001` (wraps around)
+- Client 4 → `ws://127.0.0.1:8002`
+- Client 5 → `ws://127.0.0.1:8003`
+
+### Configuration
+
+The endpoint string must:
+- Contain one or more SurrealDB endpoints separated by semicolons (`;`)
+- Use remote connection protocols only: `ws://`, `wss://`, `http://`, or `https://`
+- Point to instances that accept the same root credentials (default: `root`/`root`)
+
+**Valid endpoint configurations:**
+
+```bash
+# Local testing with three instances
+-e "ws://127.0.0.1:8001;ws://127.0.0.1:8002;ws://127.0.0.1:8003"
+
+# Remote cluster nodes
+-e "ws://node1.example.com:8000;ws://node2.example.com:8000;ws://node3.example.com:8000"
+
+# Single instance (still works, but no load distribution)
+-e "ws://127.0.0.1:8000"
+```
+
+### Use Cases
+
+SurrealDS is ideal for:
+
+- **Load Balancing Testing**: Evaluate how your application performs when distributing load across multiple SurrealDB instances
+- **Distributed Deployment Benchmarking**: Test the performance characteristics of multi-node SurrealDB setups
+- **Scalability Assessment**: Compare single-instance vs. multi-instance performance to understand horizontal scaling benefits
+- **High Availability Scenarios**: Benchmark redundant SurrealDB deployments where multiple instances serve the same data

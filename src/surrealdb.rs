@@ -8,14 +8,14 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde_json::Value;
 use std::time::Duration;
-use surrealdb::engine::any::{connect, Any};
+use surrealdb::Surreal;
+use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
 use surrealdb::types::RecordIdKey;
-use surrealdb::Surreal;
 use surrealdb_types::{SurrealValue, ToSql};
 use tokio::time::sleep;
 

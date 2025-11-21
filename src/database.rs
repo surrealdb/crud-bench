@@ -1,3 +1,4 @@
+use crate::KeyType;
 use crate::benchmark::Benchmark;
 use crate::dialect::{
 	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MongoDBDialect, MySqlDialect, Neo4jDialect,
@@ -10,7 +11,6 @@ use crate::keyprovider::KeyProvider;
 use crate::map::MapClientProvider;
 use crate::result::BenchmarkResult;
 use crate::valueprovider::ValueProvider;
-use crate::KeyType;
 use anyhow::Result;
 use clap::ValueEnum;
 
@@ -60,6 +60,14 @@ pub(crate) enum Database {
 	Surrealkv,
 	#[cfg(feature = "surrealmx")]
 	Surrealmx,
+	/// SurrealDS - Multi-instance distributed SurrealDB benchmarking.
+	///
+	/// This option enables benchmarking against multiple SurrealDB instances simultaneously
+	/// using round-robin load balancing. Ideal for testing distributed deployments,
+	/// load balancing scenarios, and assessing multi-node cluster performance.
+	///
+	/// Requires specifying multiple endpoints separated by semicolons:
+	/// `-e "ws://host1:8000;ws://host2:8000;ws://host3:8000"`
 	#[cfg(feature = "surrealdb")]
 	Surrealds,
 }
