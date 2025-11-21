@@ -47,6 +47,7 @@ mod rocksdb;
 mod scylladb;
 mod sqlite;
 mod surrealdb;
+mod surrealds;
 mod surrealkv;
 mod surrealmx;
 

@@ -1,4 +1,3 @@
-use crate::KeyType;
 use crate::benchmark::Benchmark;
 use crate::dialect::{
 	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MongoDBDialect, MySqlDialect, Neo4jDialect,
@@ -11,6 +10,7 @@ use crate::keyprovider::KeyProvider;
 use crate::map::MapClientProvider;
 use crate::result::BenchmarkResult;
 use crate::valueprovider::ValueProvider;
+use crate::KeyType;
 use anyhow::Result;
 use clap::ValueEnum;
 
@@ -60,6 +60,8 @@ pub(crate) enum Database {
 	Surrealkv,
 	#[cfg(feature = "surrealmx")]
 	Surrealmx,
+	#[cfg(feature = "surrealdb")]
+	Surrealds,
 }
 
 impl Database {
@@ -393,6 +395,26 @@ impl Database {
 				benchmark
 					.run::<_, SurrealDBDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
+			#[cfg(feature = "surrealdb")]
+			Database::Surrealds => {
+				benchmark
+					.run::<_, SurrealDBDialect, _>(
+						crate::surrealds::SurrealDBClientsProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark,

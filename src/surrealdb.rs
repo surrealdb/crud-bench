@@ -8,15 +8,14 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::{Result, bail};
-use log::warn;
+use anyhow::{bail, Result};
 use serde_json::Value;
 use std::time::Duration;
-use surrealdb::Surreal;
-use surrealdb::engine::any::{Any, connect};
+use surrealdb::engine::any::{connect, Any};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
 use surrealdb::types::RecordIdKey;
+use surrealdb::Surreal;
 use surrealdb_types::{SurrealValue, ToSql};
 use tokio::time::sleep;
 
@@ -94,7 +93,7 @@ pub(crate) struct SurrealDBClientProvider {
 	root: Root,
 }
 
-async fn initialise_db(endpoint: &str, root: Root) -> Result<Surreal<Any>> {
+pub(super) async fn initialise_db(endpoint: &str, root: Root) -> Result<Surreal<Any>> {
 	// Set the root user
 	let config = Config::new().user(root.clone());
 	// Connect to the database
@@ -148,7 +147,7 @@ pub(crate) struct SurrealDBClient {
 }
 
 impl SurrealDBClient {
-	const fn new(db: Surreal<Any>) -> Self {
+	pub(super) const fn new(db: Surreal<Any>) -> Self {
 		Self {
 			db,
 		}
@@ -259,68 +258,12 @@ impl BenchmarkClient for SurrealDBClient {
 	}
 
 	async fn drop_index(&self, name: &str) -> Result<()> {
-		// Retry helper closure for handling transient "Resource busy" errors.
-		//
-		// ## Why Retry is Necessary
-		//
-		// After intensive concurrent scan operations (e.g., 12 clients × 48 threads = 576 tasks),
-		// each scan creates a READ transaction in SurrealDB that holds a RocksDB snapshot.
-		// These snapshots capture the database state and provide MVCC (Multi-Version Concurrency Control).
-		//
-		// When REMOVE INDEX executes immediately after scans complete:
-		// 1. Client-side: All Rust futures have finished (via try_join_all)
-		// 2. Server-side: SurrealDB/RocksDB may still have:
-		//    - Active transaction objects not yet fully released
-		//    - Snapshot references held in memory
-		//    - Deferred cleanup operations in progress
-		//
-		// ## The Conflict
-		//
-		// REMOVE INDEX runs in a WRITE transaction that needs to:
-		// - Delete index metadata keys (del_tb_index)
-		// - Update table definition (put_tb)
-		// - Clear caches
-		//
-		// RocksDB's optimistic transaction engine detects conflicts between:
-		// - Active READ snapshots from completed scan operations
-		// - WRITE transaction from REMOVE INDEX trying to modify metadata
-		//
-		// This results in: "The query was not executed due to a failed transaction. Resource busy:"
-		//
-		// ## Why Retry Works
-		//
-		// The error is transient. As transaction objects are dropped and snapshots released,
-		// the metadata locks become available. The 500ms sleep allows sufficient time for:
-		// - Async transaction cleanup to complete
-		// - RocksDB to release internal snapshot references
-		// - Memory management to finalize deferred operations
-		//
-		// Since REMOVE INDEX IF EXISTS is idempotent, retrying is safe and appropriate
-		// for benchmark scenarios where the goal is reliable completion rather than
-		// immediate failure on transient resource contention.
-		let retry = |sql: String| async move {
-			loop {
-				match self.db.query(&sql).await?.check() {
-					Ok(_) => return Ok(()),
-					Err(e) => {
-						if e.to_string().eq(
-							"The query was not executed due to a failed transaction. Resource busy: ",
-						) {
-							warn!("Retrying {sql} due to {e}");
-							sleep(Duration::from_millis(500)).await;
-						} else {
-							return Err(e);
-						}
-					}
-				}
-			}
-		};
 		// Remove the index
 		let sql = format!("REMOVE INDEX IF EXISTS {name} ON TABLE record");
-		retry(sql).await?;
+		self.db.query(&sql).await?.check()?;
 		// Remove the analyzer
 		let sql = format!("REMOVE ANALYZER IF EXISTS {name}");
-		retry(sql).await?;
+		self.db.query(&sql).await?.check()?;
 		// All ok
 		Ok(())
 	}
