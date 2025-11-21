@@ -138,7 +138,7 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientsProvider {
 		for e in endpoint.split(';') {
 			// Validate that each endpoint uses a remote connection protocol
 			// SurrealDS only supports networked instances, not embedded databases
-			match endpoint.split_once(':').unwrap().0 {
+			match e.split_once(':').unwrap().0 {
 				"ws" | "wss" | "http" | "https" => endpoints.push(e.to_string()),
 				_ => bail!("A remote connection is expected: {e}"),
 			};
