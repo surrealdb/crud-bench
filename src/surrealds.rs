@@ -30,7 +30,7 @@
 //! across all configured SurrealDB instances.
 
 use crate::engine::BenchmarkEngine;
-use crate::surrealdb::{SurrealDBClient, initialise_db};
+use crate::surrealdb::{SurrealDBClient, initialise_db, surrealdb_password, surrealdb_username};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType};
 use anyhow::{Result, bail};
@@ -126,11 +126,11 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientsProvider {
 		// three-instance local setup if no endpoint is specified
 		let endpoint = options.endpoint.as_deref().unwrap_or(DEFAULT);
 
-		// Define root user authentication credentials
+		// Define root user authentication credentials from environment variables or use defaults
 		// All configured SurrealDB instances must accept these credentials
 		let root = Root {
-			username: String::from("root"),
-			password: String::from("root"),
+			username: surrealdb_username(),
+			password: surrealdb_password(),
 		};
 
 		// Parse and validate endpoints from the semicolon-separated string

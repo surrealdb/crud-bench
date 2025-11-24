@@ -11,6 +11,7 @@ use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use log::warn;
 use serde_json::Value;
+use std::env;
 use std::time::Duration;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
@@ -30,15 +31,34 @@ fn calculate_surrealdb_memory() -> u64 {
 	(memory.cache_gb * 4 / 6).max(1)
 }
 
+/// Retrieves the SurrealDB username from the environment variable or returns the default.
+///
+/// Reads the `SURREALDB_USER` environment variable. If not set, defaults to `"root"`.
+/// This username is used for both Docker container startup and client authentication.
+pub(super) fn surrealdb_username() -> String {
+	env::var("SURREALDB_USER").unwrap_or_else(|_| String::from("root"))
+}
+
+/// Retrieves the SurrealDB password from the environment variable or returns the default.
+///
+/// Reads the `SURREALDB_PASS` environment variable. If not set, defaults to `"root"`.
+/// This password is used for both Docker container startup and client authentication.
+pub(super) fn surrealdb_password() -> String {
+	env::var("SURREALDB_PASS").unwrap_or_else(|_| String::from("root"))
+}
+
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Calculate memory allocation
 	let cache_gb = calculate_surrealdb_memory();
+	// Get credentials from environment variables or use defaults
+	let username = surrealdb_username();
+	let password = surrealdb_password();
 	// Return Docker parameters
 	match options.database {
 		Database::SurrealdbMemory => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
-			post_args: "start --user root --pass root memory".to_string(),
+			post_args: format!("start --user {username} --pass {password} memory"),
 		},
 		Database::SurrealdbRocksdb => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
@@ -60,7 +80,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 					}
 				),
 			},
-			post_args: "start --user root --pass root rocksdb:/data/crud-bench.db".to_string(),
+			post_args: format!(
+				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db"
+			),
 		},
 		Database::SurrealdbSurrealkv => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
@@ -82,7 +104,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 					}
 				),
 			},
-			post_args: "start --user root --pass root surrealkv:/data/crud-bench.db".to_string(),
+			post_args: format!(
+				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db"
+			),
 		},
 		_ => unreachable!(),
 	}
@@ -112,10 +136,12 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Get the custom endpoint if specified
 		let endpoint = options.endpoint.as_deref().unwrap_or(DEFAULT).replace("memory", "mem://");
-		// Define root user details
+		// Define root user details from environment variables or use defaults
+		let username = surrealdb_username();
+		let password = surrealdb_password();
 		let root = Root {
-			username: String::from("root"),
-			password: String::from("root"),
+			username,
+			password,
 		};
 		// Setup the optional client
 		let client = match endpoint.split_once(':').unwrap().0 {

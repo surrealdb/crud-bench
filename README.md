@@ -517,6 +517,58 @@ Then run crud-bench with the `surrealdb` database option:
 cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 -s 100000 -c 12 -t 24 -r
 ```
 
+## SurrealDB Authentication
+
+When benchmarking SurrealDB (including `surrealdb`, `surrealdb-memory`, `surrealdb-rocksdb`, `surrealdb-surrealkv`, and `surrealds`), you can configure authentication credentials using environment variables.
+
+### Environment Variables
+
+- **`SURREALDB_USER`**: Username for SurrealDB authentication (default: `root`)
+- **`SURREALDB_PASS`**: Password for SurrealDB authentication (default: `root`)
+
+These environment variables are used in two scenarios:
+
+1. **Docker Container Startup**: When crud-bench automatically starts a SurrealDB Docker container, it uses these credentials to configure the database server (applies to `surrealdb-memory`, `surrealdb-rocksdb`, and `surrealdb-surrealkv`)
+2. **Client Authentication**: When connecting to SurrealDB instances (both embedded and networked), the benchmark client uses these credentials to authenticate
+
+### Usage Examples
+
+**Using default credentials (root/root):**
+
+```bash
+cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r
+```
+
+**Using custom credentials via environment variables:**
+
+```bash
+export SURREALDB_USER=admin
+export SURREALDB_PASS=secure_password
+cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r
+```
+
+**One-line command with custom credentials:**
+
+```bash
+SURREALDB_USER=admin SURREALDB_PASS=secure_password cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 -s 100000 -c 12 -t 24 -r
+```
+
+**Connecting to an external SurrealDB instance with custom credentials:**
+
+First, start your SurrealDB instance with custom credentials:
+
+```bash
+surreal start --allow-all -u admin -p secure_password rocksdb:/tmp/db
+```
+
+Then run the benchmark with matching credentials:
+
+```bash
+SURREALDB_USER=admin SURREALDB_PASS=secure_password cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 -s 100000 -c 12 -t 24 -r
+```
+
+> **Note**: When using the automatically started Docker containers, the environment variables configure both the server and client credentials, ensuring they match. When connecting to external instances, ensure the environment variables match the credentials configured on your SurrealDB server.
+
 ## SurrealDS - Multi-Instance Distributed Benchmark with TiKV
 
 SurrealDS (SurrealDB Distributed System) enables benchmarking against multiple SurrealDB instances simultaneously, with the **primary use case being SurrealDB with TiKV as the distributed storage backend**. This is particularly useful for testing SurrealDB's performance characteristics when using TiKV's distributed, transactional key-value storage in production-like environments.
@@ -607,6 +659,8 @@ The endpoint string must:
 - Contain one or more SurrealDB endpoints separated by semicolons (`;`)
 - Use remote connection protocols only: `ws://`, `wss://`, `http://`, or `https://`
 - Point to instances that accept the same root credentials (default: `root`/`root`)
+
+> **Note**: You can customize authentication credentials using the `SURREALDB_USER` and `SURREALDB_PASS` environment variables. See the [SurrealDB Authentication](#surrealdb-authentication) section for details.
 
 **Valid endpoint configurations:**
 
