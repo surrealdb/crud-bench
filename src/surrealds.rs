@@ -136,9 +136,16 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientsProvider {
 		// Parse and validate endpoints from the semicolon-separated string
 		let mut endpoints = Vec::new();
 		for e in endpoint.split(';') {
+			// Skip empty segments that result from trailing or double semicolons
+			if e.is_empty() {
+				continue;
+			}
+
 			// Validate that each endpoint uses a remote connection protocol
 			// SurrealDS only supports networked instances, not embedded databases
-			match e.split_once(':').unwrap().0 {
+			let scheme = e.split_once(':').map(|(scheme, _)| scheme).unwrap_or("");
+
+			match scheme {
 				"ws" | "wss" | "http" | "https" => endpoints.push(e.to_string()),
 				_ => bail!("A remote connection is expected: {e}"),
 			};
