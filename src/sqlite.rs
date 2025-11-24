@@ -13,9 +13,9 @@ use std::cmp::max;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_rusqlite::Connection;
 use tokio_rusqlite::types::ToSqlOutput;
 use tokio_rusqlite::types::Value;
-use tokio_rusqlite::{Connection, rusqlite};
 
 const DATABASE_DIR: &str = "sqlite";
 
@@ -265,7 +265,7 @@ impl BenchmarkClient for SqliteClient {
 
 impl SqliteClient {
 	async fn execute_batch(&self, query: Cow<'static, str>) -> Result<()> {
-		self.conn.call(move |conn| conn.execute_batch(query.as_ref())).await?;
+		self.conn.call(move |conn| conn.execute_batch(query.as_ref()).map_err(Into::into)).await?;
 		Ok(())
 	}
 
@@ -275,7 +275,7 @@ impl SqliteClient {
 		params: ToSqlOutput<'static>,
 	) -> Result<usize> {
 		self.conn
-			.call(move |conn| conn.execute(query.as_ref(), [&params]))
+			.call(move |conn| conn.execute(query.as_ref(), [&params]).map_err(Into::into))
 			.await
 			.map_err(Into::into)
 	}
@@ -286,7 +286,7 @@ impl SqliteClient {
 		params: Option<ToSqlOutput<'static>>,
 	) -> Result<Vec<Row>> {
 		self.conn
-			.call(move |conn| -> rusqlite::Result<Vec<Row>> {
+			.call(move |conn| {
 				let mut stmt = conn.prepare(stmt.as_ref())?;
 				let mut rows = match params {
 					Some(params) => stmt.query([&params])?,
@@ -424,7 +424,7 @@ impl SqliteClient {
 		let conn = self.conn.clone();
 		let column_defs = self.columns.clone();
 
-		conn.call(move |conn| -> rusqlite::Result<()> {
+		conn.call(move |conn| {
 			// Store the records to insert
 			let mut inserts = Vec::with_capacity(key_vals.len());
 			// Store all parameter values as owned types
@@ -482,7 +482,7 @@ impl SqliteClient {
 	{
 		let conn = self.conn.clone();
 
-		conn.call(move |conn| -> rusqlite::Result<()> {
+		conn.call(move |conn| {
 			// Build the IN clause with positional parameters
 			let ids = (1..=keys.len()).map(|i| format!("${i}")).collect::<Vec<String>>().join(", ");
 
@@ -540,7 +540,7 @@ impl SqliteClient {
 		let conn = self.conn.clone();
 		let column_defs = self.columns.clone();
 
-		conn.call(move |conn| -> rusqlite::Result<()> {
+		conn.call(move |conn| {
 			// For SQLite, we'll use multiple UPDATE statements in a transaction
 			// since SQLite doesn't support UPDATE FROM as elegantly as PostgreSQL
 
@@ -609,7 +609,7 @@ impl SqliteClient {
 	{
 		let conn = self.conn.clone();
 
-		conn.call(move |conn| -> rusqlite::Result<()> {
+		conn.call(move |conn| {
 			// Build the IN clause with positional parameters
 			let ids = (1..=keys.len()).map(|i| format!("${i}")).collect::<Vec<String>>().join(", ");
 
