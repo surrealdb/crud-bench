@@ -60,6 +60,16 @@ pub(crate) enum Database {
 	Surrealkv,
 	#[cfg(feature = "surrealmx")]
 	Surrealmx,
+	/// SurrealDS - Multi-instance distributed SurrealDB benchmarking.
+	///
+	/// This option enables benchmarking against multiple SurrealDB instances simultaneously
+	/// using round-robin load balancing. Ideal for testing distributed deployments,
+	/// load balancing scenarios, and assessing multi-node cluster performance.
+	///
+	/// Requires specifying multiple endpoints separated by semicolons:
+	/// `-e "ws://host1:8000;ws://host2:8000;ws://host3:8000"`
+	#[cfg(feature = "surrealdb")]
+	Surrealds,
 }
 
 impl Database {
@@ -393,6 +403,26 @@ impl Database {
 				benchmark
 					.run::<_, SurrealDBDialect, _>(
 						crate::surrealdb::SurrealDBClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
+			#[cfg(feature = "surrealdb")]
+			Database::Surrealds => {
+				benchmark
+					.run::<_, SurrealDBDialect, _>(
+						crate::surrealds::SurrealDBClientsProvider::setup(
 							kt,
 							vp.columns(),
 							benchmark,
