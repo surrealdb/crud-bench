@@ -117,3 +117,8 @@ tokio-postgres = { version = "0.7.15", optional = true, features = [
 tokio-rusqlite = { version = "0.7.0", optional = true, features = ["bundled"] }
 twox-hash = "2.1.2"
 uuid = { version = "1.18.1", features = ["v4"] }
+
+[profile.profiling]
+inherits = "release"  # start from the production settings
+debug = true          # keep debug info so symbols show up in flamegraph
+strip = "none"

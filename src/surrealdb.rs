@@ -11,6 +11,7 @@ use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use log::warn;
 use serde_json::Value;
+use std::env;
 use std::time::Duration;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
@@ -18,7 +19,7 @@ use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
 use surrealdb::types::RecordIdKey;
 use surrealdb_types::{SurrealValue, ToSql};
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
 
@@ -30,15 +31,34 @@ fn calculate_surrealdb_memory() -> u64 {
 	(memory.cache_gb * 4 / 6).max(1)
 }
 
+/// Retrieves the SurrealDB username from the environment variable or returns the default.
+///
+/// Reads the `SURREALDB_USER` environment variable. If not set, defaults to `"root"`.
+/// This username is used for both Docker container startup and client authentication.
+pub(super) fn surrealdb_username() -> String {
+	env::var("SURREALDB_USER").unwrap_or_else(|_| String::from("root"))
+}
+
+/// Retrieves the SurrealDB password from the environment variable or returns the default.
+///
+/// Reads the `SURREALDB_PASS` environment variable. If not set, defaults to `"root"`.
+/// This password is used for both Docker container startup and client authentication.
+pub(super) fn surrealdb_password() -> String {
+	env::var("SURREALDB_PASS").unwrap_or_else(|_| String::from("root"))
+}
+
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Calculate memory allocation
 	let cache_gb = calculate_surrealdb_memory();
+	// Get credentials from environment variables or use defaults
+	let username = surrealdb_username();
+	let password = surrealdb_password();
 	// Return Docker parameters
 	match options.database {
 		Database::SurrealdbMemory => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
-			post_args: "start --user root --pass root memory".to_string(),
+			post_args: format!("start --user {username} --pass {password} memory"),
 		},
 		Database::SurrealdbRocksdb => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
@@ -60,7 +80,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 					}
 				),
 			},
-			post_args: "start --user root --pass root rocksdb:/data/crud-bench.db".to_string(),
+			post_args: format!(
+				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db"
+			),
 		},
 		Database::SurrealdbSurrealkv => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
@@ -82,7 +104,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 					}
 				),
 			},
-			post_args: "start --user root --pass root surrealkv:/data/crud-bench.db".to_string(),
+			post_args: format!(
+				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db"
+			),
 		},
 		_ => unreachable!(),
 	}
@@ -94,7 +118,7 @@ pub(crate) struct SurrealDBClientProvider {
 	root: Root,
 }
 
-async fn initialise_db(endpoint: &str, root: Root) -> Result<Surreal<Any>> {
+pub(super) async fn initialise_db(endpoint: &str, root: Root) -> Result<Surreal<Any>> {
 	// Set the root user
 	let config = Config::new().user(root.clone());
 	// Connect to the database
@@ -112,10 +136,12 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Get the custom endpoint if specified
 		let endpoint = options.endpoint.as_deref().unwrap_or(DEFAULT).replace("memory", "mem://");
-		// Define root user details
+		// Define root user details from environment variables or use defaults
+		let username = surrealdb_username();
+		let password = surrealdb_password();
 		let root = Root {
-			username: String::from("root"),
-			password: String::from("root"),
+			username,
+			password,
 		};
 		// Setup the optional client
 		let client = match endpoint.split_once(':').unwrap().0 {
@@ -148,7 +174,7 @@ pub(crate) struct SurrealDBClient {
 }
 
 impl SurrealDBClient {
-	const fn new(db: Surreal<Any>) -> Self {
+	pub(super) const fn new(db: Surreal<Any>) -> Self {
 		Self {
 			db,
 		}
@@ -298,29 +324,39 @@ impl BenchmarkClient for SurrealDBClient {
 		// Since REMOVE INDEX IF EXISTS is idempotent, retrying is safe and appropriate
 		// for benchmark scenarios where the goal is reliable completion rather than
 		// immediate failure on transient resource contention.
-		let retry = |sql: String| async move {
-			loop {
-				match self.db.query(&sql).await?.check() {
-					Ok(_) => return Ok(()),
-					Err(e) => {
-						if e.to_string().eq(
-							"The query was not executed due to a failed transaction. Resource busy: ",
-						) {
-							warn!("Retrying {sql} due to {e}");
-							sleep(Duration::from_millis(500)).await;
-						} else {
+		let retry = |sql: String, max_wait: Duration| async move {
+			let fut = async {
+				loop {
+					match self.db.query(&sql).await?.check() {
+						Ok(_) => return Ok(()),
+						Err(e) => {
+							let msg = e.to_string();
+							// Be permissive on the match to tolerate tiny wording changes
+							if msg.starts_with(
+								"The query was not executed due to a failed transaction.",
+							) {
+								warn!("Retrying {sql} due to {msg}");
+								sleep(Duration::from_millis(500)).await;
+								continue;
+							}
 							return Err(e);
 						}
 					}
+				}
+			};
+			match timeout(max_wait, fut).await {
+				Ok(res) => res.map_err(|e| e.into()),
+				Err(_) => {
+					bail!("Timed out after {:?} waiting to execute: {}", max_wait, sql)
 				}
 			}
 		};
 		// Remove the index
 		let sql = format!("REMOVE INDEX IF EXISTS {name} ON TABLE record");
-		retry(sql).await?;
+		retry(sql, Duration::from_secs(120)).await?;
 		// Remove the analyzer
 		let sql = format!("REMOVE ANALYZER IF EXISTS {name}");
-		retry(sql).await?;
+		retry(sql, Duration::from_secs(60)).await?;
 		// All ok
 		Ok(())
 	}
