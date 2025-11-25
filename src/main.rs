@@ -36,6 +36,7 @@ mod fjall;
 mod keydb;
 mod lmdb;
 mod map;
+mod mariadb;
 mod mdbx;
 mod mongodb;
 mod mysql;

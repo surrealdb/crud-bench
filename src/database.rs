@@ -30,6 +30,8 @@ pub(crate) enum Database {
 	Mdbx,
 	#[cfg(feature = "lmdb")]
 	Lmdb,
+	#[cfg(feature = "mariadb")]
+	Mariadb,
 	#[cfg(feature = "mongodb")]
 	Mongodb,
 	#[cfg(feature = "mysql")]
@@ -83,6 +85,8 @@ impl Database {
 			Self::Dragonfly => crate::dragonfly::docker(options),
 			#[cfg(feature = "keydb")]
 			Self::Keydb => crate::keydb::docker(options),
+			#[cfg(feature = "mariadb")]
+			Self::Mariadb => crate::mariadb::docker(options),
 			#[cfg(feature = "mongodb")]
 			Self::Mongodb => crate::mongodb::docker(options),
 			#[cfg(feature = "mysql")]
@@ -245,6 +249,22 @@ impl Database {
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						MapClientProvider::setup(kt, vp.columns(), benchmark).await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
+			#[cfg(feature = "mariadb")]
+			Database::Mariadb => {
+				benchmark
+					.run::<_, MySqlDialect, _>(
+						crate::mariadb::MariadbClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
 						kp,
 						vp,
 						scans,
@@ -558,6 +578,8 @@ impl Database {
 			Database::Lmdb => "LMDB",
 			#[cfg(feature = "mdbx")]
 			Database::Mdbx => "MDBX",
+			#[cfg(feature = "mariadb")]
+			Database::Mariadb => "MariaDB",
 			#[cfg(feature = "mongodb")]
 			Database::Mongodb => "MongoDB",
 			#[cfg(feature = "mysql")]
