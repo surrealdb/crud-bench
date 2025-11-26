@@ -26,6 +26,7 @@ TIMEOUT=""
 DATASTORE=""
 BUILD="true"
 DATA_DIR="$(pwd)/data"
+NAME=""
 
 # ============================================================================
 # LOGGING FUNCTIONS
@@ -76,6 +77,7 @@ OPTIONS:
     -t, --threads <num>       Number of threads (default: 48)
     -k, --key <type>          Primary key type (default: string26)
                               Options: integer, string26, string90, string250, string506
+    --name <name>             Custom name for this benchmark run (default: database name)
     --sync                    Acknowledge disk writes (default: false)
     --optimised               Use optimised database configurations (default: false)
     --timeout <minutes>       Timeout in minutes (default: none)
@@ -98,6 +100,9 @@ EXAMPLES:
 
     # Run multiple specific databases
     $0 -d postgres,mysql,mongodb
+
+    # Run with custom benchmark name
+    $0 -d postgres --name my-custom-benchmark
 
     # Run with custom parameters
     $0 -d rocksdb -s 1000000 -c 64 -t 24 --sync --optimised
@@ -150,6 +155,10 @@ parse_args() {
                 ;;
             -k|--key)
                 KEY_TYPE="$2"
+                shift 2
+                ;;
+            --name)
+                NAME="$2"
                 shift 2
                 ;;
             --sync)
@@ -621,15 +630,18 @@ run_benchmark() {
     # Get binary path (from default target directory)
     local binary_path="target/release/crud-bench"
 
+    # Use custom name if provided, otherwise use database name
+    local run_name="${NAME:-$db}"
+
     # Build command based on platform
     local bench_cmd
     if [[ "$IS_LINUX" == "true" ]]; then
         # Linux: use taskset for CPU affinity
         local cpu_range="0-$((num_cpus - 1))"
-        bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $db -r"
+        bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
     else
         # macOS: no taskset, just nice
-        bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $db -r"
+        bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
     fi
 
     # Run the benchmark with timeout (if specified)
