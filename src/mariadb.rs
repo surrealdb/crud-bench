@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "mysql://root:mariadb@127.0.0.1:3306/bench";
 
+/// Calculate MariaDB specific memory allocation
 fn calculate_mariadb_memory() -> (u64, u64, u64) {
 	let memory = Config::new();
 	let buffer_pool_gb = memory.cache_gb;
