@@ -639,6 +639,11 @@ run_benchmark() {
     # Use custom name if provided, otherwise use database name
     local run_name="${NAME:-$db}"
 
+	# Initialise data directory
+    rm -rf "${DATA_DIR}"
+    mkdir -p "${DATA_DIR}"
+    chmod 777 "${DATA_DIR}"
+
     # Build command based on platform
     local bench_cmd
     if [[ "$IS_LINUX" == "true" ]]; then
