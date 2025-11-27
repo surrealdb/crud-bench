@@ -83,7 +83,7 @@ OPTIONS:
     --optimised               Use optimised database configurations (default: false)
     --timeout <minutes>       Timeout in minutes (default: none)
     --no-build                Skip the cargo build step
-    --nowait                  Skip waiting for system load to drop (default: false)
+    --no-wait                 Skip waiting for system load to drop (default: false)
     --data-dir <path>         Data directory path (default: ./data)
     -h, --help                Show this help message
 
@@ -179,7 +179,7 @@ parse_args() {
                 BUILD="false"
                 shift
                 ;;
-            --nowait)
+            --no-wait)
                 NOWAIT="true"
                 shift
                 ;;
@@ -757,11 +757,11 @@ main() {
         # Optimize system
         optimize_system
 
-        # Wait for system to be ready (unless --nowait is specified)
+        # Wait for system to be ready (unless --no-wait is specified)
         if [[ "$NOWAIT" != "true" ]]; then
             wait_for_system
         else
-            log_info "Skipping system load wait (--nowait specified)"
+            log_info "Skipping system load wait (--no-wait specified)"
         fi
 
         # Run benchmark
