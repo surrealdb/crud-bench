@@ -28,7 +28,10 @@ fn calculate_mariadb_memory() -> (u64, u64, u64) {
 	(buffer_pool_gb, log_file_gb, buffer_pool_instances)
 }
 
+/// Returns the Docker parameters required to run a MariaDB instance for benchmarking,
+/// with configuration optimized based on the provided benchmark options.
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// Calculate memory allocation
 	let (buffer_pool_gb, log_file_gb, buffer_pool_instances) = calculate_mariadb_memory();
 	DockerParams {
 		image: "mariadb",
