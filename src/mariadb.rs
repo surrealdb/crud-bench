@@ -94,10 +94,12 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 pub(crate) struct MariadbClientProvider(KeyType, Columns, String);
 
 impl BenchmarkEngine<MariadbClient> for MariadbClientProvider {
+	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
 		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
 		Ok(Self(kt, columns, url))
 	}
+	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<MariadbClient> {
 		let conn = Conn::new(Opts::from_url(&self.2)?).await?;
 		Ok(MariadbClient {
