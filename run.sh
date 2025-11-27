@@ -22,6 +22,7 @@ THREADS="48"
 KEY_TYPE="string26"
 SYNC="false"
 OPTIMISED="false"
+ELEVATED="false"
 TIMEOUT=""
 DATASTORE=""
 BUILD="true"
@@ -81,6 +82,8 @@ OPTIONS:
     --name <name>             Custom name for this benchmark run (default: database name)
     --sync                    Acknowledge disk writes (default: false)
     --optimised               Use optimised database configurations (default: false)
+    --elevated                Run with elevated priorities (sudo, nice, ionice, taskset, --privileged)
+                              Requires sudo access. Use on bare metal for maximum isolation.
     --timeout <minutes>       Timeout in minutes (default: none)
     --no-build                Skip the cargo build step
     --no-wait                 Skip waiting for system load to drop (default: false)
@@ -169,6 +172,10 @@ parse_args() {
                 ;;
             --optimised)
                 OPTIMISED="true"
+                shift
+                ;;
+            --elevated)
+                ELEVATED="true"
                 shift
                 ;;
             --timeout)
@@ -325,6 +332,13 @@ get_db_property() {
 #   - networked: nice -n -10 ionice -c 2 -n 0 (normal priority, runs in Docker)
 get_db_cli_args() {
     local db=$1
+
+    # Only use nice/ionice when elevated mode is enabled
+    if [[ "$ELEVATED" != "true" ]]; then
+        echo ""
+        return
+    fi
+
     local category=$(get_db_property "$db" "category")
 
     if [[ "$category" == "embedded" ]]; then
@@ -639,20 +653,26 @@ run_benchmark() {
     # Use custom name if provided, otherwise use database name
     local run_name="${NAME:-$db}"
 
-	# Initialise data directory
+    # Initialise data directory
     rm -rf "${DATA_DIR}"
     mkdir -p "${DATA_DIR}"
     chmod 777 "${DATA_DIR}"
 
-    # Build command based on platform
+    # Build command based on platform and elevated mode
     local bench_cmd
-    if [[ "$IS_LINUX" == "true" ]]; then
-        # Linux: use taskset for CPU affinity
-        local cpu_range="0-$((num_cpus - 1))"
-        bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+    if [[ "$ELEVATED" == "true" ]]; then
+        # Elevated mode: use sudo, nice/ionice, taskset (Linux), and --privileged
+        if [[ "$IS_LINUX" == "true" ]]; then
+            # Linux: use taskset for CPU affinity
+            local cpu_range="0-$((num_cpus - 1))"
+            bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+        else
+            # macOS: no taskset, just nice
+            bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+        fi
     else
-        # macOS: no taskset, just nice
-        bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+        # Normal mode: no sudo, no nice/ionice, no taskset, no --privileged
+        bench_cmd="$binary_path $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
     fi
 
     # Run the benchmark with timeout (if specified)
