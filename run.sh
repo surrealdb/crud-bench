@@ -27,6 +27,7 @@ DATASTORE=""
 BUILD="true"
 DATA_DIR="$(pwd)/data"
 NAME=""
+NOWAIT="false"
 
 # ============================================================================
 # LOGGING FUNCTIONS
@@ -82,6 +83,7 @@ OPTIONS:
     --optimised               Use optimised database configurations (default: false)
     --timeout <minutes>       Timeout in minutes (default: none)
     --no-build                Skip the cargo build step
+    --nowait                  Skip waiting for system load to drop (default: false)
     --data-dir <path>         Data directory path (default: ./data)
     -h, --help                Show this help message
 
@@ -175,6 +177,10 @@ parse_args() {
                 ;;
             --no-build)
                 BUILD="false"
+                shift
+                ;;
+            --nowait)
+                NOWAIT="true"
                 shift
                 ;;
             --data-dir)
@@ -751,8 +757,12 @@ main() {
         # Optimize system
         optimize_system
 
-        # Wait for system to be ready
-        wait_for_system
+        # Wait for system to be ready (unless --nowait is specified)
+        if [[ "$NOWAIT" != "true" ]]; then
+            wait_for_system
+        else
+            log_info "Skipping system load wait (--nowait specified)"
+        fi
 
         # Run benchmark
         if ! run_benchmark "$db"; then
