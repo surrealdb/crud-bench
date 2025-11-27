@@ -91,6 +91,8 @@ pub(crate) struct SurrealKVClient {
 
 impl BenchmarkClient for SurrealKVClient {
 	async fn shutdown(&self) -> Result<()> {
+		// Close the database
+		self.db.close().await?;
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Ok
