@@ -21,10 +21,15 @@ pub const DEFAULT: &str = "mysql://root:mariadb@127.0.0.1:3306/bench";
 
 /// Calculate MariaDB specific memory allocation
 fn calculate_mariadb_memory() -> (u64, u64, u64) {
+	// Load the system memory
 	let memory = Config::new();
+	// Use ~100% of recommended cache allocation
 	let buffer_pool_gb = memory.cache_gb;
+	// Use ~10% of buffer pool, min 1GB, max 8GB
 	let log_file_gb = (memory.cache_gb / 10).clamp(1, 8);
+	// Use 1 buffer pool instance per 2GB, max 64
 	let buffer_pool_instances = (buffer_pool_gb / 2).clamp(1, 64);
+	// Return configuration
 	(buffer_pool_gb, log_file_gb, buffer_pool_instances)
 }
 
@@ -96,7 +101,9 @@ pub(crate) struct MariadbClientProvider(KeyType, Columns, String);
 impl BenchmarkEngine<MariadbClient> for MariadbClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
+		// Get the custom endpoint if specified
 		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
+		// Create the client provider
 		Ok(Self(kt, columns, url))
 	}
 	/// Creates a new client for this benchmarking engine
@@ -186,13 +193,16 @@ impl BenchmarkClient for MariadbClient {
 	}
 
 	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Get the unique flag
 		let unique = if spec.unique.unwrap_or(false) {
 			"UNIQUE"
 		} else {
 			""
 		}
 		.to_string();
+		// Get the fields
 		let fields = spec.fields.join(", ");
+		// Check if an index type is specified
 		let stmt = match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
 				format!("CREATE FULLTEXT INDEX {name} ON record ({fields})")
@@ -204,7 +214,9 @@ impl BenchmarkClient for MariadbClient {
 				format!("CREATE {unique} INDEX {name} ON record ({fields})")
 			}
 		};
+		// Create the index
 		self.conn.lock().await.query_drop(&stmt).await?;
+		// All ok
 		Ok(())
 	}
 
@@ -368,6 +380,7 @@ impl MariadbClient {
 	}
 
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		// MariaDB requires a full-text index to run a MATCH query
 		if ctx == ScanContext::WithoutIndex
 			&& let Some(index) = &scan.index
 			&& let Some(kind) = &index.index_type
@@ -375,14 +388,20 @@ impl MariadbClient {
 		{
 			bail!(NOT_SUPPORTED_ERROR);
 		}
+		// Extract parameters
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
 		let c = MySqlDialect::filter_clause(scan)?;
 		let p = scan.projection()?;
+		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
 				let stm = format!("SELECT id FROM record {c} {l} {s}");
 				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
 				for v in res {
 					black_box(self.consume(v).unwrap());
@@ -393,6 +412,10 @@ impl MariadbClient {
 			Projection::Full => {
 				let stm = format!("SELECT * FROM record {c} {l} {s}");
 				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
+				// We use a for loop to iterate over the results, while
+				// calling black_box internally. This is necessary as
+				// an iterator with `filter_map` or `map` is optimised
+				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
 				for v in res {
 					black_box(self.consume(v).unwrap());
@@ -425,10 +448,8 @@ impl MariadbClient {
 			.join(", ");
 		let placeholders = (0..key_vals.len())
 			.map(|_| {
-				let value_placeholders = (0..self.columns.0.len())
-					.map(|_| "?")
-					.collect::<Vec<_>>()
-					.join(", ");
+				let value_placeholders =
+					(0..self.columns.0.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
 				format!("(?, {value_placeholders})")
 			})
 			.collect::<Vec<_>>()
@@ -453,9 +474,9 @@ impl MariadbClient {
 								}
 							}
 							Value::String(s) => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
-							Value::Array(_) | Value::Object(_) => {
-								mysql_async::Value::Bytes(serde_json::to_string(v).unwrap().as_bytes().to_vec())
-							}
+							Value::Array(_) | Value::Object(_) => mysql_async::Value::Bytes(
+								serde_json::to_string(v).unwrap().as_bytes().to_vec(),
+							),
 						});
 					}
 				}
@@ -498,10 +519,8 @@ impl MariadbClient {
 		let case_statements = columns
 			.iter()
 			.map(|col| {
-				let when_clauses = (0..key_vals.len())
-					.map(|_| "WHEN id = ? THEN ?")
-					.collect::<Vec<_>>()
-					.join(" ");
+				let when_clauses =
+					(0..key_vals.len()).map(|_| "WHEN id = ? THEN ?").collect::<Vec<_>>().join(" ");
 				format!("{col} = CASE {when_clauses} ELSE {col} END")
 			})
 			.collect::<Vec<_>>()
@@ -527,9 +546,9 @@ impl MariadbClient {
 								}
 							}
 							Value::String(s) => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
-							Value::Array(_) | Value::Object(_) => {
-								mysql_async::Value::Bytes(serde_json::to_string(v).unwrap().as_bytes().to_vec())
-							}
+							Value::Array(_) | Value::Object(_) => mysql_async::Value::Bytes(
+								serde_json::to_string(v).unwrap().as_bytes().to_vec(),
+							),
 						});
 					}
 				}
@@ -556,4 +575,3 @@ impl MariadbClient {
 		Ok(())
 	}
 }
-

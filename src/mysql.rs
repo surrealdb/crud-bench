@@ -232,6 +232,50 @@ impl BenchmarkClient for MysqlClient {
 	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		self.scan(scan, ctx).await
 	}
+
+	async fn batch_create_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		self.batch_create(key_vals.map(|(k, v)| (k as u64, v)).collect()).await
+	}
+
+	async fn batch_create_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		self.batch_create(key_vals.collect()).await
+	}
+
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		self.batch_read(keys.map(|k| k as u64).collect()).await
+	}
+
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		self.batch_read(keys.collect()).await
+	}
+
+	async fn batch_update_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		self.batch_update(key_vals.map(|(k, v)| (k as u64, v)).collect()).await
+	}
+
+	async fn batch_update_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		self.batch_update(key_vals.collect()).await
+	}
+
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		self.batch_delete(keys.map(|k| k as u64).collect()).await
+	}
+
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		self.batch_delete(keys.collect()).await
+	}
 }
 
 impl MysqlClient {
@@ -386,5 +430,148 @@ impl MysqlClient {
 				Ok(count as usize)
 			}
 		}
+	}
+
+	async fn batch_create<T>(&self, key_vals: Vec<(T, Value)>) -> Result<()>
+	where
+		T: ToValue + Sync,
+	{
+		if key_vals.is_empty() {
+			return Ok(());
+		}
+		let columns = self
+			.columns
+			.0
+			.iter()
+			.map(|(name, _)| MySqlDialect::escape_field(name.clone()))
+			.collect::<Vec<String>>()
+			.join(", ");
+		let placeholders = (0..key_vals.len())
+			.map(|_| {
+				let value_placeholders =
+					(0..self.columns.0.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
+				format!("(?, {value_placeholders})")
+			})
+			.collect::<Vec<_>>()
+			.join(", ");
+		let stm = format!("INSERT INTO record (id, {columns}) VALUES {placeholders}");
+		let mut params: Vec<mysql_async::Value> = Vec::new();
+		for (key, val) in key_vals {
+			params.push(key.to_value());
+			if let Value::Object(map) = val {
+				for (name, _) in &self.columns.0 {
+					if let Some(v) = map.get(name) {
+						params.push(match v {
+							Value::Null => mysql_async::Value::NULL,
+							Value::Bool(b) => mysql_async::Value::Int(*b as i64),
+							Value::Number(n) => {
+								if let Some(i) = n.as_i64() {
+									mysql_async::Value::Int(i)
+								} else if let Some(f) = n.as_f64() {
+									mysql_async::Value::Double(f)
+								} else {
+									mysql_async::Value::NULL
+								}
+							}
+							Value::String(s) => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
+							Value::Array(_) | Value::Object(_) => mysql_async::Value::Bytes(
+								serde_json::to_string(v).unwrap().as_bytes().to_vec(),
+							),
+						});
+					}
+				}
+			}
+		}
+		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		Ok(())
+	}
+
+	async fn batch_read<T>(&self, keys: Vec<T>) -> Result<()>
+	where
+		T: ToValue + Sync,
+	{
+		if keys.is_empty() {
+			return Ok(());
+		}
+		let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+		let stm = format!("SELECT * FROM record WHERE id IN ({placeholders})");
+		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
+		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		for row in res {
+			black_box(self.consume(row).unwrap());
+		}
+		Ok(())
+	}
+
+	async fn batch_update<T>(&self, key_vals: Vec<(T, Value)>) -> Result<()>
+	where
+		T: ToValue + Sync,
+	{
+		if key_vals.is_empty() {
+			return Ok(());
+		}
+		let columns = self
+			.columns
+			.0
+			.iter()
+			.map(|(name, _)| MySqlDialect::escape_field(name.clone()))
+			.collect::<Vec<String>>();
+		let case_statements = columns
+			.iter()
+			.map(|col| {
+				let when_clauses =
+					(0..key_vals.len()).map(|_| "WHEN id = ? THEN ?").collect::<Vec<_>>().join(" ");
+				format!("{col} = CASE {when_clauses} ELSE {col} END")
+			})
+			.collect::<Vec<_>>()
+			.join(", ");
+		let id_placeholders = key_vals.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+		let stm = format!("UPDATE record SET {case_statements} WHERE id IN ({id_placeholders})");
+		let mut params: Vec<mysql_async::Value> = Vec::new();
+		for (name, _) in &self.columns.0 {
+			for (key, val) in &key_vals {
+				params.push(key.to_value());
+				if let Value::Object(map) = val {
+					if let Some(v) = map.get(name) {
+						params.push(match v {
+							Value::Null => mysql_async::Value::NULL,
+							Value::Bool(b) => mysql_async::Value::Int(*b as i64),
+							Value::Number(n) => {
+								if let Some(i) = n.as_i64() {
+									mysql_async::Value::Int(i)
+								} else if let Some(f) = n.as_f64() {
+									mysql_async::Value::Double(f)
+								} else {
+									mysql_async::Value::NULL
+								}
+							}
+							Value::String(s) => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
+							Value::Array(_) | Value::Object(_) => mysql_async::Value::Bytes(
+								serde_json::to_string(v).unwrap().as_bytes().to_vec(),
+							),
+						});
+					}
+				}
+			}
+		}
+		for (key, _) in &key_vals {
+			params.push(key.to_value());
+		}
+		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		Ok(())
+	}
+
+	async fn batch_delete<T>(&self, keys: Vec<T>) -> Result<()>
+	where
+		T: ToValue + Sync,
+	{
+		if keys.is_empty() {
+			return Ok(());
+		}
+		let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+		let stm = format!("DELETE FROM record WHERE id IN ({placeholders})");
+		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
+		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		Ok(())
 	}
 }

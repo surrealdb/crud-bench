@@ -246,6 +246,11 @@ jobs:
             database: map
             enabled: true
             description: Map
+          # MariaDB
+          - name: mariadb
+            database: mariadb
+            enabled: true
+            description: MariaDB
           # MDBX
           - name: mdbx
             database: mdbx
@@ -286,7 +291,7 @@ jobs:
             database: rocksdb
             enabled: true
             description: RocksDB
-          # Scylladb
+          # ScyllaDB
           - name: scylladb
             database: scylladb
             enabled: false

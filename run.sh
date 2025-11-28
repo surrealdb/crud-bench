@@ -251,6 +251,7 @@ fjall|fjall|embedded|Fjall|
 keydb|keydb|networked|KeyDB|
 lmdb|lmdb|embedded|LMDB|
 map|map|embedded|Map|
+mariadb|mariadb|networked|MariaDB|
 mdbx|mdbx|embedded|MDBX|
 mongodb|mongodb|networked|MongoDB|
 mysql|mysql|networked|MySQL|
