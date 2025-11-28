@@ -242,6 +242,18 @@ pub(crate) struct Args {
 		]"#
 	)]
 	pub(crate) batches: String,
+
+	/// Skip all scan benchmarks
+	#[arg(long, default_value = "false")]
+	pub(crate) skip_scans: bool,
+
+	/// Skip all batch benchmarks
+	#[arg(long, default_value = "false")]
+	pub(crate) skip_batches: bool,
+
+	/// Skip index operations, but still table scan queries
+	#[arg(long, default_value = "false")]
+	pub(crate) skip_indexes: bool,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -395,6 +407,24 @@ fn run(args: Args) -> Result<()> {
 	let kp = KeyProvider::new(args.key, args.random);
 	// Build the value provider
 	let vp = ValueProvider::new(&args.value)?;
+	// Parse the scans configuration
+	let mut scans: Scans = serde_json::from_str(&args.scans)?;
+	// Check if we should skip scans entirely
+	if args.skip_scans {
+		scans.clear();
+	}
+	// Check if we should skip scan indexes
+	else if args.skip_indexes {
+		for scan in &mut scans {
+			scan.index = None;
+		}
+	}
+	// Parse the batches configuration
+	let mut batches: Batches = serde_json::from_str(&args.batches)?;
+	// Check if we should skip batches entirely
+	if args.skip_batches {
+		batches.clear();
+	}
 	// Run the benchmark
 	let res = runtime.block_on(async {
 		args.database
@@ -403,8 +433,8 @@ fn run(args: Args) -> Result<()> {
 				args.key,
 				kp,
 				vp,
-				&args.scans,
-				&args.batches,
+				scans,
+				batches,
 				Some(name.clone()),
 				Some(system),
 				Some(metadata),
@@ -545,6 +575,9 @@ mod test {
 			pid: None,
 			store_results: false,
 			storage_endpoint: "ws://localhost:8000".to_string(),
+			skip_scans: false,
+			skip_batches: false,
+			skip_indexes: false,
 		})
 	}
 

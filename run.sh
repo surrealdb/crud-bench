@@ -31,6 +31,9 @@ NAME=""
 NOWAIT="false"
 PROFILE="false"
 FLAMEGRAPH="false"
+SKIP_SCANS="false"
+SKIP_BATCHES="false"
+SKIP_INDEXES="false"
 
 # ============================================================================
 # LOGGING FUNCTIONS
@@ -92,6 +95,9 @@ OPTIONS:
     --profile                 Enable internalprofiling mode (default: false)
     --flamegraph              Use cargo flamegraph for profiling (default: false)
     --data-dir <path>         Data directory path (default: ./data)
+    --skip-scans              Skip all scan benchmarks
+    --skip-batches            Skip all batch benchmarks
+    --skip-indexes            Skip index operations (run queries as table scans only)
     -h, --help                Show this help message
 
 EXAMPLES:
@@ -205,6 +211,18 @@ parse_args() {
             --data-dir)
                 DATA_DIR="$2"
                 shift 2
+                ;;
+            --skip-scans)
+                SKIP_SCANS="true"
+                shift
+                ;;
+            --skip-batches)
+                SKIP_BATCHES="true"
+                shift
+                ;;
+            --skip-indexes)
+                SKIP_INDEXES="true"
+                shift
                 ;;
             -h|--help)
                 show_usage
@@ -695,24 +713,36 @@ run_benchmark() {
     mkdir -p "${DATA_DIR}"
     chmod 777 "${DATA_DIR}"
 
+    # Build skip flags
+    local skip_flags=""
+    if [[ "$SKIP_SCANS" == "true" ]]; then
+        skip_flags="$skip_flags --skip-scans"
+    fi
+    if [[ "$SKIP_BATCHES" == "true" ]]; then
+        skip_flags="$skip_flags --skip-batches"
+    fi
+    if [[ "$SKIP_INDEXES" == "true" ]]; then
+        skip_flags="$skip_flags --skip-indexes"
+    fi
+
     # Build command based on platform and elevated mode
     local bench_cmd
     if [[ "$FLAMEGRAPH" == "true" ]]; then
         # Flamegraph mode: cargo flamegraph doesn't work well with sudo/nice/ionice wrappers
-        bench_cmd="$binary_path $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+        bench_cmd="$binary_path $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
     elif [[ "$ELEVATED" == "true" ]]; then
         # Elevated mode: use sudo, nice/ionice, taskset (Linux), and --privileged
         if [[ "$IS_LINUX" == "true" ]]; then
             # Linux: use taskset for CPU affinity
             local cpu_range="0-$((num_cpus - 1))"
-            bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+            bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
         else
             # macOS: no taskset, just nice
-            bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+            bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
         fi
     else
         # Normal mode: no sudo, no nice/ionice, no taskset, no --privileged
-        bench_cmd="$binary_path $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+        bench_cmd="$binary_path $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
     fi
 
     # Run the benchmark with timeout (if specified)

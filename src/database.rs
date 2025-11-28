@@ -1,4 +1,6 @@
+use crate::BatchOperation;
 use crate::KeyType;
+use crate::Scan;
 use crate::benchmark::Benchmark;
 use crate::dialect::{
 	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MongoDBDialect, MySqlDialect, Neo4jDialect,
@@ -120,14 +122,12 @@ impl Database {
 		kt: KeyType,
 		kp: KeyProvider,
 		vp: ValueProvider,
-		scans: &str,
-		batches: &str,
+		scans: Vec<Scan>,
+		batches: Vec<BatchOperation>,
 		database: Option<String>,
 		system: Option<crate::system::SystemInfo>,
 		metadata: Option<crate::result::BenchmarkMetadata>,
 	) -> Result<BenchmarkResult> {
-		let scans = serde_json::from_str(scans)?;
-		let batches = serde_json::from_str(batches)?;
 		match self {
 			Database::Dry => {
 				benchmark
