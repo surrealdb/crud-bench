@@ -423,7 +423,9 @@ fn run(args: Args) -> Result<()> {
 		scans.clear();
 	} else if args.skip_indexes {
 		for scan in &mut scans {
-			scan.index.as_mut().map(|index| index.skip = true);
+			if let Some(index) = scan.index.as_mut() {
+				index.skip = true;
+			}
 		}
 	}
 	// Run the benchmark
