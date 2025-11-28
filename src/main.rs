@@ -372,7 +372,7 @@ fn run(args: Args) -> Result<()> {
 	};
 	// Setup the asynchronous runtime
 	let runtime = runtime::Builder::new_multi_thread()
-		.thread_stack_size(5 * 1024 * 1024) // Set stack size to 5MiB
+		.thread_stack_size(2 * 1024 * 1024) // Set stack size to 5MiB
 		.max_blocking_threads(args.blocking as usize) // Set the number of blocking threads
 		.worker_threads(args.workers as usize) // Set the number of worker threads
 		.thread_name("crud-bench-runtime") // Set the name of the runtime threads
