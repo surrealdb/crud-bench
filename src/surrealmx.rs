@@ -179,7 +179,7 @@ impl SurrealMXClient {
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.transaction(false);
+		let txn = self.db.transaction(false);
 		// Process the data
 		let res = txn.get(key.to_vec())?;
 		// Check the value exists
@@ -228,7 +228,7 @@ impl SurrealMXClient {
 
 	async fn batch_read_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
 		// Create a new transaction
-		let mut txn = self.db.transaction(false);
+		let txn = self.db.transaction(false);
 		// Process the data
 		for key in keys {
 			// Get the current value
@@ -278,7 +278,7 @@ impl SurrealMXClient {
 		// Extract parameters
 		let p = scan.projection()?;
 		// Create a new transaction
-		let mut txn = self.db.transaction(false);
+		let txn = self.db.transaction(false);
 		let beg = [0u8].to_vec();
 		let end = [255u8].to_vec();
 		// Perform the relevant projection scan type
