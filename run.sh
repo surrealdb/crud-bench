@@ -29,6 +29,7 @@ BUILD="true"
 DATA_DIR="$(pwd)/data"
 NAME=""
 NOWAIT="false"
+PROFILE="false"
 
 # ============================================================================
 # LOGGING FUNCTIONS
@@ -87,6 +88,7 @@ OPTIONS:
     --timeout <minutes>       Timeout in minutes (default: none)
     --no-build                Skip the cargo build step
     --no-wait                 Skip waiting for system load to drop (default: false)
+    --profile                 Enable profiling mode (default: false)
     --data-dir <path>         Data directory path (default: ./data)
     -h, --help                Show this help message
 
@@ -188,6 +190,10 @@ parse_args() {
                 ;;
             --no-wait)
                 NOWAIT="true"
+                shift
+                ;;
+            --profile)
+                PROFILE="true"
                 shift
                 ;;
             --data-dir)
@@ -646,6 +652,11 @@ run_benchmark() {
     export CRUD_BENCH_VALUE="${CRUD_BENCH_VALUE:-{ \"text\": \"text:50\", \"number\": \"int:1..5000\", \"integer\": \"int\", \"words\": \"words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance\", \"nested\": { \"text\": \"text:1000\", \"array\": [ \"string:50\", \"string:50\", \"string:50\", \"string:50\", \"string:50\" ] } }}"
     export DOCKER_PRE_ARGS="${DOCKER_PRE_ARGS:-}"
     export DOCKER_POST_ARGS="${DOCKER_POST_ARGS:-}"
+
+    # Set profiling environment variable if enabled
+    if [[ "$PROFILE" == "true" ]]; then
+        export PROFILE=1
+    fi
 
     # Get binary path (from default target directory)
     local binary_path="target/release/crud-bench"
