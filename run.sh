@@ -22,11 +22,19 @@ THREADS="48"
 KEY_TYPE="string26"
 SYNC="false"
 OPTIMISED="false"
+ELEVATED="false"
 TIMEOUT=""
 DATASTORE=""
 BUILD="true"
 DATA_DIR="$(pwd)/data"
 NAME=""
+NOWAIT="false"
+PROFILE="false"
+FLAMEGRAPH="false"
+SKIP_SCANS="false"
+SKIP_BATCHES="false"
+SKIP_INDEXES="false"
+DEBUG="false"
 
 # ============================================================================
 # LOGGING FUNCTIONS
@@ -80,9 +88,18 @@ OPTIONS:
     --name <name>             Custom name for this benchmark run (default: database name)
     --sync                    Acknowledge disk writes (default: false)
     --optimised               Use optimised database configurations (default: false)
+    --elevated                Run with elevated priorities (sudo, nice, ionice, taskset, --privileged)
+                              Requires sudo access. Use on bare metal for maximum isolation.
     --timeout <minutes>       Timeout in minutes (default: none)
     --no-build                Skip the cargo build step
+    --no-wait                 Skip waiting for system load to drop (default: false)
+    --debug                   Use debug build instead of release build (default: false)
+    --profile                 Enable internalprofiling mode (default: false)
+    --flamegraph              Use cargo flamegraph for profiling (default: false)
     --data-dir <path>         Data directory path (default: ./data)
+    --skip-scans              Skip all scan benchmarks
+    --skip-batches            Skip all batch benchmarks
+    --skip-indexes            Skip index operations (run queries as table scans only)
     -h, --help                Show this help message
 
 EXAMPLES:
@@ -169,6 +186,10 @@ parse_args() {
                 OPTIMISED="true"
                 shift
                 ;;
+            --elevated)
+                ELEVATED="true"
+                shift
+                ;;
             --timeout)
                 TIMEOUT="$2"
                 shift 2
@@ -177,9 +198,37 @@ parse_args() {
                 BUILD="false"
                 shift
                 ;;
+            --no-wait)
+                NOWAIT="true"
+                shift
+                ;;
+            --debug)
+                DEBUG="true"
+                shift
+                ;;
+            --profile)
+                PROFILE="true"
+                shift
+                ;;
+            --flamegraph)
+                FLAMEGRAPH="true"
+                shift
+                ;;
             --data-dir)
                 DATA_DIR="$2"
                 shift 2
+                ;;
+            --skip-scans)
+                SKIP_SCANS="true"
+                shift
+                ;;
+            --skip-batches)
+                SKIP_BATCHES="true"
+                shift
+                ;;
+            --skip-indexes)
+                SKIP_INDEXES="true"
+                shift
                 ;;
             -h|--help)
                 show_usage
@@ -196,6 +245,11 @@ parse_args() {
     if [[ -z "$DATASTORE" ]]; then
         log_error "Datastore is required"
         show_usage
+        exit 1
+    fi
+
+    if [[ "$PROFILE" == "true" && "$FLAMEGRAPH" == "true" ]]; then
+        log_error "--profile and --flamegraph are mutually exclusive"
         exit 1
     fi
 }
@@ -319,6 +373,13 @@ get_db_property() {
 #   - networked: nice -n -10 ionice -c 2 -n 0 (normal priority, runs in Docker)
 get_db_cli_args() {
     local db=$1
+
+    # Only use nice/ionice when elevated mode is enabled
+    if [[ "$ELEVATED" != "true" ]]; then
+        echo ""
+        return
+    fi
+
     local category=$(get_db_property "$db" "category")
 
     if [[ "$category" == "embedded" ]]; then
@@ -380,13 +441,32 @@ build_benchmark() {
         return 0
     fi
 
-    log_info "Building crud-bench in release mode..."
+    # Check if flamegraph is requested and install if needed
+    if [[ "$FLAMEGRAPH" == "true" ]]; then
+        if ! command -v flamegraph &> /dev/null; then
+            log_info "cargo flamegraph not found, installing..."
+            cargo install flamegraph
+        fi
+        log_info "Skipping regular build (cargo flamegraph will build with profiling profile)"
+        return 0
+    fi
 
-    if cargo build --release; then
-        log_success "Build completed successfully"
+    if [[ "$DEBUG" == "true" ]]; then
+        log_info "Building crud-bench in debug mode..."
+        if cargo build; then
+            log_success "Build completed successfully"
+        else
+            log_error "Build failed"
+            exit 1
+        fi
     else
-        log_error "Build failed"
-        exit 1
+        log_info "Building crud-bench in release mode..."
+        if cargo build --release; then
+            log_success "Build completed successfully"
+        else
+            log_error "Build failed"
+            exit 1
+        fi
     fi
 
 }
@@ -627,21 +707,59 @@ run_benchmark() {
     export DOCKER_PRE_ARGS="${DOCKER_PRE_ARGS:-}"
     export DOCKER_POST_ARGS="${DOCKER_POST_ARGS:-}"
 
+    # Set profiling environment variable if enabled
+    if [[ "$PROFILE" == "true" ]]; then
+        export PROFILE=1
+    fi
+
     # Get binary path (from default target directory)
-    local binary_path="target/release/crud-bench"
+    local binary_path
+    if [[ "$FLAMEGRAPH" == "true" ]]; then
+        binary_path="cargo flamegraph --profile profiling --"
+    elif [[ "$DEBUG" == "true" ]]; then
+        binary_path="target/debug/crud-bench"
+    else
+        binary_path="target/release/crud-bench"
+    fi
 
     # Use custom name if provided, otherwise use database name
     local run_name="${NAME:-$db}"
 
-    # Build command based on platform
+    # Initialise data directory
+    rm -rf "${DATA_DIR}"
+    mkdir -p "${DATA_DIR}"
+    chmod 777 "${DATA_DIR}"
+
+    # Build skip flags
+    local skip_flags=""
+    if [[ "$SKIP_SCANS" == "true" ]]; then
+        skip_flags="$skip_flags --skip-scans"
+    fi
+    if [[ "$SKIP_BATCHES" == "true" ]]; then
+        skip_flags="$skip_flags --skip-batches"
+    fi
+    if [[ "$SKIP_INDEXES" == "true" ]]; then
+        skip_flags="$skip_flags --skip-indexes"
+    fi
+
+    # Build command based on platform and elevated mode
     local bench_cmd
-    if [[ "$IS_LINUX" == "true" ]]; then
-        # Linux: use taskset for CPU affinity
-        local cpu_range="0-$((num_cpus - 1))"
-        bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+    if [[ "$FLAMEGRAPH" == "true" ]]; then
+        # Flamegraph mode: cargo flamegraph doesn't work well with sudo/nice/ionice wrappers
+        bench_cmd="$binary_path $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+    elif [[ "$ELEVATED" == "true" ]]; then
+        # Elevated mode: use sudo, nice/ionice, taskset (Linux), and --privileged
+        if [[ "$IS_LINUX" == "true" ]]; then
+            # Linux: use taskset for CPU affinity
+            local cpu_range="0-$((num_cpus - 1))"
+            bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+        else
+            # macOS: no taskset, just nice
+            bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+        fi
     else
-        # macOS: no taskset, just nice
-        bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+        # Normal mode: no sudo, no nice/ionice, no taskset, no --privileged
+        bench_cmd="$binary_path $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
     fi
 
     # Run the benchmark with timeout (if specified)
@@ -751,8 +869,12 @@ main() {
         # Optimize system
         optimize_system
 
-        # Wait for system to be ready
-        wait_for_system
+        # Wait for system to be ready (unless --no-wait is specified)
+        if [[ "$NOWAIT" != "true" ]]; then
+            wait_for_system
+        else
+            log_info "Skipping system load wait (--no-wait specified)"
+        fi
 
         # Run benchmark
         if ! run_benchmark "$db"; then
