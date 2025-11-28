@@ -30,6 +30,7 @@ DATA_DIR="$(pwd)/data"
 NAME=""
 NOWAIT="false"
 PROFILE="false"
+FLAMEGRAPH="false"
 
 # ============================================================================
 # LOGGING FUNCTIONS
@@ -88,7 +89,8 @@ OPTIONS:
     --timeout <minutes>       Timeout in minutes (default: none)
     --no-build                Skip the cargo build step
     --no-wait                 Skip waiting for system load to drop (default: false)
-    --profile                 Enable profiling mode (default: false)
+    --profile                 Enable internalprofiling mode (default: false)
+    --flamegraph              Use cargo flamegraph for profiling (default: false)
     --data-dir <path>         Data directory path (default: ./data)
     -h, --help                Show this help message
 
@@ -196,6 +198,10 @@ parse_args() {
                 PROFILE="true"
                 shift
                 ;;
+            --flamegraph)
+                FLAMEGRAPH="true"
+                shift
+                ;;
             --data-dir)
                 DATA_DIR="$2"
                 shift 2
@@ -215,6 +221,11 @@ parse_args() {
     if [[ -z "$DATASTORE" ]]; then
         log_error "Datastore is required"
         show_usage
+        exit 1
+    fi
+
+    if [[ "$PROFILE" == "true" && "$FLAMEGRAPH" == "true" ]]; then
+        log_error "--profile and --flamegraph are mutually exclusive"
         exit 1
     fi
 }
@@ -403,6 +414,16 @@ build_benchmark() {
 
     if [[ "$BUILD" == "false" ]]; then
         log_info "Skipping build step"
+        return 0
+    fi
+
+    # Check if flamegraph is requested and install if needed
+    if [[ "$FLAMEGRAPH" == "true" ]]; then
+        if ! command -v flamegraph &> /dev/null; then
+            log_info "cargo flamegraph not found, installing..."
+            cargo install flamegraph
+        fi
+        log_info "Skipping regular build (cargo flamegraph will build with profiling profile)"
         return 0
     fi
 
@@ -659,7 +680,12 @@ run_benchmark() {
     fi
 
     # Get binary path (from default target directory)
-    local binary_path="target/release/crud-bench"
+    local binary_path
+    if [[ "$FLAMEGRAPH" == "true" ]]; then
+        binary_path="cargo flamegraph --profile profiling --"
+    else
+        binary_path="target/release/crud-bench"
+    fi
 
     # Use custom name if provided, otherwise use database name
     local run_name="${NAME:-$db}"
@@ -671,7 +697,10 @@ run_benchmark() {
 
     # Build command based on platform and elevated mode
     local bench_cmd
-    if [[ "$ELEVATED" == "true" ]]; then
+    if [[ "$FLAMEGRAPH" == "true" ]]; then
+        # Flamegraph mode: cargo flamegraph doesn't work well with sudo/nice/ionice wrappers
+        bench_cmd="$binary_path $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r"
+    elif [[ "$ELEVATED" == "true" ]]; then
         # Elevated mode: use sudo, nice/ionice, taskset (Linux), and --privileged
         if [[ "$IS_LINUX" == "true" ]]; then
             # Linux: use taskset for CPU affinity
