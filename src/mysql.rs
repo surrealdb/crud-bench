@@ -442,6 +442,7 @@ impl MysqlClient {
 	}
 
 	/// Helper function to execute a statement and verify the affected rows count
+	/// Retries on deadlock errors (MySQL error 1213)
 	async fn exec_and_verify(
 		&self,
 		stm: String,
@@ -449,19 +450,45 @@ impl MysqlClient {
 		expected_count: usize,
 		operation: &str,
 	) -> Result<()> {
-		let mut conn = self.conn.lock().await;
-		let result = conn.exec_iter(stm, params).await?;
-		let affected = result.affected_rows();
-		drop(result);
-		if affected != expected_count as u64 {
-			return Err(anyhow::anyhow!(
-				"{}: expected {} rows affected, got {}",
-				operation,
-				expected_count,
-				affected
-			));
+		const MAX_RETRIES: u32 = 5;
+		const INITIAL_BACKOFF_MS: u64 = 10;
+
+		let mut attempt = 0;
+		loop {
+			let mut conn = self.conn.lock().await;
+			match conn.exec_iter(&stm, params.clone()).await {
+				Ok(result) => {
+					let affected = result.affected_rows();
+					drop(result);
+					drop(conn);
+
+					if affected != expected_count as u64 {
+						return Err(anyhow::anyhow!(
+							"{}: expected {} rows affected, got {}",
+							operation,
+							expected_count,
+							affected
+						));
+					}
+					return Ok(());
+				}
+				Err(e) => {
+					drop(conn);
+
+					let error_msg = e.to_string();
+					let is_deadlock = error_msg.contains("1213") || error_msg.contains("Deadlock");
+
+					if is_deadlock && attempt < MAX_RETRIES {
+						attempt += 1;
+						let backoff_ms = INITIAL_BACKOFF_MS * (1 << (attempt - 1));
+						tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+						continue;
+					}
+
+					return Err(e.into());
+				}
+			}
 		}
-		Ok(())
 	}
 
 	async fn batch_create<T>(&self, key_vals: Vec<(T, Value)>) -> Result<()>
