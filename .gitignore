@@ -25,7 +25,6 @@ Temporary Items
 # Files
 # -----------------------------------
 
-Cargo.lock
 **/*.rs.bk
 *.db
 *.skv
