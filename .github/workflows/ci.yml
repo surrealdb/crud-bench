@@ -315,8 +315,9 @@ jobs:
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
-            enabled: true
+            enabled: false
             description: SurrealDB with SurrealKV storage
+            skipped: SurrealDB with SurrealKV storage benchmark awaiting fixes
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
@@ -332,9 +333,10 @@ jobs:
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
-            enabled: true
+            enabled: false
             endpoint: -e surrealkv:~/crud-bench
             description: SurrealDB embedded with SurrealKV storage
+            skipped: SurrealDB with SurrealKV storage benchmark awaiting fixes
           # SurrealKV
           - name: surrealkv
             database: surrealkv

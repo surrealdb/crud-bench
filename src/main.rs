@@ -279,6 +279,8 @@ pub(crate) type Batches = Vec<BatchOperation>;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct Index {
+	#[serde(default)]
+	pub(crate) skip: bool,
 	pub(crate) fields: Vec<String>,
 	pub(crate) unique: Option<bool>,
 	pub(crate) index_type: Option<String>,
@@ -370,7 +372,7 @@ fn run(args: Args) -> Result<()> {
 	};
 	// Setup the asynchronous runtime
 	let runtime = runtime::Builder::new_multi_thread()
-		.thread_stack_size(5 * 1024 * 1024) // Set stack size to 5MiB
+		.thread_stack_size(2 * 1024 * 1024) // Set stack size to 5MiB
 		.max_blocking_threads(args.blocking as usize) // Set the number of blocking threads
 		.worker_threads(args.workers as usize) // Set the number of worker threads
 		.thread_name("crud-bench-runtime") // Set the name of the runtime threads
@@ -408,23 +410,23 @@ fn run(args: Args) -> Result<()> {
 	let kp = KeyProvider::new(args.key, args.random);
 	// Build the value provider
 	let vp = ValueProvider::new(&args.value)?;
-	// Parse the scans configuration
-	let mut scans: Scans = serde_json::from_str(&args.scans)?;
-	// Check if we should skip scans entirely
-	if args.skip_scans {
-		scans.clear();
-	}
-	// Check if we should skip scan indexes
-	else if args.skip_indexes {
-		for scan in &mut scans {
-			scan.index = None;
-		}
-	}
 	// Parse the batches configuration
 	let mut batches: Batches = serde_json::from_str(&args.batches)?;
-	// Check if we should skip batches entirely
+	// Check if we should skip batches
 	if args.skip_batches {
 		batches.clear();
+	}
+	// Parse the scans configuration
+	let mut scans: Scans = serde_json::from_str(&args.scans)?;
+	// Check if we should skip scans
+	if args.skip_scans {
+		scans.clear();
+	} else if args.skip_indexes {
+		for scan in &mut scans {
+			if let Some(index) = scan.index.as_mut() {
+				index.skip = true;
+			}
+		}
 	}
 	// Run the benchmark
 	let res = runtime.block_on(async {

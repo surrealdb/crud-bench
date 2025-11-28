@@ -49,6 +49,7 @@ pub(crate) struct ScanResult {
 	pub(crate) without_index: Option<OperationResult>,
 	pub(crate) index_build: Option<OperationResult>,
 	pub(crate) with_index: Option<OperationResult>,
+	pub(crate) index_remove: Option<OperationResult>,
 	pub(crate) has_index_spec: bool,
 }
 
@@ -153,6 +154,17 @@ impl Display for BenchmarkResult {
 					table.add_row(cells);
 				}
 			}
+			// Remove index (only for indexed scans)
+			if scan.has_index_spec {
+				let label = format!("[R]emoveIndex::{}", scan.name);
+				if let Some(res) = &scan.index_remove {
+					table.add_row(res.output(label));
+				} else {
+					let mut cells = vec![label];
+					cells.extend(SKIP.iter().map(|s| s.to_string()));
+					table.add_row(cells);
+				}
+			}
 		}
 		for (name, samples, groups, result) in &self.batches {
 			let name = format!("[B]atch::{name} ({samples} batches of {groups})");
@@ -228,6 +240,17 @@ impl BenchmarkResult {
 			if scan.has_index_spec {
 				let label = format!("[S]can::{}::indexed ({})", scan.name, scan.samples);
 				if let Some(res) = &scan.with_index {
+					w.write_record(res.output_csv(label))?;
+				} else {
+					let mut cells = vec![label];
+					cells.extend(CSV_SKIP.iter().map(|s| s.to_string()));
+					w.write_record(cells)?;
+				}
+			}
+			// Remove index (only for indexed scans)
+			if scan.has_index_spec {
+				let label = format!("[R]emoveIndex::{}", scan.name);
+				if let Some(res) = &scan.index_remove {
 					w.write_record(res.output_csv(label))?;
 				} else {
 					let mut cells = vec![label];
