@@ -432,6 +432,29 @@ impl MariadbClient {
 		}
 	}
 
+	/// Helper function to execute a statement and verify the affected rows count
+	async fn exec_and_verify(
+		&self,
+		stm: String,
+		params: Vec<mysql_async::Value>,
+		expected_count: usize,
+		operation: &str,
+	) -> Result<()> {
+		let mut conn = self.conn.lock().await;
+		let result = conn.exec_iter(stm, params).await?;
+		let affected = result.affected_rows();
+		drop(result);
+		if affected != expected_count as u64 {
+			return Err(anyhow::anyhow!(
+				"{}: expected {} rows affected, got {}",
+				operation,
+				expected_count,
+				affected
+			));
+		}
+		Ok(())
+	}
+
 	async fn batch_create<T>(&self, key_vals: Vec<(T, Value)>) -> Result<()>
 	where
 		T: ToValue + Sync,
@@ -439,6 +462,7 @@ impl MariadbClient {
 		if key_vals.is_empty() {
 			return Ok(());
 		}
+		let expected_count = key_vals.len();
 		let columns = self
 			.columns
 			.0
@@ -446,7 +470,7 @@ impl MariadbClient {
 			.map(|(name, _)| MySqlDialect::escape_field(name.clone()))
 			.collect::<Vec<String>>()
 			.join(", ");
-		let placeholders = (0..key_vals.len())
+		let placeholders = (0..expected_count)
 			.map(|_| {
 				let value_placeholders =
 					(0..self.columns.0.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
@@ -478,12 +502,14 @@ impl MariadbClient {
 								serde_json::to_string(v).unwrap().as_bytes().to_vec(),
 							),
 						});
+
+					} else {
+						return Err(anyhow::anyhow!("Missing value for column {}", name));
 					}
 				}
 			}
 		}
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
-		Ok(())
+		self.exec_and_verify(stm, params, expected_count, "batch_create").await
 	}
 
 	async fn batch_read<T>(&self, keys: Vec<T>) -> Result<()>
@@ -497,6 +523,7 @@ impl MariadbClient {
 		let stm = format!("SELECT * FROM record WHERE id IN ({placeholders})");
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
 		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		assert_eq!(res.len(), keys.len());
 		for row in res {
 			black_box(self.consume(row).unwrap());
 		}
@@ -510,6 +537,7 @@ impl MariadbClient {
 		if key_vals.is_empty() {
 			return Ok(());
 		}
+		let expected_count = key_vals.len();
 		let columns = self
 			.columns
 			.0
@@ -551,14 +579,15 @@ impl MariadbClient {
 							serde_json::to_string(v).unwrap().as_bytes().to_vec(),
 						),
 					});
-				}
+				} else {
+						return Err(anyhow::anyhow!("Missing value for column {}", name));
+					}
 			}
 		}
 		for (key, _) in &key_vals {
 			params.push(key.to_value());
 		}
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
-		Ok(())
+		self.exec_and_verify(stm, params, expected_count, "batch_update").await
 	}
 
 	async fn batch_delete<T>(&self, keys: Vec<T>) -> Result<()>
@@ -568,10 +597,10 @@ impl MariadbClient {
 		if keys.is_empty() {
 			return Ok(());
 		}
+		let expected_count = keys.len();
 		let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 		let stm = format!("DELETE FROM record WHERE id IN ({placeholders})");
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
-		Ok(())
+		self.exec_and_verify(stm, params, expected_count, "batch_delete").await
 	}
 }
