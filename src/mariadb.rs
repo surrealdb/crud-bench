@@ -1,4 +1,4 @@
-#![cfg(feature = "mysql")]
+#![cfg(feature = "mariadb")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::{Dialect, MySqlDialect};
@@ -17,10 +17,10 @@ use std::hint::black_box;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub const DEFAULT: &str = "mysql://root:mysql@127.0.0.1:3306/bench";
+pub const DEFAULT: &str = "mysql://root:mariadb@127.0.0.1:3306/bench";
 
-/// Calculate MySQL specific memory allocation
-fn calculate_mysql_memory() -> (u64, u64, u64) {
+/// Calculate MariaDB specific memory allocation
+fn calculate_mariadb_memory() -> (u64, u64, u64) {
 	// Load the system memory
 	let memory = Config::new();
 	// Use ~100% of recommended cache allocation
@@ -33,15 +33,15 @@ fn calculate_mysql_memory() -> (u64, u64, u64) {
 	(buffer_pool_gb, log_file_gb, buffer_pool_instances)
 }
 
+/// Returns the Docker parameters required to run a MariaDB instance for benchmarking,
+/// with configuration optimized based on the provided benchmark options.
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Calculate memory allocation
-	let (buffer_pool_gb, log_file_gb, buffer_pool_instances) = calculate_mysql_memory();
-	// Return Docker parameters
+	let (buffer_pool_gb, log_file_gb, buffer_pool_instances) = calculate_mariadb_memory();
 	DockerParams {
-		image: "mysql",
-		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_HOST=% -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=bench".to_string(),
+		image: "mariadb",
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MARIADB_ROOT_PASSWORD=mariadb -e MARIADB_DATABASE=bench".to_string(),
 		post_args: match options.optimised {
-			// Optimised configuration
 			true => format!(
 				"--max-connections=1024 \
 				--innodb-buffer-pool-size={buffer_pool_gb}G \
@@ -61,7 +61,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--join-buffer-size=32M \
 				--tmp-table-size=1G \
 				--max-heap-table-size=1G \
-				--query-cache-size=0 \
+				--innodb-adaptive-hash-index=ON \
+				--innodb-use-native-aio=1 \
+				--innodb-doublewrite=OFF \
 				--sync_binlog={} \
 				--innodb-flush-log-at-trx-commit={}",
 				if options.sync {
@@ -75,7 +77,6 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 					"0"
 				}
 			),
-			// Default configuration
 			false => format!(
 				"--max-connections=1024 \
 				--sync_binlog={} \
@@ -95,9 +96,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	}
 }
 
-pub(crate) struct MysqlClientProvider(KeyType, Columns, String);
+pub(crate) struct MariadbClientProvider(KeyType, Columns, String);
 
-impl BenchmarkEngine<MysqlClient> for MysqlClientProvider {
+impl BenchmarkEngine<MariadbClient> for MariadbClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Get the custom endpoint if specified
@@ -106,9 +107,9 @@ impl BenchmarkEngine<MysqlClient> for MysqlClientProvider {
 		Ok(Self(kt, columns, url))
 	}
 	/// Creates a new client for this benchmarking engine
-	async fn create_client(&self) -> Result<MysqlClient> {
+	async fn create_client(&self) -> Result<MariadbClient> {
 		let conn = Conn::new(Opts::from_url(&self.2)?).await?;
-		Ok(MysqlClient {
+		Ok(MariadbClient {
 			conn: Arc::new(Mutex::new(conn)),
 			kt: self.0,
 			columns: self.1.clone(),
@@ -116,13 +117,13 @@ impl BenchmarkEngine<MysqlClient> for MysqlClientProvider {
 	}
 }
 
-pub(crate) struct MysqlClient {
+pub(crate) struct MariadbClient {
 	conn: Arc<Mutex<Conn>>,
 	kt: KeyType,
 	columns: Columns,
 }
 
-impl BenchmarkClient for MysqlClient {
+impl BenchmarkClient for MariadbClient {
 	async fn startup(&self) -> Result<()> {
 		let id_type = match self.kt {
 			KeyType::Integer => "SERIAL",
@@ -278,10 +279,9 @@ impl BenchmarkClient for MysqlClient {
 	}
 }
 
-impl MysqlClient {
+impl MariadbClient {
 	fn consume(&self, mut row: Row) -> Result<Value> {
 		let mut val: Map<String, Value> = Map::new();
-		//
 		for (i, c) in row.columns().iter().enumerate() {
 			val.insert(
 				c.name_str().to_string(),
@@ -380,7 +380,7 @@ impl MysqlClient {
 	}
 
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
-		// MySQL requires a full-text index to run a MATCH query
+		// MariaDB requires a full-text index to run a MATCH query
 		if ctx == ScanContext::WithoutIndex
 			&& let Some(index) = &scan.index
 			&& let Some(kind) = &index.index_type

@@ -14,6 +14,7 @@ default = [
     "keydb",
     "mdbx",
     "lmdb",
+    "mariadb",
     "mongodb",
     "mysql",
     "neo4j",
@@ -33,6 +34,7 @@ keydb = ["dep:redis"]
 fjall = ["dep:fjall"]
 mdbx = ["dep:libmdbx"]
 lmdb = ["dep:heed"]
+mariadb = ["dep:mysql_async"]
 mongodb = ["dep:mongodb"]
 mysql = ["dep:mysql_async"]
 neo4j = ["dep:neo4rs"]
