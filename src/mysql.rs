@@ -531,26 +531,26 @@ impl MysqlClient {
 		for (name, _) in &self.columns.0 {
 			for (key, val) in &key_vals {
 				params.push(key.to_value());
-				if let Value::Object(map) = val {
-					if let Some(v) = map.get(name) {
-						params.push(match v {
-							Value::Null => mysql_async::Value::NULL,
-							Value::Bool(b) => mysql_async::Value::Int(*b as i64),
-							Value::Number(n) => {
-								if let Some(i) = n.as_i64() {
-									mysql_async::Value::Int(i)
-								} else if let Some(f) = n.as_f64() {
-									mysql_async::Value::Double(f)
-								} else {
-									mysql_async::Value::NULL
-								}
+				if let Value::Object(map) = val
+					&& let Some(v) = map.get(name)
+				{
+					params.push(match v {
+						Value::Null => mysql_async::Value::NULL,
+						Value::Bool(b) => mysql_async::Value::Int(*b as i64),
+						Value::Number(n) => {
+							if let Some(i) = n.as_i64() {
+								mysql_async::Value::Int(i)
+							} else if let Some(f) = n.as_f64() {
+								mysql_async::Value::Double(f)
+							} else {
+								mysql_async::Value::NULL
 							}
-							Value::String(s) => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
-							Value::Array(_) | Value::Object(_) => mysql_async::Value::Bytes(
-								serde_json::to_string(v).unwrap().as_bytes().to_vec(),
-							),
-						});
-					}
+						}
+						Value::String(s) => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
+						Value::Array(_) | Value::Object(_) => mysql_async::Value::Bytes(
+							serde_json::to_string(v).unwrap().as_bytes().to_vec(),
+						),
+					});
 				}
 			}
 		}
