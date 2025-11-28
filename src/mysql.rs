@@ -25,19 +25,20 @@ fn calculate_mysql_memory() -> (u64, u64, u64) {
 	let memory = Config::new();
 	// Use ~100% of recommended cache allocation
 	let buffer_pool_gb = memory.cache_gb;
-	// Use ~10% of buffer pool, min 1GB, max 8GB
-	let log_file_gb = (memory.cache_gb / 10).clamp(1, 8);
+	// Use ~10% of buffer pool for redo log capacity, min 1GB, max 8GB
+	// Note: In MySQL 8.0.30+, innodb_log_file_size was replaced with innodb_redo_log_capacity
+	let redo_log_gb = (memory.cache_gb / 10).clamp(1, 8);
 	// Use 1 buffer pool instance per 2GB, max 64
 	let buffer_pool_instances = (buffer_pool_gb / 2).clamp(1, 64);
 	// Return configuration
-	(buffer_pool_gb, log_file_gb, buffer_pool_instances)
+	(buffer_pool_gb, redo_log_gb, buffer_pool_instances)
 }
 
 /// Returns the Docker parameters required to run a MySQL instance for benchmarking,
 /// with configuration optimized based on the provided benchmark options.
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Calculate memory allocation
-	let (buffer_pool_gb, log_file_gb, buffer_pool_instances) = calculate_mysql_memory();
+	let (buffer_pool_gb, redo_log_gb, buffer_pool_instances) = calculate_mysql_memory();
 	// Return Docker parameters
 	DockerParams {
 		image: "mysql",
@@ -48,7 +49,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"--max-connections=1024 \
 				--innodb-buffer-pool-size={buffer_pool_gb}G \
 				--innodb-buffer-pool-instances={buffer_pool_instances} \
-				--innodb-log-file-size={log_file_gb}G \
+				--innodb-redo-log-capacity={redo_log_gb}G \
 				--innodb-log-buffer-size=256M \
 				--innodb-flush-method=O_DIRECT \
 				--innodb-io-capacity=2000 \

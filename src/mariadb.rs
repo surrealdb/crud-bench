@@ -512,7 +512,6 @@ impl MariadbClient {
 								serde_json::to_string(v).unwrap().as_bytes().to_vec(),
 							),
 						});
-
 					} else {
 						return Err(anyhow::anyhow!("Missing value for column {}", name));
 					}
@@ -590,8 +589,8 @@ impl MariadbClient {
 						),
 					});
 				} else {
-						return Err(anyhow::anyhow!("Missing value for column {}", name));
-					}
+					return Err(anyhow::anyhow!("Missing value for column {}", name));
+				}
 			}
 		}
 		for (key, _) in &key_vals {
