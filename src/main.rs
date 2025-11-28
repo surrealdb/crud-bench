@@ -279,6 +279,8 @@ pub(crate) type Batches = Vec<BatchOperation>;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct Index {
+	#[serde(default)]
+	pub(crate) skip: bool,
 	pub(crate) fields: Vec<String>,
 	pub(crate) unique: Option<bool>,
 	pub(crate) index_type: Option<String>,
@@ -408,23 +410,21 @@ fn run(args: Args) -> Result<()> {
 	let kp = KeyProvider::new(args.key, args.random);
 	// Build the value provider
 	let vp = ValueProvider::new(&args.value)?;
-	// Parse the scans configuration
-	let mut scans: Scans = serde_json::from_str(&args.scans)?;
-	// Check if we should skip scans entirely
-	if args.skip_scans {
-		scans.clear();
-	}
-	// Check if we should skip scan indexes
-	else if args.skip_indexes {
-		for scan in &mut scans {
-			scan.index = None;
-		}
-	}
 	// Parse the batches configuration
 	let mut batches: Batches = serde_json::from_str(&args.batches)?;
-	// Check if we should skip batches entirely
+	// Check if we should skip batches
 	if args.skip_batches {
 		batches.clear();
+	}
+	// Parse the scans configuration
+	let mut scans: Scans = serde_json::from_str(&args.scans)?;
+	// Check if we should skip scans
+	if args.skip_scans {
+		scans.clear();
+	} else if args.skip_indexes {
+		for scan in &mut scans {
+			scan.index.as_mut().map(|index| index.skip = true);
+		}
 	}
 	// Run the benchmark
 	let res = runtime.block_on(async {

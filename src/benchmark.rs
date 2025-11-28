@@ -131,7 +131,9 @@ impl Benchmark {
 			let name = scan.name.clone();
 			let samples = scan.samples.map(|s| s as u32).unwrap_or(self.samples);
 			// Check if an index is specified
-			let result = if let Some(index_spec) = &scan.index {
+			let result = if let Some(index_spec) = &scan.index
+				&& !index_spec.skip
+			{
 				// Perform the scan without the index
 				let without_index = self
 					.run_operation::<C, D>(
@@ -153,9 +155,9 @@ impl Benchmark {
 					)
 					.await?;
 				// Check if the index was built
-				let with_index = if index_build.is_some() {
+				let (with_index, index_remove) = if index_build.is_some() {
 					// Perform the scan with the index
-					let result = self
+					let with_index = self
 						.run_operation::<C, D>(
 							&clients,
 							BenchmarkOperation::Scan(scan.clone(), ScanContext::WithIndex),
@@ -165,19 +167,20 @@ impl Benchmark {
 						)
 						.await?;
 					// Remove the index
-					self.run_operation::<C, D>(
-						&clients[..1],
-						BenchmarkOperation::RemoveIndex(name.clone()),
-						kp,
-						vp.clone(),
-						1,
-					)
-					.await?;
+					let index_remove = self
+						.run_operation::<C, D>(
+							&clients[..1],
+							BenchmarkOperation::RemoveIndex(name.clone()),
+							kp,
+							vp.clone(),
+							1,
+						)
+						.await?;
 					// Return the scan results
-					result
+					(with_index, index_remove)
 				} else {
 					// Skip the scan with the index
-					None
+					(None, None)
 				};
 				// Return the scan results
 				ScanResult {
@@ -186,6 +189,7 @@ impl Benchmark {
 					without_index,
 					index_build,
 					with_index,
+					index_remove,
 					has_index_spec: true,
 				}
 			} else {
@@ -206,6 +210,7 @@ impl Benchmark {
 					without_index: result,
 					index_build: None,
 					with_index: None,
+					index_remove: None,
 					has_index_spec: false,
 				}
 			};
