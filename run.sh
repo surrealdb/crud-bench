@@ -34,6 +34,7 @@ FLAMEGRAPH="false"
 SKIP_SCANS="false"
 SKIP_BATCHES="false"
 SKIP_INDEXES="false"
+DEBUG="false"
 
 # ============================================================================
 # LOGGING FUNCTIONS
@@ -92,6 +93,7 @@ OPTIONS:
     --timeout <minutes>       Timeout in minutes (default: none)
     --no-build                Skip the cargo build step
     --no-wait                 Skip waiting for system load to drop (default: false)
+    --debug                   Use debug build instead of release build (default: false)
     --profile                 Enable internalprofiling mode (default: false)
     --flamegraph              Use cargo flamegraph for profiling (default: false)
     --data-dir <path>         Data directory path (default: ./data)
@@ -198,6 +200,10 @@ parse_args() {
                 ;;
             --no-wait)
                 NOWAIT="true"
+                shift
+                ;;
+            --debug)
+                DEBUG="true"
                 shift
                 ;;
             --profile)
@@ -445,13 +451,22 @@ build_benchmark() {
         return 0
     fi
 
-    log_info "Building crud-bench in release mode..."
-
-    if cargo build --release; then
-        log_success "Build completed successfully"
+    if [[ "$DEBUG" == "true" ]]; then
+        log_info "Building crud-bench in debug mode..."
+        if cargo build; then
+            log_success "Build completed successfully"
+        else
+            log_error "Build failed"
+            exit 1
+        fi
     else
-        log_error "Build failed"
-        exit 1
+        log_info "Building crud-bench in release mode..."
+        if cargo build --release; then
+            log_success "Build completed successfully"
+        else
+            log_error "Build failed"
+            exit 1
+        fi
     fi
 
 }
@@ -701,6 +716,8 @@ run_benchmark() {
     local binary_path
     if [[ "$FLAMEGRAPH" == "true" ]]; then
         binary_path="cargo flamegraph --profile profiling --"
+    elif [[ "$DEBUG" == "true" ]]; then
+        binary_path="target/debug/crud-bench"
     else
         binary_path="target/release/crud-bench"
     fi
