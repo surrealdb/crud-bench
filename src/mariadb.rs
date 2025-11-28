@@ -42,6 +42,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		image: "mariadb",
 		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MARIADB_ROOT_PASSWORD=mariadb -e MARIADB_DATABASE=bench".to_string(),
 		post_args: match options.optimised {
+			// Optimised configuration
 			true => format!(
 				"--max-connections=1024 \
 				--innodb-buffer-pool-size={buffer_pool_gb}G \
@@ -64,6 +65,10 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--innodb-adaptive-hash-index=ON \
 				--innodb-use-native-aio=1 \
 				--innodb-doublewrite=OFF \
+				--log-bin=mariadb-bin \
+				--binlog-format=ROW \
+				--server-id=1 \
+				--binlog-row-image=MINIMAL \
 				--sync_binlog={} \
 				--innodb-flush-log-at-trx-commit={}",
 				if options.sync {
@@ -77,8 +82,13 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 					"0"
 				}
 			),
+			// Default configuration
 			false => format!(
 				"--max-connections=1024 \
+				--log-bin=mariadb-bin \
+				--binlog-format=ROW \
+				--server-id=1 \
+				--binlog-row-image=FULL \
 				--sync_binlog={} \
 				--innodb-flush-log-at-trx-commit={}",
 				if options.sync {

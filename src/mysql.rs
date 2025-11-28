@@ -64,6 +64,10 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--tmp-table-size=1G \
 				--max-heap-table-size=1G \
 				--query-cache-size=0 \
+				--log-bin=mysql-bin \
+				--binlog-format=ROW \
+				--server-id=1 \
+				--binlog-row-image=MINIMAL \
 				--sync_binlog={} \
 				--innodb-flush-log-at-trx-commit={}",
 				if options.sync {
@@ -80,6 +84,10 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			// Default configuration
 			false => format!(
 				"--max-connections=1024 \
+				--log-bin=mysql-bin \
+				--binlog-format=ROW \
+				--server-id=1 \
+				--binlog-row-image=FULL \
 				--sync_binlog={} \
 				--innodb-flush-log-at-trx-commit={}",
 				if options.sync {
