@@ -1214,7 +1214,7 @@ dependencies = [
  "surrealdb-rocksdb",
  "surrealdb-types",
  "surrealkv",
- "surrealmx 0.15.0",
+ "surrealmx",
  "sysinfo 0.37.2",
  "tokio",
  "tokio-postgres",
@@ -3109,7 +3109,7 @@ dependencies = [
  "guardian",
  "interval-heap",
  "log",
- "lz4_flex",
+ "lz4_flex 0.11.5",
  "path-absolutize",
  "quick_cache",
  "rustc-hash",
@@ -3144,6 +3144,15 @@ name = "lz4_flex"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08ab2867e3eeeca90e844d1940eab391c9dc5228783db2ed999acbc0a9ed375a"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
+name = "lz4_flex"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab6473172471198271ff72e9379150e9dfd70d8e533e0752a27e515b48dd375e"
 dependencies = [
  "twox-hash",
 ]
@@ -4753,10 +4762,11 @@ checksum = "4389f1d5789befaf6029ebd9f7dac4af7f7e3d61b69d4f30e2ac02b57e7712b0"
 
 [[package]]
 name = "revision"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b762d27bdb312a92b2a1786e9dec700186f3c3e8a98b56b36c1b078e6bf2804a"
+checksum = "1afd502a7bd15659a0b81479de42a249afa2dd3bdcc689871d6da4b3d005018d"
 dependencies = [
+ "bytes",
  "chrono",
  "geo 0.31.0",
  "regex",
@@ -4768,9 +4778,9 @@ dependencies = [
 
 [[package]]
 name = "revision-derive"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e05651c26aaf33d5e642e380a43b1e5112f76668085aab9377130694160d5177"
+checksum = "400e8b48caaca9faa40f590f643c5c155d6c8700378e700de1bd8f453e11578d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5158,7 +5168,7 @@ dependencies = [
  "bytes",
  "chrono",
  "itertools 0.14.0",
- "lz4_flex",
+ "lz4_flex 0.11.5",
  "scylla-macros",
  "snap",
  "stable_deref_trait",
@@ -5554,19 +5564,20 @@ checksum = "33ae9eec00137a8eed469fb4148acd9fc6ac8c3f9b110f52cd34698c8b5bfa0e"
 
 [[package]]
 name = "storekey"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79f0a20b9cc597130e6b3ae22f2bc0892095c0def0361b4b86e64a609ef222ef"
+checksum = "ac0a0c60667da4e707563b1f1616534926d4a2508d6a7cdb26414a9103f63e1c"
 dependencies = [
+ "bytes",
  "storekey-derive",
  "uuid",
 ]
 
 [[package]]
 name = "storekey-derive"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b17310dd353bab243079e8669927142cc4bde8e6b91bc966c65e347e78563a3"
+checksum = "7555a4e3498505187316766c9f4fc23d54ac1ee4455e6c931f87a6990efbb8ba"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5652,8 +5663,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "surrealdb"
 version = "3.0.0-alpha.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9feee672723cb93404ecc4e546bc87db5546f18c007fd6104a657e3b358751d0"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#9f6438edb8701176076779b08ea2dfe8edd66269"
 dependencies = [
  "arrayvec",
  "async-channel",
@@ -5695,8 +5705,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-core"
 version = "3.0.0-alpha.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fb7e4aae83485f3056bef658918dda357b426d9efba2077b8cc69aef744850c"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#9f6438edb8701176076779b08ea2dfe8edd66269"
 dependencies = [
  "addr",
  "affinitypool",
@@ -5772,7 +5781,7 @@ dependencies = [
  "surrealdb-rocksdb",
  "surrealdb-types",
  "surrealkv",
- "surrealmx 0.14.4",
+ "surrealmx",
  "sysinfo 0.33.1",
  "tempfile",
  "thiserror 1.0.69",
@@ -5841,8 +5850,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-types"
 version = "3.0.0-alpha.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "735155fe32da2ecd6adcb5f96b8ffb244c6b8ecce65db21537bb854c32690879"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#9f6438edb8701176076779b08ea2dfe8edd66269"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5867,8 +5875,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-types-derive"
 version = "3.0.0-alpha.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a20facc0d9ca1e9c8e035066968ac575f4b25a6fc3736713496f4cd0763c408"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#9f6438edb8701176076779b08ea2dfe8edd66269"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5878,8 +5885,7 @@ dependencies = [
 [[package]]
 name = "surrealkv"
 version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae2e4384e4e61954e97d74798f9b13423988b32f60e8377b0b49efbcd7540ba5"
+source = "git+https://github.com/surrealdb/surrealkv?branch=wal-fix#4acd7abc1e7f3bbadb6036bda7125d6943a4e5b5"
 dependencies = [
  "arc-swap",
  "async-channel",
@@ -5899,6 +5905,7 @@ dependencies = [
  "integer-encoding",
  "interval-heap",
  "log",
+ "lz4_flex 0.12.0",
  "memmap2",
  "parking_lot",
  "quick_cache",
@@ -5907,27 +5914,6 @@ dependencies = [
  "sha2",
  "snap",
  "tokio",
-]
-
-[[package]]
-name = "surrealmx"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a285508f077d3ff9069d408a677ea9af290cdc841f65e769e4e6385aca0d6db"
-dependencies = [
- "ahash 0.8.12",
- "arc-swap",
- "bincode 2.0.1",
- "bytes",
- "crossbeam-deque",
- "crossbeam-queue",
- "crossbeam-skiplist",
- "lz4",
- "parking_lot",
- "serde",
- "smallvec",
- "thiserror 2.0.17",
- "tracing",
 ]
 
 [[package]]
