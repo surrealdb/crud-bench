@@ -5663,7 +5663,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "surrealdb"
 version = "3.0.0-alpha.16"
-source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#9f6438edb8701176076779b08ea2dfe8edd66269"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#32c8d787b0b3619018f8379f531099f5b3bfcb9a"
 dependencies = [
  "arrayvec",
  "async-channel",
@@ -5705,7 +5705,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-core"
 version = "3.0.0-alpha.16"
-source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#9f6438edb8701176076779b08ea2dfe8edd66269"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#32c8d787b0b3619018f8379f531099f5b3bfcb9a"
 dependencies = [
  "addr",
  "affinitypool",
@@ -5850,7 +5850,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-types"
 version = "3.0.0-alpha.16"
-source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#9f6438edb8701176076779b08ea2dfe8edd66269"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#32c8d787b0b3619018f8379f531099f5b3bfcb9a"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5875,7 +5875,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-types-derive"
 version = "3.0.0-alpha.16"
-source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#9f6438edb8701176076779b08ea2dfe8edd66269"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskvfixes#32c8d787b0b3619018f8379f531099f5b3bfcb9a"
 dependencies = [
  "proc-macro2",
  "quote",
