@@ -72,7 +72,7 @@ impl Benchmark {
 		kp: KeyProvider,
 		mut vp: ValueProvider,
 		scans: Scans,
-		_batches: Batches,
+		batches: Batches,
 		database: Option<String>,
 		system: Option<SystemInfo>,
 		metadata: Option<BenchmarkMetadata>,
@@ -221,40 +221,40 @@ impl Benchmark {
 		if std::env::var("COMPACTION").is_ok() {
 			self.wait_for_client(&engine).await?.compact().await?;
 		}
-		// // Run the "deletes" benchmark
-		// let deletes = self
-		// 	.run_operation::<C, D>(
-		// 		&clients,
-		// 		BenchmarkOperation::Delete,
-		// 		kp,
-		// 		vp.clone(),
-		// 		self.samples,
-		// 	)
-		// 	.await?;
-		// // Compact the datastore
-		// if std::env::var("COMPACTION").is_ok() {
-		// 	self.wait_for_client(&engine).await?.compact().await?;
-		// }
+		// Run the "deletes" benchmark
+		let deletes = self
+			.run_operation::<C, D>(
+				&clients,
+				BenchmarkOperation::Delete,
+				kp,
+				vp.clone(),
+				self.samples,
+			)
+			.await?;
+		// Compact the datastore
+		if std::env::var("COMPACTION").is_ok() {
+			self.wait_for_client(&engine).await?.compact().await?;
+		}
 		// Run the "batch" benchmarks
-		// let mut batch_results = Vec::with_capacity(batches.len());
-		// for batch in batches {
-		// 	// Get the name of the batch operation
-		// 	let name = batch.name.clone();
-		// 	let groups = batch.batch_size;
-		// 	let samples = batch.samples.map(|s| s as u32).unwrap_or(self.samples);
-		// 	// Determine the batch operation type
-		// 	let operation = match batch.operation {
-		// 		crate::BatchOperationType::Create => BenchmarkOperation::BatchCreate(batch.clone()),
-		// 		crate::BatchOperationType::Read => BenchmarkOperation::BatchRead(batch.clone()),
-		// 		crate::BatchOperationType::Update => BenchmarkOperation::BatchUpdate(batch.clone()),
-		// 		crate::BatchOperationType::Delete => BenchmarkOperation::BatchDelete(batch.clone()),
-		// 	};
-		// 	// Execute the batch benchmark
-		// 	let duration =
-		// 		self.run_operation::<C, D>(&clients, operation, kp, vp.clone(), samples).await?;
-		// 	// Store the batch benchmark result
-		// 	batch_results.push((name, samples, groups, duration));
-		// }
+		let mut batch_results = Vec::with_capacity(batches.len());
+		for batch in batches {
+			// Get the name of the batch operation
+			let name = batch.name.clone();
+			let groups = batch.batch_size;
+			let samples = batch.samples.map(|s| s as u32).unwrap_or(self.samples);
+			// Determine the batch operation type
+			let operation = match batch.operation {
+				crate::BatchOperationType::Create => BenchmarkOperation::BatchCreate(batch.clone()),
+				crate::BatchOperationType::Read => BenchmarkOperation::BatchRead(batch.clone()),
+				crate::BatchOperationType::Update => BenchmarkOperation::BatchUpdate(batch.clone()),
+				crate::BatchOperationType::Delete => BenchmarkOperation::BatchDelete(batch.clone()),
+			};
+			// Execute the batch benchmark
+			let duration =
+				self.run_operation::<C, D>(&clients, operation, kp, vp.clone(), samples).await?;
+			// Store the batch benchmark result
+			batch_results.push((name, samples, groups, duration));
+		}
 		// Setup the datastore
 		self.wait_for_client(&engine).await?.shutdown().await?;
 		// Return the benchmark results
@@ -266,8 +266,8 @@ impl Benchmark {
 			reads,
 			updates,
 			scans: scan_results,
-			batches: vec![],
-			deletes: None,
+			batches: batch_results,
+			deletes,
 			sample,
 		})
 	}
