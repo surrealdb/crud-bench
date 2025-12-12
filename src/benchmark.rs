@@ -504,15 +504,10 @@ pub(crate) enum BenchmarkOperation {
 	Scan(Scan, ScanContext),
 	BuildIndex(Index, String),
 	RemoveIndex(String),
-	#[allow(dead_code)]
 	Delete,
-	#[allow(dead_code)]
 	BatchCreate(BatchOperation),
-	#[allow(dead_code)]
 	BatchRead(BatchOperation),
-	#[allow(dead_code)]
 	BatchUpdate(BatchOperation),
-	#[allow(dead_code)]
 	BatchDelete(BatchOperation),
 }
 
