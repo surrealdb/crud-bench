@@ -22,17 +22,11 @@ const DATABASE_DIR: &str = "surrealkv";
 const BLOCK_SIZE: usize = 64 * 1024;
 
 /// Calculate SurrealKV specific memory allocation
-fn calculate_surrealkv_memory() -> (u64, u64) {
+fn calculate_surrealkv_memory() -> u64 {
 	// Load the system memory
 	let memory = Config::new();
-	// Calculate total available cache memory in bytes
-	let total_cache_bytes = memory.cache_gb * 1024 * 1024 * 1024;
-	// Allocate 70% for block cache
-	let block_cache_bytes = (total_cache_bytes * 70) / 100;
-	// Allocate 30% for value cache
-	let value_cache_bytes = (total_cache_bytes * 30) / 100;
 	// Return configuration
-	(block_cache_bytes, value_cache_bytes)
+	memory.cache_gb * 1024 * 1024 * 1024
 }
 
 pub(crate) struct SurrealKVClientProvider {
@@ -50,15 +44,13 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Calculate memory allocation
-		let (block_cache_bytes, value_cache_bytes) = calculate_surrealkv_memory();
+		let block_cache_bytes = calculate_surrealkv_memory();
 		// Configure custom options
 		let builder = TreeBuilder::new();
 		// Enable max memtable size
 		let builder = builder.with_max_memtable_size(256 * 1024 * 1024);
 		// Enable the block cache capacity
 		let builder = builder.with_block_cache_capacity(block_cache_bytes);
-		// Enable the block cache capacity
-		let builder = builder.with_vlog_cache_capacity(value_cache_bytes);
 		// Disable versioned queries
 		let builder = builder.with_versioning(false, 0);
 		// Enable separated keys and values
