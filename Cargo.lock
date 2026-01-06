@@ -466,7 +466,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -4213,7 +4213,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.111",
@@ -5485,7 +5485,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "surrealdb"
 version = "3.0.0-beta"
-source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskv017#dd2600a2ac67c79dba2225bf01f0db285b68ecf1"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskv017#65867500ec6c49b5be8b300fe1e25bf21e945436"
 dependencies = [
  "async-channel",
  "bincode 1.3.3",
@@ -5523,7 +5523,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-core"
 version = "3.0.0-beta"
-source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskv017#dd2600a2ac67c79dba2225bf01f0db285b68ecf1"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fskv017#65867500ec6c49b5be8b300fe1e25bf21e945436"
 dependencies = [
  "addr",
  "affinitypool",
@@ -5702,7 +5702,7 @@ dependencies = [
 [[package]]
 name = "surrealkv"
 version = "0.16.0"
-source = "git+https://github.com/surrealdb/surrealkv?branch=main#f6aa2b851f28ffac58cddfe7f6befa6c18c08939"
+source = "git+https://github.com/surrealdb/surrealkv?branch=fix-level-compaction#7a43ccc0259fbdc5f4e133ad664581ecca5a3c10"
 dependencies = [
  "arc-swap",
  "async-channel",
