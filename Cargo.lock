@@ -1102,7 +1102,6 @@ dependencies = [
  "serial_test",
  "surrealdb",
  "surrealdb-rocksdb",
- "surrealdb-types",
  "surrealkv",
  "surrealmx",
  "sysinfo 0.37.2",
