@@ -466,7 +466,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "regex",
@@ -577,6 +577,12 @@ dependencies = [
  "quote",
  "syn 2.0.111",
 ]
+
+[[package]]
+name = "boxcar"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36f64beae40a84da1b4b26ff2761a5b895c12adc41dc25aaee1c4f2bbfe97a6e"
 
 [[package]]
 name = "bson"
@@ -4207,7 +4213,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.111",
@@ -5478,16 +5484,18 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surrealdb"
-version = "3.0.0-alpha.18"
+version = "3.0.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa193f474dd55ee33c0ad098bc63ce7049da38865f3f256f10756a69b0e75f17"
+checksum = "7ffa5b9e8dd8ca9ab2a82144248986f0e749258470ae321164ebcf8b6e04dac5"
 dependencies = [
  "async-channel",
  "bincode 1.3.3",
+ "boxcar",
  "chrono",
  "futures",
  "getrandom 0.3.4",
  "indexmap 2.12.1",
+ "js-sys",
  "path-clean",
  "pharos",
  "reqwest",
@@ -5504,19 +5512,20 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "tracing",
- "trice",
  "url",
  "uuid",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasmtimer",
+ "web-sys",
  "ws_stream_wasm",
 ]
 
 [[package]]
 name = "surrealdb-core"
-version = "3.0.0-alpha.18"
+version = "3.0.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74a8af8624415dcc95363b9cf3300d67e3dec956516255c14e4ef529d70b2965"
+checksum = "87d21dc1d6c38c2b72e10c8668a8dc88eb8f1015fcf6a5d742d8d50e934d255c"
 dependencies = [
  "addr",
  "affinitypool",
@@ -5657,9 +5666,9 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-types"
-version = "3.0.0-alpha.18"
+version = "3.0.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85031d4bd411305e8c416ad30f1c7a640c28e7ccb6b4aa26292c9362bd7dce5c"
+checksum = "7cb800d8a4df97620e123b5836dd1ef416bf95091a8eec50a04a7426d0358ede"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5669,6 +5678,7 @@ dependencies = [
  "hex",
  "http",
  "nanoid",
+ "papaya",
  "regex",
  "rstest",
  "rust_decimal",
@@ -5682,9 +5692,9 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-types-derive"
-version = "3.0.0-alpha.18"
+version = "3.0.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c07619a9d4f56fea2e4100f51e0ccce33a29ec934450892bdeddcc06b681f337"
+checksum = "fab1dfbc1214d922627c03415f18012a73d9c73263beedd1e9f15587086e4b00"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6792,7 +6802,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
