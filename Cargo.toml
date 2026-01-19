@@ -1,3 +1,10 @@
+# This single-package project is configured as a workspace to prevent it from being
+# automatically included as a member of the parent SurrealDB workspace when embedded
+# in the SurrealDB repository. This allows crud-bench to be run independently in CI
+# workflows without interfering with the main SurrealDB workspace dependency resolution.
+[workspace]
+members = ["."]
+
 [package]
 name = "crud-bench"
 edition = "2024"
@@ -46,7 +53,6 @@ scylladb = ["dep:scylla"]
 sqlite = ["dep:tokio-rusqlite"]
 surrealdb = [
     "dep:surrealdb",
-    "dep:surrealdb-types",
     "surrealdb/kv-mem",
     "surrealdb/kv-rocksdb",
     "surrealdb/kv-surrealkv",
@@ -106,8 +112,7 @@ scylla = { version = "1.4.1", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serial_test = "3.2.0"
-surrealdb = { version = "3.0.0-alpha.18", default-features = false, optional = true }
-surrealdb-types = { version = "3.0.0-alpha.18", default-features = false, optional = true }
+surrealdb = { version = "3.0.0-beta.2", default-features = false, optional = true }
 surrealkv = { version = "0.16.0", optional = true }
 surrealmx = { version = "0.15.0", optional = true }
 sysinfo = { version = "0.37.2", features = ["serde"] }

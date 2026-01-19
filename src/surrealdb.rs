@@ -17,8 +17,7 @@ use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
-use surrealdb::types::RecordIdKey;
-use surrealdb_types::{SurrealValue, ToSql};
+use surrealdb::types::{RecordIdKey, SurrealValue, ToSql};
 use tokio::time::{sleep, timeout};
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
@@ -182,6 +181,7 @@ impl SurrealDBClient {
 }
 
 #[derive(Debug, SurrealValue)]
+#[surreal(crate = "surrealdb::types")]
 struct Bindings<T: SurrealValue> {
 	content: Value,
 	key: T,
