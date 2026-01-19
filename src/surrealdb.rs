@@ -17,8 +17,7 @@ use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
-use surrealdb::types::RecordIdKey;
-use surrealdb::types::{SurrealValue, ToSql};
+use surrealdb::types::{RecordIdKey, SurrealValue, ToSql};
 use tokio::time::{sleep, timeout};
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
