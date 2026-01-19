@@ -1,3 +1,7 @@
+# This single-package project is configured as a workspace to prevent it from being
+# automatically included as a member of the parent SurrealDB workspace when embedded
+# in the SurrealDB repository. This allows crud-bench to be run independently in CI
+# workflows without interfering with the main SurrealDB workspace dependency resolution.
 [workspace]
 members = ["."]
 
