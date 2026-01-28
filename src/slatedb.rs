@@ -6,7 +6,7 @@ use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use serde_json::Value;
-use slatedb::config::{Settings, WriteOptions};
+use slatedb::config::{Settings, SstBlockSize, WriteOptions};
 use slatedb::object_store::local::LocalFileSystem;
 use slatedb::{Db, IsolationLevel};
 use std::hint::black_box;
@@ -45,6 +45,8 @@ impl BenchmarkEngine<SlateDBClient> for SlateDBClientProvider {
 		let builder = builder.with_settings(settings);
 		// Setup the WAL object store
 		let builder = builder.with_wal_object_store(store);
+		// Use a larger block size
+		let builder = builder.with_sst_block_size(SstBlockSize::Block64Kib);
 		// Open the database
 		let db = builder.build().await?;
 		// Create the store
