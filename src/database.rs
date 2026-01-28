@@ -50,6 +50,8 @@ pub(crate) enum Database {
 	Rocksdb,
 	#[cfg(feature = "scylladb")]
 	Scylladb,
+	#[cfg(feature = "slatedb")]
+	Slatedb,
 	#[cfg(feature = "sqlite")]
 	Sqlite,
 	#[cfg(feature = "surrealdb")]
@@ -402,6 +404,22 @@ impl Database {
 					)
 					.await
 			}
+			#[cfg(feature = "slatedb")]
+			Database::Slatedb => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::slatedb::SlateDBClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
 			#[cfg(feature = "sqlite")]
 			Database::Sqlite => {
 				benchmark
@@ -594,6 +612,8 @@ impl Database {
 			Database::Arangodb => "ArangoDB",
 			#[cfg(feature = "scylladb")]
 			Database::Scylladb => "ScyllaDB",
+			#[cfg(feature = "slatedb")]
+			Database::Slatedb => "SlateDB",
 			#[cfg(feature = "fjall")]
 			Database::Fjall => "Fjall",
 			#[cfg(feature = "redb")]

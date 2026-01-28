@@ -30,6 +30,7 @@ default = [
     "redis",
     "rocksdb",
     "scylladb",
+    "slatedb",
     "sqlite",
     "surrealdb",
     "surrealkv",
@@ -50,6 +51,7 @@ redb = ["dep:redb"]
 redis = ["dep:redis"]
 rocksdb = ["dep:rocksdb"]
 scylladb = ["dep:scylla"]
+slatedb = ["dep:slatedb"]
 sqlite = ["dep:tokio-rusqlite"]
 surrealdb = [
     "dep:surrealdb",
@@ -110,6 +112,7 @@ redis = { version = "0.32.7", features = ["tokio-comp"], optional = true }
 rocksdb = { version = "0.24.0-surreal.1", package = "surrealdb-rocksdb", features = ["lz4", "snappy"], optional = true }
 scylla = { version = "1.4.1", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
+slatedb = { version = "0.10.1", optional = true }
 serde_json = "1.0.145"
 serial_test = "3.2.0"
 surrealdb = { version = "3.0.0-beta.2", default-features = false, optional = true }
