@@ -229,17 +229,6 @@ impl BenchmarkClient for SlateDBClient {
 }
 
 impl SlateDBClient {
-	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
-		// Get the data
-		let res = self.db.get(key).await?;
-		// Check the value exists
-		assert!(res.is_some());
-		// Deserialise the value
-		black_box(res.unwrap());
-		// All ok
-		Ok(())
-	}
-
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
@@ -248,7 +237,19 @@ impl SlateDBClient {
 		// Process the data
 		txn.put(key, val)?;
 		txn.commit_with_options(&self.opts).await?;
-		//
+		Ok(())
+	}
+
+	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
+		// Create a new transaction
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
+		// Get the data
+		let res = txn.get(key).await?;
+		// Check the value exists
+		assert!(res.is_some());
+		// Deserialise the value
+		black_box(res.unwrap());
+		// All ok
 		Ok(())
 	}
 
@@ -272,22 +273,6 @@ impl SlateDBClient {
 		Ok(())
 	}
 
-	async fn batch_read_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
-		// Create a new transaction
-		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
-		// Process the data
-		for key in keys {
-			// Get the current value
-			let res = txn.get(&key).await?;
-			// Check the value exists
-			assert!(res.is_some());
-			// Deserialise the value
-			black_box(res.unwrap());
-		}
-		// All ok
-		Ok(())
-	}
-
 	async fn batch_create_bytes(
 		&self,
 		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>>,
@@ -301,6 +286,22 @@ impl SlateDBClient {
 		}
 		// Commit the batch
 		txn.commit_with_options(&self.opts).await?;
+		Ok(())
+	}
+
+	async fn batch_read_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
+		// Create a new transaction
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
+		// Process the data
+		for key in keys {
+			// Get the current value
+			let res = txn.get(&key).await?;
+			// Check the value exists
+			assert!(res.is_some());
+			// Deserialise the value
+			black_box(res.unwrap());
+		}
+		// All ok
 		Ok(())
 	}
 
