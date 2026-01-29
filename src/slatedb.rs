@@ -345,6 +345,14 @@ impl SlateDBClient {
 		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Create an iterator
 		let mut iter = txn.scan::<Vec<u8>, _>(..).await?;
+		// Skip the necessary number of entries
+		let mut skipped = 0;
+		while skipped < s {
+			if iter.next().await?.is_none() {
+				return Ok(0);
+			}
+			skipped += 1;
+		}
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
@@ -353,16 +361,12 @@ impl SlateDBClient {
 				// otherwise the loop is optimised out by the compiler
 				// when calling `count` at the end.
 				let mut count = 0;
-				let mut scanned = 0;
 				while let Ok(Some(item)) = iter.next().await {
-					if scanned >= s {
-						black_box(item.key);
-						count += 1;
-						if count >= l {
-							break;
-						}
+					black_box(item.key);
+					count += 1;
+					if count >= l {
+						break;
 					}
-					scanned += 1;
 				}
 				Ok(count)
 			}
@@ -372,34 +376,23 @@ impl SlateDBClient {
 				// otherwise the loop is optimised out by the compiler
 				// when calling `count` at the end.
 				let mut count = 0;
-				let mut scanned = 0;
 				while let Ok(Some(item)) = iter.next().await {
-					if scanned >= s {
-						black_box(item.value);
-						count += 1;
-						if count >= l {
-							break;
-						}
+					black_box(item.value);
+					count += 1;
+					if count >= l {
+						break;
 					}
-					scanned += 1;
 				}
 				Ok(count)
 			}
 			Projection::Count => {
-				// We use a while loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// otherwise the loop is optimised out by the compiler
-				// when calling `count` at the end.
+				// Count entries without processing values
 				let mut count = 0;
-				let mut scanned = 0;
 				while let Ok(Some(_)) = iter.next().await {
-					if scanned >= s {
-						count += 1;
-						if count >= l {
-							break;
-						}
+					count += 1;
+					if count >= l {
+						break;
 					}
-					scanned += 1;
 				}
 				Ok(count)
 			}
