@@ -8,7 +8,7 @@ use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use fjall::{
 	KeyspaceCreateOptions, KvSeparationOptions, OptimisticTxDatabase, OptimisticTxKeyspace,
-	PersistMode, Readable,
+	PersistMode, Readable, config::BlockSizePolicy,
 };
 use serde_json::Value;
 use std::hint::black_box;
@@ -62,6 +62,8 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			.separation_threshold(4 * 1024);
 		// Configure and create the keyspace
 		let keyspace_opts = KeyspaceCreateOptions::default()
+			// Set the data block size policy to 64 KiB
+			.data_block_size_policy(BlockSizePolicy::all(64 * 1_024))
 			// Set the max memtable size to 256 MiB
 			.max_memtable_size(256 * 1024 * 1024)
 			// Separate values if larger than 4 KiB
