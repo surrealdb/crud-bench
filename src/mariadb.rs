@@ -456,7 +456,7 @@ impl MariadbClient {
 			.join(", ");
 		let stm = format!("INSERT INTO record (id, {columns}) VALUES {placeholders}");
 		let mut params: Vec<mysql_async::Value> = Vec::new();
-		for (key, val) in key_vals {
+		for (key, val) in key_vals.iter() {
 			params.push(key.to_value());
 			if let Value::Object(map) = val {
 				for (name, _) in &self.columns.0 {
@@ -482,7 +482,8 @@ impl MariadbClient {
 				}
 			}
 		}
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		assert_eq!(res.len(), key_vals.len());
 		Ok(())
 	}
 
@@ -497,6 +498,7 @@ impl MariadbClient {
 		let stm = format!("SELECT * FROM record WHERE id IN ({placeholders})");
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
 		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		assert_eq!(res.len(), keys.len());
 		for row in res {
 			black_box(self.consume(row).unwrap());
 		}
@@ -557,7 +559,8 @@ impl MariadbClient {
 		for (key, _) in &key_vals {
 			params.push(key.to_value());
 		}
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		assert_eq!(res.len(), key_vals.len());
 		Ok(())
 	}
 
@@ -571,7 +574,8 @@ impl MariadbClient {
 		let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 		let stm = format!("DELETE FROM record WHERE id IN ({placeholders})");
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		assert_eq!(res.len(), keys.len());
 		Ok(())
 	}
 }
