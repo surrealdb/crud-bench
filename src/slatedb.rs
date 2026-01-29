@@ -62,7 +62,7 @@ impl BenchmarkEngine<SlateDBClient> for SlateDBClientProvider {
 			// Set the L0 SST size to 256MB
 			l0_sst_size_bytes: 256 * 1024 * 1024,
 			// Set max L0 SSTs before compaction
-			l0_max_ssts: 16,
+			l0_max_ssts: 8,
 			// Set backpressure limit to 512MB
 			max_unflushed_bytes: 512 * 1024 * 1024,
 			// Enable bloom filters for SSTs with 100+ keys
