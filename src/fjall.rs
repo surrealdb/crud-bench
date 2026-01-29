@@ -209,7 +209,7 @@ impl FjallClient {
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncAll)
 		} else {
 			Some(PersistMode::Buffer)
 		};
@@ -239,7 +239,7 @@ impl FjallClient {
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncAll)
 		} else {
 			Some(PersistMode::Buffer)
 		};
@@ -254,7 +254,7 @@ impl FjallClient {
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncAll)
 		} else {
 			Some(PersistMode::Buffer)
 		};
@@ -272,7 +272,7 @@ impl FjallClient {
 	) -> Result<()> {
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncAll)
 		} else {
 			Some(PersistMode::Buffer)
 		};
@@ -310,7 +310,7 @@ impl FjallClient {
 	) -> Result<()> {
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncAll)
 		} else {
 			Some(PersistMode::Buffer)
 		};
@@ -329,7 +329,7 @@ impl FjallClient {
 	async fn batch_delete_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncAll)
 		} else {
 			Some(PersistMode::Buffer)
 		};
