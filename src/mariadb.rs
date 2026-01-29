@@ -25,19 +25,19 @@ fn calculate_mariadb_memory() -> (u64, u64, u64) {
 	let memory = Config::new();
 	// Use ~100% of recommended cache allocation
 	let buffer_pool_gb = memory.cache_gb;
-	// Use ~10% of buffer pool, min 1GB, max 8GB
-	let log_file_gb = (memory.cache_gb / 10).clamp(1, 8);
+	// Use ~10% of buffer pool for redo log capacity, min 1GB, max 8GB
+	let redo_log_gb = (memory.cache_gb / 10).clamp(1, 8);
 	// Use 1 buffer pool instance per 2GB, max 64
 	let buffer_pool_instances = (buffer_pool_gb / 2).clamp(1, 64);
 	// Return configuration
-	(buffer_pool_gb, log_file_gb, buffer_pool_instances)
+	(buffer_pool_gb, redo_log_gb, buffer_pool_instances)
 }
 
 /// Returns the Docker parameters required to run a MariaDB instance for benchmarking,
 /// with configuration optimized based on the provided benchmark options.
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Calculate memory allocation
-	let (buffer_pool_gb, log_file_gb, buffer_pool_instances) = calculate_mariadb_memory();
+	let (buffer_pool_gb, redo_log_gb, buffer_pool_instances) = calculate_mariadb_memory();
 	DockerParams {
 		image: "mariadb",
 		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MARIADB_ROOT_PASSWORD=mariadb -e MARIADB_DATABASE=bench".to_string(),
@@ -46,7 +46,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"--max-connections=1024 \
 				--innodb-buffer-pool-size={buffer_pool_gb}G \
 				--innodb-buffer-pool-instances={buffer_pool_instances} \
-				--innodb-log-file-size={log_file_gb}G \
+				--innodb-redo-log-capacity={redo_log_gb}G \
 				--innodb-log-buffer-size=256M \
 				--innodb-flush-method=O_DIRECT \
 				--innodb-io-capacity=2000 \
@@ -61,9 +61,11 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--join-buffer-size=32M \
 				--tmp-table-size=1G \
 				--max-heap-table-size=1G \
-				--innodb-adaptive-hash-index=ON \
-				--innodb-use-native-aio=1 \
-				--innodb-doublewrite=OFF \
+				--query-cache-size=0 \
+				--log-bin=mysql-bin \
+				--binlog-format=ROW \
+				--server-id=1 \
+				--binlog-row-image=MINIMAL \
 				--sync_binlog={} \
 				--innodb-flush-log-at-trx-commit={}",
 				if options.sync {
@@ -79,6 +81,10 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			),
 			false => format!(
 				"--max-connections=1024 \
+				--log-bin=mysql-bin \
+				--binlog-format=ROW \
+				--server-id=1 \
+				--binlog-row-image=FULL \
 				--sync_binlog={} \
 				--innodb-flush-log-at-trx-commit={}",
 				if options.sync {
@@ -456,7 +462,7 @@ impl MariadbClient {
 			.join(", ");
 		let stm = format!("INSERT INTO record (id, {columns}) VALUES {placeholders}");
 		let mut params: Vec<mysql_async::Value> = Vec::new();
-		for (key, val) in key_vals {
+		for (key, val) in key_vals.iter() {
 			params.push(key.to_value());
 			if let Value::Object(map) = val {
 				for (name, _) in &self.columns.0 {
@@ -482,7 +488,9 @@ impl MariadbClient {
 				}
 			}
 		}
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		let mut conn = self.conn.lock().await;
+		let res = conn.exec_iter(stm, params).await?;
+		assert_eq!(res.affected_rows(), key_vals.len() as u64);
 		Ok(())
 	}
 
@@ -497,6 +505,7 @@ impl MariadbClient {
 		let stm = format!("SELECT * FROM record WHERE id IN ({placeholders})");
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
 		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		assert_eq!(res.len(), keys.len());
 		for row in res {
 			black_box(self.consume(row).unwrap());
 		}
@@ -557,7 +566,9 @@ impl MariadbClient {
 		for (key, _) in &key_vals {
 			params.push(key.to_value());
 		}
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		let mut conn = self.conn.lock().await;
+		let res = conn.exec_iter(stm, params).await?;
+		assert_eq!(res.affected_rows(), key_vals.len() as u64);
 		Ok(())
 	}
 
@@ -571,7 +582,9 @@ impl MariadbClient {
 		let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 		let stm = format!("DELETE FROM record WHERE id IN ({placeholders})");
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		let mut conn = self.conn.lock().await;
+		let res = conn.exec_iter(stm, params).await?;
+		assert_eq!(res.affected_rows(), keys.len() as u64);
 		Ok(())
 	}
 }
