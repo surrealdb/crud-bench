@@ -58,7 +58,7 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		// Set the block size to 64 KiB
 		let builder = builder.with_block_size(BLOCK_SIZE);
 		// Set the vlog threshold to 1KB
-		let builder = builder.with_vlog_value_threshold(1 * 1024);
+		let builder = builder.with_vlog_value_threshold(1024);
 		// Set the directory location
 		let builder = builder.with_path(PathBuf::from(DATABASE_DIR));
 		// Create the datastore

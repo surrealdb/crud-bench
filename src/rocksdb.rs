@@ -90,7 +90,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Enable separation of keys and values
 		opts.set_enable_blob_files(true);
 		// Store 1KB values separate from keys
-		opts.set_min_blob_size(1 * 1024);
+		opts.set_min_blob_size(1024);
 		// Set the write-ahead-log size limit
 		opts.set_wal_size_limit_mb(1024);
 		// Set specific compression levels
