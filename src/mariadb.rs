@@ -488,8 +488,9 @@ impl MariadbClient {
 				}
 			}
 		}
-		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
-		assert_eq!(res.len(), key_vals.len());
+		let mut conn = self.conn.lock().await;
+		let res = conn.exec_iter(stm, params).await?;
+		assert_eq!(res.affected_rows(), key_vals.len() as u64);
 		Ok(())
 	}
 
@@ -565,8 +566,9 @@ impl MariadbClient {
 		for (key, _) in &key_vals {
 			params.push(key.to_value());
 		}
-		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
-		assert_eq!(res.len(), key_vals.len());
+		let mut conn = self.conn.lock().await;
+		let res = conn.exec_iter(stm, params).await?;
+		assert_eq!(res.affected_rows(), key_vals.len() as u64);
 		Ok(())
 	}
 
@@ -580,8 +582,9 @@ impl MariadbClient {
 		let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 		let stm = format!("DELETE FROM record WHERE id IN ({placeholders})");
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
-		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
-		assert_eq!(res.len(), keys.len());
+		let mut conn = self.conn.lock().await;
+		let res = conn.exec_iter(stm, params).await?;
+		assert_eq!(res.affected_rows(), keys.len() as u64);
 		Ok(())
 	}
 }
