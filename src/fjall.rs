@@ -55,6 +55,10 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 			.manual_journal_persist(!options.sync)
 			// Set the cache size
 			.cache_size(memory)
+			// Set the maximum journal size
+			.max_journaling_size(1024 * 1024 * 1024)
+			// Set the number of worker threads for parallelism
+			.worker_threads(num_cpus::get().min(8))
 			// Open the database
 			.open()?;
 		// Configure and create the keyspace
