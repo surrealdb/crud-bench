@@ -46,6 +46,7 @@ mod redb;
 mod redis;
 mod rocksdb;
 mod scylladb;
+mod slatedb;
 mod sqlite;
 mod surrealdb;
 mod surrealds;

@@ -55,6 +55,7 @@ redb
 lmdb/
 mdbx/
 rocksdb/
+slatedb/
 surrealkv/
 surrealmx/
 
