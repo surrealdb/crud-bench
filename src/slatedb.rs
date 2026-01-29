@@ -318,9 +318,12 @@ impl SlateDBClient {
 				let mut count = 0;
 				let mut scanned = 0;
 				while let Ok(Some(item)) = iter.next().await {
-					if scanned >= s && scanned < s + l {
+					if scanned >= s {
 						black_box(item.key);
 						count += 1;
+						if count >= l {
+							break;
+						}
 					}
 					scanned += 1;
 				}
@@ -334,9 +337,12 @@ impl SlateDBClient {
 				let mut count = 0;
 				let mut scanned = 0;
 				while let Ok(Some(item)) = iter.next().await {
-					if scanned >= s && scanned < s + l {
+					if scanned >= s {
 						black_box(item.value);
 						count += 1;
+						if count >= l {
+							break;
+						}
 					}
 					scanned += 1;
 				}
@@ -350,8 +356,11 @@ impl SlateDBClient {
 				let mut count = 0;
 				let mut scanned = 0;
 				while let Ok(Some(_)) = iter.next().await {
-					if scanned >= s && scanned < s + l {
+					if scanned >= s {
 						count += 1;
+						if count >= l {
+							break;
+						}
 					}
 					scanned += 1;
 				}
