@@ -25,19 +25,19 @@ fn calculate_mariadb_memory() -> (u64, u64, u64) {
 	let memory = Config::new();
 	// Use ~100% of recommended cache allocation
 	let buffer_pool_gb = memory.cache_gb;
-	// Use ~10% of buffer pool, min 1GB, max 8GB
-	let log_file_gb = (memory.cache_gb / 10).clamp(1, 8);
+	// Use ~10% of buffer pool for redo log capacity, min 1GB, max 8GB
+	let redo_log_gb = (memory.cache_gb / 10).clamp(1, 8);
 	// Use 1 buffer pool instance per 2GB, max 64
 	let buffer_pool_instances = (buffer_pool_gb / 2).clamp(1, 64);
 	// Return configuration
-	(buffer_pool_gb, log_file_gb, buffer_pool_instances)
+	(buffer_pool_gb, redo_log_gb, buffer_pool_instances)
 }
 
 /// Returns the Docker parameters required to run a MariaDB instance for benchmarking,
 /// with configuration optimized based on the provided benchmark options.
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Calculate memory allocation
-	let (buffer_pool_gb, log_file_gb, buffer_pool_instances) = calculate_mariadb_memory();
+	let (buffer_pool_gb, redo_log_gb, buffer_pool_instances) = calculate_mariadb_memory();
 	DockerParams {
 		image: "mariadb",
 		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MARIADB_ROOT_PASSWORD=mariadb -e MARIADB_DATABASE=bench".to_string(),
@@ -46,7 +46,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"--max-connections=1024 \
 				--innodb-buffer-pool-size={buffer_pool_gb}G \
 				--innodb-buffer-pool-instances={buffer_pool_instances} \
-				--innodb-log-file-size={log_file_gb}G \
+				--innodb-redo-log-capacity={redo_log_gb}G \
 				--innodb-log-buffer-size=256M \
 				--innodb-flush-method=O_DIRECT \
 				--innodb-io-capacity=2000 \
@@ -61,9 +61,11 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--join-buffer-size=32M \
 				--tmp-table-size=1G \
 				--max-heap-table-size=1G \
-				--innodb-adaptive-hash-index=ON \
-				--innodb-use-native-aio=1 \
-				--innodb-doublewrite=OFF \
+				--query-cache-size=0 \
+				--log-bin=mysql-bin \
+				--binlog-format=ROW \
+				--server-id=1 \
+				--binlog-row-image=MINIMAL \
 				--sync_binlog={} \
 				--innodb-flush-log-at-trx-commit={}",
 				if options.sync {
@@ -79,6 +81,10 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			),
 			false => format!(
 				"--max-connections=1024 \
+				--log-bin=mysql-bin \
+				--binlog-format=ROW \
+				--server-id=1 \
+				--binlog-row-image=FULL \
 				--sync_binlog={} \
 				--innodb-flush-log-at-trx-commit={}",
 				if options.sync {
