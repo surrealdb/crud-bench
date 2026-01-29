@@ -11,7 +11,7 @@ edition = "2024"
 version = "0.1.0"
 license = "Apache-2.0"
 readme = "README.md"
-rust-version = "1.89.0"
+rust-version = "1.91.0"
 
 [features]
 default = [
@@ -80,9 +80,9 @@ anyhow = "1.0.100"
 arangors = { version = "0.6.0", optional = true }
 bincode = { version = "2.0.1", features = ["serde"] }
 bytesize = "2.3.1"
-comfy-table = "7.2.1"
-chrono = "0.4.42"
-clap = { version = "4.5.53", features = ["derive", "string", "env", "color"] }
+comfy-table = "7.2.2"
+chrono = "0.4.43"
+clap = { version = "4.5.55", features = ["derive", "string", "env", "color"] }
 csv = "1.4.0"
 dashmap = "6.1.0"
 env_logger = "0.11.8"
@@ -91,10 +91,10 @@ flatten-json-object = "0.6.1"
 futures = "0.3.31"
 hdrhistogram = "7.5.4"
 heed = { version = "0.22.0", optional = true }
-libmdbx = { version = "0.6.4", optional = true }
-log = "0.4.28"
+libmdbx = { version = "0.6.5", optional = true }
+log = "0.4.29"
 mimalloc = "0.1.48"
-mongodb = { version = "3.4.1", optional = true }
+mongodb = { version = "3.5.0", optional = true }
 mysql_async = { version = "0.36.1", default-features = false, features = [
     "bigdecimal",
     "binlog",
@@ -113,20 +113,20 @@ rocksdb = { version = "0.24.0-surreal.1", package = "surrealdb-rocksdb", feature
 scylla = { version = "1.4.1", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 slatedb = { version = "0.10.1", features = ["snappy", "foyer"], optional = true }
-serde_json = "1.0.145"
-serial_test = "3.2.0"
+serde_json = "1.0.149"
+serial_test = "3.3.1"
 surrealdb = { version = "3.0.0-beta.2", default-features = false, optional = true }
-surrealkv = { version = "0.16.0", optional = true }
+surrealkv = { version = "0.17.1", optional = true }
 surrealmx = { version = "0.15.0", optional = true }
 sysinfo = { version = "0.37.2", features = ["serde"] }
-tokio = { version = "1.48.0", features = ["macros", "time", "rt-multi-thread"] }
-tokio-postgres = { version = "0.7.15", optional = true, features = [
+tokio = { version = "1.49.0", features = ["macros", "time", "rt-multi-thread"] }
+tokio-postgres = { version = "0.7.16", optional = true, features = [
     "with-serde_json-1",
     "with-uuid-1",
 ] }
 tokio-rusqlite = { version = "0.7.0", optional = true, features = ["bundled"] }
 twox-hash = "2.1.2"
-uuid = { version = "1.18.1", features = ["v4"] }
+uuid = { version = "1.20.0", features = ["v4"] }
 
 [profile.profiling]
 inherits = "release"  # start from the production settings
