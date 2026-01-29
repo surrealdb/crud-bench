@@ -7,8 +7,8 @@ use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use fjall::{
-	Config, KvSeparationOptions, PartitionCreateOptions, PersistMode, TransactionalKeyspace,
-	TxPartitionHandle,
+	KeyspaceCreateOptions, KvSeparationOptions, OptimisticTxDatabase, OptimisticTxKeyspace,
+	PersistMode, Readable,
 };
 use serde_json::Value;
 use std::hint::black_box;
@@ -28,8 +28,8 @@ fn calculate_fjall_memory() -> u64 {
 // Durability will be set dynamically based on sync flag
 
 pub(crate) struct FjallClientProvider {
-	keyspace: Arc<TransactionalKeyspace>,
-	partition: Arc<TxPartitionHandle>,
+	db: Arc<OptimisticTxDatabase>,
+	keyspace: Arc<OptimisticTxKeyspace>,
 	sync: bool,
 }
 
@@ -44,56 +44,50 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Calculate memory allocation
 		let memory = calculate_fjall_memory();
-		// Configure the key-value separation
-		let blobopts = KvSeparationOptions::default()
-			// Separate values if larger than 1 KiB
-			.separation_threshold(1024);
-		// Configure and create the keyspace
-		let keyspace = Config::new(DATABASE_DIR)
-			// Fsync data every 100 milliseconds
-			.fsync_ms(if options.sync {
-				Some(100)
-			} else {
-				None
-			})
+		// Configure and create the database
+		let db = OptimisticTxDatabase::builder(DATABASE_DIR)
 			// Handle transaction flushed automatically
 			.manual_journal_persist(!options.sync)
-			// Set the amount of data to build up in memory
-			.max_write_buffer_size(u64::MAX)
 			// Set the cache size
 			.cache_size(memory)
-			// Open a transactional keyspace
-			.open_transactional()?;
-		// Configure and create the partition
-		let partition = PartitionCreateOptions::default()
-			// Set the data block size to 32 KiB
-			.block_size(16 * 1_024)
+			// Set the maximum journal size
+			.max_journaling_size(1024 * 1024 * 1024)
+			// Set the number of worker threads for parallelism
+			.worker_threads(num_cpus::get().min(8))
+			// Open the database
+			.open()?;
+		// Configure the key-value separation
+		let blob_opts = KvSeparationOptions::default()
+			// Separate values if larger than 4 KiB (matches RocksDB blob settings)
+			.separation_threshold(4 * 1024);
+		// Configure and create the keyspace
+		let keyspace_opts = KeyspaceCreateOptions::default()
 			// Set the max memtable size to 256 MiB
-			.max_memtable_size(256 * 1_024 * 1_024)
+			.max_memtable_size(256 * 1024 * 1024)
 			// Separate values if larger than 4 KiB
-			.with_kv_separation(blobopts);
-		// Create a default data partition
-		let partition = keyspace.open_partition("default", partition)?;
+			.with_kv_separation(Some(blob_opts));
+		// Create a default data keyspace
+		let keyspace = db.keyspace("default", || keyspace_opts)?;
 		// Create the store
 		Ok(Self {
+			db: Arc::new(db),
 			keyspace: Arc::new(keyspace),
-			partition: Arc::new(partition),
 			sync: options.sync,
 		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<FjallClient> {
 		Ok(FjallClient {
+			db: self.db.clone(),
 			keyspace: self.keyspace.clone(),
-			partition: self.partition.clone(),
 			sync: self.sync,
 		})
 	}
 }
 
 pub(crate) struct FjallClient {
-	keyspace: Arc<TransactionalKeyspace>,
-	partition: Arc<TxPartitionHandle>,
+	db: Arc<OptimisticTxDatabase>,
+	keyspace: Arc<OptimisticTxKeyspace>,
 	sync: bool,
 }
 
@@ -216,23 +210,23 @@ impl FjallClient {
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncData)
 		} else {
 			Some(PersistMode::Buffer)
 		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let mut txn = self.db.write_tx()?.durability(durability);
 		// Process the data
-		txn.insert(&self.partition, key, val);
-		txn.commit()?;
+		txn.insert(&*self.keyspace, key, val);
+		txn.commit()??;
 		Ok(())
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let txn = self.keyspace.read_tx();
+		let txn = self.db.read_tx();
 		// Process the data
-		let res = txn.get(&self.partition, key)?;
+		let res = txn.get(&*self.keyspace, key)?;
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value
@@ -246,30 +240,30 @@ impl FjallClient {
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncData)
 		} else {
 			Some(PersistMode::Buffer)
 		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let mut txn = self.db.write_tx()?.durability(durability);
 		// Process the data
-		txn.insert(&self.partition, key, val);
-		txn.commit()?;
+		txn.insert(&*self.keyspace, key, val);
+		txn.commit()??;
 		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncData)
 		} else {
 			Some(PersistMode::Buffer)
 		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let mut txn = self.db.write_tx()?.durability(durability);
 		// Process the data
-		txn.remove(&self.partition, key);
-		txn.commit()?;
+		txn.remove(&*self.keyspace, key);
+		txn.commit()??;
 		Ok(())
 	}
 
@@ -279,29 +273,29 @@ impl FjallClient {
 	) -> Result<()> {
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncData)
 		} else {
 			Some(PersistMode::Buffer)
 		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let mut txn = self.db.write_tx()?.durability(durability);
 		// Process the data
 		for result in key_vals {
 			let (key, val) = result?;
-			txn.insert(&self.partition, &key, val);
+			txn.insert(&*self.keyspace, &key, val);
 		}
 		// Commit the batch
-		txn.commit()?;
+		txn.commit()??;
 		Ok(())
 	}
 
 	async fn batch_read_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
 		// Create a new transaction
-		let txn = self.keyspace.read_tx();
+		let txn = self.db.read_tx();
 		// Process the data
 		for key in keys {
 			// Get the current value
-			let res = txn.get(&self.partition, &key)?;
+			let res = txn.get(&*self.keyspace, &key)?;
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
@@ -317,37 +311,37 @@ impl FjallClient {
 	) -> Result<()> {
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncData)
 		} else {
 			Some(PersistMode::Buffer)
 		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let mut txn = self.db.write_tx()?.durability(durability);
 		// Process the data
 		for result in key_vals {
 			let (key, val) = result?;
-			txn.insert(&self.partition, &key, val);
+			txn.insert(&*self.keyspace, &key, val);
 		}
 		// Commit the batch
-		txn.commit()?;
+		txn.commit()??;
 		Ok(())
 	}
 
 	async fn batch_delete_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
 		// Set the transaction durability
 		let durability = if self.sync {
-			None
+			Some(PersistMode::SyncData)
 		} else {
 			Some(PersistMode::Buffer)
 		};
 		// Create a new transaction
-		let mut txn = self.keyspace.write_tx().durability(durability);
+		let mut txn = self.db.write_tx()?.durability(durability);
 		// Process the data
 		for key in keys {
-			txn.remove(&self.partition, &key);
+			txn.remove(&*self.keyspace, &key);
 		}
 		// Commit the batch
-		txn.commit()?;
+		txn.commit()??;
 		Ok(())
 	}
 
@@ -361,39 +355,39 @@ impl FjallClient {
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
 		// Create a new transaction
-		let txn = self.keyspace.read_tx();
+		let txn = self.db.read_tx();
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
 				// Create an iterator starting at the beginning
-				let iter = txn.keys(&self.partition);
+				let iter = txn.iter(&*self.keyspace);
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
 				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				for v in iter.skip(s).take(l) {
-					black_box(v.unwrap());
+				for kv in iter.skip(s).take(l) {
+					black_box(kv.key()?);
 					count += 1;
 				}
 				Ok(count)
 			}
 			Projection::Full => {
 				// Create an iterator starting at the beginning
-				let iter = txn.iter(&self.partition);
+				let iter = txn.iter(&*self.keyspace);
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
 				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				for v in iter.skip(s).take(l) {
-					black_box(v.unwrap().1);
+				for kv in iter.skip(s).take(l) {
+					black_box(kv.value()?);
 					count += 1;
 				}
 				Ok(count)
 			}
 			Projection::Count => {
 				Ok(txn
-					.keys(&self.partition)
+					.iter(&*self.keyspace)
 					.skip(s) // Skip the first `offset` entries
 					.take(l) // Take the next `limit` entries
 					.count())

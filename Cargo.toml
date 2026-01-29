@@ -84,7 +84,7 @@ clap = { version = "4.5.53", features = ["derive", "string", "env", "color"] }
 csv = "1.4.0"
 dashmap = "6.1.0"
 env_logger = "0.11.8"
-fjall = { version = "2.11.2", optional = true }
+fjall = { version = "3.0", optional = true, features = ["lz4"] }
 flatten-json-object = "0.6.1"
 futures = "0.3.31"
 hdrhistogram = "7.5.4"
