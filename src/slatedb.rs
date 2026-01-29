@@ -2,11 +2,13 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::memory::Config;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use serde_json::Value;
-use slatedb::config::{Settings, SstBlockSize, WriteOptions};
+use slatedb::config::{CompressionCodec, Settings, SstBlockSize, WriteOptions};
+use slatedb::db_cache::foyer::{FoyerCache, FoyerCacheOptions};
 use slatedb::object_store::local::LocalFileSystem;
 use slatedb::{Db, IsolationLevel};
 use std::hint::black_box;
@@ -14,6 +16,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const DATABASE_DIR: &str = "slatedb";
+const DATA_DIR: &str = "slatedb/data";
+const WAL_DIR: &str = "slatedb/wal";
+
+/// Calculate SlateDB specific memory allocation
+fn calculate_slatedb_memory() -> u64 {
+	// Load the system memory
+	let memory = Config::new();
+	// Return configuration in bytes
+	memory.cache_gb * 1024 * 1024 * 1024
+}
 
 pub(crate) struct SlateDBClientProvider {
 	db: Arc<Db>,
@@ -29,23 +41,48 @@ impl BenchmarkEngine<SlateDBClient> for SlateDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
-		// Create the database directory
-		std::fs::create_dir_all(DATABASE_DIR)?;
-		// Create object store (using local filesystem)
-		let store = Arc::new(LocalFileSystem::new_with_prefix(DATABASE_DIR)?);
+		// Create the database directories
+		std::fs::create_dir_all(DATA_DIR)?;
+		std::fs::create_dir_all(WAL_DIR)?;
+		// Calculate memory allocation
+		let memory = calculate_slatedb_memory();
+		// Create object store for data
+		let data_store = Arc::new(LocalFileSystem::new_with_prefix(DATA_DIR)?);
+		// Create object store for WAL
+		let wal_store = Arc::new(LocalFileSystem::new_with_prefix(WAL_DIR)?);
+		// Create a custom block cache
+		let cache = Arc::new(FoyerCache::new_with_opts(FoyerCacheOptions {
+			max_capacity: memory,
+			shards: num_cpus::get(),
+		}));
 		// Configure database settings
 		let settings = Settings {
 			// Flush the WAL regularly
 			flush_interval: Some(Duration::from_millis(100)),
+			// Set the L0 SST size to 256MB
+			l0_sst_size_bytes: 256 * 1024 * 1024,
+			// Set max L0 SSTs before compaction
+			l0_max_ssts: 16,
+			// Set backpressure limit to 512MB
+			max_unflushed_bytes: 512 * 1024 * 1024,
+			// Enable bloom filters for SSTs with 100+ keys
+			min_filter_keys: 100,
+			// Set bloom filter bits per key
+			filter_bits_per_key: 10,
+			// Enable Snappy compression
+			compression_codec: Some(CompressionCodec::Snappy),
+			// Use other default settings
 			..Default::default()
 		};
 		// Create the database builder
-		let builder = Db::builder(DATABASE_DIR, store.clone());
+		let builder = Db::builder(DATABASE_DIR, data_store);
 		// Apply custom settings
 		let builder = builder.with_settings(settings);
-		// Setup the WAL object store
-		let builder = builder.with_wal_object_store(store);
-		// Use a larger block size
+		// Setup the separate WAL object store
+		let builder = builder.with_wal_object_store(wal_store);
+		// Configure custom memory cache
+		let builder = builder.with_memory_cache(cache);
+		// Use a larger block size for better sequential performance
 		let builder = builder.with_sst_block_size(SstBlockSize::Block64Kib);
 		// Open the database
 		let db = builder.build().await?;
