@@ -58,7 +58,7 @@ impl BenchmarkEngine<SlateDBClient> for SlateDBClientProvider {
 		// Configure database settings
 		let settings = Settings {
 			// Flush the WAL regularly
-			flush_interval: Some(Duration::from_millis(100)),
+			flush_interval: Some(Duration::from_millis(200)),
 			// Set the L0 SST size to 256MB
 			l0_sst_size_bytes: 256 * 1024 * 1024,
 			// Set max L0 SSTs before compaction
