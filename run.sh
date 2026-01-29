@@ -314,6 +314,7 @@ postgres|postgres|networked|Postgres|
 redb|redb|embedded|ReDB|
 redis|redis|networked|Redis|
 rocksdb|rocksdb|embedded|RocksDB|
+slatedb|slatedb|embedded|SlateDB|
 sqlite|sqlite|embedded|SQLite|
 surrealdb-memory|surrealdb-memory|networked|SurrealDB with in-memory storage|
 surrealdb-rocksdb|surrealdb-rocksdb|networked|SurrealDB with RocksDB storage|
