@@ -507,7 +507,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "regex",
@@ -706,9 +706,9 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "bytes"
-version = "1.11.0"
+version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b35204fbdc0b3f4446b89fc1ac2cf84a8a68971995d0bf2e925ec7cd960f9cb3"
+checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 dependencies = [
  "serde",
 ]
@@ -2752,7 +2752,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.2",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4679,7 +4679,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -4763,7 +4763,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.2",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4801,7 +4801,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.2",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -6164,7 +6164,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "surrealdb"
 version = "3.0.0-beta"
-source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fkeyref#ff2875cd14581aea68eadb28305ba30d59ced65c"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fkeyref#42e2214c107429047300d9a2b1de2965c36c74ed"
 dependencies = [
  "async-channel",
  "boxcar",
@@ -6200,7 +6200,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-core"
 version = "3.0.0-beta"
-source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fkeyref#ff2875cd14581aea68eadb28305ba30d59ced65c"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fkeyref#42e2214c107429047300d9a2b1de2965c36c74ed"
 dependencies = [
  "addr",
  "affinitypool",
@@ -6339,7 +6339,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-types"
 version = "3.0.0-beta"
-source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fkeyref#ff2875cd14581aea68eadb28305ba30d59ced65c"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fkeyref#42e2214c107429047300d9a2b1de2965c36c74ed"
 dependencies = [
  "anyhow",
  "bytes",
@@ -6364,7 +6364,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-types-derive"
 version = "3.0.0-beta"
-source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fkeyref#ff2875cd14581aea68eadb28305ba30d59ced65c"
+source = "git+https://github.com/surrealdb/surrealdb?branch=arriqaaq%2Fkeyref#42e2214c107429047300d9a2b1de2965c36c74ed"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6374,7 +6374,7 @@ dependencies = [
 [[package]]
 name = "surrealkv"
 version = "0.17.1"
-source = "git+https://github.com/surrealdb/surrealkv?branch=main#8c757293173a34f9924e5368b2a54f69b156fd92"
+source = "git+https://github.com/surrealdb/surrealkv?branch=main#dd9c3fbd8a31195325a877405cc01b2c4cce793e"
 dependencies = [
  "arc-swap",
  "async-channel",
@@ -7492,7 +7492,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
