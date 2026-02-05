@@ -57,6 +57,8 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 		let builder = builder.with_enable_vlog(true);
 		// Set the block size to 64 KiB
 		let builder = builder.with_block_size(BLOCK_SIZE);
+		// Set the vlog threshold to 4KB
+		let builder = builder.with_vlog_value_threshold(4 * 1024);
 		// Set the directory location
 		let builder = builder.with_path(PathBuf::from(DATABASE_DIR));
 		// Create the datastore
@@ -354,38 +356,70 @@ impl SurrealKVClient {
 		match p {
 			Projection::Id => {
 				// Create an iterator starting at the beginning
-				let iter = txn.keys(beg, end)?;
-				// We use a for loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
+				let mut iter = txn.range(beg, end)?;
+				iter.seek_first().unwrap();
 				let mut count = 0;
-				for v in iter.skip(s).take(l) {
-					assert!(v.is_ok());
-					black_box(v.unwrap());
+				let mut skipped = 0;
+				while iter.next()? {
+					if !iter.valid() {
+						break;
+					}
+					if skipped < s {
+						skipped += 1;
+						continue;
+					}
+					if count >= l {
+						break;
+					}
+					black_box(iter.key());
 					count += 1;
 				}
 				Ok(count)
 			}
 			Projection::Full => {
 				// Create an iterator starting at the beginning
-				let iter = txn.range(beg, end)?;
-				// We use a for loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
+				let mut iter = txn.range(beg, end)?;
+				iter.seek_first().unwrap();
 				let mut count = 0;
-				for v in iter.skip(s).take(l) {
-					assert!(v.is_ok());
-					black_box(v.unwrap().1);
+				let mut skipped = 0;
+				while iter.next()? {
+					if !iter.valid() {
+						break;
+					}
+					if skipped < s {
+						skipped += 1;
+						continue;
+					}
+					if count >= l {
+						break;
+					}
+					let _ = black_box(iter.value());
 					count += 1;
 				}
 				Ok(count)
 			}
-			Projection::Count => match scan.limit {
-				Some(_) => bail!(NOT_SUPPORTED_ERROR),
-				None => Ok(txn.count(beg, end)?),
-			},
+			Projection::Count => {
+				// Create an iterator starting at the beginning
+				let mut iter = txn.range(beg, end)?;
+				iter.seek_first().unwrap();
+				let mut count = 0;
+				let mut skipped = 0;
+				while iter.next()? {
+					if !iter.valid() {
+						break;
+					}
+					if skipped < s {
+						skipped += 1;
+						continue;
+					}
+					if count >= l {
+						break;
+					}
+					black_box(iter.key());
+					count += 1;
+				}
+				Ok(count)
+			}
 		}
 	}
 }

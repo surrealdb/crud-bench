@@ -6,9 +6,10 @@ use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
+use fjall::config::BlockSizePolicy;
 use fjall::{
 	KeyspaceCreateOptions, KvSeparationOptions, OptimisticTxDatabase, OptimisticTxKeyspace,
-	PersistMode, Readable, config::BlockSizePolicy,
+	PersistMode, Readable,
 };
 use serde_json::Value;
 use std::hint::black_box;

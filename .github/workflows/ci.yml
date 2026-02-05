@@ -320,7 +320,7 @@ jobs:
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb-surrealkv
-            enabled: false
+            enabled: true
             description: SurrealDB with SurrealKV storage
             skipped: SurrealDB with SurrealKV storage benchmark awaiting fixes
           # SurrealDB Memory Engine
