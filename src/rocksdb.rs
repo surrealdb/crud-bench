@@ -89,8 +89,8 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		opts.set_enable_pipelined_write(true);
 		// Enable separation of keys and values
 		opts.set_enable_blob_files(true);
-		// Store 1KB values separate from keys
-		opts.set_min_blob_size(1024);
+		// Store 4KB values separate from keys
+		opts.set_min_blob_size(4 * 1024);
 		// Set the write-ahead-log size limit
 		opts.set_wal_size_limit_mb(1024);
 		// Set specific compression levels
