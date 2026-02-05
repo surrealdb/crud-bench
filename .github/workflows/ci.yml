@@ -297,6 +297,11 @@ jobs:
             enabled: false
             description: ScyllaDB
             skipped: ScyllaDB benchmark not yet implemented
+          # SlateDB
+          - name: slatedb
+            database: slatedb
+            enabled: true
+            description: SlateDB
           # SQLite
           - name: sqlite
             database: sqlite

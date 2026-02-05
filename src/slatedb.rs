@@ -1,40 +1,38 @@
-#![cfg(feature = "fjall")]
+#![cfg(feature = "slatedb")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
-use crate::memory::Config as MemoryConfig;
+use crate::memory::Config;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
-use fjall::config::BlockSizePolicy;
-use fjall::{
-	KeyspaceCreateOptions, KvSeparationOptions, OptimisticTxDatabase, OptimisticTxKeyspace,
-	PersistMode, Readable,
-};
 use serde_json::Value;
+use slatedb::config::{CompressionCodec, Settings, SstBlockSize, WriteOptions};
+use slatedb::db_cache::foyer::{FoyerCache, FoyerCacheOptions};
+use slatedb::object_store::local::LocalFileSystem;
+use slatedb::{Db, IsolationLevel};
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
-const DATABASE_DIR: &str = "fjall";
+const DATABASE_DIR: &str = "slatedb";
+const DATA_DIR: &str = "slatedb/data";
+const WAL_DIR: &str = "slatedb/wal";
 
-/// Calculate Fjall specific memory allocation
-fn calculate_fjall_memory() -> u64 {
+/// Calculate SlateDB specific memory allocation
+fn calculate_slatedb_memory() -> u64 {
 	// Load the system memory
-	let memory = MemoryConfig::new();
-	// Return configuration
+	let memory = Config::new();
+	// Return configuration in bytes
 	memory.cache_gb * 1024 * 1024 * 1024
 }
 
-// Durability will be set dynamically based on sync flag
-
-pub(crate) struct FjallClientProvider {
-	db: Arc<OptimisticTxDatabase>,
-	keyspace: Arc<OptimisticTxKeyspace>,
+pub(crate) struct SlateDBClientProvider {
+	db: Arc<Db>,
 	sync: bool,
 }
 
-impl BenchmarkEngine<FjallClient> for FjallClientProvider {
+impl BenchmarkEngine<SlateDBClient> for SlateDBClientProvider {
 	/// The number of seconds to wait before connecting
 	fn wait_timeout(&self) -> Option<Duration> {
 		None
@@ -43,62 +41,85 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		// Create the database directories
+		std::fs::create_dir_all(DATA_DIR)?;
+		std::fs::create_dir_all(WAL_DIR)?;
 		// Calculate memory allocation
-		let memory = calculate_fjall_memory();
-		// Configure and create the database
-		let db = OptimisticTxDatabase::builder(DATABASE_DIR)
-			// Handle transaction flushed automatically
-			.manual_journal_persist(!options.sync)
-			// Set the cache size
-			.cache_size(memory)
-			// Set the maximum journal size
-			.max_journaling_size(1024 * 1024 * 1024)
-			// Set the number of worker threads for parallelism
-			.worker_threads(num_cpus::get().min(8))
-			// Open the database
-			.open()?;
-		// Configure the key-value separation
-		let blob_opts = KvSeparationOptions::default()
-			// Separate values if larger than 4 KiB (matches RocksDB blob settings)
-			.separation_threshold(4 * 1024);
-		// Configure and create the keyspace
-		let keyspace_opts = KeyspaceCreateOptions::default()
-			// Set the data block size policy to 64 KiB
-			.data_block_size_policy(BlockSizePolicy::all(64 * 1_024))
-			// Set the max memtable size to 256 MiB
-			.max_memtable_size(256 * 1024 * 1024)
-			// Separate values if larger than 4 KiB
-			.with_kv_separation(Some(blob_opts));
-		// Create a default data keyspace
-		let keyspace = db.keyspace("default", || keyspace_opts)?;
+		let memory = calculate_slatedb_memory();
+		// Create object store for data
+		let data_store = Arc::new(LocalFileSystem::new_with_prefix(DATA_DIR)?);
+		// Create object store for WAL
+		let wal_store = Arc::new(LocalFileSystem::new_with_prefix(WAL_DIR)?);
+		// Create a custom block cache
+		let cache = Arc::new(FoyerCache::new_with_opts(FoyerCacheOptions {
+			max_capacity: memory,
+			shards: num_cpus::get(),
+		}));
+		// Configure database settings
+		let settings = Settings {
+			// Flush the WAL regularly
+			flush_interval: Some(Duration::from_millis(200)),
+			// Set the L0 SST size to 256MB
+			l0_sst_size_bytes: 256 * 1024 * 1024,
+			// Set max L0 SSTs before compaction
+			l0_max_ssts: 8,
+			// Set backpressure limit to 512MB
+			max_unflushed_bytes: 512 * 1024 * 1024,
+			// Enable bloom filters for SSTs with 100+ keys
+			min_filter_keys: 100,
+			// Set bloom filter bits per key
+			filter_bits_per_key: 10,
+			// Enable Snappy compression
+			compression_codec: Some(CompressionCodec::Snappy),
+			// Use other default settings
+			..Default::default()
+		};
+		// Create the database builder
+		let builder = Db::builder(DATABASE_DIR, data_store);
+		// Apply custom settings
+		let builder = builder.with_settings(settings);
+		// Setup the separate WAL object store
+		let builder = builder.with_wal_object_store(wal_store);
+		// Configure custom memory cache
+		let builder = builder.with_memory_cache(cache);
+		// Use a larger block size for better sequential performance
+		let builder = builder.with_sst_block_size(SstBlockSize::Block64Kib);
+		// Open the database
+		let db = builder.build().await?;
 		// Create the store
 		Ok(Self {
 			db: Arc::new(db),
-			keyspace: Arc::new(keyspace),
 			sync: options.sync,
 		})
 	}
 	/// Creates a new client for this benchmarking engine
-	async fn create_client(&self) -> Result<FjallClient> {
-		Ok(FjallClient {
+	async fn create_client(&self) -> Result<SlateDBClient> {
+		Ok(SlateDBClient {
 			db: self.db.clone(),
-			keyspace: self.keyspace.clone(),
-			sync: self.sync,
+			opts: WriteOptions {
+				await_durable: self.sync,
+			},
 		})
 	}
 }
 
-pub(crate) struct FjallClient {
-	db: Arc<OptimisticTxDatabase>,
-	keyspace: Arc<OptimisticTxKeyspace>,
-	sync: bool,
+pub(crate) struct SlateDBClient {
+	db: Arc<Db>,
+	opts: WriteOptions,
 }
 
-impl BenchmarkClient for FjallClient {
+impl BenchmarkClient for SlateDBClient {
 	async fn shutdown(&self) -> Result<()> {
+		// Close the database
+		self.db.close().await?;
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Ok
+		Ok(())
+	}
+
+	async fn compact(&self) -> Result<()> {
+		// SlateDB handles compaction automatically
 		Ok(())
 	}
 
@@ -207,29 +228,23 @@ impl BenchmarkClient for FjallClient {
 	}
 }
 
-impl FjallClient {
+impl SlateDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
-		// Set the transaction durability
-		let durability = if self.sync {
-			Some(PersistMode::SyncData)
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.db.write_tx()?.durability(durability);
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Process the data
-		txn.insert(&*self.keyspace, key, val);
-		txn.commit()??;
+		txn.put(key, val)?;
+		txn.commit_with_options(&self.opts).await?;
 		Ok(())
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
 		// Create a new transaction
-		let txn = self.db.read_tx();
-		// Process the data
-		let res = txn.get(&*self.keyspace, key)?;
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
+		// Get the data
+		let res = txn.get(key).await?;
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value
@@ -241,32 +256,20 @@ impl FjallClient {
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
 		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
-		// Set the transaction durability
-		let durability = if self.sync {
-			Some(PersistMode::SyncData)
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.db.write_tx()?.durability(durability);
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Process the data
-		txn.insert(&*self.keyspace, key, val);
-		txn.commit()??;
+		txn.put(key, val)?;
+		txn.commit_with_options(&self.opts).await?;
 		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Set the transaction durability
-		let durability = if self.sync {
-			Some(PersistMode::SyncData)
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.db.write_tx()?.durability(durability);
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Process the data
-		txn.remove(&*self.keyspace, key);
-		txn.commit()??;
+		txn.delete(key)?;
+		txn.commit_with_options(&self.opts).await?;
 		Ok(())
 	}
 
@@ -274,31 +277,25 @@ impl FjallClient {
 		&self,
 		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>>,
 	) -> Result<()> {
-		// Set the transaction durability
-		let durability = if self.sync {
-			Some(PersistMode::SyncData)
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.db.write_tx()?.durability(durability);
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Process the data
 		for result in key_vals {
 			let (key, val) = result?;
-			txn.insert(&*self.keyspace, &key, val);
+			txn.put(&key, val)?;
 		}
 		// Commit the batch
-		txn.commit()??;
+		txn.commit_with_options(&self.opts).await?;
 		Ok(())
 	}
 
 	async fn batch_read_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
 		// Create a new transaction
-		let txn = self.db.read_tx();
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Process the data
 		for key in keys {
 			// Get the current value
-			let res = txn.get(&*self.keyspace, &key)?;
+			let res = txn.get(&key).await?;
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
@@ -312,44 +309,32 @@ impl FjallClient {
 		&self,
 		key_vals: impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>>,
 	) -> Result<()> {
-		// Set the transaction durability
-		let durability = if self.sync {
-			Some(PersistMode::SyncData)
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.db.write_tx()?.durability(durability);
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Process the data
 		for result in key_vals {
 			let (key, val) = result?;
-			txn.insert(&*self.keyspace, &key, val);
+			txn.put(&key, val)?;
 		}
 		// Commit the batch
-		txn.commit()??;
+		txn.commit_with_options(&self.opts).await?;
 		Ok(())
 	}
 
 	async fn batch_delete_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
-		// Set the transaction durability
-		let durability = if self.sync {
-			Some(PersistMode::SyncData)
-		} else {
-			Some(PersistMode::Buffer)
-		};
 		// Create a new transaction
-		let mut txn = self.db.write_tx()?.durability(durability);
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Process the data
 		for key in keys {
-			txn.remove(&*self.keyspace, &key);
+			txn.delete(&key)?;
 		}
 		// Commit the batch
-		txn.commit()??;
+		txn.commit_with_options(&self.opts).await?;
 		Ok(())
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
-		// Contional scans are not supported
+		// Conditional scans are not supported
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
@@ -358,42 +343,59 @@ impl FjallClient {
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
 		// Create a new transaction
-		let txn = self.db.read_tx();
+		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
+		// Create an iterator
+		let mut iter = txn.scan::<Vec<u8>, _>(..).await?;
+		// Skip the necessary number of entries
+		let mut skipped = 0;
+		while skipped < s {
+			if iter.next().await?.is_none() {
+				return Ok(0);
+			}
+			skipped += 1;
+		}
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				// Create an iterator starting at the beginning
-				let iter = txn.iter(&*self.keyspace);
-				// We use a for loop to iterate over the results, while
+				// We use a while loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
+				// otherwise the loop is optimised out by the compiler
+				// when calling `count` at the end.
 				let mut count = 0;
-				for kv in iter.skip(s).take(l) {
-					black_box(kv.key()?);
+				while let Ok(Some(item)) = iter.next().await {
+					black_box(item.key);
 					count += 1;
+					if count >= l {
+						break;
+					}
 				}
 				Ok(count)
 			}
 			Projection::Full => {
-				// Create an iterator starting at the beginning
-				let iter = txn.iter(&*self.keyspace);
+				// We use a while loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
+				// otherwise the loop is optimised out by the compiler
+				// when calling `count` at the end.
 				let mut count = 0;
-				for kv in iter.skip(s).take(l) {
-					black_box(kv.value()?);
+				while let Ok(Some(item)) = iter.next().await {
+					black_box(item.value);
 					count += 1;
+					if count >= l {
+						break;
+					}
 				}
 				Ok(count)
 			}
 			Projection::Count => {
-				Ok(txn
-					.iter(&*self.keyspace)
-					.skip(s) // Skip the first `offset` entries
-					.take(l) // Take the next `limit` entries
-					.count())
+				// Count entries without processing values
+				let mut count = 0;
+				while let Ok(Some(_)) = iter.next().await {
+					count += 1;
+					if count >= l {
+						break;
+					}
+				}
+				Ok(count)
 			}
 		}
 	}

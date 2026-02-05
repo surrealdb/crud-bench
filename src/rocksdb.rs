@@ -74,7 +74,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Set minimum number of write buffers to merge
 		opts.set_min_write_buffer_number_to_merge(6);
 		// Delay compaction until the minimum number of files
-		opts.set_level_zero_file_num_compaction_trigger(16);
+		opts.set_level_zero_file_num_compaction_trigger(8);
 		// Set the compaction readahead size
 		opts.set_compaction_readahead_size(16 * 1024 * 1024);
 		// Set the max number of subcompactions

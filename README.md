@@ -124,7 +124,7 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
   -n, --name <NAME>                          An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>                  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, sqlite, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, surrealkv, surrealmx]
+  -d, --database <DATABASE>                  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, slatedb, sqlite, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, surrealkv, surrealmx]
   -i, --image <IMAGE>                        Specify a custom Docker image
   -p, --privileged                           Whether to run Docker in privileged mode
   -e, --endpoint <ENDPOINT>                  Specify a custom endpoint to connect to
@@ -439,6 +439,14 @@ following command:
 
 ```bash
 cargo run -r -- -d scylladb -e 127.0.0.1:9042 -s 100000 -c 12 -t 24 -r
+```
+
+### [SlateDB](https://slatedb.io/)
+
+SlateDB is an embedded storage engine built as a log-structured merge-tree on object storage. It provides bottomless storage capacity and high durability by leveraging object storage (S3, GCS, MinIO, and more).
+
+```bash
+cargo run -r -- -d slatedb -s 100000 -c 12 -t 24 -r
 ```
 
 ### [SQLite](https://www.sqlite.org/)
