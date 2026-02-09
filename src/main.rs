@@ -132,116 +132,31 @@ pub(crate) struct Args {
 	#[arg(long, env = "CRUD_BENCH_STORAGE_ENDPOINT", default_value = "ws://localhost:8000")]
 	pub(crate) storage_endpoint: String,
 
-	/// Size of the text value
+	/// The value specification as inline JSON or @path to a JSON file
 	#[arg(
 		short,
 		long,
 		env = "CRUD_BENCH_VALUE",
-		hide_default_value = true,
-		default_value = r#"{
-			"text": "string:50",
-			"number": "int:1..5000",
-			"integer": "int",
-			"words": "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
-		}"#
+		default_value = "@config/value.json",
+		hide_default_value = true
 	)]
 	pub(crate) value: String,
 
-	/// An array of scan specifications
+	/// An array of scan specifications as inline JSON or @path to a JSON file
 	#[arg(
 		long,
 		env = "CRUD_BENCH_SCANS",
-		hide_default_value = true,
-		default_value = r#"[
-			{ "name": "count_all", "samples": 100, "projection": "COUNT" },
-			{ "name": "limit_id", "samples": 10000, "projection": "ID", "limit": 100, "expect": 100 },
-			{ "name": "limit_all", "samples": 10000, "projection": "FULL", "limit": 100, "expect": 100 },
-			{ "name": "limit_start_id", "samples": 10000, "projection": "ID", "start": 5000, "limit": 100, "expect": 100 },
-			{ "name": "limit_start_all", "samples": 10000, "projection": "FULL", "start": 5000, "limit": 100, "expect": 100 },
-			{ "name": "where_field_integer_eq", "samples": 100, "projection": "FULL",
-				"condition": {
-					"sql": "number = 21",
-					"mysql": "number = 21",
-					"neo4j": "r.number = 21",
-					"mongodb": { "number": { "$eq": 21 } },
-					"arangodb": "r.number == 21",
-					"surrealdb": "number = 21"
-				},
-				"index": {
-					"fields": ["number"]
-				}
-			},
-			{ "name": "where_field_integer_gte_lte", "samples": 100, "projection": "FULL",
-				"condition": {
-					"sql": "number >= 18 AND number <= 21",
-					"mysql": "number >= 18 AND number <= 21",
-					"neo4j": "r.number >= 18 AND r.number <= 21",
-					"mongodb": { "number": { "$gte": 18, "$lte": 21 } },
-					"arangodb": "r.number >= 18 AND r.number <= 21",
-					"surrealdb": "number >= 18 AND number <= 21"
-				},
-				"index": {
-					"fields": ["number"]
-				}
-			},
-			{ "name": "where_field_fulltext_single", "samples": 100, "projection": "FULL", "limit": 1000,
-				"condition": {
-					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello')",
-					"mysql": "MATCH(words) AGAINST('hello' IN NATURAL LANGUAGE MODE)",
-					"neo4j": "hello",
-					"mongodb": { "$text": { "$search": "hello" } },
-					"surrealdb": "words @@ 'hello'"
-				},
-				"index": {
-					"fields": ["words"],
-					"index_type": "fulltext"
-				}
-			},
-			{ "name": "where_field_fulltext_multi_and", "samples": 100, "projection": "FULL", "limit": 1000,
-				"condition": {
-					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello & world')",
-					"mysql": "MATCH(words) AGAINST('+hello +world' IN NATURAL LANGUAGE MODE)",
-					"neo4j": "hello AND world",
-					"mongodb": { "$text": { "$search": "hello world" } },
-					"surrealdb": "words @@ 'hello' AND words @@ 'world'"
-				},
-				"index": {
-					"fields": ["words"],
-					"index_type": "fulltext"
-				}
-			},
-			{ "name": "where_field_fulltext_multi_or", "samples": 100, "projection": "FULL", "limit": 1000,
-				"condition": {
-					"sql": "to_tsvector('english', words) @@ to_tsquery('english', 'foo | bar')",
-					"mysql": "MATCH(words) AGAINST('foo bar' IN NATURAL LANGUAGE MODE)",
-					"neo4j": "foo OR bar",
-					"mongodb": { "$text": { "$search": "foo bar" } },
-					"surrealdb": "words @@ 'foo' OR words @@ 'bar'"
-				},
-				"index": {
-					"fields": ["words"],
-					"index_type": "fulltext"
-				}
-			}
-		]"#
+		default_value = "@config/scans.json",
+		hide_default_value = true
 	)]
 	pub(crate) scans: String,
 
-	/// An array of batch operation specifications
+	/// An array of batch operation specifications as inline JSON or @path to a JSON file
 	#[arg(
 		long,
 		env = "CRUD_BENCH_BATCHES",
-		hide_default_value = true,
-		default_value = r#"[
-			{ "name": "batch_create_100", "operation": "CREATE", "batch_size": 100, "samples": 250 },
-			{ "name": "batch_read_100", "operation": "READ", "batch_size": 100, "samples": 250 },
-			{ "name": "batch_update_100", "operation": "UPDATE", "batch_size": 100, "samples": 250 },
-			{ "name": "batch_delete_100", "operation": "DELETE", "batch_size": 100, "samples": 250 },
-			{ "name": "batch_create_1000", "operation": "CREATE", "batch_size": 1000, "samples": 250 },
-			{ "name": "batch_read_1000", "operation": "READ", "batch_size": 1000, "samples": 250 },
-			{ "name": "batch_update_1000", "operation": "UPDATE", "batch_size": 1000, "samples": 250 },
-			{ "name": "batch_delete_1000", "operation": "DELETE", "batch_size": 1000, "samples": 250 }
-		]"#
+		default_value = "@config/batches.json",
+		hide_default_value = true
 	)]
 	pub(crate) batches: String,
 
@@ -347,6 +262,18 @@ pub(crate) enum BatchOperationType {
 	Delete,
 }
 
+/// Resolves a JSON argument value. If the value starts with `@`, it is
+/// treated as a file path and the contents are read from disk. Otherwise
+/// the value is returned as-is (inline JSON).
+fn resolve_json_arg(value: &str) -> Result<String> {
+	if let Some(path) = value.strip_prefix('@') {
+		std::fs::read_to_string(path)
+			.map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", path, e))
+	} else {
+		Ok(value.to_string())
+	}
+}
+
 fn main() -> Result<()> {
 	// Initialise the logger
 	env_logger::init();
@@ -409,16 +336,20 @@ fn run(args: Args) -> Result<()> {
 	let name = args.database.name().to_string();
 	// Build the key provider
 	let kp = KeyProvider::new(args.key, args.random);
+	// Resolve the value, scans, and batches arguments (inline JSON or @file)
+	let value = resolve_json_arg(&args.value)?;
+	let scans_str = resolve_json_arg(&args.scans)?;
+	let batches_str = resolve_json_arg(&args.batches)?;
 	// Build the value provider
-	let vp = ValueProvider::new(&args.value)?;
+	let vp = ValueProvider::new(&value)?;
 	// Parse the batches configuration
-	let mut batches: Batches = serde_json::from_str(&args.batches)?;
+	let mut batches: Batches = serde_json::from_str(&batches_str)?;
 	// Check if we should skip batches
 	if args.skip_batches {
 		batches.clear();
 	}
 	// Parse the scans configuration
-	let mut scans: Scans = serde_json::from_str(&args.scans)?;
+	let mut scans: Scans = serde_json::from_str(&scans_str)?;
 	// Check if we should skip scans
 	if args.skip_scans {
 		scans.clear();

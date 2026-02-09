@@ -1,0 +1,151 @@
+[
+    {
+        "name": "count_all",
+        "samples": 1000,
+        "projection": "COUNT"
+    },
+    {
+        "name": "limit_id",
+        "samples": 10000,
+        "projection": "ID",
+        "limit": 100,
+        "expect": 100
+    },
+    {
+        "name": "limit_all",
+        "samples": 10000,
+        "projection": "FULL",
+        "limit": 100,
+        "expect": 100
+    },
+    {
+        "name": "limit_start_id",
+        "samples": 10000,
+        "projection": "ID",
+        "start": 5000,
+        "limit": 100,
+        "expect": 100
+    },
+    {
+        "name": "limit_start_all",
+        "samples": 10000,
+        "projection": "FULL",
+        "start": 5000,
+        "limit": 100,
+        "expect": 100
+    },
+    {
+        "name": "where_field_integer_eq",
+        "samples": 10000,
+        "projection": "FULL",
+        "condition": {
+            "sql": "number = 21",
+            "mysql": "number = 21",
+            "neo4j": "r.number = 21",
+            "mongodb": {
+                "number": {
+                    "$eq": 21
+                }
+            },
+            "arangodb": "r.number == 21",
+            "surrealdb": "number = 21"
+        },
+        "index": {
+            "fields": [
+                "number"
+            ]
+        }
+    },
+    {
+        "name": "where_field_integer_gte_lte",
+        "samples": 10000,
+        "projection": "FULL",
+        "condition": {
+            "sql": "number >= 18 AND number <= 21",
+            "mysql": "number >= 18 AND number <= 21",
+            "neo4j": "r.number >= 18 AND r.number <= 21",
+            "mongodb": {
+                "number": {
+                    "$gte": 18,
+                    "$lte": 21
+                }
+            },
+            "arangodb": "r.number >= 18 AND r.number <= 21",
+            "surrealdb": "number >= 18 AND number <= 21"
+        },
+        "index": {
+            "fields": [
+                "number"
+            ]
+        }
+    },
+    {
+        "name": "where_field_fulltext_single",
+        "samples": 10000,
+        "projection": "FULL",
+        "limit": 1000,
+        "condition": {
+            "sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello')",
+            "mysql": "MATCH(words) AGAINST('hello' IN NATURAL LANGUAGE MODE)",
+            "neo4j": "hello",
+            "mongodb": {
+                "$text": {
+                    "$search": "hello"
+                }
+            },
+            "surrealdb": "words @@ 'hello'"
+        },
+        "index": {
+            "fields": [
+                "words"
+            ],
+            "index_type": "fulltext"
+        }
+    },
+    {
+        "name": "where_field_fulltext_multi_and",
+        "samples": 10000,
+        "projection": "FULL",
+        "limit": 1000,
+        "condition": {
+            "sql": "to_tsvector('english', words) @@ to_tsquery('english', 'hello & world')",
+            "mysql": "MATCH(words) AGAINST('+hello +world' IN NATURAL LANGUAGE MODE)",
+            "neo4j": "hello AND world",
+            "mongodb": {
+                "$text": {
+                    "$search": "hello world"
+                }
+            },
+            "surrealdb": "words @@ 'hello' AND words @@ 'world'"
+        },
+        "index": {
+            "fields": [
+                "words"
+            ],
+            "index_type": "fulltext"
+        }
+    },
+    {
+        "name": "where_field_fulltext_multi_or",
+        "samples": 10000,
+        "projection": "FULL",
+        "limit": 1000,
+        "condition": {
+            "sql": "to_tsvector('english', words) @@ to_tsquery('english', 'foo | bar')",
+            "mysql": "MATCH(words) AGAINST('foo bar' IN NATURAL LANGUAGE MODE)",
+            "neo4j": "foo OR bar",
+            "mongodb": {
+                "$text": {
+                    "$search": "foo bar"
+                }
+            },
+            "surrealdb": "words @@ 'foo' OR words @@ 'bar'"
+        },
+        "index": {
+            "fields": [
+                "words"
+            ],
+            "index_type": "fulltext"
+        }
+    }
+]
