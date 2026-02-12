@@ -9,7 +9,7 @@ use anyhow::{Result, bail};
 use serde_json::Value;
 use slatedb::config::{CompressionCodec, Settings, SstBlockSize, WriteOptions};
 use slatedb::db_cache::foyer::{FoyerCache, FoyerCacheOptions};
-use slatedb::object_store::local::LocalFileSystem;
+use slatedb::object_store::{ObjectStore, local::LocalFileSystem};
 use slatedb::{Db, IsolationLevel};
 use std::hint::black_box;
 use std::sync::Arc;
@@ -47,9 +47,10 @@ impl BenchmarkEngine<SlateDBClient> for SlateDBClientProvider {
 		// Calculate memory allocation
 		let memory = calculate_slatedb_memory();
 		// Create object store for data
-		let data_store = Arc::new(LocalFileSystem::new_with_prefix(DATA_DIR)?);
+		let data_store: Arc<dyn ObjectStore> =
+			Arc::new(LocalFileSystem::new_with_prefix(DATA_DIR)?);
 		// Create object store for WAL
-		let wal_store = Arc::new(LocalFileSystem::new_with_prefix(WAL_DIR)?);
+		let wal_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(WAL_DIR)?);
 		// Create a custom block cache
 		let cache = Arc::new(FoyerCache::new_with_opts(FoyerCacheOptions {
 			max_capacity: memory,

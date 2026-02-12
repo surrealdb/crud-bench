@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use surrealkv::Durability;
+use surrealkv::LSMIterator;
 use surrealkv::Mode::{ReadOnly, ReadWrite};
 use surrealkv::Tree;
 use surrealkv::TreeBuilder;
