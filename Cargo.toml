@@ -33,6 +33,7 @@ default = [
     "slatedb",
     "sqlite",
     "surrealdb",
+    "surrealdb2",
     "surrealkv",
     "surrealmx",
 ]
@@ -61,6 +62,18 @@ surrealdb = [
     "surrealdb/protocol-http",
     "surrealdb/protocol-ws",
     "surrealdb/rustls",
+]
+surrealdb2 = [
+    "dep:surrealdb2",
+    "surrealdb2/protocol-http",
+    "surrealdb2/protocol-ws",
+    "surrealdb2/rustls",
+]
+surrealdb2-embedded = [
+    "surrealdb2",
+    "surrealdb2/kv-mem",
+    "surrealdb2/kv-rocksdb",
+    "surrealdb2/kv-surrealkv",
 ]
 surrealkv = ["dep:surrealkv"]
 surrealmx = ["dep:surrealmx"]
@@ -116,6 +129,7 @@ slatedb = { version = "0.10.1", features = ["snappy", "foyer"], optional = true 
 serde_json = "1.0.149"
 serial_test = "3.3.1"
 surrealdb = { version = "3.0.0-beta.2", default-features = false, optional = true }
+surrealdb2 = { package = "surrealdb", version = "2.6", default-features = false, optional = true }
 surrealkv = { version = "0.17.1", optional = true }
 surrealmx = { version = "0.15.0", optional = true }
 sysinfo = { version = "0.37.2", features = ["serde"] }

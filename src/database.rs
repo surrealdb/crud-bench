@@ -76,6 +76,14 @@ pub(crate) enum Database {
 	/// `-e "ws://host1:8000;ws://host2:8000;ws://host3:8000"`
 	#[cfg(feature = "surrealdb")]
 	Surrealds,
+	#[cfg(feature = "surrealdb2")]
+	Surrealdb2,
+	#[cfg(feature = "surrealdb2")]
+	Surrealdb2Memory,
+	#[cfg(feature = "surrealdb2")]
+	Surrealdb2Rocksdb,
+	#[cfg(feature = "surrealdb2")]
+	Surrealdb2Surrealkv,
 }
 
 impl Database {
@@ -109,6 +117,12 @@ impl Database {
 			Self::SurrealdbRocksdb => crate::surrealdb::docker(options),
 			#[cfg(feature = "surrealdb")]
 			Self::SurrealdbSurrealkv => crate::surrealdb::docker(options),
+			#[cfg(feature = "surrealdb2")]
+			Self::Surrealdb2Memory => crate::surrealdb2::docker(options),
+			#[cfg(feature = "surrealdb2")]
+			Self::Surrealdb2Rocksdb => crate::surrealdb2::docker(options),
+			#[cfg(feature = "surrealdb2")]
+			Self::Surrealdb2Surrealkv => crate::surrealdb2::docker(options),
 			#[allow(unreachable_patterns)]
 			_ => return None,
 		};
@@ -536,6 +550,86 @@ impl Database {
 					)
 					.await
 			}
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2 => {
+				benchmark
+					.run::<_, SurrealDBDialect, _>(
+						crate::surrealdb2::SurrealDB2ClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2Memory => {
+				benchmark
+					.run::<_, SurrealDBDialect, _>(
+						crate::surrealdb2::SurrealDB2ClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2Rocksdb => {
+				benchmark
+					.run::<_, SurrealDBDialect, _>(
+						crate::surrealdb2::SurrealDB2ClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2Surrealkv => {
+				benchmark
+					.run::<_, SurrealDBDialect, _>(
+						crate::surrealdb2::SurrealDB2ClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
 			#[cfg(feature = "surrealkv")]
 			Database::Surrealkv => {
 				benchmark
@@ -630,6 +724,14 @@ impl Database {
 			Database::SurrealdbRocksdb => "SurrealDB (RocksDB)",
 			#[cfg(feature = "surrealdb")]
 			Database::SurrealdbSurrealkv => "SurrealDB (SurrealKV)",
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2 => "SurrealDB 2",
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2Memory => "SurrealDB 2 (Memory)",
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2Rocksdb => "SurrealDB 2 (RocksDB)",
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2Surrealkv => "SurrealDB 2 (SurrealKV)",
 			#[allow(unreachable_patterns)]
 			_ => "Unknown",
 		}
