@@ -332,7 +332,7 @@ impl BenchmarkClient for SurrealDBClient {
 						Err(e) => {
 							let msg = e.to_string();
 							// Be permissive on the match to tolerate tiny wording changes
-							if msg.starts_with(
+							if msg.contains(
 								"The query was not executed due to a failed transaction.",
 							) {
 								warn!("Retrying {sql} due to {msg}");
