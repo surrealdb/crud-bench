@@ -453,8 +453,9 @@ impl Benchmark {
 		}
 		// Calculate runtime information
 		let result = OperationResult::new(metric, global_histogram);
-		// Finish the progress bar with the elapsed time
-		pb.finish_with_message(format!("done in {}", result.total_time()));
+		// Finish the progress bar and print the result to stdout (visible in CI)
+		pb.finish_and_clear();
+		println!("{operation:>40}  done in {}", result.total_time());
 		// Shall we skip the operation? (operation not supported)
 		if skip.load(Ordering::Relaxed) {
 			return Ok(None);
