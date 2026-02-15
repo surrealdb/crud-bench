@@ -1,0 +1,13 @@
+{
+	"text": "string:50",
+	"name": "string:20",
+	"age": "int:1..100",
+	"city": "string_enum:london,paris,berlin,tokyo,new_york,sydney,madrid,rome",
+	"number": "int:1..5000",
+	"integer": "int",
+	"score": "float:0.0..100.0",
+	"active": "bool",
+	"tags": ["string_enum:alpha,beta,gamma,delta,epsilon", "string_enum:alpha,beta,gamma,delta,epsilon", "string_enum:alpha,beta,gamma,delta,epsilon"],
+	"embedding": "vector:4",
+	"words": "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
+}

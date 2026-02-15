@@ -71,6 +71,8 @@ enum ValueGenerator {
 	StringEnum(Vec<String>),
 	IntegerEnum(Vec<Number>),
 	FloatEnum(Vec<Number>),
+	/// Fixed-dimension vector of random floats in [0.0, 1.0)
+	Vector(usize),
 	Array(Vec<ValueGenerator>),
 	Object(BTreeMap<String, ValueGenerator>),
 }
@@ -192,6 +194,12 @@ impl ValueGenerator {
 				numbers.push(Number::from_f64(s.parse::<f32>()? as f64).unwrap());
 			}
 			Self::FloatEnum(numbers)
+		} else if let Some(i) = s.strip_prefix("vector:") {
+			let dim: usize = i.parse().map_err(|_| anyhow!("Invalid vector dimension: {i}"))?;
+			if dim == 0 {
+				bail!("Vector dimension must be > 0");
+			}
+			Self::Vector(dim)
 		} else if s.eq("bool") {
 			Self::Bool
 		} else if s.eq("int") {
@@ -290,6 +298,16 @@ impl ValueGenerator {
 			ValueGenerator::FloatEnum(a) => {
 				let i = rng.random_range(0..a.len());
 				Value::Number(a[i].clone())
+			}
+			ValueGenerator::Vector(dim) => {
+				// Generate a fixed-dimension vector of random floats in [0.0, 1.0)
+				let vec: Vec<Value> = (0..*dim)
+					.map(|_| {
+						let v: f64 = RandGen::random_range(&mut *rng, 0.0f64..1.0f64);
+						Value::Number(Number::from_f64(v).unwrap())
+					})
+					.collect();
+				Value::Array(vec)
 			}
 			ValueGenerator::Array(a) => {
 				// Generate any array structure values
@@ -393,9 +411,7 @@ impl ColumnType {
 			ValueGenerator::DateTime => ColumnType::DateTime,
 			ValueGenerator::Bool => ColumnType::Bool,
 			ValueGenerator::Uuid => ColumnType::Uuid,
-			t => {
-				bail!("Invalid data type: {t:?}");
-			}
+			ValueGenerator::Vector(_) | ValueGenerator::Array(_) => ColumnType::Object,
 		};
 		Ok(r)
 	}

@@ -248,16 +248,26 @@ impl BenchmarkClient for SurrealDBClient {
 		// Get the fields
 		let fields = spec.fields.join(", ");
 		// Check if an index type is specified
-		let sql = match &spec.index_type {
-			Some(kind) if kind == "fulltext" => {
+		let sql = match spec.index_type.as_deref() {
+			Some("fulltext") => {
 				// Define the analyzer
 				let sql = format!(
 					"DEFINE ANALYZER IF NOT EXISTS {name} TOKENIZERS blank,class FILTERS lowercase,ascii;"
 				);
 				self.db.query(sql).await?.check()?;
-				// Define the index concurrently (so we don't maintain an open transaction during the indexing
+				// Define the index concurrently
 				format!(
 					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
+				)
+			}
+			Some("mtree") => {
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} MTREE DIMENSION 4 CONCURRENTLY"
+				)
+			}
+			Some("hnsw") => {
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} HNSW DIMENSION 4 DIST EUCLIDEAN CONCURRENTLY"
 				)
 			}
 			_ => {
@@ -368,6 +378,13 @@ impl BenchmarkClient for SurrealDBClient {
 	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		self.scan(scan, ctx).await
 	}
+
+	async fn run_setup_queries(&self, queries: &[String]) -> Result<()> {
+		for q in queries {
+			self.db.query(q.as_str()).await?.check()?;
+		}
+		Ok(())
+	}
 }
 
 impl SurrealDBClient {
@@ -429,13 +446,25 @@ impl SurrealDBClient {
 	}
 
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
-		// SurrealDB requires a full-text index to use the @@ operator
-		if ctx == ScanContext::WithoutIndex
-			&& let Some(index) = &scan.index
-			&& let Some(kind) = &index.index_type
-			&& kind == "fulltext"
-		{
-			bail!(NOT_SUPPORTED_ERROR);
+		// Skip index-dependent queries when running without an index
+		if ctx == ScanContext::WithoutIndex {
+			if let Some(index) = &scan.index {
+				match index.index_type.as_deref() {
+					// SurrealDB requires a full-text index to use the @@ operator
+					Some("fulltext") | Some("mtree") | Some("hnsw") => {
+						bail!(NOT_SUPPORTED_ERROR);
+					}
+					_ => {}
+				}
+			}
+		}
+		// Check for a raw query
+		if let Some(sql) = scan.raw_query("surrealdb") {
+			let res: surrealdb::types::Value = self.db.query(sql).await?.take(0)?;
+			return match res.as_array() {
+				Some(arr) => Ok(arr.len()),
+				None => Ok(1), // Single result (e.g. GROUP ALL)
+			};
 		}
 		// Extract parameters
 		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();

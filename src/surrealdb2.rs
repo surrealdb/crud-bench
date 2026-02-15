@@ -2,7 +2,7 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::database::Database;
-use crate::dialect::SurrealDBDialect;
+use crate::dialect::SurrealDB2Dialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
@@ -15,7 +15,9 @@ use std::env;
 use std::time::Duration;
 use surrealdb2::Surreal;
 use surrealdb2::engine::any::{Any, connect};
+use surrealdb2::opt::Config;
 use surrealdb2::opt::auth::Root;
+use surrealdb2::sql::Value as CoreValue;
 use tokio::time::{sleep, timeout};
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
@@ -122,8 +124,14 @@ pub(super) async fn initialise_db(
 	username: &str,
 	password: &str,
 ) -> Result<Surreal<Any>> {
+	// Set the root user for embedded engines
+	let root = Root {
+		username,
+		password,
+	};
+	let config = Config::new().user(root);
 	// Connect to the database
-	let db = connect(endpoint).await?;
+	let db = connect((endpoint, config)).await?;
 	// Signin as a namespace, database, or root user
 	db.signin(Root {
 		username,
@@ -210,7 +218,7 @@ impl BenchmarkClient for SurrealDB2Client {
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<()> {
-		self.read(key as i64).await
+		self.read(key).await
 	}
 
 	async fn read_string(&self, key: String) -> Result<()> {
@@ -244,16 +252,27 @@ impl BenchmarkClient for SurrealDB2Client {
 		// Get the fields
 		let fields = spec.fields.join(", ");
 		// Check if an index type is specified
-		let sql = match &spec.index_type {
-			Some(kind) if kind == "fulltext" => {
+		let sql = match spec.index_type.as_deref() {
+			Some("fulltext") => {
 				// Define the analyzer
 				let sql = format!(
 					"DEFINE ANALYZER IF NOT EXISTS {name} TOKENIZERS blank,class FILTERS lowercase,ascii;"
 				);
 				self.db.query(sql).await?.check()?;
-				// Define the index concurrently (so we don't maintain an open transaction during the indexing
+				// Define the index concurrently
 				format!(
 					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
+				)
+			}
+			Some("mtree") => {
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} MTREE DIMENSION 4 CONCURRENTLY"
+				)
+			}
+			Some("hnsw") => {
+				// HNSW may not be available in SurrealDB v2; will fail gracefully
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} HNSW DIMENSION 4 DIST EUCLIDEAN CONCURRENTLY"
 				)
 			}
 			_ => {
@@ -335,6 +354,25 @@ impl BenchmarkClient for SurrealDB2Client {
 	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		self.scan(scan, ctx).await
 	}
+
+	async fn run_setup_queries(&self, queries: &[String]) -> Result<()> {
+		for q in queries {
+			self.db.query(q.as_str()).await?.check()?;
+		}
+		Ok(())
+	}
+}
+
+/// Extract the length of a SurrealDB v2 Value result.
+///
+/// Uses the SDK's own Value type to bypass serde deserialization, which
+/// fails on Thing (record ID) types with "invalid type: enum" errors.
+fn core_value_len(val: surrealdb2::Value) -> usize {
+	match val.into_inner() {
+		CoreValue::Array(arr) => arr.len(),
+		CoreValue::None => 0,
+		_ => 1,
+	}
 }
 
 impl SurrealDB2Client {
@@ -343,7 +381,7 @@ impl SurrealDB2Client {
 		T: serde::Serialize + Send + 'static,
 	{
 		self.db
-			.query("CREATE type::record('record', $key) CONTENT $content RETURN NULL")
+			.query("CREATE type::thing('record', $key) CONTENT $content RETURN NULL")
 			.bind(("key", key))
 			.bind(("content", val))
 			.await?
@@ -353,10 +391,16 @@ impl SurrealDB2Client {
 
 	async fn read<T>(&self, key: T) -> Result<()>
 	where
-		T: Into<surrealdb2::RecordIdKey>,
+		T: serde::Serialize + Send + 'static,
 	{
-		let res: Option<Value> = self.db.select(("record", key)).await?;
-		assert!(res.is_some());
+		// Use surrealdb2::Value to avoid serde deserialization of Thing types
+		let res: surrealdb2::Value = self
+			.db
+			.query("SELECT * FROM type::thing('record', $key)")
+			.bind(("key", key))
+			.await?
+			.take(0)?;
+		assert!(!res.into_inner().is_none());
 		Ok(())
 	}
 
@@ -365,7 +409,7 @@ impl SurrealDB2Client {
 		T: serde::Serialize + Send + 'static,
 	{
 		self.db
-			.query("UPDATE type::record('record', $key) CONTENT $content RETURN NULL")
+			.query("UPDATE type::thing('record', $key) CONTENT $content RETURN NULL")
 			.bind(("key", key))
 			.bind(("content", val))
 			.await?
@@ -378,7 +422,7 @@ impl SurrealDB2Client {
 		T: serde::Serialize + Send + 'static,
 	{
 		self.db
-			.query("DELETE type::record('record', $key) RETURN NULL")
+			.query("DELETE type::thing('record', $key) RETURN NULL")
 			.bind(("key", key))
 			.await?
 			.check()?;
@@ -386,30 +430,38 @@ impl SurrealDB2Client {
 	}
 
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
-		// SurrealDB requires a full-text index to use the @@ operator
-		if ctx == ScanContext::WithoutIndex
-			&& let Some(index) = &scan.index
-			&& let Some(kind) = &index.index_type
-			&& kind == "fulltext"
-		{
-			bail!(NOT_SUPPORTED_ERROR);
+		// Skip index-dependent queries when running without an index
+		if ctx == ScanContext::WithoutIndex {
+			if let Some(index) = &scan.index {
+				match index.index_type.as_deref() {
+					Some("fulltext") | Some("mtree") | Some("hnsw") => {
+						bail!(NOT_SUPPORTED_ERROR);
+					}
+					_ => {}
+				}
+			}
+		}
+		// Check for a raw query (with v2 fallback)
+		if let Some(sql) = scan.raw_query("surrealdb2") {
+			let res: surrealdb2::Value = self.db.query(sql).await?.take(0)?;
+			return Ok(core_value_len(res).max(1)); // At least 1 for single-result queries
 		}
 		// Extract parameters
 		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
-		let c = SurrealDBDialect::filter_clause(scan)?;
+		let c = SurrealDB2Dialect::filter_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
 				let sql = format!("SELECT id FROM record {c} {s} {l}");
-				let res: Vec<Value> = self.db.query(sql).await?.take(0)?;
-				Ok(res.len())
+				let res: surrealdb2::Value = self.db.query(sql).await?.take(0)?;
+				Ok(core_value_len(res))
 			}
 			Projection::Full => {
 				let sql = format!("SELECT * FROM record {c} {s} {l}");
-				let res: Vec<Value> = self.db.query(sql).await?.take(0)?;
-				Ok(res.len())
+				let res: surrealdb2::Value = self.db.query(sql).await?.take(0)?;
+				Ok(core_value_len(res))
 			}
 			Projection::Count => {
 				let sql = if s.is_empty() && l.is_empty() {

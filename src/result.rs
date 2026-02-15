@@ -46,6 +46,7 @@ pub(crate) struct BenchmarkResult {
 pub(crate) struct ScanResult {
 	pub(crate) name: String,
 	pub(crate) samples: u32,
+	pub(crate) query: Option<String>,
 	pub(crate) without_index: Option<OperationResult>,
 	pub(crate) index_build: Option<OperationResult>,
 	pub(crate) with_index: Option<OperationResult>,
@@ -68,7 +69,7 @@ const HEADERS: [&str; 12] = [
 	"Writes",
 ];
 
-const CSV_HEADERS: [&str; 22] = [
+const CSV_HEADERS: [&str; 27] = [
 	"Test",
 	"Total time",
 	"Mean",
@@ -91,10 +92,15 @@ const CSV_HEADERS: [&str; 22] = [
 	"Writes",
 	"System load",
 	"System load (1m/5m/15m)",
+	"Samples",
+	"Clients",
+	"Threads",
+	"Concurrency",
+	"Query",
 ];
 
 const SKIP: [&str; 11] = ["-"; 11];
-const CSV_SKIP: [&str; 21] = ["-"; 21];
+const CSV_SKIP: [&str; 26] = ["-"; 26];
 
 impl Display for BenchmarkResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -194,32 +200,60 @@ impl Display for BenchmarkResult {
 }
 
 impl BenchmarkResult {
+	/// Build the metadata suffix columns for a CSV row.
+	fn csv_meta(&self, samples: u32, query: &str) -> Vec<String> {
+		let (clients, threads) = self
+			.metadata
+			.as_ref()
+			.map(|m| (m.clients, m.threads))
+			.unwrap_or((0, 0));
+		vec![
+			format!("{samples}"),
+			format!("{clients}"),
+			format!("{threads}"),
+			format!("{}", clients * threads),
+			query.to_string(),
+		]
+	}
+
 	pub(crate) fn to_csv(&self, path: &str) -> Result<(), csv::Error> {
 		let mut w = Writer::from_path(path)?;
+		let global_samples = self.metadata.as_ref().map(|m| m.samples).unwrap_or(0);
 		// Write headers
 		w.write_record(CSV_HEADERS)?;
 		// Add the [C]reate results to the output
 		if let Some(res) = &self.creates {
-			w.write_record(res.output_csv("[C]reate"))?;
+			let mut row = res.output_csv("[C]reate");
+			row.extend(self.csv_meta(global_samples, ""));
+			w.write_record(row)?;
 		}
 		// Add the [R]eads results to the output
 		if let Some(res) = &self.reads {
-			w.write_record(res.output_csv("[R]ead"))?;
+			let mut row = res.output_csv("[R]ead");
+			row.extend(self.csv_meta(global_samples, ""));
+			w.write_record(row)?;
 		}
 		// Add the [U]pdates results to the output
 		if let Some(res) = &self.updates {
-			w.write_record(res.output_csv("[U]pdate"))?;
+			let mut row = res.output_csv("[U]pdate");
+			row.extend(self.csv_meta(global_samples, ""));
+			w.write_record(row)?;
 		}
 		// Add the [D]eletes results to the output
 		if let Some(res) = &self.deletes {
-			w.write_record(res.output_csv("[D]elete"))?;
+			let mut row = res.output_csv("[D]elete");
+			row.extend(self.csv_meta(global_samples, ""));
+			w.write_record(row)?;
 		}
 		// Add the [S]cans results to the output
 		for scan in &self.scans {
+			let query_text = scan.query.as_deref().unwrap_or("");
 			// Scan without index
 			let label = format!("[S]can::{} ({})", scan.name, scan.samples);
 			if let Some(res) = &scan.without_index {
-				w.write_record(res.output_csv(label))?;
+				let mut row = res.output_csv(label);
+				row.extend(self.csv_meta(scan.samples, query_text));
+				w.write_record(row)?;
 			} else {
 				let mut cells = vec![label];
 				cells.extend(CSV_SKIP.iter().map(|s| s.to_string()));
@@ -229,7 +263,9 @@ impl BenchmarkResult {
 			if scan.has_index_spec {
 				let label = format!("[I]ndex::{}", scan.name);
 				if let Some(res) = &scan.index_build {
-					w.write_record(res.output_csv(label))?;
+					let mut row = res.output_csv(label);
+					row.extend(self.csv_meta(1, query_text));
+					w.write_record(row)?;
 				} else {
 					let mut cells = vec![label];
 					cells.extend(CSV_SKIP.iter().map(|s| s.to_string()));
@@ -240,7 +276,9 @@ impl BenchmarkResult {
 			if scan.has_index_spec {
 				let label = format!("[S]can::{}::indexed ({})", scan.name, scan.samples);
 				if let Some(res) = &scan.with_index {
-					w.write_record(res.output_csv(label))?;
+					let mut row = res.output_csv(label);
+					row.extend(self.csv_meta(scan.samples, query_text));
+					w.write_record(row)?;
 				} else {
 					let mut cells = vec![label];
 					cells.extend(CSV_SKIP.iter().map(|s| s.to_string()));
@@ -251,7 +289,9 @@ impl BenchmarkResult {
 			if scan.has_index_spec {
 				let label = format!("[R]emoveIndex::{}", scan.name);
 				if let Some(res) = &scan.index_remove {
-					w.write_record(res.output_csv(label))?;
+					let mut row = res.output_csv(label);
+					row.extend(self.csv_meta(1, query_text));
+					w.write_record(row)?;
 				} else {
 					let mut cells = vec![label];
 					cells.extend(CSV_SKIP.iter().map(|s| s.to_string()));
@@ -261,11 +301,13 @@ impl BenchmarkResult {
 		}
 		// Add the [B]atch results to the output
 		for (name, samples, groups, result) in &self.batches {
-			let name = format!("[B]atch::{name} ({samples} batches of {groups})");
+			let label = format!("[B]atch::{name} ({samples} batches of {groups})");
 			if let Some(res) = &result {
-				w.write_record(res.output_csv(name))?;
+				let mut row = res.output_csv(&label);
+				row.extend(self.csv_meta(*samples, ""));
+				w.write_record(row)?;
 			} else {
-				let mut cells = vec![name];
+				let mut cells = vec![label];
 				cells.extend(CSV_SKIP.iter().map(|s| s.to_string()));
 				w.write_record(cells)?;
 			}

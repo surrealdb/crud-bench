@@ -58,6 +58,7 @@ rocksdb/
 slatedb/
 surrealkv/
 surrealmx/
+tmp/
 
 # --- Ignore generated result files
 result.csv

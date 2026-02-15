@@ -1,0 +1,22 @@
+warning: field `script` is never read
+   --> /home/bench/stu/surrealdb/surrealdb/core/src/exec/physical_expr/function.rs:356:13
+    |
+354 | pub struct JsFunctionExec {
+    |            -------------- field in this struct
+355 |     #[cfg_attr(not(feature = "scripting"), allow(unused_variables))]
+356 |     pub(crate) script: Script,
+    |                ^^^^^^
+    |
+    = note: `JsFunctionExec` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `surrealdb-core` (lib) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 0.20s
+     Running `target/release/crud-bench -d surrealdb2 -e 'tikv://127.0.0.1:2379' -s 1000000 -c 12 -t 24 --value '@config/value-surrealdb.json' --scans '@config/scans-surrealdb.json' --setup '@config/setup-surrealdb.json' --batches '@config/batches.json' -n v2-tikv`
+--------------------------------------------------
+Failure: There was a problem with authentication
+--------------------------------------------------
+Error: There was a problem with authentication
+
+Caused by:
+    There was a problem with authentication

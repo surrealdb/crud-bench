@@ -1,10 +1,11 @@
 use crate::BatchOperation;
 use crate::KeyType;
 use crate::Scan;
+use crate::SetupConfig;
 use crate::benchmark::Benchmark;
 use crate::dialect::{
 	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MongoDBDialect, MySqlDialect, Neo4jDialect,
-	SurrealDBDialect,
+	SurrealDB2Dialect, SurrealDBDialect,
 };
 use crate::docker::{Container, DockerParams};
 use crate::dry::DryClientProvider;
@@ -144,6 +145,7 @@ impl Database {
 		vp: ValueProvider,
 		scans: Vec<Scan>,
 		batches: Vec<BatchOperation>,
+		setup: SetupConfig,
 		database: Option<String>,
 		system: Option<crate::system::SystemInfo>,
 		metadata: Option<crate::result::BenchmarkMetadata>,
@@ -156,10 +158,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database,
-						system,
-						metadata,
+					batches,
+					setup.clone(),
+					database,
+					system,
+					metadata,
 					)
 					.await
 			}
@@ -172,10 +175,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -192,10 +196,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -208,10 +213,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -224,10 +230,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -239,10 +246,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -254,10 +262,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -268,10 +277,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -284,10 +294,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -300,10 +311,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -316,10 +328,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -332,10 +345,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -348,10 +362,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -363,10 +378,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -379,10 +395,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -395,10 +412,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -411,10 +429,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -427,10 +446,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -443,10 +463,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -463,10 +484,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -483,10 +505,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -503,10 +526,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -523,10 +547,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -543,17 +568,18 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
 			#[cfg(feature = "surrealdb2")]
 			Database::Surrealdb2 => {
 				benchmark
-					.run::<_, SurrealDBDialect, _>(
+					.run::<_, SurrealDB2Dialect, _>(
 						crate::surrealdb2::SurrealDB2ClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -563,17 +589,18 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
 			#[cfg(feature = "surrealdb2")]
 			Database::Surrealdb2Memory => {
 				benchmark
-					.run::<_, SurrealDBDialect, _>(
+					.run::<_, SurrealDB2Dialect, _>(
 						crate::surrealdb2::SurrealDB2ClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -583,17 +610,18 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
 			#[cfg(feature = "surrealdb2")]
 			Database::Surrealdb2Rocksdb => {
 				benchmark
-					.run::<_, SurrealDBDialect, _>(
+					.run::<_, SurrealDB2Dialect, _>(
 						crate::surrealdb2::SurrealDB2ClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -603,17 +631,18 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
 			#[cfg(feature = "surrealdb2")]
 			Database::Surrealdb2Surrealkv => {
 				benchmark
-					.run::<_, SurrealDBDialect, _>(
+					.run::<_, SurrealDB2Dialect, _>(
 						crate::surrealdb2::SurrealDB2ClientProvider::setup(
 							kt,
 							vp.columns(),
@@ -623,10 +652,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -643,10 +673,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}
@@ -664,10 +695,11 @@ impl Database {
 						kp,
 						vp,
 						scans,
-						batches,
-						database.clone(),
-						system.clone(),
-						metadata.clone(),
+					batches,
+					setup.clone(),
+					database.clone(),
+					system.clone(),
+					metadata.clone(),
 					)
 					.await
 			}

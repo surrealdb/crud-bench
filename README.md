@@ -13,6 +13,138 @@ queries and performance.
 
 The crud-bench benchmarking tool is being actively developed with new features and functionality being added regularly.
 
+## SurrealDB 2 vs 3 Comparison Suite
+
+This project includes a comprehensive benchmark suite for comparing SurrealDB 2 and SurrealDB 3 across all storage
+backends. It uses Makefile targets for easy invocation and scripts for side-by-side result comparison.
+
+### Quick Start
+
+```bash
+# Build the release binary
+make build
+
+# Run a single benchmark
+make bench-v3-memory
+
+# Run v2 and v3 on the same backend and compare
+make bench-all-memory
+
+# Run all 8 benchmarks (memory, rocksdb, surrealkv, tikv for both v2 and v3)
+make bench-all
+```
+
+### Available Backends
+
+| Backend | v3 Target | v2 Target | Notes |
+|---------|-----------|-----------|-------|
+| Memory | `make bench-v3-memory` | `make bench-v2-memory` | Embedded in-memory |
+| RocksDB | `make bench-v3-rocksdb` | `make bench-v2-rocksdb` | Embedded, disk at `tmp/` |
+| SurrealKV | `make bench-v3-surrealkv` | `make bench-v2-surrealkv` | Embedded, disk at `tmp/` |
+| TiKV | `make bench-v3-tikv` | `make bench-v2-tikv` | Containerized (see below) |
+
+### TiKV Backend
+
+TiKV runs as a containerized cluster (PD + TiKV). Manage it with:
+
+```bash
+make tikv-start       # Start PD + TiKV containers
+make tikv-status      # Check cluster health
+make bench-all-tikv   # Run v3 and v2 benchmarks, then compare
+make tikv-stop        # Stop containers (data preserved)
+make tikv-clean       # Stop containers and remove data
+```
+
+The TiKV PD endpoint defaults to `127.0.0.1:2379`. Override with `TIKV_PD=host:port`.
+
+### Grouped Benchmarks
+
+Run both v2 and v3 for a backend, then automatically compare:
+
+```bash
+make bench-all-memory       # v3-memory + v2-memory + compare
+make bench-all-rocksdb      # v3-rocksdb + v2-rocksdb + compare
+make bench-all-surrealkv    # v3-surrealkv + v2-surrealkv + compare
+make bench-all-tikv         # v3-tikv + v2-tikv + compare
+make bench-all              # All 8 benchmarks
+```
+
+### Comparing Results
+
+Compare v2 vs v3 on the same backend:
+
+```bash
+make compare-memory         # v2 vs v3 on memory
+make compare-rocksdb        # v2 vs v3 on rocksdb
+make compare-surrealkv      # v2 vs v3 on surrealkv
+make compare-tikv           # v2 vs v3 on tikv
+make compare-all            # All of the above
+```
+
+Compare the same version across backends:
+
+```bash
+make compare-v3             # v3: memory vs rocksdb vs surrealkv
+make compare-v2             # v2: memory vs rocksdb vs surrealkv
+```
+
+Comparison output shows Mean latency (ms) and OPS side-by-side with percentage deltas.
+
+### Tuning Parameters
+
+Override defaults on any target:
+
+```bash
+make bench-v3-memory SAMPLES=500000 CLIENTS=8 THREADS=16
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SAMPLES` | 1000000 | Records to create/read/update/delete |
+| `CLIENTS` | 12 | Concurrent client connections |
+| `THREADS` | 24 | Concurrent threads per client |
+| `TIKV_PD` | 127.0.0.1:2379 | TiKV PD endpoint |
+
+### Output Files
+
+Each benchmark writes to `results/runs/`:
+
+- `result-{name}.txt` -- Full console output
+- `result-{name}.json` -- Structured JSON results
+- `result-{name}.csv` -- Tabular CSV (used by comparison scripts)
+- `result-{name}.html` -- Interactive HTML charts
+
+### Extended Value Schema
+
+The suite uses `config/value-surrealdb.json` with additional fields for comprehensive query testing:
+`name`, `age`, `city` (8-value enum for GROUP BY), `tags` (array for SPLIT), `embedding` (4D vector
+for MTREE/HNSW), `score`, `active`, plus the standard `text`, `number`, `integer`, and `words` fields.
+
+### Setup Queries
+
+The `--setup @config/setup-surrealdb.json` config creates graph edges, a secondary table, and record
+links after the Create phase, enabling graph traversal, subquery, and FETCH benchmarks.
+
+### Scan Coverage
+
+The suite (`config/scans-surrealdb.json`) covers 30 scan types across 6 categories:
+
+- **SELECT variants** -- WHERE (id, >, IN, multi-AND), ORDER BY, GROUP BY (count, sum, avg, multi-aggregate, GROUP ALL), SPLIT, FETCH
+- **Graph traversal** -- Outgoing depth 1-3, incoming, bidirectional, edge-filtered
+- **Complex graph** -- Subqueries with WHERE, GROUP ALL, and GROUP BY inside traversals
+- **Subqueries** -- Inline table subquery, inline aggregate subquery
+- **Index types** -- Standard, composite, fulltext/BM25, MTREE vector, HNSW vector (each with build/query/drop cycle)
+
+### Value Types
+
+The `vector:N` value type generates an N-dimensional array of random floats in [0, 1):
+
+```json
+{ "embedding": "vector:4" }
+```
+
+Produces: `[0.361, 0.214, 0.615, 0.147]`
+
 ## Contributing
 
 The crud-bench benchmarking tool is open-source, and we encourage additions, modifications, and improvements to the

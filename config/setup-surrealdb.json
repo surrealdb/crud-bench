@@ -1,0 +1,16 @@
+{
+	"surrealdb": [
+		"DEFINE TABLE IF NOT EXISTS knows TYPE RELATION FROM record TO record",
+		"DEFINE TABLE IF NOT EXISTS small_table",
+		"FOR $i IN 0..999 { LET $from = type::record('record', $i); LET $to1 = type::record('record', ($i + 1) % 1000); LET $to2 = type::record('record', ($i + 3) % 1000); LET $to3 = type::record('record', ($i + 7) % 1000); RELATE $from->knows->$to1 SET weight = ($i % 100); RELATE $from->knows->$to2 SET weight = (($i * 7) % 100); RELATE $from->knows->$to3 SET weight = (($i * 13) % 100); };",
+		"FOR $i IN 0..99 { LET $id = type::record('small_table', $i); CREATE $id SET name = string::concat('item_', <string> $i), value = (($i * 7) % 1000), city = ['london', 'paris', 'berlin', 'tokyo', 'new_york', 'sydney', 'madrid', 'rome'][($i % 8)]; };",
+		"FOR $i IN 0..999 { LET $rec = type::record('record', $i); LET $friend = type::record('record', ($i + 42) % 1000); UPDATE $rec SET friend = $friend; };"
+	],
+	"surrealdb2": [
+		"DEFINE TABLE IF NOT EXISTS knows TYPE RELATION FROM record TO record",
+		"DEFINE TABLE IF NOT EXISTS small_table",
+		"FOR $i IN 0..999 { LET $from = type::thing('record', $i); LET $to1 = type::thing('record', ($i + 1) % 1000); LET $to2 = type::thing('record', ($i + 3) % 1000); LET $to3 = type::thing('record', ($i + 7) % 1000); RELATE $from->knows->$to1 SET weight = ($i % 100); RELATE $from->knows->$to2 SET weight = (($i * 7) % 100); RELATE $from->knows->$to3 SET weight = (($i * 13) % 100); };",
+		"FOR $i IN 0..99 { LET $id = type::thing('small_table', $i); CREATE $id SET name = string::concat('item_', <string> $i), value = (($i * 7) % 1000), city = ['london', 'paris', 'berlin', 'tokyo', 'new_york', 'sydney', 'madrid', 'rome'][($i % 8)]; };",
+		"FOR $i IN 0..999 { LET $rec = type::thing('record', $i); LET $friend = type::thing('record', ($i + 42) % 1000); UPDATE $rec SET friend = $friend; };"
+	]
+}

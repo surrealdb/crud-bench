@@ -238,7 +238,7 @@ impl Neo4jDialect {
 }
 
 // --------------------------------------------------
-// SurrealDB
+// SurrealDB (v3)
 // --------------------------------------------------
 
 pub(crate) struct SurrealDBDialect();
@@ -250,6 +250,31 @@ impl SurrealDBDialect {
 	pub fn filter_clause(scan: &Scan) -> Result<String> {
 		if let Some(ref c) = scan.condition {
 			if let Some(ref c) = c.surrealdb {
+				return Ok(format!("WHERE {c}"));
+			} else {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+		}
+		Ok(String::new())
+	}
+}
+
+// --------------------------------------------------
+// SurrealDB v2 (falls back to surrealdb if surrealdb2 not set)
+// --------------------------------------------------
+
+pub(crate) struct SurrealDB2Dialect();
+
+impl Dialect for SurrealDB2Dialect {}
+
+impl SurrealDB2Dialect {
+	/// Constructs the WHERE clause for [S]elect tests (v2 with fallback)
+	pub fn filter_clause(scan: &Scan) -> Result<String> {
+		if let Some(ref c) = scan.condition {
+			// Try surrealdb2-specific condition first, then fall back to surrealdb
+			if let Some(ref c) = c.surrealdb2 {
+				return Ok(format!("WHERE {c}"));
+			} else if let Some(ref c) = c.surrealdb {
 				return Ok(format!("WHERE {c}"));
 			} else {
 				bail!(NOT_SUPPORTED_ERROR);

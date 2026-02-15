@@ -1,0 +1,5 @@
+Create took 2s 526ms
+Read took 1s 865ms
+Update took 2s 631ms
+Running 5 setup queries for dialect 'surrealdb'...
+Setup queries completed.

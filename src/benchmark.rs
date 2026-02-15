@@ -7,7 +7,7 @@ use crate::result::{BenchmarkResult, OperationMetric, OperationResult, ScanResul
 use crate::system::SystemInfo;
 use crate::terminal::Terminal;
 use crate::valueprovider::ValueProvider;
-use crate::{Args, BatchOperation, Batches, Index, Scan, Scans};
+use crate::{Args, BatchOperation, Batches, Index, Scan, Scans, SetupConfig};
 use anyhow::{Result, bail};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
@@ -64,6 +64,36 @@ impl Benchmark {
 		}
 	}
 
+	/// Returns the setup dialect name for the current database
+	fn setup_dialect_name(&self) -> &'static str {
+		match self.database {
+			#[cfg(feature = "surrealdb")]
+			Database::Surrealdb
+			| Database::SurrealdbMemory
+			| Database::SurrealdbRocksdb
+			| Database::SurrealdbSurrealkv
+			| Database::Surrealds => "surrealdb",
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2
+			| Database::Surrealdb2Memory
+			| Database::Surrealdb2Rocksdb
+			| Database::Surrealdb2Surrealkv => "surrealdb2",
+			#[cfg(feature = "postgres")]
+			Database::Postgres => "sql",
+			#[cfg(feature = "mysql")]
+			Database::Mysql => "mysql",
+			#[cfg(feature = "mariadb")]
+			Database::Mariadb => "mysql",
+			#[cfg(feature = "neo4j")]
+			Database::Neo4j => "neo4j",
+			#[cfg(feature = "mongodb")]
+			Database::Mongodb => "mongodb",
+			#[cfg(feature = "arangodb")]
+			Database::Arangodb => "arangodb",
+			_ => "sql",
+		}
+	}
+
 	#[allow(clippy::too_many_arguments)]
 	/// Run the benchmark for the desired benchmark engine
 	pub(crate) async fn run<C, D, E>(
@@ -73,6 +103,7 @@ impl Benchmark {
 		mut vp: ValueProvider,
 		scans: Scans,
 		batches: Batches,
+		setup: SetupConfig,
 		database: Option<String>,
 		system: Option<SystemInfo>,
 		metadata: Option<BenchmarkMetadata>,
@@ -124,12 +155,23 @@ impl Benchmark {
 		if std::env::var("COMPACTION").is_ok() {
 			self.wait_for_client(&engine).await?.compact().await?;
 		}
+		// Run setup queries (graph edges, secondary tables, etc.) before scans
+		let dialect_name = self.setup_dialect_name();
+		if let Some(queries) = setup.queries_for(dialect_name) {
+			if !queries.is_empty() {
+				println!("Running {} setup queries for dialect '{}'...", queries.len(), dialect_name);
+				let client = self.wait_for_client(&engine).await?;
+				client.run_setup_queries(queries).await?;
+				println!("Setup queries completed.");
+			}
+		}
 		// Run the "scan" benchmarks
 		let mut scan_results = Vec::with_capacity(scans.len());
 		for scan in scans {
 			// Get the name of the scan
 			let name = scan.name.clone();
 			let samples = scan.samples.map(|s| s as u32).unwrap_or(self.samples);
+			let query = scan.query_text(dialect_name);
 			// Check if an index is specified
 			let result = if let Some(index_spec) = &scan.index
 				&& !index_spec.skip
@@ -182,16 +224,17 @@ impl Benchmark {
 					// Skip the scan with the index
 					(None, None)
 				};
-				// Return the scan results
-				ScanResult {
-					name,
-					samples,
-					without_index,
-					index_build,
-					with_index,
-					index_remove,
-					has_index_spec: true,
-				}
+			// Return the scan results
+			ScanResult {
+				name,
+				samples,
+				query,
+				without_index,
+				index_build,
+				with_index,
+				index_remove,
+				has_index_spec: true,
+			}
 			} else {
 				// Perform the scan without any index
 				let result = self
@@ -203,16 +246,17 @@ impl Benchmark {
 						samples,
 					)
 					.await?;
-				// Return the scan results
-				ScanResult {
-					name,
-					samples,
-					without_index: result,
-					index_build: None,
-					with_index: None,
-					index_remove: None,
-					has_index_spec: false,
-				}
+			// Return the scan results
+			ScanResult {
+				name,
+				samples,
+				query,
+				without_index: result,
+				index_build: None,
+				with_index: None,
+				index_remove: None,
+				has_index_spec: false,
+			}
 			};
 			// Store the scan benchmark result
 			scan_results.push(result);

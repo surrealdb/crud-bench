@@ -51,6 +51,15 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		Ok(())
 	}
 
+	/// Run setup queries (e.g. graph edges, secondary tables) before scans.
+	/// Default implementation is a no-op.
+	fn run_setup_queries(
+		&self,
+		_queries: &[String],
+	) -> impl Future<Output = Result<()>> + Send {
+		async { Ok(()) }
+	}
+
 	/// Create a single entry with the current client
 	fn create(
 		&self,

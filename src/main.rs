@@ -172,6 +172,15 @@ pub(crate) struct Args {
 	/// Skip index operations, but still table scan queries
 	#[arg(long, default_value = "false")]
 	pub(crate) skip_indexes: bool,
+
+	/// Setup queries to run after creates and before scans (e.g. graph edges, secondary tables).
+	/// Inline JSON or @path to a JSON file with per-dialect query arrays.
+	#[arg(
+		long,
+		env = "CRUD_BENCH_SETUP",
+		hide_default_value = true
+	)]
+	pub(crate) setup: Option<String>,
 }
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
@@ -194,6 +203,39 @@ pub(crate) type Scans = Vec<Scan>;
 
 pub(crate) type Batches = Vec<BatchOperation>;
 
+/// Setup queries to run after creates and before scans.
+/// Each field contains an array of queries for that dialect.
+/// When `surrealdb2` is absent, falls back to `surrealdb`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub(crate) struct SetupConfig {
+	pub(crate) sql: Option<Vec<String>>,
+	pub(crate) mysql: Option<Vec<String>>,
+	pub(crate) neo4j: Option<Vec<String>>,
+	pub(crate) mongodb: Option<Vec<String>>,
+	pub(crate) arangodb: Option<Vec<String>>,
+	pub(crate) surrealdb: Option<Vec<String>>,
+	pub(crate) surrealdb2: Option<Vec<String>>,
+}
+
+impl SetupConfig {
+	/// Returns setup queries for the given dialect, with fallback.
+	pub fn queries_for(&self, dialect: &str) -> Option<&[String]> {
+		match dialect {
+			"surrealdb2" => self
+				.surrealdb2
+				.as_deref()
+				.or(self.surrealdb.as_deref()),
+			"surrealdb" => self.surrealdb.as_deref(),
+			"sql" => self.sql.as_deref(),
+			"mysql" => self.mysql.as_deref(),
+			"neo4j" => self.neo4j.as_deref(),
+			"mongodb" => self.mongodb.as_deref(),
+			"arangodb" => self.arangodb.as_deref(),
+			_ => None,
+		}
+	}
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct Index {
 	#[serde(default)]
@@ -208,6 +250,8 @@ pub(crate) struct Scan {
 	name: String,
 	samples: Option<usize>,
 	condition: Option<Condition>,
+	/// Full raw query per dialect. When set, bypasses auto-generated SELECT.
+	query: Option<Condition>,
 	start: Option<usize>,
 	limit: Option<usize>,
 	expect: Option<usize>,
@@ -225,6 +269,38 @@ impl Scan {
 			Some(o) => bail!(format!("Unsupported projection: {}", o)),
 			_ => Ok(Projection::Full),
 		}
+	}
+
+	/// Returns the raw query for the given dialect, with fallback.
+	/// For "surrealdb2", falls back to "surrealdb" if no v2-specific query is set.
+	pub fn raw_query(&self, dialect: &str) -> Option<&str> {
+		self.query.as_ref().and_then(|q| match dialect {
+			"surrealdb2" => q.surrealdb2.as_deref().or(q.surrealdb.as_deref()),
+			"surrealdb" => q.surrealdb.as_deref(),
+			"sql" => q.sql.as_deref(),
+			"mysql" => q.mysql.as_deref(),
+			"neo4j" => q.neo4j.as_deref(),
+			"arangodb" => q.arangodb.as_deref(),
+			_ => None,
+		})
+	}
+
+	/// Returns the query or condition text for the given dialect.
+	/// Tries raw query first, then falls back to the condition string.
+	pub fn query_text(&self, dialect: &str) -> Option<String> {
+		self.raw_query(dialect)
+			.map(|s| s.to_string())
+			.or_else(|| {
+				self.condition.as_ref().and_then(|c| match dialect {
+					"surrealdb2" => c.surrealdb2.clone().or(c.surrealdb.clone()),
+					"surrealdb" => c.surrealdb.clone(),
+					"sql" => c.sql.clone(),
+					"mysql" => c.mysql.clone(),
+					"neo4j" => c.neo4j.clone(),
+					"arangodb" => c.arangodb.clone(),
+					_ => None,
+				})
+			})
 	}
 }
 
@@ -244,6 +320,8 @@ pub(crate) struct Condition {
 	mongodb: Option<Value>,
 	arangodb: Option<String>,
 	surrealdb: Option<String>,
+	/// SurrealDB v2-specific override. Falls back to `surrealdb` if unset.
+	surrealdb2: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -361,6 +439,14 @@ fn run(args: Args) -> Result<()> {
 			}
 		}
 	}
+	// Parse the optional setup configuration
+	let setup: SetupConfig = match &args.setup {
+		Some(setup_arg) => {
+			let setup_str = resolve_json_arg(setup_arg)?;
+			serde_json::from_str(&setup_str)?
+		}
+		None => SetupConfig::default(),
+	};
 	// Run the benchmark
 	let res = runtime.block_on(async {
 		args.database
@@ -371,6 +457,7 @@ fn run(args: Args) -> Result<()> {
 				vp,
 				scans,
 				batches,
+				setup,
 				Some(name.clone()),
 				Some(system),
 				Some(metadata),
@@ -514,6 +601,7 @@ mod test {
 			skip_scans: false,
 			skip_batches: false,
 			skip_indexes: false,
+			setup: None,
 		})
 	}
 
