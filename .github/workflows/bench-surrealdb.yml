@@ -36,15 +36,24 @@ jobs:
         backend: [memory, rocksdb, surrealkv, tikv]
     runs-on: [self-hosted, benchmarking]
     name: v2-${{ matrix.backend }}
-    if: contains(inputs.backends, matrix.backend)
-
     outputs:
       artifact-name: ${{ steps.cache-check.outputs.artifact_name }}
 
     steps:
+      - name: Check if backend is selected
+        id: filter
+        run: |
+          if [[ ",${{ inputs.backends }}," != *",${{ matrix.backend }},"* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.filter.outputs.skip == 'false'
 
       - name: Resolve versions and check cache
+        if: steps.filter.outputs.skip == 'false'
         id: cache-check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,15 +131,25 @@ jobs:
     runs-on: [self-hosted, benchmarking]
     name: v3-${{ matrix.backend }}
     needs: [bench-v2]
-    if: contains(inputs.backends, matrix.backend)
 
     outputs:
       artifact-name: ${{ steps.cache-check.outputs.artifact_name }}
 
     steps:
+      - name: Check if backend is selected
+        id: filter
+        run: |
+          if [[ ",${{ inputs.backends }}," != *",${{ matrix.backend }},"* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.filter.outputs.skip == 'false'
 
       - name: Resolve versions and check cache
+        if: steps.filter.outputs.skip == 'false'
         id: cache-check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -218,17 +237,28 @@ jobs:
     runs-on: ubuntu-latest
     name: compare-${{ matrix.backend }}
     needs: [bench-v2, bench-v3]
-    if: contains(inputs.backends, matrix.backend)
 
     steps:
+      - name: Check if backend is selected
+        id: filter
+        run: |
+          if [[ ",${{ inputs.backends }}," != *",${{ matrix.backend }},"* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.filter.outputs.skip == 'false'
 
       - name: Set up Python
+        if: steps.filter.outputs.skip == 'false'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Compute artifact names
+        if: steps.filter.outputs.skip == 'false'
         id: names
         run: |
           # Reconstruct v2 artifact name
@@ -242,6 +272,7 @@ jobs:
           echo "v3_name=v3-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V3_SHORT}" >> "$GITHUB_OUTPUT"
 
       - name: Download v2 results
+        if: steps.filter.outputs.skip == 'false'
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: bench-surrealdb.yml
@@ -250,6 +281,7 @@ jobs:
           search_artifacts: true
 
       - name: Download v3 results
+        if: steps.filter.outputs.skip == 'false'
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: bench-surrealdb.yml
@@ -258,6 +290,7 @@ jobs:
           search_artifacts: true
 
       - name: Run comparison
+        if: steps.filter.outputs.skip == 'false'
         run: |
           mkdir -p results/compare
           python3 scripts/compare.py \
@@ -268,6 +301,7 @@ jobs:
             | tee results/compare/compare-${{ matrix.backend }}.txt
 
       - name: Upload comparison
+        if: steps.filter.outputs.skip == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: compare-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}
