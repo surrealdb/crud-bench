@@ -261,12 +261,7 @@ impl BenchmarkClient for SurrealDB2Client {
 				self.db.query(sql).await?.check()?;
 				// Define the index concurrently
 				format!(
-					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
-				)
-			}
-			Some("mtree") => {
-				format!(
-					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} MTREE DIMENSION 4 CONCURRENTLY"
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} SEARCH ANALYZER {name} BM25 CONCURRENTLY"
 				)
 			}
 			Some("hnsw") => {

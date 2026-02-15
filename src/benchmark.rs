@@ -5,12 +5,12 @@ use crate::keyprovider::KeyProvider;
 use crate::result::BenchmarkMetadata;
 use crate::result::{BenchmarkResult, OperationMetric, OperationResult, ScanResult};
 use crate::system::SystemInfo;
-use crate::terminal::Terminal;
 use crate::valueprovider::ValueProvider;
 use crate::{Args, BatchOperation, Batches, Index, Scan, Scans, SetupConfig};
 use anyhow::{Result, bail};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
+use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -38,6 +38,8 @@ pub(crate) struct Benchmark {
 	pub(crate) threads: u32,
 	/// The number of samples to run
 	pub(crate) samples: u32,
+	/// Override scan sample counts
+	pub(crate) scan_samples: Option<u32>,
 	/// Pid to monitor
 	pub(crate) pid: Option<u32>,
 	/// Whether to ensure data is synced
@@ -57,6 +59,7 @@ impl Benchmark {
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
+			scan_samples: args.scan_samples,
 			sync: args.sync,
 			pid: args.pid,
 			persisted: args.persisted,
@@ -170,7 +173,9 @@ impl Benchmark {
 		for scan in scans {
 			// Get the name of the scan
 			let name = scan.name.clone();
-			let samples = scan.samples.map(|s| s as u32).unwrap_or(self.samples);
+			let samples = self
+				.scan_samples
+				.unwrap_or_else(|| scan.samples.map(|s| s as u32).unwrap_or(self.samples));
 			let query = scan.query_text(dialect_name);
 			// Check if an index is specified
 			let result = if let Some(index_spec) = &scan.index
@@ -370,22 +375,26 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
 	{
-		// Create a new terminal display
-		let mut out = Terminal::default();
+		// Create a progress bar for this operation
+		let pb = ProgressBar::new(samples as u64);
+		pb.set_style(
+			ProgressStyle::with_template(
+				"{prefix:>40} [{elapsed_precise}] {wide_bar:.cyan/blue} {pos}/{len} ({per_sec}, ETA {eta})",
+			)
+			.unwrap()
+			.progress_chars("##-"),
+		);
+		pb.set_prefix(format!("{operation}"));
 		// Get the total concurrent futures
 		let total = (self.clients * self.threads) as usize;
 		// Whether we have experienced an error
 		let error = Arc::new(AtomicBool::new(false));
-		// Wether the test should be skipped
+		// Whether the test should be skipped
 		let skip = Arc::new(AtomicBool::new(false));
 		// The total records processed so far
 		let current = Arc::new(AtomicU32::new(0));
-		// The total records processed so far
-		let complete = Arc::new(AtomicU32::new(0));
 		// Store the futures in a vector
 		let mut futures = Vec::with_capacity(total);
-		// Print out the first stage
-		out.write(|| Some(format!("\r{operation} 0%")))?;
 		// Measure the starting time
 		let metric = OperationMetric::new(self.pid, samples);
 		// Loop over the clients
@@ -395,9 +404,8 @@ impl Benchmark {
 				let error = error.clone();
 				let skip = skip.clone();
 				let current = current.clone();
-				let complete = complete.clone();
 				let client = client.clone();
-				let out = out.clone();
+				let pb = pb.clone();
 				let vp = vp.clone();
 				let operation = operation.clone();
 				futures.push(task::spawn(async move {
@@ -406,9 +414,8 @@ impl Benchmark {
 						samples,
 						&error,
 						&current,
-						&complete,
 						operation,
-						(kp, vp, out),
+						(kp, vp, pb),
 					)
 					.await
 					{
@@ -446,12 +453,8 @@ impl Benchmark {
 		}
 		// Calculate runtime information
 		let result = OperationResult::new(metric, global_histogram);
-		// Print out the last stage
-		out.write(|| Some(format!("\r{operation} 100%")))?;
-		// Print out a separator
-		out.write(|| Some(" - "))?;
-		// Output the total stage time
-		println!("{operation} took {}", result.total_time());
+		// Finish the progress bar with the elapsed time
+		pb.finish_with_message(format!("done in {}", result.total_time()));
 		// Shall we skip the operation? (operation not supported)
 		if skip.load(Ordering::Relaxed) {
 			return Ok(None);
@@ -465,16 +468,14 @@ impl Benchmark {
 		samples: u32,
 		error: &AtomicBool,
 		current: &AtomicU32,
-		complete: &AtomicU32,
 		operation: BenchmarkOperation,
-		(mut kp, mut vp, mut out): (KeyProvider, ValueProvider, Terminal),
+		(mut kp, mut vp, pb): (KeyProvider, ValueProvider, ProgressBar),
 	) -> Result<Histogram<u64>>
 	where
 		C: BenchmarkClient,
 		D: Dialect,
 	{
 		let mut histogram = Histogram::new(3)?;
-		let mut old_percent = 0;
 		// Check if we have encountered an error
 		while !error.load(Ordering::Relaxed) {
 			// Get the current sample number
@@ -515,25 +516,11 @@ impl Benchmark {
 					client.batch_delete(sample, batch_op, &mut kp).await?
 				}
 			};
-			// Get the completed sample number
-			let sample = complete.fetch_add(1, Ordering::Relaxed);
-			// Output the percentage completion
-			out.write(|| {
-				// Calculate the percentage completion
-				let new_percent = match sample {
-					0 => 0u8,
-					_ => (sample * 20 / samples) as u8,
-				};
-				// Display the percent if multiple of 5
-				if new_percent != old_percent {
-					old_percent = new_percent;
-					Some(format!("\r{operation} {}%", new_percent * 5))
-				} else {
-					None
-				}
-			})?;
-			//
+			// Record the latency BEFORE updating the progress bar
+			// so progress overhead has zero impact on measured latency
 			histogram.record(time.elapsed().as_micros() as u64)?;
+			// Update the progress bar (outside the timing window)
+			pb.inc(1);
 		}
 		Ok(histogram)
 	}

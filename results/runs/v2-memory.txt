@@ -1,14 +1,2 @@
-Create took 7s 26ms
-Read took 1s 222ms
-Update took 9s 358ms
 Running 5 setup queries for dialect 'surrealdb2'...
 Setup queries completed.
-Scan::count_all took 8s 443ms
-Scan::limit_id took 123ms 627µs
-Scan::limit_all took 579ms 397µs
-Scan::limit_start_id took 247ms 830µs
-Scan::limit_start_all took 623ms 855µs
-Scan::select_where_id took 15ms 37µs
-Scan::select_where_gt took 781ms 878µs
-Scan::select_where_in took 1s 81ms
-Scan::select_where_multi_and took 2s 974ms

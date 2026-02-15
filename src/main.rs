@@ -25,7 +25,6 @@ mod profiling;
 mod result;
 mod storage;
 mod system;
-mod terminal;
 mod valueprovider;
 
 // Datastore modules
@@ -96,6 +95,10 @@ pub(crate) struct Args {
 	/// Number of samples to be created, read, updated, and deleted
 	#[arg(short, long, value_parser=clap::value_parser!(u32).range(1..))]
 	pub(crate) samples: u32,
+
+	/// Override scan sample counts (number of query iterations per scan test)
+	#[arg(long, value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) scan_samples: Option<u32>,
 
 	/// Generate the keys in a pseudo-randomized order
 	#[arg(short, long)]
@@ -584,6 +587,7 @@ mod test {
 			clients: 2,
 			threads: 2,
 			samples: 10000,
+			scan_samples: None,
 			sync: false,
 			persisted: false,
 			optimised: false,

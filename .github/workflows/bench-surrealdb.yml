@@ -1,0 +1,275 @@
+name: Bench SurrealDB
+
+on:
+  workflow_dispatch:
+    inputs:
+      clients:
+        description: "Number of concurrent clients"
+        default: "4"
+      threads:
+        description: "Number of threads per client"
+        default: "4"
+      samples:
+        description: "Number of CRUD records"
+        default: "1000000"
+      scan_samples:
+        description: "Override scan sample count (leave empty for config defaults)"
+        default: ""
+      backends:
+        description: "Comma-separated backends to run (memory,rocksdb,surrealkv,tikv)"
+        default: "memory,rocksdb,surrealkv,tikv"
+      surrealdb_rev:
+        description: "SurrealDB v3 git revision (commit hash)"
+        default: "5f6bd4e3d08b928a15f32024c122f7d0a00b708d"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # -----------------------------------------------------------
+  # Stage 1: V2 benchmarks (cached by version + params)
+  # -----------------------------------------------------------
+  bench-v2:
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [memory, rocksdb, surrealkv, tikv]
+    runs-on: [self-hosted, benchmarking]
+    name: v2-${{ matrix.backend }}
+    if: contains(inputs.backends, matrix.backend)
+
+    outputs:
+      artifact-name: ${{ steps.cache-check.outputs.artifact_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve versions and check cache
+        id: cache-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Extract v2 version from Cargo.toml
+          SDB_V2=$(grep 'package = "surrealdb", version' Cargo.toml | grep -oP 'version = "\K[^"]+')
+          echo "sdb_v2=${SDB_V2}" >> "$GITHUB_OUTPUT"
+
+          # Build artifact name with all parameters
+          SS="${{ inputs.scan_samples }}"
+          ARTIFACT_NAME="v2-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V2}"
+          echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+
+          # Check if artifact already exists
+          EXISTS=$(gh api repos/${{ github.repository }}/actions/artifacts \
+            --jq ".artifacts[] | select(.name == \"${ARTIFACT_NAME}\" and .expired == false) | .id" \
+            2>/dev/null | head -1)
+          if [ -n "$EXISTS" ]; then
+            echo "cached=true" >> "$GITHUB_OUTPUT"
+            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS})"
+          else
+            echo "cached=false" >> "$GITHUB_OUTPUT"
+            echo "Cache miss: ${ARTIFACT_NAME}"
+          fi
+
+      - name: Install Rust toolchain
+        if: steps.cache-check.outputs.cached == 'false'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        if: steps.cache-check.outputs.cached == 'false'
+        run: make build
+
+      - name: Start TiKV
+        if: steps.cache-check.outputs.cached == 'false' && matrix.backend == 'tikv'
+        run: make tikv-start
+
+      - name: Run benchmark
+        if: steps.cache-check.outputs.cached == 'false'
+        run: |
+          EXTRA_FLAGS=""
+          if [ -n "${{ inputs.scan_samples }}" ]; then
+            EXTRA_FLAGS="SCAN_SAMPLES=${{ inputs.scan_samples }}"
+          fi
+          make bench-v2-${{ matrix.backend }} \
+            CLIENTS=${{ inputs.clients }} \
+            THREADS=${{ inputs.threads }} \
+            SAMPLES=${{ inputs.samples }} \
+            $EXTRA_FLAGS
+
+      - name: Stop TiKV
+        if: steps.cache-check.outputs.cached == 'false' && matrix.backend == 'tikv' && always()
+        run: make tikv-stop
+
+      - name: Upload results
+        if: success() && steps.cache-check.outputs.cached == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.cache-check.outputs.artifact_name }}
+          path: |
+            results/runs/result-v2-${{ matrix.backend }}.json
+            results/runs/result-v2-${{ matrix.backend }}.csv
+            results/runs/result-v2-${{ matrix.backend }}.html
+            results/runs/v2-${{ matrix.backend }}.txt
+          retention-days: 90
+
+  # -----------------------------------------------------------
+  # Stage 2: V3 benchmarks (cached by git rev + params)
+  # -----------------------------------------------------------
+  bench-v3:
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [memory, rocksdb, surrealkv, tikv]
+    runs-on: [self-hosted, benchmarking]
+    name: v3-${{ matrix.backend }}
+    needs: [bench-v2]
+    if: contains(inputs.backends, matrix.backend)
+
+    outputs:
+      artifact-name: ${{ steps.cache-check.outputs.artifact_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve versions and check cache
+        id: cache-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # v3 version is the git rev input
+          SDB_V3="${{ inputs.surrealdb_rev }}"
+          # Use short hash for artifact name
+          SDB_V3_SHORT="${SDB_V3:0:12}"
+          echo "sdb_v3=${SDB_V3}" >> "$GITHUB_OUTPUT"
+          echo "sdb_v3_short=${SDB_V3_SHORT}" >> "$GITHUB_OUTPUT"
+
+          # Build artifact name with all parameters
+          SS="${{ inputs.scan_samples }}"
+          ARTIFACT_NAME="v3-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V3_SHORT}"
+          echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+
+          # Check if artifact already exists
+          EXISTS=$(gh api repos/${{ github.repository }}/actions/artifacts \
+            --jq ".artifacts[] | select(.name == \"${ARTIFACT_NAME}\" and .expired == false) | .id" \
+            2>/dev/null | head -1)
+          if [ -n "$EXISTS" ]; then
+            echo "cached=true" >> "$GITHUB_OUTPUT"
+            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS})"
+          else
+            echo "cached=false" >> "$GITHUB_OUTPUT"
+            echo "Cache miss: ${ARTIFACT_NAME}"
+          fi
+
+      - name: Install Rust toolchain
+        if: steps.cache-check.outputs.cached == 'false'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Patch SurrealDB revision
+        if: steps.cache-check.outputs.cached == 'false'
+        run: |
+          # Update Cargo.toml to use the requested revision
+          sed -i 's/rev = "[a-f0-9]*"/rev = "${{ inputs.surrealdb_rev }}"/' Cargo.toml
+          cargo update -p surrealdb@3.0.0-beta
+
+      - name: Build
+        if: steps.cache-check.outputs.cached == 'false'
+        run: make build
+
+      - name: Start TiKV
+        if: steps.cache-check.outputs.cached == 'false' && matrix.backend == 'tikv'
+        run: make tikv-start
+
+      - name: Run benchmark
+        if: steps.cache-check.outputs.cached == 'false'
+        run: |
+          EXTRA_FLAGS=""
+          if [ -n "${{ inputs.scan_samples }}" ]; then
+            EXTRA_FLAGS="SCAN_SAMPLES=${{ inputs.scan_samples }}"
+          fi
+          make bench-v3-${{ matrix.backend }} \
+            CLIENTS=${{ inputs.clients }} \
+            THREADS=${{ inputs.threads }} \
+            SAMPLES=${{ inputs.samples }} \
+            $EXTRA_FLAGS
+
+      - name: Stop TiKV
+        if: steps.cache-check.outputs.cached == 'false' && matrix.backend == 'tikv' && always()
+        run: make tikv-stop
+
+      - name: Upload results
+        if: success() && steps.cache-check.outputs.cached == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.cache-check.outputs.artifact_name }}
+          path: |
+            results/runs/result-v3-${{ matrix.backend }}.json
+            results/runs/result-v3-${{ matrix.backend }}.csv
+            results/runs/result-v3-${{ matrix.backend }}.html
+            results/runs/v3-${{ matrix.backend }}.txt
+          retention-days: 90
+
+  # -----------------------------------------------------------
+  # Stage 3: Compare v2 vs v3 (ubuntu-latest)
+  # -----------------------------------------------------------
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [memory, rocksdb, surrealkv, tikv]
+    runs-on: ubuntu-latest
+    name: compare-${{ matrix.backend }}
+    needs: [bench-v2, bench-v3]
+    if: contains(inputs.backends, matrix.backend)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compute artifact names
+        id: names
+        run: |
+          # Reconstruct v2 artifact name
+          SDB_V2=$(grep 'package = "surrealdb", version' Cargo.toml | grep -oP 'version = "\K[^"]+')
+          SS="${{ inputs.scan_samples }}"
+          echo "v2_name=v2-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V2}" >> "$GITHUB_OUTPUT"
+
+          # Reconstruct v3 artifact name
+          SDB_V3_SHORT="${{ inputs.surrealdb_rev }}"
+          SDB_V3_SHORT="${SDB_V3_SHORT:0:12}"
+          echo "v3_name=v3-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V3_SHORT}" >> "$GITHUB_OUTPUT"
+
+      - name: Download v2 results
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: bench-surrealdb.yml
+          name: ${{ steps.names.outputs.v2_name }}
+          path: results/runs/
+          search_artifacts: true
+
+      - name: Download v3 results
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: bench-surrealdb.yml
+          name: ${{ steps.names.outputs.v3_name }}
+          path: results/runs/
+          search_artifacts: true
+
+      - name: Run comparison
+        run: |
+          mkdir -p results/compare
+          python3 scripts/compare.py \
+            --title "${{ matrix.backend }}: v2 vs v3" \
+            results/runs/result-v2-${{ matrix.backend }}.csv "SurrealDB 2" \
+            results/runs/result-v3-${{ matrix.backend }}.csv "SurrealDB 3" \
+            --output results/compare/compare-${{ matrix.backend }}.html \
+            | tee results/compare/compare-${{ matrix.backend }}.txt
+
+      - name: Upload comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: compare-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}
+          path: results/compare/
+          retention-days: 90

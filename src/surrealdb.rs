@@ -260,11 +260,6 @@ impl BenchmarkClient for SurrealDBClient {
 					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
 				)
 			}
-			Some("mtree") => {
-				format!(
-					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} MTREE DIMENSION 4 CONCURRENTLY"
-				)
-			}
 			Some("hnsw") => {
 				format!(
 					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} HNSW DIMENSION 4 DIST EUCLIDEAN CONCURRENTLY"

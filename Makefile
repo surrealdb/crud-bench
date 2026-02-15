@@ -23,11 +23,12 @@
 # --------------------------------------------------
 # Tunables
 # --------------------------------------------------
-SAMPLES   ?= 1000000
-CLIENTS   ?= 12
-THREADS   ?= 24
-DATADIR   ?= $(CURDIR)/tmp
-RELEASE   ?= 1
+SAMPLES      ?= 1000000
+CLIENTS      ?= 12
+THREADS      ?= 24
+SCAN_SAMPLES ?=
+DATADIR      ?= $(CURDIR)/tmp
+RELEASE      ?= 1
 
 # TiKV settings
 TIKV_PD   ?= 127.0.0.1:2379
@@ -44,6 +45,10 @@ RESULTDIR := $(CURDIR)/results/runs
 # Common flags
 COMMON_FLAGS := -s $(SAMPLES) -c $(CLIENTS) -t $(THREADS) \
 	--value $(VALUE) --scans $(SCANS) --setup $(SETUP) --batches $(BATCHES)
+
+ifneq ($(SCAN_SAMPLES),)
+COMMON_FLAGS += --scan-samples $(SCAN_SAMPLES)
+endif
 
 # Cargo build mode: RELEASE=1 (default) for --release, RELEASE=0 for debug
 ifeq ($(RELEASE),1)
@@ -142,25 +147,25 @@ tikv-restart: tikv-clean tikv-start
 # ============================================================
 .PHONY: bench-v3-memory
 bench-v3-memory: build $(RESULTDIR)
-	$(CRUD_BENCH_BINARY) -d surrealdb -e memory $(COMMON_FLAGS) -n v3-memory 2>&1 | tee $(RESULTDIR)/v3-memory.txt
+	$(CRUD_BENCH_BINARY) -d surrealdb -e memory $(COMMON_FLAGS) -n v3-memory | tee $(RESULTDIR)/v3-memory.txt
 	@mv -f result-v3-memory.json result-v3-memory.csv result-v3-memory.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v3-memory done → $(RESULTDIR)/v3-memory.*"
 
 .PHONY: bench-v3-rocksdb
 bench-v3-rocksdb: build $(RESULTDIR) clean-data-v3-rocksdb
-	$(CRUD_BENCH_BINARY) -d surrealdb -e rocksdb:$(DATADIR)/v3-rocksdb $(COMMON_FLAGS) -n v3-rocksdb 2>&1 | tee $(RESULTDIR)/v3-rocksdb.txt
+	$(CRUD_BENCH_BINARY) -d surrealdb -e rocksdb:$(DATADIR)/v3-rocksdb $(COMMON_FLAGS) -n v3-rocksdb | tee $(RESULTDIR)/v3-rocksdb.txt
 	@mv -f result-v3-rocksdb.json result-v3-rocksdb.csv result-v3-rocksdb.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v3-rocksdb done → $(RESULTDIR)/v3-rocksdb.*"
 
 .PHONY: bench-v3-surrealkv
 bench-v3-surrealkv: build $(RESULTDIR) clean-data-v3-surrealkv
-	$(CRUD_BENCH_BINARY) -d surrealdb -e surrealkv:$(DATADIR)/v3-surrealkv $(COMMON_FLAGS) -n v3-surrealkv 2>&1 | tee $(RESULTDIR)/v3-surrealkv.txt
+	$(CRUD_BENCH_BINARY) -d surrealdb -e surrealkv:$(DATADIR)/v3-surrealkv $(COMMON_FLAGS) -n v3-surrealkv | tee $(RESULTDIR)/v3-surrealkv.txt
 	@mv -f result-v3-surrealkv.json result-v3-surrealkv.csv result-v3-surrealkv.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v3-surrealkv done → $(RESULTDIR)/v3-surrealkv.*"
 
 .PHONY: bench-v3-tikv
 bench-v3-tikv: build $(RESULTDIR) tikv-restart
-	$(CRUD_BENCH_BINARY) -d surrealdb -e tikv://$(TIKV_PD) $(COMMON_FLAGS) -n v3-tikv 2>&1 | tee $(RESULTDIR)/v3-tikv.txt
+	$(CRUD_BENCH_BINARY) -d surrealdb -e tikv://$(TIKV_PD) $(COMMON_FLAGS) -n v3-tikv | tee $(RESULTDIR)/v3-tikv.txt
 	@mv -f result-v3-tikv.json result-v3-tikv.csv result-v3-tikv.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v3-tikv done → $(RESULTDIR)/v3-tikv.*"
 
@@ -169,25 +174,25 @@ bench-v3-tikv: build $(RESULTDIR) tikv-restart
 # ============================================================
 .PHONY: bench-v2-memory
 bench-v2-memory: build $(RESULTDIR)
-	$(CRUD_BENCH_BINARY) -d surrealdb2 -e memory $(COMMON_FLAGS) -n v2-memory 2>&1 | tee $(RESULTDIR)/v2-memory.txt
+	$(CRUD_BENCH_BINARY) -d surrealdb2 -e memory $(COMMON_FLAGS) -n v2-memory | tee $(RESULTDIR)/v2-memory.txt
 	@mv -f result-v2-memory.json result-v2-memory.csv result-v2-memory.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v2-memory done → $(RESULTDIR)/v2-memory.*"
 
 .PHONY: bench-v2-rocksdb
 bench-v2-rocksdb: build $(RESULTDIR) clean-data-v2-rocksdb
-	$(CRUD_BENCH_BINARY) -d surrealdb2 -e rocksdb:$(DATADIR)/v2-rocksdb $(COMMON_FLAGS) -n v2-rocksdb 2>&1 | tee $(RESULTDIR)/v2-rocksdb.txt
+	$(CRUD_BENCH_BINARY) -d surrealdb2 -e rocksdb:$(DATADIR)/v2-rocksdb $(COMMON_FLAGS) -n v2-rocksdb | tee $(RESULTDIR)/v2-rocksdb.txt
 	@mv -f result-v2-rocksdb.json result-v2-rocksdb.csv result-v2-rocksdb.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v2-rocksdb done → $(RESULTDIR)/v2-rocksdb.*"
 
 .PHONY: bench-v2-surrealkv
 bench-v2-surrealkv: build $(RESULTDIR) clean-data-v2-surrealkv
-	$(CRUD_BENCH_BINARY) -d surrealdb2 -e surrealkv:$(DATADIR)/v2-surrealkv $(COMMON_FLAGS) -n v2-surrealkv 2>&1 | tee $(RESULTDIR)/v2-surrealkv.txt
+	$(CRUD_BENCH_BINARY) -d surrealdb2 -e surrealkv:$(DATADIR)/v2-surrealkv $(COMMON_FLAGS) -n v2-surrealkv | tee $(RESULTDIR)/v2-surrealkv.txt
 	@mv -f result-v2-surrealkv.json result-v2-surrealkv.csv result-v2-surrealkv.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v2-surrealkv done → $(RESULTDIR)/v2-surrealkv.*"
 
 .PHONY: bench-v2-tikv
 bench-v2-tikv: build $(RESULTDIR) tikv-restart
-	$(CRUD_BENCH_BINARY) -d surrealdb2 -e tikv://$(TIKV_PD) $(COMMON_FLAGS) -n v2-tikv 2>&1 | tee $(RESULTDIR)/v2-tikv.txt
+	$(CRUD_BENCH_BINARY) -d surrealdb2 -e tikv://$(TIKV_PD) $(COMMON_FLAGS) -n v2-tikv | tee $(RESULTDIR)/v2-tikv.txt
 	@mv -f result-v2-tikv.json result-v2-tikv.csv result-v2-tikv.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v2-tikv done → $(RESULTDIR)/v2-tikv.*"
 

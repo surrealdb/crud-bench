@@ -1,5 +1,56 @@
-Create took 2s 526ms
-Read took 1s 865ms
-Update took 2s 631ms
+Create  done in 6s 306ms
+Read  done in 4s 920ms
+Update  done in 6s 524ms
 Running 5 setup queries for dialect 'surrealdb'...
 Setup queries completed.
+Scan::count_all  done in 325ms 896µs
+Scan::limit_id  done in 1ms 518µs
+Scan::limit_all  done in 1ms 258µs
+Scan::limit_start_id  done in 3ms 999µs
+Scan::limit_start_all  done in 4ms 164µs
+Scan::select_where_id  done in 561µs 802ns
+Scan::select_where_id_eq  done in 569µs 625ns
+Scan::select_where_gt  done in 12ms 206µs
+Scan::select_where_in  done in 11ms 639µs
+Scan::select_where_multi_and  done in 55ms 672µs
+Scan::select_order_by  done in 4s 57ms
+Scan::select_order_by_multi  done in 4s 81ms
+Scan::select_group_count  done in 3s 922ms
+Scan::select_group_sum  done in 4s 983ms
+Scan::select_group_avg  done in 4s 991ms
+Scan::select_group_multi_agg  done in 7s 152ms
+Scan::select_group_all  done in 5s 6ms
+Scan::select_split  done in 16ms 12µs
+Scan::select_fetch  done in 2ms 779µs
+Scan::graph_out_depth1  done in 651µs 998ns
+Scan::graph_out_depth2  done in 783µs 736ns
+Scan::graph_out_depth3  done in 890µs 125ns
+Scan::graph_in_depth1  done in 1ms 184µs
+Scan::graph_bidirectional  done in 799µs 899ns
+Scan::graph_edge_filter  done in 1ms 748µs
+Scan::graph_sub_where  done in 679µs 449ns
+Scan::graph_sub_group_all  done in 932µs 448ns
+Scan::graph_sub_group_by  done in 729µs 584ns
+Scan::subquery_inline  done in 21ms 2µs
+Scan::subquery_count  done in 8ms 401µs
+Scan::index_standard  done in 4s 54ms
+BuildIndex::index_standard  done in 3s 509ms
+Scan::index_standard  done in 3ms 988µs
+RemoveIndex::index_standard  done in 1s 140ms
+Scan::index_composite  done in 4s 895ms
+BuildIndex::index_composite  done in 3s 512ms
+Scan::index_composite  done in 1s 430ms
+RemoveIndex::index_composite  done in 1s 251ms
+Scan::index_range_merged  done in 5s 47ms
+BuildIndex::index_range_merged  done in 4s 16ms
+Scan::index_range_merged  done in 262ms 617µs
+RemoveIndex::index_range_merged  done in 1s 190ms
+Scan::index_in  done in 4s 373ms
+BuildIndex::index_in  done in 4s 14ms
+Scan::index_in  done in 14ms 861µs
+RemoveIndex::index_in  done in 1s 216ms
+Scan::index_fulltext  done in 86µs 870ns
+BuildIndex::index_fulltext  done in 55s 144ms
+Scan::index_fulltext  done in 1s 444ms
+RemoveIndex::index_fulltext  done in 27s 877ms
+Scan::index_mtree  done in 141µs 913ns

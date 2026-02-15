@@ -44,171 +44,171 @@
 	},
 	{
 		"name": "select_where_id_eq",
-		"samples": 10000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT * FROM record WHERE id = record:42"
 		}
 	},
 	{
 		"name": "select_where_gt",
-		"samples": 10000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT * FROM record WHERE number > 2500 LIMIT 100"
 		}
 	},
 	{
 		"name": "select_where_in",
-		"samples": 10000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT * FROM record WHERE city IN ['london', 'paris', 'berlin'] LIMIT 100"
 		}
 	},
 	{
 		"name": "select_where_multi_and",
-		"samples": 10000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT * FROM record WHERE city = 'london' AND age > 50 LIMIT 100"
 		}
 	},
 	{
 		"name": "select_order_by",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT * FROM record ORDER BY number LIMIT 100"
 		}
 	},
 	{
 		"name": "select_order_by_multi",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT * FROM record ORDER BY city, number DESC LIMIT 100"
 		}
 	},
 	{
 		"name": "select_group_count",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT city, count() as total FROM record GROUP BY city"
 		}
 	},
 	{
 		"name": "select_group_sum",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT city, math::sum(number) as total FROM record GROUP BY city"
 		}
 	},
 	{
 		"name": "select_group_avg",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT city, math::mean(age) as avg_age FROM record GROUP BY city"
 		}
 	},
 	{
 		"name": "select_group_multi_agg",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT city, math::sum(number) as s1, math::sum(number) as s2, math::mean(age) as avg_age FROM record GROUP BY city"
 		}
 	},
 	{
 		"name": "select_group_all",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT count() as c, math::sum(number) as total, math::mean(age) as avg_age FROM record GROUP ALL"
 		}
 	},
 	{
 		"name": "select_split",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT * FROM record SPLIT tags LIMIT 100"
 		}
 	},
 	{
 		"name": "select_fetch",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
-			"surrealdb": "SELECT * FROM record FETCH friend LIMIT 100"
+			"surrealdb": "SELECT * FROM record LIMIT 100 FETCH friend"
 		}
 	},
 
 	{
 		"name": "graph_out_depth1",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT ->knows->record FROM record:1"
 		}
 	},
 	{
 		"name": "graph_out_depth2",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT ->knows->record->knows->record FROM record:1"
 		}
 	},
 	{
 		"name": "graph_out_depth3",
-		"samples": 3000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT ->knows->record->knows->record->knows->record FROM record:1"
 		}
 	},
 	{
 		"name": "graph_in_depth1",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT <-knows<-record FROM record:1"
 		}
 	},
 	{
 		"name": "graph_bidirectional",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT <->knows<->record FROM record:1"
 		}
 	},
 	{
 		"name": "graph_edge_filter",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
-			"surrealdb": "SELECT ->knows WHERE weight > 50->record FROM record:1"
+			"surrealdb": "SELECT ->knows[WHERE weight > 50]->record FROM record:1"
 		}
 	},
 
 	{
 		"name": "graph_sub_where",
-		"samples": 3000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT name, ->knows->(SELECT * FROM record WHERE number > 2500) FROM record:1"
 		}
 	},
 	{
 		"name": "graph_sub_group_all",
-		"samples": 3000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT ->knows->(SELECT COUNT() as c, math::mean(number) as avg_num FROM record GROUP ALL) FROM record:1"
 		}
 	},
 	{
 		"name": "graph_sub_group_by",
-		"samples": 3000,
+		"samples": 1000,
 		"query": {
-			"surrealdb": "SELECT ->knows->(SELECT COUNT() as c, math::mean(number) as avg_num FROM record GROUP BY city) FROM record:1"
+			"surrealdb": "SELECT ->knows->(SELECT COUNT() as c, math::mean(number) as avg_num, city FROM record GROUP BY city) FROM record:1"
 		}
 	},
 
 	{
 		"name": "subquery_inline",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT *, (SELECT * FROM small_table) as sub FROM record LIMIT 100"
 		}
 	},
 	{
 		"name": "subquery_count",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT *, (SELECT count() FROM small_table GROUP ALL) as sub_count FROM record LIMIT 100"
 		}
@@ -216,7 +216,7 @@
 
 	{
 		"name": "index_standard",
-		"samples": 10000,
+		"samples": 1000,
 		"projection": "FULL",
 		"condition": {
 			"surrealdb": "number = 42"
@@ -227,7 +227,7 @@
 	},
 	{
 		"name": "index_composite",
-		"samples": 10000,
+		"samples": 1000,
 		"projection": "FULL",
 		"condition": {
 			"surrealdb": "city = 'london' AND age > 50"
@@ -238,7 +238,7 @@
 	},
 	{
 		"name": "index_range_merged",
-		"samples": 10000,
+		"samples": 1000,
 		"projection": "FULL",
 		"condition": {
 			"surrealdb": "number > 100 AND number < 200"
@@ -249,7 +249,7 @@
 	},
 	{
 		"name": "index_in",
-		"samples": 10000,
+		"samples": 1000,
 		"projection": "FULL",
 		"condition": {
 			"surrealdb": "number IN [42, 100, 200, 300, 400]"
@@ -260,7 +260,7 @@
 	},
 	{
 		"name": "index_fulltext",
-		"samples": 10000,
+		"samples": 1000,
 		"projection": "FULL",
 		"limit": 1000,
 		"condition": {
@@ -272,19 +272,8 @@
 		}
 	},
 	{
-		"name": "index_mtree",
-		"samples": 5000,
-		"query": {
-			"surrealdb": "SELECT * FROM record WHERE embedding <|5,EUCLIDEAN|> [0.5, 0.3, 0.7, 0.1]"
-		},
-		"index": {
-			"fields": ["embedding"],
-			"index_type": "mtree"
-		}
-	},
-	{
 		"name": "index_hnsw",
-		"samples": 5000,
+		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT * FROM record WHERE embedding <|5,EUCLIDEAN|> [0.5, 0.3, 0.7, 0.1]"
 		},
