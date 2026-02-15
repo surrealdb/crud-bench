@@ -27,7 +27,34 @@ env:
 
 jobs:
   # -----------------------------------------------------------
-  # Stage 1: V2 benchmarks (cached by version + params)
+  # Build once, share binary across all benchmark jobs
+  # -----------------------------------------------------------
+  build:
+    runs-on: [self-hosted, benchmarking]
+    name: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Patch SurrealDB revision
+        run: |
+          sed -i 's/rev = "[a-f0-9]*"/rev = "${{ inputs.surrealdb_rev }}"/' Cargo.toml
+          cargo update -p surrealdb@3.0.0-beta
+
+      - name: Build release binary
+        run: make build
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: crud-bench-binary
+          path: target/release/crud-bench
+          retention-days: 1
+
+  # -----------------------------------------------------------
+  # V2 benchmarks (cached by version + params)
   # -----------------------------------------------------------
   bench-v2:
     strategy:
@@ -36,6 +63,7 @@ jobs:
         backend: [memory, rocksdb, surrealkv, tikv]
     runs-on: [self-hosted, benchmarking]
     name: v2-${{ matrix.backend }}
+    needs: [build]
     outputs:
       artifact-name: ${{ steps.cache-check.outputs.artifact_name }}
 
@@ -79,13 +107,16 @@ jobs:
             echo "Cache miss: ${ARTIFACT_NAME}"
           fi
 
-      - name: Install Rust toolchain
+      - name: Download binary
         if: steps.cache-check.outputs.cached == 'false'
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions/download-artifact@v4
+        with:
+          name: crud-bench-binary
+          path: target/release/
 
-      - name: Build
+      - name: Make binary executable
         if: steps.cache-check.outputs.cached == 'false'
-        run: make build
+        run: chmod +x target/release/crud-bench
 
       - name: Start TiKV
         if: steps.cache-check.outputs.cached == 'false' && matrix.backend == 'tikv'
@@ -121,7 +152,7 @@ jobs:
           retention-days: 90
 
   # -----------------------------------------------------------
-  # Stage 2: V3 benchmarks (cached by git rev + params)
+  # V3 benchmarks (cached by git rev + params)
   # -----------------------------------------------------------
   bench-v3:
     strategy:
@@ -130,7 +161,7 @@ jobs:
         backend: [memory, rocksdb, surrealkv, tikv]
     runs-on: [self-hosted, benchmarking]
     name: v3-${{ matrix.backend }}
-    needs: [bench-v2]
+    needs: [build]
 
     outputs:
       artifact-name: ${{ steps.cache-check.outputs.artifact_name }}
@@ -178,20 +209,16 @@ jobs:
             echo "Cache miss: ${ARTIFACT_NAME}"
           fi
 
-      - name: Install Rust toolchain
+      - name: Download binary
         if: steps.cache-check.outputs.cached == 'false'
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions/download-artifact@v4
+        with:
+          name: crud-bench-binary
+          path: target/release/
 
-      - name: Patch SurrealDB revision
+      - name: Make binary executable
         if: steps.cache-check.outputs.cached == 'false'
-        run: |
-          # Update Cargo.toml to use the requested revision
-          sed -i 's/rev = "[a-f0-9]*"/rev = "${{ inputs.surrealdb_rev }}"/' Cargo.toml
-          cargo update -p surrealdb@3.0.0-beta
-
-      - name: Build
-        if: steps.cache-check.outputs.cached == 'false'
-        run: make build
+        run: chmod +x target/release/crud-bench
 
       - name: Start TiKV
         if: steps.cache-check.outputs.cached == 'false' && matrix.backend == 'tikv'
@@ -227,7 +254,7 @@ jobs:
           retention-days: 90
 
   # -----------------------------------------------------------
-  # Stage 3: Compare v2 vs v3 (ubuntu-latest)
+  # Compare v2 vs v3 (ubuntu-latest, frees benchmark machines)
   # -----------------------------------------------------------
   compare:
     strategy:
