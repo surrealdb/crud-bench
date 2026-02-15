@@ -260,6 +260,9 @@ pub(crate) struct Scan {
 	expect: Option<usize>,
 	projection: Option<String>,
 	index: Option<Index>,
+	/// Dialects for which this scan should be skipped entirely.
+	#[serde(default)]
+	skip_for: Vec<String>,
 }
 
 impl Scan {

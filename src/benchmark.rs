@@ -171,6 +171,11 @@ impl Benchmark {
 		// Run the "scan" benchmarks
 		let mut scan_results = Vec::with_capacity(scans.len());
 		for scan in scans {
+			// Skip scans that are not supported for this dialect
+			if scan.skip_for.iter().any(|d| d == dialect_name) {
+				println!("{:>40}  skipped for {dialect_name}", scan.name);
+				continue;
+			}
 			// Get the name of the scan
 			let name = scan.name.clone();
 			let samples = self

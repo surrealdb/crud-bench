@@ -71,6 +71,41 @@
 		}
 	},
 	{
+		"name": "select_where_order_limit",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT * FROM record WHERE number > 2500 ORDER BY age LIMIT 50"
+		}
+	},
+	{
+		"name": "select_where_order_desc_limit",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT * FROM record WHERE city = 'london' ORDER BY number DESC LIMIT 50"
+		}
+	},
+	{
+		"name": "select_where_multi_order_limit",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT * FROM record WHERE age > 30 AND active = true ORDER BY city, score DESC LIMIT 50"
+		}
+	},
+	{
+		"name": "select_omit_limit",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT * OMIT words, embedding, tags FROM record LIMIT 100"
+		}
+	},
+	{
+		"name": "select_fields_where_limit",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT name, city, age, number FROM record WHERE score > 50.0 LIMIT 100"
+		}
+	},
+	{
 		"name": "select_order_by",
 		"samples": 1000,
 		"query": {
@@ -120,6 +155,35 @@
 		}
 	},
 	{
+		"name": "select_group_order_limit",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT city, count() as total, math::mean(score) as avg_score FROM record GROUP BY city ORDER BY total DESC LIMIT 5"
+		}
+	},
+	{
+		"name": "select_group_where",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT city, count() as total, math::sum(number) as sum FROM record WHERE age > 50 GROUP BY city"
+		}
+	},
+	{
+		"name": "select_group_dedup_agg",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT city, math::sum(number) as total, math::sum(number) as dup1, math::sum(number) as dup2 FROM record GROUP BY city"
+		}
+	},
+	{
+		"name": "select_group_dedup_agg_complex",
+		"samples": 1000,
+		"skip_for": ["surrealdb2"],
+		"query": {
+			"surrealdb": "SELECT city, math::sum(number) as total, math::sum(number) / count() as avg_manual, math::sum(number) * 2 as doubled FROM record GROUP BY city"
+		}
+	},
+	{
 		"name": "select_split",
 		"samples": 1000,
 		"query": {
@@ -131,6 +195,13 @@
 		"samples": 1000,
 		"query": {
 			"surrealdb": "SELECT * FROM record LIMIT 100 FETCH friend"
+		}
+	},
+	{
+		"name": "select_fetch_where_limit",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT * FROM record WHERE city = 'london' LIMIT 50 FETCH friend"
 		}
 	},
 
@@ -178,6 +249,35 @@
 	},
 
 	{
+		"name": "graph_multi_out",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT id, ->knows->record.name FROM record LIMIT 100"
+		}
+	},
+	{
+		"name": "graph_multi_out_where",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT id, ->knows->(? WHERE number > 2500) FROM record LIMIT 50"
+		}
+	},
+	{
+		"name": "graph_multi_count",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT id, count(->knows) as edge_count FROM record LIMIT 100"
+		}
+	},
+	{
+		"name": "graph_depth2_limit",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT id, ->knows->record->knows->record FROM record LIMIT 20"
+		}
+	},
+
+	{
 		"name": "graph_sub_where",
 		"samples": 1000,
 		"query": {
@@ -213,7 +313,21 @@
 			"surrealdb": "SELECT *, (SELECT count() FROM small_table GROUP ALL) as sub_count FROM record LIMIT 100"
 		}
 	},
+	{
+		"name": "subquery_from",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT city, math::mean(number) as avg FROM (SELECT * FROM record WHERE age > 50 LIMIT 10000) GROUP BY city"
+		}
+	},
 
+	{
+		"name": "pipeline_filter_group_order",
+		"samples": 1000,
+		"query": {
+			"surrealdb": "SELECT city, count() as c, math::mean(age) as avg_age FROM record WHERE number > 1000 GROUP BY city ORDER BY c DESC LIMIT 5"
+		}
+	},
 	{
 		"name": "index_standard",
 		"samples": 1000,
