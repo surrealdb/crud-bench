@@ -271,15 +271,15 @@ impl Benchmark {
 			self.wait_for_client(&engine).await?.compact().await?;
 		}
 		// Run the "deletes" benchmark
-		let deletes = self
-			.run_operation::<C, D>(
-				&clients,
-				BenchmarkOperation::Delete,
-				kp,
-				vp.clone(),
-				self.samples,
-			)
-			.await?;
+		// let deletes = self
+		// 	.run_operation::<C, D>(
+		// 		&clients,
+		// 		BenchmarkOperation::Delete,
+		// 		kp,
+		// 		vp.clone(),
+		// 		self.samples,
+		// 	)
+		// 	.await?;
 		// Compact the datastore
 		if std::env::var("COMPACTION").is_ok() {
 			self.wait_for_client(&engine).await?.compact().await?;
@@ -316,7 +316,7 @@ impl Benchmark {
 			updates,
 			scans: scan_results,
 			batches: batch_results,
-			deletes,
+			deletes: None,
 			sample,
 		})
 	}
