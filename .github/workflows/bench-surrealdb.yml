@@ -102,9 +102,12 @@ jobs:
           SDB_V2=$(grep 'package = "surrealdb", version' Cargo.toml | grep -oP 'version = "\K[^"]+')
           echo "sdb_v2=${SDB_V2}" >> "$GITHUB_OUTPUT"
 
+          # Hash config and source files for cache invalidation
+          BENCH_HASH=$(find config/ src/ Cargo.toml Cargo.lock -type f | sort | xargs sha256sum | sha256sum | cut -c1-12)
+
           # Build artifact name with all parameters
           SS="${{ inputs.scan_samples }}"
-          ARTIFACT_NAME="v2-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V2}"
+          ARTIFACT_NAME="v2-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V2}-h${BENCH_HASH}"
           echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
 
           # Check if artifact already exists
@@ -204,9 +207,12 @@ jobs:
           echo "sdb_v3=${SDB_V3}" >> "$GITHUB_OUTPUT"
           echo "sdb_v3_short=${SDB_V3_SHORT}" >> "$GITHUB_OUTPUT"
 
+          # Hash config and source files for cache invalidation
+          BENCH_HASH=$(find config/ src/ Cargo.toml Cargo.lock -type f | sort | xargs sha256sum | sha256sum | cut -c1-12)
+
           # Build artifact name with all parameters
           SS="${{ inputs.scan_samples }}"
-          ARTIFACT_NAME="v3-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V3_SHORT}"
+          ARTIFACT_NAME="v3-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V3_SHORT}-h${BENCH_HASH}"
           echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
 
           # Check if artifact already exists
@@ -300,15 +306,18 @@ jobs:
         if: steps.filter.outputs.skip == 'false'
         id: names
         run: |
+          # Hash config and source files (must match bench-v2/bench-v3 computation)
+          BENCH_HASH=$(find config/ src/ Cargo.toml Cargo.lock -type f | sort | xargs sha256sum | sha256sum | cut -c1-12)
+
           # Reconstruct v2 artifact name
           SDB_V2=$(grep 'package = "surrealdb", version' Cargo.toml | grep -oP 'version = "\K[^"]+')
           SS="${{ inputs.scan_samples }}"
-          echo "v2_name=v2-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V2}" >> "$GITHUB_OUTPUT"
+          echo "v2_name=v2-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V2}-h${BENCH_HASH}" >> "$GITHUB_OUTPUT"
 
           # Reconstruct v3 artifact name
           SDB_V3_SHORT="${{ inputs.surrealdb_rev }}"
           SDB_V3_SHORT="${SDB_V3_SHORT:0:12}"
-          echo "v3_name=v3-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V3_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "v3_name=v3-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V3_SHORT}-h${BENCH_HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Download v2 results
         if: steps.filter.outputs.skip == 'false'
