@@ -1,4 +1,5 @@
 name: Bench SurrealDB
+run-name: "Bench SurrealDB [${{ inputs.backends }}] c=${{ inputs.clients }} t=${{ inputs.threads }} s=${{ inputs.samples }} rev=${{ inputs.surrealdb_rev }}"
 
 on:
   workflow_dispatch:
