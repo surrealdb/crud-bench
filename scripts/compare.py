@@ -523,6 +523,23 @@ def generate_html(title, labels, test_order, metrics):
         })
         res_chart_id += 1
 
+    # Build per-test chart data (one small chart per test, independently scaled)
+    per_test_charts = []
+    pt_chart_id = 0
+    for test in all_valid_tests:
+        mean_vals = [round(metrics[i].get(test, {}).get("mean", 0) or 0, 3) for i in range(len(labels))]
+        ops_vals = [round(metrics[i].get(test, {}).get("ops", 0) or 0, 1) for i in range(len(labels))]
+        per_test_charts.append({
+            "test": test,
+            "short_name": _short_name(test),
+            "category": categorise(test),
+            "mean_chart_id": f"ptc_mean_{pt_chart_id}",
+            "ops_chart_id": f"ptc_ops_{pt_chart_id}",
+            "mean_vals": mean_vals,
+            "ops_vals": ops_vals,
+        })
+        pt_chart_id += 1
+
     # Build detail table rows
     table_rows = []
     for test in test_order:
@@ -553,7 +570,8 @@ def generate_html(title, labels, test_order, metrics):
     # Render HTML
     return _render_html(
         title, labels, is_two, meta_info, summary, chart_blocks,
-        resource_chart_blocks, table_rows, has_cpu, has_memory, has_io,
+        resource_chart_blocks, per_test_charts, table_rows,
+        has_cpu, has_memory, has_io,
     )
 
 
@@ -573,7 +591,8 @@ def _short_name(test):
 
 
 def _render_html(title, labels, is_two, meta_info, summary, chart_blocks,
-                  resource_chart_blocks, table_rows, has_cpu, has_memory, has_io):
+                  resource_chart_blocks, per_test_charts, table_rows,
+                  has_cpu, has_memory, has_io):
     escaped_title = html.escape(title)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -711,6 +730,63 @@ def _render_html(title, labels, is_two, meta_info, summary, chart_blocks,
             """
         charts_html += "</div>"
 
+    # Per-test comparison charts (independently scaled)
+    if per_test_charts:
+        labels_js = json.dumps(labels)
+        color_list_js = json.dumps(CHART_COLORS[:len(labels)])
+        border_list_js = json.dumps(CHART_BORDERS[:len(labels)])
+
+        for metric_key, metric_title, metric_unit in [
+            ("mean_vals", "Per-Test Comparison: Mean Latency (ms) — lower is better", "ms"),
+            ("ops_vals", "Per-Test Comparison: Operations/sec — higher is better", "ops/sec"),
+        ]:
+            charts_html += f'\n        <div class="chart-section"><h2>{metric_title}</h2>'
+            chart_id_key = "mean_chart_id" if metric_key == "mean_vals" else "ops_chart_id"
+
+            # Group by category, preserving CATEGORIES order
+            cat_order = [c for c, _ in CATEGORIES] + ["Other"]
+            cat_grouped = {}
+            for ptc in per_test_charts:
+                cat_grouped.setdefault(ptc["category"], []).append(ptc)
+
+            for cat_name in cat_order:
+                cat_items = cat_grouped.get(cat_name, [])
+                if not cat_items:
+                    continue
+                charts_html += f'\n            <h3>{html.escape(cat_name)}</h3>\n            <div class="chart-grid">'
+                for ptc in cat_items:
+                    cid = ptc[chart_id_key]
+                    bar_h = max(len(labels) * 28, 60)
+                    charts_html += f"""
+                <div class="chart-card">
+                    <h4>{html.escape(ptc['short_name'])}</h4>
+                    <div style="height:{bar_h}px"><canvas id="{cid}"></canvas></div>
+                </div>"""
+                    data_vals = json.dumps(ptc[metric_key])
+                    charts_js += f"""
+        (function() {{
+            var vals = {data_vals};
+            var colors = {color_list_js};
+            var borders = {border_list_js};
+            var datasets = vals.map(function(v, i) {{
+                return {{ label: {labels_js}[i], data: [v], backgroundColor: colors[i], borderColor: borders[i], borderWidth: 1 }};
+            }});
+            new Chart(document.getElementById('{cid}'), {{
+                type: 'bar',
+                data: {{ labels: [''], datasets: datasets }},
+                options: {{
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {{ legend: {{ display: false }} }},
+                    scales: {{ x: {{ beginAtZero: true, ticks: {{ font: {{ size: 10 }} }} }} }}
+                }}
+            }});
+        }})();
+                    """
+                charts_html += "\n            </div>"
+            charts_html += "\n        </div>"
+
     # Detail table - determine column count per dataset
     cols_per_label = 7  # Mean, P50, P95, P99, Min, Max, OPS
     if has_memory:
@@ -814,6 +890,18 @@ def _render_html(title, labels, is_two, meta_info, summary, chart_blocks,
     .chart-container {{
         background: var(--surface); border: 1px solid var(--border);
         border-radius: 8px; padding: 16px;
+    }}
+    .chart-grid {{
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;
+        margin-bottom: 20px;
+    }}
+    .chart-card {{
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 8px; padding: 10px;
+    }}
+    .chart-card h4 {{
+        font-size: 0.8rem; color: var(--text2); margin-bottom: 4px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }}
     table {{
         width: 100%; border-collapse: collapse; margin-top: 24px;
