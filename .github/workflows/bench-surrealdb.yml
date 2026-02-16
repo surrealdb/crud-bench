@@ -285,6 +285,7 @@ jobs:
     runs-on: ubuntu-latest
     name: compare-${{ matrix.backend }}
     needs: [bench-v2, bench-v3]
+    if: ${{ !cancelled() }}
 
     steps:
       - name: Check if backend is selected
@@ -342,6 +343,8 @@ jobs:
 
       - name: Download v2 results
         if: steps.filter.outputs.skip == 'false'
+        id: dl-v2
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: ${{ steps.names.outputs.v2_name }}
@@ -351,6 +354,8 @@ jobs:
 
       - name: Download v3 results
         if: steps.filter.outputs.skip == 'false'
+        id: dl-v3
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: ${{ steps.names.outputs.v3_name }}
@@ -359,7 +364,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Run comparison
-        if: steps.filter.outputs.skip == 'false'
+        if: steps.filter.outputs.skip == 'false' && steps.dl-v2.outcome == 'success' && steps.dl-v3.outcome == 'success'
         run: |
           mkdir -p results/compare
           python3 scripts/compare.py \
@@ -369,8 +374,13 @@ jobs:
             --output results/compare/compare-${{ matrix.backend }}.html \
             | tee results/compare/compare-${{ matrix.backend }}.txt
 
+      - name: Log skipped comparison
+        if: steps.filter.outputs.skip == 'false' && (steps.dl-v2.outcome != 'success' || steps.dl-v3.outcome != 'success')
+        run: |
+          echo "::warning::Skipping comparison for ${{ matrix.backend }}: v2 download=${{ steps.dl-v2.outcome }}, v3 download=${{ steps.dl-v3.outcome }}"
+
       - name: Upload comparison
-        if: steps.filter.outputs.skip == 'false'
+        if: steps.filter.outputs.skip == 'false' && steps.dl-v2.outcome == 'success' && steps.dl-v3.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: compare-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}
