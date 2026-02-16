@@ -117,11 +117,25 @@ jobs:
             2>/dev/null | head -1)
           if [ -n "$EXISTS" ]; then
             echo "cached=true" >> "$GITHUB_OUTPUT"
+            echo "artifact_id=${EXISTS}" >> "$GITHUB_OUTPUT"
             echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS})"
           else
             echo "cached=false" >> "$GITHUB_OUTPUT"
             echo "Cache miss: ${ARTIFACT_NAME}"
           fi
+
+      - name: Restore cached results
+        if: steps.filter.outputs.skip == 'false' && steps.cache-check.outputs.cached == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p results/runs
+          curl -sSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -o /tmp/cached.zip \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${{ steps.cache-check.outputs.artifact_id }}/zip"
+          unzip -o /tmp/cached.zip -d results/runs/
 
       - name: Download binary
         if: steps.cache-check.outputs.cached == 'false'
@@ -156,7 +170,7 @@ jobs:
         run: make tikv-stop
 
       - name: Upload results
-        if: success() && steps.cache-check.outputs.cached == 'false'
+        if: steps.filter.outputs.skip == 'false' && success()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.cache-check.outputs.artifact_name }}
@@ -222,11 +236,25 @@ jobs:
             2>/dev/null | head -1)
           if [ -n "$EXISTS" ]; then
             echo "cached=true" >> "$GITHUB_OUTPUT"
+            echo "artifact_id=${EXISTS}" >> "$GITHUB_OUTPUT"
             echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS})"
           else
             echo "cached=false" >> "$GITHUB_OUTPUT"
             echo "Cache miss: ${ARTIFACT_NAME}"
           fi
+
+      - name: Restore cached results
+        if: steps.filter.outputs.skip == 'false' && steps.cache-check.outputs.cached == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p results/runs
+          curl -sSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -o /tmp/cached.zip \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${{ steps.cache-check.outputs.artifact_id }}/zip"
+          unzip -o /tmp/cached.zip -d results/runs/
 
       - name: Download binary
         if: steps.cache-check.outputs.cached == 'false'
@@ -261,7 +289,7 @@ jobs:
         run: make tikv-stop
 
       - name: Upload results
-        if: success() && steps.cache-check.outputs.cached == 'false'
+        if: steps.filter.outputs.skip == 'false' && success()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.cache-check.outputs.artifact_name }}
@@ -322,23 +350,17 @@ jobs:
 
       - name: Download v2 results
         if: steps.filter.outputs.skip == 'false'
-        uses: dawidd6/action-download-artifact@v6
+        uses: actions/download-artifact@v4
         with:
-          workflow: bench-surrealdb.yml
           name: ${{ steps.names.outputs.v2_name }}
           path: results/runs/
-          search_artifacts: true
-          workflow_conclusion: ""
 
       - name: Download v3 results
         if: steps.filter.outputs.skip == 'false'
-        uses: dawidd6/action-download-artifact@v6
+        uses: actions/download-artifact@v4
         with:
-          workflow: bench-surrealdb.yml
           name: ${{ steps.names.outputs.v3_name }}
           path: results/runs/
-          search_artifacts: true
-          workflow_conclusion: ""
 
       - name: Run comparison
         if: steps.filter.outputs.skip == 'false'
