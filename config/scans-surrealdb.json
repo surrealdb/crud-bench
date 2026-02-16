@@ -53,42 +53,42 @@
 		"name": "select_where_gt",
 		"samples": 1000,
 		"query": {
-			"surrealdb": "SELECT * FROM record WHERE number > 2500 LIMIT 100"
+			"surrealdb": "SELECT * FROM record WHERE number > 4625"
 		}
 	},
 	{
 		"name": "select_where_in",
 		"samples": 1000,
 		"query": {
-			"surrealdb": "SELECT * FROM record WHERE city IN ['london', 'paris', 'berlin'] LIMIT 100"
+			"surrealdb": "SELECT * FROM record WHERE age IN [5, 15, 25, 35, 45, 55, 65]"
 		}
 	},
 	{
 		"name": "select_where_multi_and",
 		"samples": 1000,
 		"query": {
-			"surrealdb": "SELECT * FROM record WHERE city = 'london' AND age > 50 LIMIT 100"
+			"surrealdb": "SELECT * FROM record WHERE city = 'london' AND age > 50"
 		}
 	},
 	{
 		"name": "select_where_order_limit",
 		"samples": 1000,
 		"query": {
-			"surrealdb": "SELECT * FROM record WHERE number > 2500 ORDER BY age LIMIT 50"
+			"surrealdb": "SELECT * FROM record WHERE number > 4625 ORDER BY age LIMIT 50"
 		}
 	},
 	{
 		"name": "select_where_order_desc_limit",
 		"samples": 1000,
 		"query": {
-			"surrealdb": "SELECT * FROM record WHERE city = 'london' ORDER BY number DESC LIMIT 50"
+			"surrealdb": "SELECT * FROM record WHERE score < 7.5 ORDER BY number DESC LIMIT 50"
 		}
 	},
 	{
 		"name": "select_where_multi_order_limit",
 		"samples": 1000,
 		"query": {
-			"surrealdb": "SELECT * FROM record WHERE age > 30 AND active = true ORDER BY city, score DESC LIMIT 50"
+			"surrealdb": "SELECT * FROM record WHERE age > 85 AND active = true ORDER BY city, score DESC LIMIT 50"
 		}
 	},
 	{

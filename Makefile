@@ -172,28 +172,29 @@ bench-v3-tikv: build $(RESULTDIR) tikv-restart
 
 # ============================================================
 # SurrealDB v2 benchmarks
+# (SURREAL_SYNC_DATA=true enables fsync, matching v3 defaults)
 # ============================================================
 .PHONY: bench-v2-memory
 bench-v2-memory: build $(RESULTDIR)
-	$(CRUD_BENCH_BINARY) -d surrealdb2 -e memory $(COMMON_FLAGS) -n v2-memory | tee $(RESULTDIR)/v2-memory.txt
+	SURREAL_SYNC_DATA=true $(CRUD_BENCH_BINARY) -d surrealdb2 -e memory $(COMMON_FLAGS) -n v2-memory | tee $(RESULTDIR)/v2-memory.txt
 	@mv -f result-v2-memory.json result-v2-memory.csv result-v2-memory.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v2-memory done → $(RESULTDIR)/v2-memory.*"
 
 .PHONY: bench-v2-rocksdb
 bench-v2-rocksdb: build $(RESULTDIR) clean-data-v2-rocksdb
-	$(CRUD_BENCH_BINARY) -d surrealdb2 -e rocksdb:$(DATADIR)/v2-rocksdb $(COMMON_FLAGS) -n v2-rocksdb | tee $(RESULTDIR)/v2-rocksdb.txt
+	SURREAL_SYNC_DATA=true $(CRUD_BENCH_BINARY) -d surrealdb2 -e rocksdb:$(DATADIR)/v2-rocksdb $(COMMON_FLAGS) -n v2-rocksdb | tee $(RESULTDIR)/v2-rocksdb.txt
 	@mv -f result-v2-rocksdb.json result-v2-rocksdb.csv result-v2-rocksdb.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v2-rocksdb done → $(RESULTDIR)/v2-rocksdb.*"
 
 .PHONY: bench-v2-surrealkv
 bench-v2-surrealkv: build $(RESULTDIR) clean-data-v2-surrealkv
-	$(CRUD_BENCH_BINARY) -d surrealdb2 -e surrealkv:$(DATADIR)/v2-surrealkv $(COMMON_FLAGS) -n v2-surrealkv | tee $(RESULTDIR)/v2-surrealkv.txt
+	SURREAL_SYNC_DATA=true $(CRUD_BENCH_BINARY) -d surrealdb2 -e surrealkv:$(DATADIR)/v2-surrealkv $(COMMON_FLAGS) -n v2-surrealkv | tee $(RESULTDIR)/v2-surrealkv.txt
 	@mv -f result-v2-surrealkv.json result-v2-surrealkv.csv result-v2-surrealkv.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v2-surrealkv done → $(RESULTDIR)/v2-surrealkv.*"
 
 .PHONY: bench-v2-tikv
 bench-v2-tikv: build $(RESULTDIR) tikv-restart
-	$(CRUD_BENCH_BINARY) -d surrealdb2 -e tikv://$(TIKV_PD) $(COMMON_FLAGS) -n v2-tikv | tee $(RESULTDIR)/v2-tikv.txt
+	SURREAL_SYNC_DATA=true $(CRUD_BENCH_BINARY) -d surrealdb2 -e tikv://$(TIKV_PD) $(COMMON_FLAGS) -n v2-tikv | tee $(RESULTDIR)/v2-tikv.txt
 	@mv -f result-v2-tikv.json result-v2-tikv.csv result-v2-tikv.html $(RESULTDIR)/ 2>/dev/null || true
 	@echo "✅ v2-tikv done → $(RESULTDIR)/v2-tikv.*"
 
