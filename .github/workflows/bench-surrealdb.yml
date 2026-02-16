@@ -118,7 +118,9 @@ jobs:
           if [ -n "$EXISTS" ]; then
             echo "cached=true" >> "$GITHUB_OUTPUT"
             echo "artifact_id=${EXISTS}" >> "$GITHUB_OUTPUT"
-            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS})"
+            CACHED_RUN_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts/${EXISTS}" --jq '.workflow_run.id')
+            echo "cached_run_id=${CACHED_RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS}, run: ${CACHED_RUN_ID})"
           else
             echo "cached=false" >> "$GITHUB_OUTPUT"
             echo "Cache miss: ${ARTIFACT_NAME}"
@@ -126,16 +128,12 @@ jobs:
 
       - name: Restore cached results
         if: steps.filter.outputs.skip == 'false' && steps.cache-check.outputs.cached == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p results/runs
-          curl -sSL \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -o /tmp/cached.zip \
-            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${{ steps.cache-check.outputs.artifact_id }}/zip"
-          unzip -o /tmp/cached.zip -d results/runs/
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.cache-check.outputs.artifact_name }}
+          path: results/runs/
+          run-id: ${{ steps.cache-check.outputs.cached_run_id }}
+          github-token: ${{ github.token }}
 
       - name: Download binary
         if: steps.cache-check.outputs.cached == 'false'
@@ -237,7 +235,9 @@ jobs:
           if [ -n "$EXISTS" ]; then
             echo "cached=true" >> "$GITHUB_OUTPUT"
             echo "artifact_id=${EXISTS}" >> "$GITHUB_OUTPUT"
-            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS})"
+            CACHED_RUN_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts/${EXISTS}" --jq '.workflow_run.id')
+            echo "cached_run_id=${CACHED_RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS}, run: ${CACHED_RUN_ID})"
           else
             echo "cached=false" >> "$GITHUB_OUTPUT"
             echo "Cache miss: ${ARTIFACT_NAME}"
@@ -245,16 +245,12 @@ jobs:
 
       - name: Restore cached results
         if: steps.filter.outputs.skip == 'false' && steps.cache-check.outputs.cached == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p results/runs
-          curl -sSL \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -o /tmp/cached.zip \
-            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${{ steps.cache-check.outputs.artifact_id }}/zip"
-          unzip -o /tmp/cached.zip -d results/runs/
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.cache-check.outputs.artifact_name }}
+          path: results/runs/
+          run-id: ${{ steps.cache-check.outputs.cached_run_id }}
+          github-token: ${{ github.token }}
 
       - name: Download binary
         if: steps.cache-check.outputs.cached == 'false'
