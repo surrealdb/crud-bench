@@ -105,23 +105,11 @@ jobs:
             2>/dev/null | head -1)
           if [ -n "$EXISTS" ]; then
             echo "cached=true" >> "$GITHUB_OUTPUT"
-            echo "artifact_id=${EXISTS}" >> "$GITHUB_OUTPUT"
-            CACHED_RUN_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts/${EXISTS}" --jq '.workflow_run.id')
-            echo "cached_run_id=${CACHED_RUN_ID}" >> "$GITHUB_OUTPUT"
-            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS}, run: ${CACHED_RUN_ID})"
+            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS})"
           else
             echo "cached=false" >> "$GITHUB_OUTPUT"
             echo "Cache miss: ${ARTIFACT_NAME}"
           fi
-
-      - name: Restore cached results
-        if: steps.filter.outputs.skip == 'false' && steps.cache-check.outputs.cached == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ steps.cache-check.outputs.artifact_name }}
-          path: results/runs/
-          run-id: ${{ steps.cache-check.outputs.cached_run_id }}
-          github-token: ${{ github.token }}
 
       - name: Download binary
         if: steps.cache-check.outputs.cached == 'false'
@@ -156,7 +144,7 @@ jobs:
         run: make tikv-stop
 
       - name: Upload results
-        if: steps.filter.outputs.skip == 'false' && success()
+        if: success() && steps.cache-check.outputs.cached == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.cache-check.outputs.artifact_name }}
@@ -222,23 +210,11 @@ jobs:
             2>/dev/null | head -1)
           if [ -n "$EXISTS" ]; then
             echo "cached=true" >> "$GITHUB_OUTPUT"
-            echo "artifact_id=${EXISTS}" >> "$GITHUB_OUTPUT"
-            CACHED_RUN_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts/${EXISTS}" --jq '.workflow_run.id')
-            echo "cached_run_id=${CACHED_RUN_ID}" >> "$GITHUB_OUTPUT"
-            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS}, run: ${CACHED_RUN_ID})"
+            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS})"
           else
             echo "cached=false" >> "$GITHUB_OUTPUT"
             echo "Cache miss: ${ARTIFACT_NAME}"
           fi
-
-      - name: Restore cached results
-        if: steps.filter.outputs.skip == 'false' && steps.cache-check.outputs.cached == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ steps.cache-check.outputs.artifact_name }}
-          path: results/runs/
-          run-id: ${{ steps.cache-check.outputs.cached_run_id }}
-          github-token: ${{ github.token }}
 
       - name: Download binary
         if: steps.cache-check.outputs.cached == 'false'
@@ -273,7 +249,7 @@ jobs:
         run: make tikv-stop
 
       - name: Upload results
-        if: steps.filter.outputs.skip == 'false' && success()
+        if: success() && steps.cache-check.outputs.cached == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.cache-check.outputs.artifact_name }}
@@ -315,9 +291,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Compute artifact names
+      - name: Resolve artifact names and runs
         if: steps.filter.outputs.skip == 'false'
         id: names
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Hash config and source files (must match bench-v2/bench-v3 computation)
           BENCH_HASH=$(find config/ src/ Cargo.toml Cargo.lock -type f | sort | xargs sha256sum | sha256sum | cut -c1-12)
@@ -325,12 +303,27 @@ jobs:
           # Reconstruct v2 artifact name
           SDB_V2=$(grep 'package = "surrealdb", version' Cargo.toml | grep -oP 'version = "\K[^"]+')
           SS="${{ inputs.scan_samples }}"
-          echo "v2_name=v2-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V2}-h${BENCH_HASH}" >> "$GITHUB_OUTPUT"
+          V2_NAME="v2-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V2}-h${BENCH_HASH}"
+          echo "v2_name=${V2_NAME}" >> "$GITHUB_OUTPUT"
 
           # Reconstruct v3 artifact name
           SDB_V3_SHORT="${{ inputs.surrealdb_rev }}"
           SDB_V3_SHORT="${SDB_V3_SHORT:0:12}"
-          echo "v3_name=v3-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V3_SHORT}-h${BENCH_HASH}" >> "$GITHUB_OUTPUT"
+          V3_NAME="v3-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V3_SHORT}-h${BENCH_HASH}"
+          echo "v3_name=${V3_NAME}" >> "$GITHUB_OUTPUT"
+
+          # Find which workflow run contains each artifact (current or previous)
+          V2_RUN_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts?name=${V2_NAME}" \
+            --jq '.artifacts[] | select(.expired == false) | .workflow_run.id' | head -1)
+          V2_RUN_ID="${V2_RUN_ID:-${{ github.run_id }}}"
+          echo "v2_run_id=${V2_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "v2 artifact: ${V2_NAME} (run: ${V2_RUN_ID})"
+
+          V3_RUN_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts?name=${V3_NAME}" \
+            --jq '.artifacts[] | select(.expired == false) | .workflow_run.id' | head -1)
+          V3_RUN_ID="${V3_RUN_ID:-${{ github.run_id }}}"
+          echo "v3_run_id=${V3_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "v3 artifact: ${V3_NAME} (run: ${V3_RUN_ID})"
 
       - name: Download v2 results
         if: steps.filter.outputs.skip == 'false'
@@ -338,6 +331,8 @@ jobs:
         with:
           name: ${{ steps.names.outputs.v2_name }}
           path: results/runs/
+          run-id: ${{ steps.names.outputs.v2_run_id }}
+          github-token: ${{ github.token }}
 
       - name: Download v3 results
         if: steps.filter.outputs.skip == 'false'
@@ -345,6 +340,8 @@ jobs:
         with:
           name: ${{ steps.names.outputs.v3_name }}
           path: results/runs/
+          run-id: ${{ steps.names.outputs.v3_run_id }}
+          github-token: ${{ github.token }}
 
       - name: Run comparison
         if: steps.filter.outputs.skip == 'false'
