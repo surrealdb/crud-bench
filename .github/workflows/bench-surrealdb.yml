@@ -98,13 +98,14 @@ jobs:
         id: cache-check
         env:
           GH_TOKEN: ${{ github.token }}
+          BENCH_HASH_FULL: ${{ hashFiles('config/**', 'src/**', 'Cargo.toml', 'Cargo.lock') }}
         run: |
           # Extract v2 version from Cargo.toml
           SDB_V2=$(grep 'package = "surrealdb", version' Cargo.toml | grep -oP 'version = "\K[^"]+')
           echo "sdb_v2=${SDB_V2}" >> "$GITHUB_OUTPUT"
 
-          # Hash config and source files for cache invalidation
-          BENCH_HASH=$(find config/ src/ Cargo.toml Cargo.lock -type f | sort | xargs sha256sum | sha256sum | cut -c1-12)
+          # Hash config and source files for cache invalidation (deterministic across runners)
+          BENCH_HASH="${BENCH_HASH_FULL:0:12}"
 
           # Build artifact name with all parameters
           SS="${{ inputs.scan_samples }}"
@@ -200,6 +201,7 @@ jobs:
         id: cache-check
         env:
           GH_TOKEN: ${{ github.token }}
+          BENCH_HASH_FULL: ${{ hashFiles('config/**', 'src/**', 'Cargo.toml', 'Cargo.lock') }}
         run: |
           # v3 version is the git rev input
           SDB_V3="${{ inputs.surrealdb_rev }}"
@@ -208,8 +210,8 @@ jobs:
           echo "sdb_v3=${SDB_V3}" >> "$GITHUB_OUTPUT"
           echo "sdb_v3_short=${SDB_V3_SHORT}" >> "$GITHUB_OUTPUT"
 
-          # Hash config and source files for cache invalidation
-          BENCH_HASH=$(find config/ src/ Cargo.toml Cargo.lock -type f | sort | xargs sha256sum | sha256sum | cut -c1-12)
+          # Hash config and source files for cache invalidation (deterministic across runners)
+          BENCH_HASH="${BENCH_HASH_FULL:0:12}"
 
           # Build artifact name with all parameters
           SS="${{ inputs.scan_samples }}"
@@ -308,9 +310,10 @@ jobs:
         id: names
         env:
           GH_TOKEN: ${{ github.token }}
+          BENCH_HASH_FULL: ${{ hashFiles('config/**', 'src/**', 'Cargo.toml', 'Cargo.lock') }}
         run: |
-          # Hash config and source files (must match bench-v2/bench-v3 computation)
-          BENCH_HASH=$(find config/ src/ Cargo.toml Cargo.lock -type f | sort | xargs sha256sum | sha256sum | cut -c1-12)
+          # Hash config and source files for cache invalidation (deterministic across runners)
+          BENCH_HASH="${BENCH_HASH_FULL:0:12}"
 
           # Reconstruct v2 artifact name
           SDB_V2=$(grep 'package = "surrealdb", version' Cargo.toml | grep -oP 'version = "\K[^"]+')
