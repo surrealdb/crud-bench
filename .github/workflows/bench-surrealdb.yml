@@ -39,18 +39,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Rust build artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: bench-build-${{ inputs.surrealdb_rev }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            bench-build-${{ inputs.surrealdb_rev }}-
-            bench-build-
-
       - name: Patch SurrealDB revision
         run: |
           sed -i 's/rev = "[a-f0-9]*"/rev = "${{ inputs.surrealdb_rev }}"/' Cargo.toml
