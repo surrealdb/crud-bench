@@ -64,6 +64,16 @@ def parse_float(val):
         return None
 
 
+def fmt_bytes(val):
+    """Convert raw byte value to human-readable string (MB or GB)."""
+    if val is None or val == 0:
+        return "-"
+    mb = val / (1024 * 1024)
+    if mb >= 1024:
+        return f"{mb / 1024:.1f} GB"
+    return f"{mb:.1f} MB"
+
+
 # ---------------------------------------------------------------------------
 # Data alignment
 # ---------------------------------------------------------------------------
@@ -94,6 +104,17 @@ def align_rows(datasets):
             p50 = parse_ms(row.get("50th", ""))
             min_v = parse_ms(row.get("Min", ""))
             max_v = parse_ms(row.get("Max", ""))
+            p75 = parse_ms(row.get("75th", ""))
+            p25 = parse_ms(row.get("25th", ""))
+            iqr = parse_ms(row.get("IQR", ""))
+            cpu_avg = parse_float(row.get("CPU_avg", ""))
+            cpu_min = parse_float(row.get("CPU_min", ""))
+            cpu_max = parse_float(row.get("CPU_max", ""))
+            mem_peak = parse_float(row.get("Memory_peak", ""))
+            mem_avg = parse_float(row.get("Memory_avg", ""))
+            reads = parse_float(row.get("Reads", ""))
+            writes = parse_float(row.get("Writes", ""))
+            sysload = row.get("System load", "").strip() if "System load" in row else ""
             query = row.get("Query", "").strip() if "Query" in row else ""
             samples = row.get("Samples", "").strip() if "Samples" in row else ""
             clients = row.get("Clients", "").strip() if "Clients" in row else ""
@@ -101,7 +122,11 @@ def align_rows(datasets):
             concurrency = row.get("Concurrency", "").strip() if "Concurrency" in row else ""
             m[test] = {
                 "mean": mean, "ops": ops, "p99": p99, "p95": p95,
-                "p50": p50, "min": min_v, "max": max_v,
+                "p50": p50, "p75": p75, "p25": p25,
+                "min": min_v, "max": max_v, "iqr": iqr,
+                "cpu_avg": cpu_avg, "cpu_min": cpu_min, "cpu_max": cpu_max,
+                "mem_peak": mem_peak, "mem_avg": mem_avg,
+                "reads": reads, "writes": writes, "sysload": sysload,
                 "query": query, "samples": samples,
                 "clients": clients, "threads": threads,
                 "concurrency": concurrency,
@@ -179,15 +204,25 @@ def print_terminal(title, labels, test_order, metrics):
 
     # Build format string
     if is_two:
-        hdr = f"{'Test':<48s}  {'Mean A':>9s}  {'Mean B':>9s}  {'Mean %':>9s}  {'OPS A':>12s}  {'OPS B':>12s}  {'OPS %':>9s}"
-        sep = f"{'---':<48s}  {'------':>9s}  {'------':>9s}  {'------':>9s}  {'-----':>12s}  {'-----':>12s}  {'-----':>9s}"
+        hdr = (
+            f"{'Test':<48s}  {'Mean A':>9s}  {'P50 A':>9s}  {'P95 A':>9s}  {'Mean B':>9s}  {'P50 B':>9s}  {'P95 B':>9s}"
+            f"  {'Mean %':>9s}  {'OPS A':>12s}  {'OPS B':>12s}  {'OPS %':>9s}"
+        )
+        sep = (
+            f"{'---':<48s}  {'------':>9s}  {'------':>9s}  {'------':>9s}  {'------':>9s}  {'------':>9s}  {'------':>9s}"
+            f"  {'------':>9s}  {'-----':>12s}  {'-----':>12s}  {'-----':>9s}"
+        )
     else:
         parts = [f"{'Test':<48s}"]
         sep_parts = [f"{'---':<48s}"]
         for i, lbl in enumerate(labels):
             tag = chr(65 + i)  # A, B, C, ...
             parts.append(f"{'Mean '+tag:>9s}")
+            parts.append(f"{'P50 '+tag:>9s}")
+            parts.append(f"{'P95 '+tag:>9s}")
             parts.append(f"{'OPS '+tag:>12s}")
+            sep_parts.append(f"{'------':>9s}")
+            sep_parts.append(f"{'------':>9s}")
             sep_parts.append(f"{'------':>9s}")
             sep_parts.append(f"{'-----':>12s}")
         hdr = "  ".join(parts)
@@ -204,6 +239,8 @@ def print_terminal(title, labels, test_order, metrics):
         vals = [m.get(test, {}) for m in metrics]
         means = [v.get("mean") for v in vals]
         opss = [v.get("ops") for v in vals]
+        p50s = [v.get("p50") for v in vals]
+        p95s = [v.get("p95") for v in vals]
 
         # Skip if all sides have no data
         if all(m is None for m in means) and all(o is None for o in opss):
@@ -215,6 +252,10 @@ def print_terminal(title, labels, test_order, metrics):
         if is_two:
             m_a, m_b = means
             o_a, o_b = opss
+            p50_a = p50s[0] if p50s[0] is not None else 0
+            p50_b = p50s[1] if p50s[1] is not None else 0
+            p95_a = p95s[0] if p95s[0] is not None else 0
+            p95_b = p95s[1] if p95s[1] is not None else 0
             m_pct = delta_pct(m_a, m_b)
             o_pct = delta_pct(o_a, o_b)
 
@@ -226,14 +267,20 @@ def print_terminal(title, labels, test_order, metrics):
                     slower_count += 1
 
             print(
-                f"{test:<48s}  {m_a:9.2f}  {m_b:9.2f}  {fmt_delta(m_pct):>18s}  {o_a:12.1f}  {o_b:12.1f}  {fmt_delta_ops(o_pct):>18s}"
+                f"{test:<48s}  {m_a:9.2f}  {p50_a:9.2f}  {p95_a:9.2f}"
+                f"  {m_b:9.2f}  {p50_b:9.2f}  {p95_b:9.2f}"
+                f"  {fmt_delta(m_pct):>18s}  {o_a:12.1f}  {o_b:12.1f}  {fmt_delta_ops(o_pct):>18s}"
             )
         else:
             parts = [f"{test:<48s}"]
             for i in range(n):
                 m_val = means[i] if means[i] is not None else 0
+                p50_val = p50s[i] if p50s[i] is not None else 0
+                p95_val = p95s[i] if p95s[i] is not None else 0
                 o_val = opss[i] if opss[i] is not None else 0
                 parts.append(f"{m_val:9.2f}")
+                parts.append(f"{p50_val:9.2f}")
+                parts.append(f"{p95_val:9.2f}")
                 parts.append(f"{o_val:12.1f}")
             print("  ".join(parts))
 
@@ -301,6 +348,20 @@ def generate_html(title, labels, test_order, metrics):
             for m in metrics
         )
 
+    # Detect which resource metrics have non-zero data
+    has_cpu = any(
+        (m.get(t, {}).get("cpu_avg") or 0) > 0
+        for m in metrics for t in test_order if has_data(t)
+    )
+    has_memory = any(
+        (m.get(t, {}).get("mem_peak") or 0) > 0
+        for m in metrics for t in test_order if has_data(t)
+    )
+    has_io = any(
+        (m.get(t, {}).get("reads") or 0) > 0 or (m.get(t, {}).get("writes") or 0) > 0
+        for m in metrics for t in test_order if has_data(t)
+    )
+
     # Summary stats (two-way only)
     summary = {}
     if is_two:
@@ -322,6 +383,13 @@ def generate_html(title, labels, test_order, metrics):
         summary["slower"] = sum(1 for d in ops_deltas_all if d < 0)
         summary["median_ops"] = statistics.median(ops_deltas_all) if ops_deltas_all else 0
         summary["median_mean"] = statistics.median(mean_deltas_all) if mean_deltas_all else 0
+
+    # Per-dataset peak memory and avg CPU for summary cards
+    for i, lbl in enumerate(labels):
+        mem_peaks = [metrics[i].get(t, {}).get("mem_peak") or 0 for t in test_order if has_data(t)]
+        cpu_avgs = [metrics[i].get(t, {}).get("cpu_avg") or 0 for t in test_order if has_data(t)]
+        summary[f"mem_peak_{i}"] = max(mem_peaks) if mem_peaks else 0
+        summary[f"cpu_avg_{i}"] = statistics.mean(cpu_avgs) if cpu_avgs else 0
 
     # Build chart data per category
     chart_blocks = []
@@ -372,6 +440,89 @@ def generate_html(title, labels, test_order, metrics):
             "bar_height": bar_height,
         })
 
+    # Build resource chart blocks (memory, CPU, IO) - conditional
+    resource_chart_blocks = []
+    res_chart_id = 0
+    all_valid_tests = [t for t in test_order if has_data(t)]
+
+    if has_memory and all_valid_tests:
+        mem_labels_js = json.dumps([_short_name(t) for t in all_valid_tests])
+        mem_datasets = []
+        for i, lbl in enumerate(labels):
+            data = [round((metrics[i].get(t, {}).get("mem_peak") or 0) / (1024*1024), 1) for t in all_valid_tests]
+            mem_datasets.append({
+                "label": lbl,
+                "data": data,
+                "backgroundColor": CHART_COLORS[i % len(CHART_COLORS)],
+                "borderColor": CHART_BORDERS[i % len(CHART_BORDERS)],
+                "borderWidth": 1,
+            })
+        bar_h = max(len(all_valid_tests) * 25 * len(labels), 200)
+        resource_chart_blocks.append({
+            "title": "Peak Memory Usage (MB)",
+            "chart_id": f"chart_mem_{res_chart_id}",
+            "labels_js": mem_labels_js,
+            "datasets_js": json.dumps(mem_datasets),
+            "bar_height": bar_h,
+            "x_label": "MB",
+        })
+        res_chart_id += 1
+
+    if has_cpu and all_valid_tests:
+        cpu_labels_js = json.dumps([_short_name(t) for t in all_valid_tests])
+        cpu_datasets = []
+        for i, lbl in enumerate(labels):
+            data = [round(metrics[i].get(t, {}).get("cpu_avg") or 0, 2) for t in all_valid_tests]
+            cpu_datasets.append({
+                "label": lbl,
+                "data": data,
+                "backgroundColor": CHART_COLORS[i % len(CHART_COLORS)],
+                "borderColor": CHART_BORDERS[i % len(CHART_BORDERS)],
+                "borderWidth": 1,
+            })
+        bar_h = max(len(all_valid_tests) * 25 * len(labels), 200)
+        resource_chart_blocks.append({
+            "title": "CPU Usage (avg cores)",
+            "chart_id": f"chart_cpu_{res_chart_id}",
+            "labels_js": cpu_labels_js,
+            "datasets_js": json.dumps(cpu_datasets),
+            "bar_height": bar_h,
+            "x_label": "cores",
+        })
+        res_chart_id += 1
+
+    if has_io and all_valid_tests:
+        io_labels_js = json.dumps([_short_name(t) for t in all_valid_tests])
+        io_r_datasets = []
+        io_w_datasets = []
+        for i, lbl in enumerate(labels):
+            r_data = [round(metrics[i].get(t, {}).get("reads") or 0, 0) for t in all_valid_tests]
+            w_data = [round(metrics[i].get(t, {}).get("writes") or 0, 0) for t in all_valid_tests]
+            io_r_datasets.append({
+                "label": f"{lbl} Reads",
+                "data": r_data,
+                "backgroundColor": CHART_COLORS[i % len(CHART_COLORS)],
+                "borderColor": CHART_BORDERS[i % len(CHART_BORDERS)],
+                "borderWidth": 1,
+            })
+            io_w_datasets.append({
+                "label": f"{lbl} Writes",
+                "data": w_data,
+                "backgroundColor": CHART_COLORS[(i + len(labels)) % len(CHART_COLORS)],
+                "borderColor": CHART_BORDERS[(i + len(labels)) % len(CHART_BORDERS)],
+                "borderWidth": 1,
+            })
+        bar_h = max(len(all_valid_tests) * 25 * len(labels), 200)
+        resource_chart_blocks.append({
+            "title": "I/O Operations",
+            "chart_id": f"chart_io_{res_chart_id}",
+            "labels_js": io_labels_js,
+            "datasets_js": json.dumps(io_r_datasets + io_w_datasets),
+            "bar_height": bar_h,
+            "x_label": "ops",
+        })
+        res_chart_id += 1
+
     # Build detail table rows
     table_rows = []
     for test in test_order:
@@ -384,6 +535,8 @@ def generate_html(title, labels, test_order, metrics):
                 "mean": d.get("mean"), "ops": d.get("ops"),
                 "p99": d.get("p99"), "p95": d.get("p95"),
                 "p50": d.get("p50"), "min": d.get("min"), "max": d.get("max"),
+                "mem_peak": d.get("mem_peak"), "cpu_avg": d.get("cpu_avg"),
+                "reads": d.get("reads"), "writes": d.get("writes"),
             }
             row["values"].append(entry)
         if is_two:
@@ -398,7 +551,10 @@ def generate_html(title, labels, test_order, metrics):
         table_rows.append(row)
 
     # Render HTML
-    return _render_html(title, labels, is_two, meta_info, summary, chart_blocks, table_rows)
+    return _render_html(
+        title, labels, is_two, meta_info, summary, chart_blocks,
+        resource_chart_blocks, table_rows, has_cpu, has_memory, has_io,
+    )
 
 
 def _short_name(test):
@@ -416,7 +572,8 @@ def _short_name(test):
     return name
 
 
-def _render_html(title, labels, is_two, meta_info, summary, chart_blocks, table_rows):
+def _render_html(title, labels, is_two, meta_info, summary, chart_blocks,
+                  resource_chart_blocks, table_rows, has_cpu, has_memory, has_io):
     escaped_title = html.escape(title)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -445,8 +602,45 @@ def _render_html(title, labels, is_two, meta_info, summary, chart_blocks, table_
                 <div class="card-value">{summary['median_mean']:+.1f}%</div>
                 <div class="card-label">Median Latency Change</div>
             </div>
-        </div>
         """
+        if has_memory:
+            for i, lbl in enumerate(labels):
+                val = summary.get(f"mem_peak_{i}", 0)
+                summary_html += f"""
+            <div class="card">
+                <div class="card-value">{fmt_bytes(val)}</div>
+                <div class="card-label">{html.escape(lbl)} Peak Mem</div>
+            </div>"""
+        if has_cpu:
+            for i, lbl in enumerate(labels):
+                val = summary.get(f"cpu_avg_{i}", 0)
+                if val > 0:
+                    summary_html += f"""
+            <div class="card">
+                <div class="card-value">{val:.2f}</div>
+                <div class="card-label">{html.escape(lbl)} Avg CPU</div>
+            </div>"""
+        summary_html += "\n        </div>"
+    else:
+        if has_memory or has_cpu:
+            summary_html = '\n        <div class="summary-cards">'
+            for i, lbl in enumerate(labels):
+                if has_memory:
+                    val = summary.get(f"mem_peak_{i}", 0)
+                    summary_html += f"""
+            <div class="card">
+                <div class="card-value">{fmt_bytes(val)}</div>
+                <div class="card-label">{html.escape(lbl)} Peak Mem</div>
+            </div>"""
+                if has_cpu:
+                    val = summary.get(f"cpu_avg_{i}", 0)
+                    if val > 0:
+                        summary_html += f"""
+            <div class="card">
+                <div class="card-value">{val:.2f}</div>
+                <div class="card-label">{html.escape(lbl)} Avg CPU</div>
+            </div>"""
+            summary_html += "\n        </div>"
 
     # Chart sections
     charts_html = ""
@@ -492,11 +686,42 @@ def _render_html(title, labels, is_two, meta_info, summary, chart_blocks, table_
         }});
         """
 
-    # Detail table
+    # Resource charts (memory, CPU, IO) - conditional
+    if resource_chart_blocks:
+        charts_html += '\n        <div class="chart-section"><h2>Resource Metrics</h2>'
+        for rcb in resource_chart_blocks:
+            charts_html += f"""
+            <div class="chart-container" style="margin-bottom:24px">
+                <h3>{html.escape(rcb['title'])}</h3>
+                <div style="height:{rcb['bar_height']}px"><canvas id="{rcb['chart_id']}"></canvas></div>
+            </div>
+            """
+            charts_js += f"""
+        new Chart(document.getElementById('{rcb['chart_id']}'), {{
+            type: 'bar',
+            data: {{ labels: {rcb['labels_js']}, datasets: {rcb['datasets_js']} }},
+            options: {{
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {{ legend: {{ position: 'top' }} }},
+                scales: {{ x: {{ beginAtZero: true, title: {{ display: true, text: '{rcb["x_label"]}' }} }} }}
+            }}
+        }});
+            """
+        charts_html += "</div>"
+
+    # Detail table - determine column count per dataset
+    cols_per_label = 7  # Mean, P50, P95, P99, Min, Max, OPS
+    if has_memory:
+        cols_per_label += 1
+    if has_cpu:
+        cols_per_label += 1
+
     # Build header
     th_labels = ""
     for lbl in labels:
-        th_labels += f'<th colspan="3">{html.escape(lbl)}</th>'
+        th_labels += f'<th colspan="{cols_per_label}">{html.escape(lbl)}</th>'
 
     delta_th = ""
     if is_two:
@@ -508,9 +733,20 @@ def _render_html(title, labels, is_two, meta_info, summary, chart_blocks, table_
         tds = ""
         for v in row["values"]:
             mean_s = f"{v['mean']:.2f}" if v["mean"] is not None else "-"
+            p50_s = f"{v['p50']:.2f}" if v.get("p50") is not None else "-"
+            p95_s = f"{v['p95']:.2f}" if v.get("p95") is not None else "-"
+            p99_s = f"{v['p99']:.2f}" if v.get("p99") is not None else "-"
+            min_s = f"{v['min']:.2f}" if v.get("min") is not None else "-"
+            max_s = f"{v['max']:.2f}" if v.get("max") is not None else "-"
             ops_s = f"{v['ops']:.1f}" if v["ops"] is not None else "-"
-            p99_s = f"{v['p99']:.2f}" if v["p99"] is not None else "-"
-            tds += f"<td>{mean_s}</td><td>{p99_s}</td><td>{ops_s}</td>"
+            tds += f"<td>{mean_s}</td><td>{p50_s}</td><td>{p95_s}</td><td>{p99_s}</td><td>{min_s}</td><td>{max_s}</td><td>{ops_s}</td>"
+            if has_memory:
+                mem_s = fmt_bytes(v.get("mem_peak"))
+                tds += f"<td>{mem_s}</td>"
+            if has_cpu:
+                cpu_v = v.get("cpu_avg")
+                cpu_s = f"{cpu_v:.2f}" if cpu_v is not None and cpu_v > 0 else "-"
+                tds += f"<td>{cpu_s}</td>"
 
         delta_tds = ""
         if is_two:
@@ -529,7 +765,11 @@ def _render_html(title, labels, is_two, meta_info, summary, chart_blocks, table_
     # Sub-headers for each label
     sub_th = ""
     for _ in labels:
-        sub_th += "<th>Mean</th><th>P99</th><th>OPS</th>"
+        sub_th += "<th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Min</th><th>Max</th><th>OPS</th>"
+        if has_memory:
+            sub_th += "<th>Mem</th>"
+        if has_cpu:
+            sub_th += "<th>CPU</th>"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
