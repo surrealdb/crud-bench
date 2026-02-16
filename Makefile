@@ -32,6 +32,7 @@ RELEASE      ?= 1
 
 # TiKV settings
 TIKV_PD   ?= 127.0.0.1:2379
+export SURREAL_TIKV_GRPC_MAX_DECODING_MESSAGE_SIZE ?= 1073741824
 
 # Config files
 VALUE     := @config/value-surrealdb.json

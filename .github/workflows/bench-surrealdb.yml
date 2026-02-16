@@ -24,6 +24,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  SURREAL_TIKV_GRPC_MAX_DECODING_MESSAGE_SIZE: "1073741824"
 
 jobs:
   # -----------------------------------------------------------
@@ -327,6 +328,7 @@ jobs:
           name: ${{ steps.names.outputs.v2_name }}
           path: results/runs/
           search_artifacts: true
+          workflow_conclusion: ""
 
       - name: Download v3 results
         if: steps.filter.outputs.skip == 'false'
@@ -336,6 +338,7 @@ jobs:
           name: ${{ steps.names.outputs.v3_name }}
           path: results/runs/
           search_artifacts: true
+          workflow_conclusion: ""
 
       - name: Run comparison
         if: steps.filter.outputs.skip == 'false'
