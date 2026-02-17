@@ -68,7 +68,7 @@ jobs:
           retention-days: 1
 
   # -----------------------------------------------------------
-  # V2 benchmarks (cached by version + params)
+  # V2 benchmarks (always run, no caching)
   # -----------------------------------------------------------
   bench-v2:
     strategy:
@@ -78,8 +78,6 @@ jobs:
     runs-on: [self-hosted, benchmarking]
     name: v2-${{ matrix.backend }}
     needs: [build]
-    outputs:
-      artifact-name: ${{ steps.cache-check.outputs.artifact_name }}
 
     steps:
       - name: Check if backend is selected
@@ -94,54 +92,35 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.filter.outputs.skip == 'false'
 
-      - name: Resolve versions and check cache
+      - name: Resolve artifact name
         if: steps.filter.outputs.skip == 'false'
-        id: cache-check
+        id: names
         env:
-          GH_TOKEN: ${{ github.token }}
           BENCH_HASH_FULL: ${{ hashFiles('config/**', 'src/**', 'Cargo.toml', 'Cargo.lock') }}
         run: |
-          # Extract v2 version from Cargo.toml
           SDB_V2=$(grep 'package = "surrealdb", version' Cargo.toml | grep -oP 'version = "\K[^"]+')
-          echo "sdb_v2=${SDB_V2}" >> "$GITHUB_OUTPUT"
-
-          # Hash config and source files for cache invalidation (deterministic across runners)
           BENCH_HASH="${BENCH_HASH_FULL:0:12}"
-
-          # Build artifact name with all parameters
           SS="${{ inputs.scan_samples }}"
           ARTIFACT_NAME="v2-${{ matrix.backend }}-c${{ inputs.clients }}-t${{ inputs.threads }}-s${{ inputs.samples }}-ss${SS:-0}-sdb${SDB_V2}-h${BENCH_HASH}"
           echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
 
-          # Check if artifact already exists
-          EXISTS=$(gh api repos/${{ github.repository }}/actions/artifacts \
-            --jq ".artifacts[] | select(.name == \"${ARTIFACT_NAME}\" and .expired == false) | .id" \
-            2>/dev/null | head -1)
-          if [ -n "$EXISTS" ]; then
-            echo "cached=true" >> "$GITHUB_OUTPUT"
-            echo "Cache hit: ${ARTIFACT_NAME} (artifact id: ${EXISTS})"
-          else
-            echo "cached=false" >> "$GITHUB_OUTPUT"
-            echo "Cache miss: ${ARTIFACT_NAME}"
-          fi
-
       - name: Download binary
-        if: steps.cache-check.outputs.cached == 'false'
+        if: steps.filter.outputs.skip == 'false'
         uses: actions/download-artifact@v4
         with:
           name: crud-bench-binary
           path: target/release/
 
       - name: Make binary executable
-        if: steps.cache-check.outputs.cached == 'false'
+        if: steps.filter.outputs.skip == 'false'
         run: chmod +x target/release/crud-bench
 
       - name: Start TiKV
-        if: steps.cache-check.outputs.cached == 'false' && matrix.backend == 'tikv'
+        if: steps.filter.outputs.skip == 'false' && matrix.backend == 'tikv'
         run: make tikv-start
 
       - name: Run benchmark
-        if: steps.cache-check.outputs.cached == 'false'
+        if: steps.filter.outputs.skip == 'false'
         run: |
           EXTRA_FLAGS=""
           if [ -n "${{ inputs.scan_samples }}" ]; then
@@ -154,14 +133,14 @@ jobs:
             $EXTRA_FLAGS
 
       - name: Stop TiKV
-        if: steps.cache-check.outputs.cached == 'false' && matrix.backend == 'tikv' && always()
+        if: steps.filter.outputs.skip == 'false' && matrix.backend == 'tikv' && always()
         run: make tikv-stop
 
       - name: Upload results
-        if: success() && steps.cache-check.outputs.cached == 'false'
+        if: steps.filter.outputs.skip == 'false'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.cache-check.outputs.artifact_name }}
+          name: ${{ steps.names.outputs.artifact_name }}
           path: |
             results/runs/result-v2-${{ matrix.backend }}.json
             results/runs/result-v2-${{ matrix.backend }}.csv
