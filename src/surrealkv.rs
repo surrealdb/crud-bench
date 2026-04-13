@@ -8,8 +8,8 @@ use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use serde_json::Value;
 use std::hint::black_box;
-use std::iter::Iterator;
 use std::path::PathBuf;
+use surrealkv::LSMIterator;
 use std::sync::Arc;
 use std::time::Duration;
 use surrealkv::Durability;
@@ -353,38 +353,64 @@ impl SurrealKVClient {
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				// Create an iterator starting at the beginning
-				let iter = txn.keys(beg, end)?;
-				// We use a for loop to iterate over the results, while
+				// Create a cursor-based iterator over the key range
+				let mut iter = txn.range(beg, end)?;
+				iter.seek_first()?;
+				// Skip the first `s` entries
+				for _ in 0..s {
+					if !iter.valid() {
+						break;
+					}
+					iter.next()?;
+				}
+				// We use a while loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
 				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				for v in iter.skip(s).take(l) {
-					assert!(v.is_ok());
-					black_box(v.unwrap());
+				while iter.valid() && count < l {
+					black_box(iter.key().user_key());
 					count += 1;
+					iter.next()?;
 				}
 				Ok(count)
 			}
 			Projection::Full => {
-				// Create an iterator starting at the beginning
-				let iter = txn.range(beg, end)?;
-				// We use a for loop to iterate over the results, while
+				// Create a cursor-based iterator over the key range
+				let mut iter = txn.range(beg, end)?;
+				iter.seek_first()?;
+				// Skip the first `s` entries
+				for _ in 0..s {
+					if !iter.valid() {
+						break;
+					}
+					iter.next()?;
+				}
+				// We use a while loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
 				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				for v in iter.skip(s).take(l) {
-					assert!(v.is_ok());
-					black_box(v.unwrap().1);
+				while iter.valid() && count < l {
+					black_box(iter.value()?);
 					count += 1;
+					iter.next()?;
 				}
 				Ok(count)
 			}
 			Projection::Count => match scan.limit {
 				Some(_) => bail!(NOT_SUPPORTED_ERROR),
-				None => Ok(txn.count(beg, end)?),
+				None => {
+					// Iterate over all entries to count them
+					let mut iter = txn.range(beg, end)?;
+					iter.seek_first()?;
+					let mut count = 0;
+					while iter.valid() {
+						count += 1;
+						iter.next()?;
+					}
+					Ok(count)
+				}
 			},
 		}
 	}
