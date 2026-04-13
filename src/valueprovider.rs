@@ -1,8 +1,8 @@
 use crate::dialect::Dialect;
 use anyhow::{Result, anyhow, bail};
 use log::debug;
-use rand::prelude::SmallRng;
 use rand::RngExt as RandGen;
+use rand::prelude::SmallRng;
 use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
 use std::fmt::Display;
