@@ -1,8 +1,8 @@
 use crate::dialect::Dialect;
 use anyhow::{Result, anyhow, bail};
 use log::debug;
+use rand::RngExt as RandGen;
 use rand::prelude::SmallRng;
-use rand::{Rng as RandGen, SeedableRng};
 use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -28,7 +28,7 @@ impl ValueProvider {
 		Ok(Self {
 			generator,
 			columns,
-			rng: SmallRng::from_os_rng(),
+			rng: rand::make_rng(),
 		})
 	}
 
@@ -48,7 +48,7 @@ impl Clone for ValueProvider {
 	fn clone(&self) -> Self {
 		Self {
 			generator: self.generator.clone(),
-			rng: SmallRng::from_os_rng(),
+			rng: rand::make_rng(),
 			columns: self.columns.clone(),
 		}
 	}
