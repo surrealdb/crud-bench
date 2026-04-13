@@ -54,6 +54,7 @@ data/
 redb
 lmdb/
 mdbx/
+fjall/
 rocksdb/
 slatedb/
 surrealkv/
