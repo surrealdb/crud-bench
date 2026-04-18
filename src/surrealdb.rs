@@ -402,10 +402,15 @@ impl BenchmarkClient for SurrealDBClient {
 						Ok(_) => return Ok(()),
 						Err(e) => {
 							let msg = e.to_string();
-							// Be permissive on the match to tolerate tiny wording changes
-							if msg.starts_with(
-								"The query was not executed due to a failed transaction.",
-							) {
+							// Be permissive on the match to tolerate tiny wording changes.
+							// We accept both the executor-level wrapper and the raw KV
+							// transaction conflict error, which surfaces directly when the
+							// failing statement is the only one in the query.
+							const RETRYABLE: &[&str] = &[
+								"This transaction can be retried",
+								"The query was not executed due to a failed transaction",
+							];
+							if RETRYABLE.iter().any(|p| msg.contains(p)) {
 								warn!("Retrying {sql} due to {msg}");
 								sleep(Duration::from_millis(500)).await;
 								continue;
