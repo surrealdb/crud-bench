@@ -149,7 +149,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				true => format!(
 					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
 				),
-				false => format!("--ulimit nofile=65536:65536 -p 8000:8000 --user root",),
+				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
 			},
 			post_args: format!(
 				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db?sync={sync}",
@@ -161,7 +161,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				true => format!(
 					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
 				),
-				false => format!("--ulimit nofile=65536:65536 -p 8000:8000 --user root",),
+				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
 			},
 			post_args: format!(
 				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db?sync={sync}",
