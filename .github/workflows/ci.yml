@@ -315,17 +315,20 @@ jobs:
             description: SQLite
           # SurrealDB + Memory
           - name: surrealdb-memory
-            database: surrealdb-memory
+            database: surrealdb
+            endpoint: -e server:memory
             enabled: true
             description: SurrealDB with in-memory storage
           # SurrealDB + RocksDB
           - name: surrealdb-rocksdb
-            database: surrealdb-rocksdb
+            database: surrealdb
+            endpoint: -e server:rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
-            database: surrealdb-surrealkv
+            database: surrealdb
+            endpoint: -e server:surrealkv
             enabled: false
             description: SurrealDB with SurrealKV storage
             skipped: SurrealDB with SurrealKV storage benchmark awaiting fixes

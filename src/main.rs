@@ -290,13 +290,13 @@ fn run(args: Args) -> Result<()> {
 	}
 	// Prepare the benchmark
 	let mut benchmark = Benchmark::new(&args);
-	// If a Docker image is specified but the endpoint, spawn the container.
-	let container = if args.endpoint.is_some() {
-		// The endpoint is specified usually when you want the benchmark to run against a remote server.
-		// Not handling this results in crud-bench starting a container never used by the client and the benchmark.
-		None
-	} else {
+	// Check if we should spawn a Docker container
+	let container = if args.database.wants_docker(&args.endpoint) {
+		// Start the Docker container
 		args.database.start_docker(&benchmark)
+	} else {
+		// No Docker container needed
+		None
 	};
 	// Setup the asynchronous runtime
 	let runtime = runtime::Builder::new_multi_thread()

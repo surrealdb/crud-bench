@@ -127,7 +127,7 @@ EXAMPLES:
 AVAILABLE DATASTORES:
     arangodb, dragonfly, dry, fjall, keydb, lmdb, map, mdbx, mongodb,
     mysql, neo4j, postgres, redb, redis, rocksdb, sqlite,
-    surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv,
+    surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv,
     surrealdb-embedded-memory, surrealdb-embedded-rocksdb,
     surrealdb-embedded-surrealkv, surrealkv, surrealmx
 
@@ -316,9 +316,10 @@ redis|redis|networked|Redis|
 rocksdb|rocksdb|embedded|RocksDB|
 slatedb|slatedb|embedded|SlateDB|
 sqlite|sqlite|embedded|SQLite|
-surrealdb-memory|surrealdb-memory|networked|SurrealDB with in-memory storage|
-surrealdb-rocksdb|surrealdb-rocksdb|networked|SurrealDB with RocksDB storage|
-surrealdb-surrealkv|surrealdb-surrealkv|networked|SurrealDB with SurrealKV storage|
+surrealdb|surrealdb|networked|SurrealDB (server: RocksDB)|
+surrealdb-memory|surrealdb|networked|SurrealDB (server: memory)|-e server:memory
+surrealdb-rocksdb|surrealdb|networked|SurrealDB (server: RocksDB)|-e server:rocksdb
+surrealdb-surrealkv|surrealdb|networked|SurrealDB (server: SurrealKV)|-e server:surrealkv
 surrealdb-embedded-memory|surrealdb|embedded|SurrealDB embedded with in-memory storage|-e memory
 surrealdb-embedded-rocksdb|surrealdb|embedded|SurrealDB embedded with RocksDB storage|-e rocksdb:DATA_DIR
 surrealdb-embedded-surrealkv|surrealdb|embedded|SurrealDB embedded with SurrealKV storage|-e surrealkv:DATA_DIR

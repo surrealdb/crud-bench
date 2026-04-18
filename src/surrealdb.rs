@@ -1,7 +1,6 @@
 #![cfg(feature = "surrealdb")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
-use crate::database::Database;
 use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
@@ -21,6 +20,79 @@ use surrealdb::types::{RecordIdKey, SurrealValue, ToSql};
 use tokio::time::{sleep, timeout};
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
+
+/// Storage backend for Docker (`server:<backend>`).
+pub(crate) enum Docker {
+	Memory,
+	Rocksdb,
+	Surrealkv,
+}
+
+/// Connection mode derived from `--endpoint`.
+pub(crate) enum Endpoint {
+	/// `server:rocksdb` | `server:memory` | `server:surrealkv` (default when omitted: server:rocksdb)
+	Docker(Docker),
+	/// `rocksdb:…`, `surrealkv:…`, `memory`, `mem://`, `mem:…`
+	Embedded(String),
+	/// Remote SurrealDB (`ws` / `http` URL)
+	Remote(String),
+}
+
+/// `true` when crud-bench should start the SurrealDB Docker container.
+pub(crate) fn wants_docker(endpoint: Option<&str>) -> bool {
+	matches!(parse_endpoint(endpoint), Ok(Endpoint::Docker(_)))
+}
+
+pub(crate) fn parse_endpoint(opt: Option<&str>) -> Result<Endpoint> {
+	// If no endpoint is specified, use the default
+	let Some(raw) = opt else {
+		return Ok(Endpoint::Docker(Docker::Rocksdb));
+	};
+	// Trim whitespace from the endpoint
+	let s = raw.trim();
+	// If the endpoint is empty, use the default
+	if s.is_empty() {
+		return Ok(Endpoint::Docker(Docker::Rocksdb));
+	}
+	// If the endpoint is a remote endpoint, return it
+	if s.starts_with("ws://")
+		|| s.starts_with("wss://")
+		|| s.starts_with("http://")
+		|| s.starts_with("https://")
+	{
+		return Ok(Endpoint::Remote(s.to_string()));
+	}
+	// If the endpoint is a server backend, return it
+	if let Some(rest) = s.strip_prefix("server:") {
+		return match rest {
+			"rocksdb" => Ok(Endpoint::Docker(Docker::Rocksdb)),
+			"memory" => Ok(Endpoint::Docker(Docker::Memory)),
+			"surrealkv" => Ok(Endpoint::Docker(Docker::Surrealkv)),
+			_ => bail!(
+				"Invalid server backend {rest:?}. Expected server:rocksdb, server:memory, or server:surrealkv.",
+			),
+		};
+	}
+	// If the endpoint is a memory endpoint, return it
+	if s == "memory" {
+		return Ok(Endpoint::Embedded("mem://".to_string()));
+	}
+	// If the endpoint is a memory endpoint, return it
+	if s.starts_with("mem:") {
+		return Ok(Endpoint::Embedded(s.to_string()));
+	}
+	// If the endpoint is a rocksdb or surrealkv endpoint, return it
+	if s.starts_with("rocksdb:") || s.starts_with("surrealkv:") {
+		return Ok(Endpoint::Embedded(s.to_string()));
+	}
+	bail!(
+		"Invalid SurrealDB endpoint {:?}. Expected:\n\
+		 - server:rocksdb | server:memory | server:surrealkv (Docker)\n\
+		 - rocksdb:<path>[?args] | surrealkv:<path>[?args] | memory | mem:// | mem:<path>[?args] (embedded)\n\
+		 - ws://... | wss://... | http://... | https://... (remote)",
+		s
+	)
+}
 
 /// Calculate SurrealDB RocksDB specific memory allocation
 fn calculate_surrealdb_memory() -> u64 {
@@ -47,67 +119,54 @@ pub(super) fn surrealdb_password() -> String {
 }
 
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// Parse the endpoint or use the default
+	let backend =
+		parse_endpoint(options.endpoint.as_deref()).unwrap_or(Endpoint::Docker(Docker::Rocksdb));
 	// Calculate memory allocation
 	let cache_gb = calculate_surrealdb_memory();
 	// Get credentials from environment variables or use defaults
 	let username = surrealdb_username();
 	let password = surrealdb_password();
+	// Configure the sync parameter
+	let sync = if options.sync {
+		"every"
+	} else {
+		"never"
+	};
 	// Return Docker parameters
-	match options.database {
-		Database::SurrealdbMemory => DockerParams {
+	match backend {
+		Endpoint::Embedded(_) | Endpoint::Remote(_) => {
+			unreachable!("docker() must only be called when wants_docker is true")
+		}
+		Endpoint::Docker(Docker::Memory) => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
 			post_args: format!("start --user {username} --pass {password} memory"),
 		},
-		Database::SurrealdbRocksdb => DockerParams {
+		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: match options.optimised {
 				true => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA={} -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
-					if options.sync {
-						"true"
-					} else {
-						"false"
-					}
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
 				),
-				false => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA={} --user root",
-					if options.sync {
-						"true"
-					} else {
-						"false"
-					}
-				),
+				false => format!("--ulimit nofile=65536:65536 -p 8000:8000 --user root",),
 			},
 			post_args: format!(
-				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db"
+				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db?sync={sync}",
 			),
 		},
-		Database::SurrealdbSurrealkv => DockerParams {
+		Endpoint::Docker(Docker::Surrealkv) => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: match options.optimised {
 				true => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA={} -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
-					if options.sync {
-						"true"
-					} else {
-						"false"
-					}
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
 				),
-				false => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SYNC_DATA={} --user root",
-					if options.sync {
-						"true"
-					} else {
-						"false"
-					}
-				),
+				false => format!("--ulimit nofile=65536:65536 -p 8000:8000 --user root",),
 			},
 			post_args: format!(
-				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db"
+				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db?sync={sync}",
 			),
 		},
-		_ => unreachable!(),
 	}
 }
 
@@ -133,8 +192,8 @@ pub(super) async fn initialise_db(endpoint: &str, root: Root) -> Result<Surreal<
 impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
-		// Get the custom endpoint if specified
-		let endpoint = options.endpoint.as_deref().unwrap_or(DEFAULT).replace("memory", "mem://");
+		// Parse the benchmark engine endpoint
+		let mode = parse_endpoint(options.endpoint.as_deref())?;
 		// Define root user details from environment variables or use defaults
 		let username = surrealdb_username();
 		let password = surrealdb_password();
@@ -142,16 +201,28 @@ impl BenchmarkEngine<SurrealDBClient> for SurrealDBClientProvider {
 			username,
 			password,
 		};
-		// Setup the optional client
-		let client = match endpoint.split_once(':').unwrap().0 {
-			// We want to be able to create multiple connections
-			// when testing against an external server
-			"ws" | "wss" | "http" | "https" => None,
-			// When the database is embedded, create only
-			// one client to avoid sending queries to the
-			// wrong database
-			_ => Some(initialise_db(&endpoint, root.clone()).await?),
+		// Create the benchmark engine client
+		let (endpoint, client) = match mode {
+			Endpoint::Docker(_) => (DEFAULT.to_string(), None),
+			Endpoint::Remote(url) => (url, None),
+			Endpoint::Embedded(url) => {
+				// Configure the sync parameter
+				let sync = if options.sync {
+					"every"
+				} else {
+					"never"
+				};
+				// Configure the full endpoint URL
+				let full_url = if url.contains('?') {
+					format!("{url}&sync={sync}")
+				} else {
+					format!("{url}?sync={sync}")
+				};
+				let db = initialise_db(&full_url, root.clone()).await?;
+				(full_url, Some(db))
+			}
 		};
+		// Return the client provider
 		Ok(Self {
 			endpoint,
 			root,
