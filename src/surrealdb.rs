@@ -8,7 +8,7 @@ use crate::memory::Config as MemoryConfig;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
-use log::warn;
+use log::{error, warn};
 use serde_json::Value;
 use std::env;
 use std::time::Duration;
@@ -20,6 +20,43 @@ use surrealdb::types::{RecordIdKey, SurrealValue, ToSql};
 use tokio::time::{sleep, timeout};
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
+
+/// Wrap a SurrealDB result error so the failing SurrealQL surfaces in two
+/// places: a `log::error!` line emitted immediately (visible in the bench's
+/// stderr stream while it is still running), and the `anyhow::Error` chain
+/// returned to the caller (which `main` prints with the `{:#}` formatter so
+/// the chain — including the `query: ...` context — is shown end-to-end).
+///
+/// SurrealDB query errors do not embed the SQL that triggered them, which
+/// makes diagnosing failures during long-running scenarios — e.g. a
+/// distributed-scan timeout buried four phases into the bench — very
+/// awkward. Use at every call site that builds or sends a SurrealQL string:
+///
+/// ```ignore
+/// let sql = format!("SELECT ... {c} {l}");
+/// let res = self.db.query(&sql).await
+///     .map_err(log_sql_err(&sql))?
+///     .take(0)
+///     .map_err(log_sql_err(&sql))?;
+/// ```
+///
+/// The closure owns the SQL by value so the returned `FnOnce` is `'static`
+/// and composes cleanly with `?` across multiple result-returning steps.
+fn log_sql_err<E>(sql: &str) -> impl FnOnce(E) -> anyhow::Error
+where
+	E: std::fmt::Display + Into<anyhow::Error>,
+{
+	let sql = sql.to_owned();
+	move |e| {
+		error!("SurrealDB query failed: {sql}\n  cause: {e}");
+		// Use the explicit `Into` bound (rather than `anyhow::Error::from(e)`)
+		// so the bound documented above resolves: anyhow's blanket `From<E>`
+		// requires `E: std::error::Error + Send + Sync + 'static`, but
+		// `Into<anyhow::Error>` is what we actually want callers to satisfy.
+		let err: anyhow::Error = e.into();
+		err.context(format!("query: {sql}"))
+	}
+}
 
 /// Storage backend for Docker (`server:<backend>`).
 pub(crate) enum Docker {
@@ -272,7 +309,12 @@ impl BenchmarkClient for SurrealDBClient {
             REMOVE TABLE IF EXISTS record;
 			DEFINE TABLE record;
 		";
-		self.db.query(surql).await?.check()?;
+		self.db
+			.query(surql)
+			.await
+			.map_err(log_sql_err(surql))?
+			.check()
+			.map_err(log_sql_err(surql))?;
 		Ok(())
 	}
 
@@ -325,7 +367,12 @@ impl BenchmarkClient for SurrealDBClient {
 				let sql = format!(
 					"DEFINE ANALYZER IF NOT EXISTS {name} TOKENIZERS blank,class FILTERS lowercase,ascii;"
 				);
-				self.db.query(sql).await?.check()?;
+				self.db
+					.query(&sql)
+					.await
+					.map_err(log_sql_err(&sql))?
+					.check()
+					.map_err(log_sql_err(&sql))?;
 				// Define the index concurrently (so we don't maintain an open transaction during the indexing
 				format!(
 					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
@@ -336,11 +383,17 @@ impl BenchmarkClient for SurrealDBClient {
 			}
 		};
 		// Create the index
-		self.db.query(sql).await?.check()?;
+		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
 		// Wait until the index is ready
 		loop {
 			let sql = format!("INFO FOR INDEX {name} ON record");
-			let r: surrealdb::types::Value = self.db.query(sql).await?.take(0)?;
+			let r: surrealdb::types::Value = self
+				.db
+				.query(&sql)
+				.await
+				.map_err(log_sql_err(&sql))?
+				.take(0)
+				.map_err(log_sql_err(&sql))?;
 			let j = r.to_sql();
 			let building = r.get("building");
 			let status = building.get("status").as_string().expect(&j);
@@ -451,15 +504,18 @@ impl SurrealDBClient {
 	where
 		T: SurrealValue + 'static,
 	{
+		let sql = "CREATE type::record('record', $key) CONTENT $content RETURN NULL";
 		let res = self
 			.db
-			.query("CREATE type::record('record', $key) CONTENT $content RETURN NULL")
+			.query(sql)
 			.bind(Bindings {
 				key,
 				content: val,
 			})
-			.await?
-			.take::<surrealdb::types::Value>(0)?;
+			.await
+			.map_err(log_sql_err(sql))?
+			.take::<surrealdb::types::Value>(0)
+			.map_err(log_sql_err(sql))?;
 		assert!(!res.is_none());
 		Ok(())
 	}
@@ -477,15 +533,18 @@ impl SurrealDBClient {
 	where
 		T: SurrealValue + 'static,
 	{
+		let sql = "UPDATE type::record('record', $key) CONTENT $content RETURN NULL";
 		let res = self
 			.db
-			.query("UPDATE type::record('record', $key) CONTENT $content RETURN NULL")
+			.query(sql)
 			.bind(Bindings {
 				key,
 				content: val,
 			})
-			.await?
-			.take::<surrealdb::types::Value>(0)?;
+			.await
+			.map_err(log_sql_err(sql))?
+			.take::<surrealdb::types::Value>(0)
+			.map_err(log_sql_err(sql))?;
 		assert!(!res.is_none());
 		Ok(())
 	}
@@ -494,12 +553,15 @@ impl SurrealDBClient {
 	where
 		T: SurrealValue + 'static,
 	{
+		let sql = "DELETE type::record('record', $key) RETURN NULL";
 		let res = self
 			.db
-			.query("DELETE type::record('record', $key) RETURN NULL")
+			.query(sql)
 			.bind(("key", key))
-			.await?
-			.take::<surrealdb::types::Value>(0)?;
+			.await
+			.map_err(log_sql_err(sql))?
+			.take::<surrealdb::types::Value>(0)
+			.map_err(log_sql_err(sql))?;
 		assert!(!res.is_none());
 		Ok(())
 	}
@@ -522,7 +584,13 @@ impl SurrealDBClient {
 		match p {
 			Projection::Id => {
 				let sql = format!("SELECT id FROM record {c} {s} {l}");
-				let res: surrealdb::types::Value = self.db.query(sql).await?.take(0)?;
+				let res: surrealdb::types::Value = self
+					.db
+					.query(&sql)
+					.await
+					.map_err(log_sql_err(&sql))?
+					.take(0)
+					.map_err(log_sql_err(&sql))?;
 				let Some(arr) = res.as_array() else {
 					panic!("Unexpected response type");
 				};
@@ -530,7 +598,13 @@ impl SurrealDBClient {
 			}
 			Projection::Full => {
 				let sql = format!("SELECT * FROM record {c} {s} {l}");
-				let res: surrealdb::types::Value = self.db.query(sql).await?.take(0)?;
+				let res: surrealdb::types::Value = self
+					.db
+					.query(&sql)
+					.await
+					.map_err(log_sql_err(&sql))?
+					.take(0)
+					.map_err(log_sql_err(&sql))?;
 				let Some(arr) = res.as_array() else {
 					panic!("Unexpected response type");
 				};
@@ -542,7 +616,13 @@ impl SurrealDBClient {
 				} else {
 					format!("SELECT count() FROM (SELECT 1 FROM record {c} {s} {l}) GROUP ALL")
 				};
-				let res: Option<usize> = self.db.query(sql).await?.take("count")?;
+				let res: Option<usize> = self
+					.db
+					.query(&sql)
+					.await
+					.map_err(log_sql_err(&sql))?
+					.take("count")
+					.map_err(log_sql_err(&sql))?;
 				Ok(res.unwrap())
 			}
 		}
