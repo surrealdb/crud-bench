@@ -383,12 +383,7 @@ impl BenchmarkClient for SurrealDBClient {
 			}
 		};
 		// Create the index
-		self.db
-			.query(&sql)
-			.await
-			.map_err(log_sql_err(&sql))?
-			.check()
-			.map_err(log_sql_err(&sql))?;
+		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
 		// Wait until the index is ready
 		loop {
 			let sql = format!("INFO FOR INDEX {name} ON record");
