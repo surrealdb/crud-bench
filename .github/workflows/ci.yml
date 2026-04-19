@@ -207,6 +207,19 @@ jobs:
           {"name":"batch_update_1000","operation":"UPDATE","batch_size":1000,"samples":100},
           {"name":"batch_delete_1000","operation":"DELETE","batch_size":1000,"samples":100}
         ]
+      CRUD_BENCH_SCANS: >-
+        [
+          {"name":"count_all","samples":1000,"projection":"COUNT"},
+          {"name":"limit_id","samples":100,"projection":"ID","limit":100,"expect":100},
+          {"name":"limit_all","samples":100,"projection":"FULL","limit":100,"expect":100},
+          {"name":"limit_start_id","samples":100,"projection":"ID","start":5000,"limit":100,"expect":100},
+          {"name":"limit_start_all","samples":100,"projection":"FULL","start":5000,"limit":100,"expect":100},
+          {"name":"where_field_integer_eq","samples":100,"projection":"FULL","condition":{"sql":"number = 21","mysql":"number = 21","neo4j":"r.number = 21","mongodb":{"number":{"$eq":21}},"arangodb":"r.number == 21","surrealdb":"number = 21"},"index":{"fields":["number"]}},
+          {"name":"where_field_integer_gte_lte","samples":100,"projection":"FULL","condition":{"sql":"number >= 18 AND number <= 21","mysql":"number >= 18 AND number <= 21","neo4j":"r.number >= 18 AND r.number <= 21","mongodb":{"number":{"$gte":18,"$lte":21}},"arangodb":"r.number >= 18 AND r.number <= 21","surrealdb":"number >= 18 AND number <= 21"},"index":{"fields":["number"]}},
+          {"name":"where_field_fulltext_single","samples":100,"projection":"FULL","limit":1000,"condition":{"sql":"to_tsvector('english', words) @@ to_tsquery('english', 'hello')","mysql":"MATCH(words) AGAINST('hello' IN NATURAL LANGUAGE MODE)","neo4j":"hello","mongodb":{"$text":{"$search":"hello"}},"surrealdb":"words @@ 'hello'"},"index":{"fields":["words"],"index_type":"fulltext"}},
+          {"name":"where_field_fulltext_multi_and","samples":100,"projection":"FULL","limit":1000,"condition":{"sql":"to_tsvector('english', words) @@ to_tsquery('english', 'hello & world')","mysql":"MATCH(words) AGAINST('+hello +world' IN NATURAL LANGUAGE MODE)","neo4j":"hello AND world","mongodb":{"$text":{"$search":"hello world"}},"surrealdb":"words @@ 'hello' AND words @@ 'world'"},"index":{"fields":["words"],"index_type":"fulltext"}},
+          {"name":"where_field_fulltext_multi_or","samples":100,"projection":"FULL","limit":1000,"condition":{"sql":"to_tsvector('english', words) @@ to_tsquery('english', 'foo | bar')","mysql":"MATCH(words) AGAINST('foo bar' IN NATURAL LANGUAGE MODE)","neo4j":"foo OR bar","mongodb":{"$text":{"$search":"foo bar"}},"surrealdb":"words @@ 'foo' OR words @@ 'bar'"},"index":{"fields":["words"],"index_type":"fulltext"}}
+        ]
     strategy:
       fail-fast: false
       matrix:
@@ -315,20 +328,22 @@ jobs:
             description: SQLite
           # SurrealDB + Memory
           - name: surrealdb-memory
-            database: surrealdb-memory
+            database: surrealdb
+            endpoint: -e server:memory
             enabled: true
             description: SurrealDB with in-memory storage
           # SurrealDB + RocksDB
           - name: surrealdb-rocksdb
-            database: surrealdb-rocksdb
+            database: surrealdb
+            endpoint: -e server:rocksdb
             enabled: true
             description: SurrealDB with RocksDB storage
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
-            database: surrealdb-surrealkv
-            enabled: false
+            database: surrealdb
+            endpoint: -e server:surrealkv
+            enabled: true
             description: SurrealDB with SurrealKV storage
-            skipped: SurrealDB with SurrealKV storage benchmark awaiting fixes
           # SurrealDB Memory Engine
           - name: surrealdb-embedded-memory
             database: surrealdb
@@ -420,7 +435,7 @@ jobs:
           ulimit -u unlimited || true
           ulimit -l unlimited || true
 
-      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key integer / random)
+      - name: Run benchmarks (10,000 samples / 12 clients / 4 threads / key integer / random)
         timeout-minutes: 5
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
@@ -431,7 +446,7 @@ jobs:
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
           # Run the benchmarks
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k integer -r -n integer-random
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k integer -r -n integer-random
           # Kill and remove any existing crud-bench container
           docker container kill crud-bench &>/dev/null || true
           docker container rm crud-bench &>/dev/null || true
@@ -442,7 +457,7 @@ jobs:
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
-      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key string26 / random)
+      - name: Run benchmarks (10,000 samples / 12 clients / 4 threads / key string26 / random)
         timeout-minutes: 5
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
@@ -453,7 +468,7 @@ jobs:
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
           # Run the benchmarks
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k string26 -r -n string26-random
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k string26 -r -n string26-random
           # Kill and remove any existing crud-bench container
           docker container kill crud-bench &>/dev/null || true
           docker container rm crud-bench &>/dev/null || true
@@ -464,7 +479,7 @@ jobs:
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
-      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key string90 / random)
+      - name: Run benchmarks (10,000 samples / 12 clients / 4 threads / key string90 / random)
         timeout-minutes: 5
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
@@ -475,7 +490,7 @@ jobs:
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
           # Run the benchmarks
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k string90 -r -n string90-random
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k string90 -r -n string90-random
           # Kill and remove any existing crud-bench container
           docker container kill crud-bench &>/dev/null || true
           docker container rm crud-bench &>/dev/null || true
@@ -486,7 +501,7 @@ jobs:
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
-      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key string250 / random)
+      - name: Run benchmarks (10,000 samples / 12 clients / 4 threads / key string250 / random)
         timeout-minutes: 10
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
@@ -497,7 +512,7 @@ jobs:
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
           # Run the benchmarks
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k string250 -r -n string250-random
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k string250 -r -n string250-random
           # Kill and remove any existing crud-bench container
           docker container kill crud-bench &>/dev/null || true
           docker container rm crud-bench &>/dev/null || true
@@ -508,7 +523,7 @@ jobs:
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
-      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key string506 / random)
+      - name: Run benchmarks (10,000 samples / 12 clients / 4 threads / key string506 / random)
         timeout-minutes: 10
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
@@ -519,7 +534,7 @@ jobs:
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
           # Run the benchmarks
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k string506 -r -n string506-random
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k string506 -r -n string506-random
           # Kill and remove any existing crud-bench container
           docker container kill crud-bench &>/dev/null || true
           docker container rm crud-bench &>/dev/null || true
@@ -530,7 +545,7 @@ jobs:
           DOCKER_PRE_ARGS: ${{ matrix.DOCKER_PRE_ARGS || '' }}
           DOCKER_POST_ARGS: ${{ matrix.DOCKER_POST_ARGS || '' }}
 
-      - name: Run benchmarks (10,000 samples / 12 clients / 48 threads / key string26 / random / 0.5KiB row and object size)
+      - name: Run benchmarks (10,000 samples / 12 clients / 4 threads / key string26 / random / 0.5KiB row and object size)
         timeout-minutes: 15
         if: ${{ matrix.enabled && (success() || failure()) }}
         run: |
@@ -541,7 +556,7 @@ jobs:
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
           # Run the benchmarks
-          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 48 -k string26 -r -n string26-random-1k
+          ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k string26 -r -n string26-random-1k
           # Kill and remove any existing crud-bench container
           docker container kill crud-bench &>/dev/null || true
           docker container rm crud-bench &>/dev/null || true

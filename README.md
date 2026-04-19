@@ -124,7 +124,7 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
   -n, --name <NAME>                          An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>                  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, slatedb, sqlite, surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv, surrealkv, surrealmx]
+  -d, --database <DATABASE>                  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mariadb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, slatedb, sqlite, surrealdb, surrealds, surrealkv, surrealmx]
   -i, --image <IMAGE>                        Specify a custom Docker image
   -p, --privileged                           Whether to run Docker in privileged mode
   -e, --endpoint <ENDPOINT>                  Specify a custom endpoint to connect to
@@ -457,41 +457,23 @@ SQLite is an embedded, relational, ACID-compliant, SQL-based database.
 cargo run -r -- -d sqlite -s 100000 -c 12 -t 24 -r
 ```
 
-### [SurrealDB](https://surrealdb.com) (in-memory storage engine)
+### [SurrealDB](https://surrealdb.com)
 
 ```bash
-cargo run -r -- -d surrealdb-memory -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 -r
 ```
 
-### [SurrealDB](https://surrealdb.com) (RocksDB storage engine)
+Specify a custom endpoint using `-e` or `--endpoint` to benchmark a custom deployment:
 
-```bash
-cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r
-```
-
-### [SurrealDB](https://surrealdb.com) (SurrealKV storage engine)
-
-```bash
-cargo run -r -- -d surrealdb-surrealkv -s 100000 -c 12 -t 24 -r
-```
-
-### [SurrealDB](https://surrealdb.com) embedded (in-memory storage engine)
-
-```bash
-cargo run -r -- -d surrealdb -e memory -s 100000 -c 12 -t 24 -r
-```
-
-### [SurrealDB](https://surrealdb.com) embedded (RocksDB storage engine)
-
-```bash
-cargo run -r -- -d surrealdb -e rocksdb:/tmp/db -s 100000 -c 12 -t 24 -r
-```
-
-### [SurrealDB](https://surrealdb.com) embedded (SurrealKV storage engine)
-
-```bash
-cargo run -r -- -d surrealdb -e surrealkv:/tmp/db -s 100000 -c 12 -t 24 -r
-```
+| Endpoint | Meaning |
+|----------|---------|
+| `server:memory` | Docker server with in-memory storage engine |
+| `server:rocksdb` | Docker server with RocksDB storage engine |
+| `server:surrealkv` | Docker server with SurrealKV storage engine |
+| `memory` | Embedded with in-memory storage engine. |
+| `rocksdb:<path>` (`rocksdb:/tmp/db`) | Embedded with RocksDB storage engine. |
+| `surrealkv:<path>` (`surrealkv:/tmp/db`) | Embedded with RocksDB storage engine. |
+| `ws://...`, `wss://...`, `http://...`, `https://...` | Remote server you manage yourself (no Docker started by crud-bench). |
 
 ### [SurrealKV](https://surrealkv.org)
 
@@ -527,7 +509,7 @@ cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 -s 100000 -c 12 -t 24 -r
 
 ## SurrealDB Authentication
 
-When benchmarking SurrealDB (including `surrealdb`, `surrealdb-memory`, `surrealdb-rocksdb`, `surrealdb-surrealkv`, and `surrealds`), you can configure authentication credentials using environment variables.
+When benchmarking SurrealDB (including `surrealdb`, and `surrealds`), you can configure authentication credentials using environment variables.
 
 ### Environment Variables
 
@@ -536,7 +518,7 @@ When benchmarking SurrealDB (including `surrealdb`, `surrealdb-memory`, `surreal
 
 These environment variables are used in two scenarios:
 
-1. **Docker Container Startup**: When crud-bench automatically starts a SurrealDB Docker container, it uses these credentials to configure the database server (applies to `surrealdb-memory`, `surrealdb-rocksdb`, and `surrealdb-surrealkv`)
+1. **Docker Container Startup**: When crud-bench automatically starts a SurrealDB Docker container (`-d surrealdb` with no endpoint, or with `-e server:rocksdb` / `-e server:memory` / `-e server:surrealkv`), it uses these credentials to configure the database server
 2. **Client Authentication**: When connecting to SurrealDB instances (both embedded and networked), the benchmark client uses these credentials to authenticate
 
 ### Usage Examples
@@ -544,7 +526,7 @@ These environment variables are used in two scenarios:
 **Using default credentials (root/root):**
 
 ```bash
-cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 -r
 ```
 
 **Using custom credentials via environment variables:**
@@ -552,7 +534,7 @@ cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r
 ```bash
 export SURREALDB_USER=admin
 export SURREALDB_PASS=secure_password
-cargo run -r -- -d surrealdb-rocksdb -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 -r
 ```
 
 **One-line command with custom credentials:**
