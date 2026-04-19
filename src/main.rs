@@ -462,9 +462,13 @@ fn run(args: Args) -> Result<()> {
 		}
 		// Output the errors
 		Err(e) => {
-			// Print the error output of the benchmark
+			// Print the error output of the benchmark.
+			// `{e:#}` renders the full anyhow chain (joined with ": "), so the
+			// `query: <sql>` context attached by backend code (see
+			// `log_sql_err` in `surrealdb.rs`) appears alongside the underlying
+			// driver / KV-store error text.
 			eprintln!("--------------------------------------------------");
-			eprintln!("Failure: {e}");
+			eprintln!("Failure: {e:#}");
 			eprintln!("--------------------------------------------------");
 			// Print the error output of the container
 			if container.is_some() {
