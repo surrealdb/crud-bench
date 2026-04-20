@@ -634,7 +634,7 @@ wait_for_system() {
         threshold=$(echo "scale=1; $cpu_count / 2" | bc)
     else
         # Linux: fixed threshold of 2.0
-        threshold="2.0"
+        threshold="1.0"
     fi
 
     while true; do
