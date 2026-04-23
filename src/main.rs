@@ -2,7 +2,7 @@ use crate::benchmark::Benchmark;
 use crate::database::Database;
 use crate::keyprovider::KeyProvider;
 use crate::valueprovider::ValueProvider;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use docker::Container;
 use serde::{Deserialize, Serialize};
@@ -488,7 +488,7 @@ fn run(args: Args) -> Result<()> {
 
 #[cfg(test)]
 mod test {
-	use crate::{Args, Database, KeyType, run};
+	use crate::{run, Args, Database, KeyType};
 	use anyhow::Result;
 	use serial_test::serial;
 
@@ -505,6 +505,7 @@ mod test {
 			threads: 2,
 			samples: 10000,
 			sync: false,
+			operation_timeout: 300,
 			persisted: false,
 			optimised: false,
 			random,
