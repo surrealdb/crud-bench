@@ -7,7 +7,7 @@ use crate::system::SystemInfo;
 use crate::terminal::Terminal;
 use crate::valueprovider::ValueProvider;
 use crate::{Args, BatchOperation, Batches, Index, Scan, Scans};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
 use log::{debug, info};
@@ -19,6 +19,21 @@ use tokio::task;
 use tokio::time::Instant;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Per-operation timeout enforced inside [`Benchmark::operation_loop`].
+///
+/// A single benchmark operation that fails to complete within this budget
+/// returns an error so [`try_join_all`] can short-circuit instead of
+/// parking the whole bench process forever on one stuck worker. The
+/// timeout fires per *iteration* (one create / read / scan / batch
+/// call), not per worker task.
+///
+/// Sized for the worst-case scan returning a large result set on a
+/// CPU- and memory-constrained CI runner. A workload that legitimately
+/// exceeds this should raise the constant rather than rely on the
+/// previous unbounded behaviour, which silently turned a single hung
+/// reply into an infinite hang at `try_join_all`.
+const OPERATION_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
 
@@ -436,37 +451,50 @@ impl Benchmark {
 				// We are done
 				break;
 			}
-			// Perform the benchmark operation
+			// Perform the benchmark operation under a per-iteration
+			// timeout. A stuck `await` inside the underlying SDK
+			// (e.g. a WebSocket reply that never lands because the
+			// connection was torn down without completing the
+			// matching oneshot) returns an error here instead of
+			// parking the worker task forever; `try_join_all` then
+			// short-circuits with the operation name in the error
+			// chain rather than hanging in `block_on`.
 			let time = Instant::now();
-			match &operation {
-				BenchmarkOperation::Create => {
-					let value = vp.generate_value::<D>();
-					client.create(sample, value, &mut kp).await?
+			tokio::time::timeout(OPERATION_TIMEOUT, async {
+				match &operation {
+					BenchmarkOperation::Create => {
+						let value = vp.generate_value::<D>();
+						client.create(sample, value, &mut kp).await
+					}
+					BenchmarkOperation::Read => client.read(sample, &mut kp).await,
+					BenchmarkOperation::Update => {
+						let value = vp.generate_value::<D>();
+						client.update(sample, value, &mut kp).await
+					}
+					BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await,
+					BenchmarkOperation::BuildIndex(spec, name) => {
+						client.build_index(spec, name.as_str()).await
+					}
+					BenchmarkOperation::RemoveIndex(name) => client.drop_index(name.as_str()).await,
+					BenchmarkOperation::Delete => client.delete(sample, &mut kp).await,
+					BenchmarkOperation::BatchCreate(batch_op) => {
+						client.batch_create(sample, batch_op, &mut kp, &mut vp).await
+					}
+					BenchmarkOperation::BatchRead(batch_op) => {
+						client.batch_read(sample, batch_op, &mut kp).await
+					}
+					BenchmarkOperation::BatchUpdate(batch_op) => {
+						client.batch_update(sample, batch_op, &mut kp, &mut vp).await
+					}
+					BenchmarkOperation::BatchDelete(batch_op) => {
+						client.batch_delete(sample, batch_op, &mut kp).await
+					}
 				}
-				BenchmarkOperation::Read => client.read(sample, &mut kp).await?,
-				BenchmarkOperation::Update => {
-					let value = vp.generate_value::<D>();
-					client.update(sample, value, &mut kp).await?
-				}
-				BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await?,
-				BenchmarkOperation::BuildIndex(spec, name) => {
-					client.build_index(spec, name.as_str()).await?
-				}
-				BenchmarkOperation::RemoveIndex(name) => client.drop_index(name.as_str()).await?,
-				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await?,
-				BenchmarkOperation::BatchCreate(batch_op) => {
-					client.batch_create(sample, batch_op, &mut kp, &mut vp).await?
-				}
-				BenchmarkOperation::BatchRead(batch_op) => {
-					client.batch_read(sample, batch_op, &mut kp).await?
-				}
-				BenchmarkOperation::BatchUpdate(batch_op) => {
-					client.batch_update(sample, batch_op, &mut kp, &mut vp).await?
-				}
-				BenchmarkOperation::BatchDelete(batch_op) => {
-					client.batch_delete(sample, batch_op, &mut kp).await?
-				}
-			};
+			})
+			.await
+			.with_context(|| {
+				format!("{operation} did not complete within {OPERATION_TIMEOUT:?}")
+			})??;
 			// Get the completed sample number
 			let sample = complete.fetch_add(1, Ordering::Relaxed);
 			// Output the percentage completion
