@@ -20,21 +20,6 @@ use tokio::time::Instant;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Per-operation timeout enforced inside [`Benchmark::operation_loop`].
-///
-/// A single benchmark operation that fails to complete within this budget
-/// returns an error so [`try_join_all`] can short-circuit instead of
-/// parking the whole bench process forever on one stuck worker. The
-/// timeout fires per *iteration* (one create / read / scan / batch
-/// call), not per worker task.
-///
-/// Sized for the worst-case scan returning a large result set on a
-/// CPU- and memory-constrained CI runner. A workload that legitimately
-/// exceeds this should raise the constant rather than rely on the
-/// previous unbounded behaviour, which silently turned a single hung
-/// reply into an infinite hang at `try_join_all`.
-const OPERATION_TIMEOUT: Duration = Duration::from_secs(300);
-
 pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
 
 pub(crate) struct Benchmark {
@@ -58,6 +43,8 @@ pub(crate) struct Benchmark {
 	pub(crate) persisted: bool,
 	/// Whether to enable optimised configurations
 	pub(crate) optimised: bool,
+	/// Per-operation timeout
+	pub(crate) operation_timeout: Duration,
 }
 impl Benchmark {
 	pub(crate) fn new(args: &Args) -> Self {
@@ -72,6 +59,7 @@ impl Benchmark {
 			pid: args.pid,
 			persisted: args.persisted,
 			optimised: args.optimised,
+			operation_timeout: Duration::from_secs(args.operation_timeout),
 		}
 	}
 
@@ -367,6 +355,7 @@ impl Benchmark {
 				let out = out.clone();
 				let vp = vp.clone();
 				let operation = operation.clone();
+				let operation_timeout = self.operation_timeout;
 				futures.push(task::spawn(async move {
 					match Self::operation_loop::<C, D>(
 						client,
@@ -375,6 +364,7 @@ impl Benchmark {
 						&current,
 						&complete,
 						operation,
+						operation_timeout,
 						(kp, vp, out),
 					)
 					.await
@@ -427,6 +417,7 @@ impl Benchmark {
 		Ok(Some(result))
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	async fn operation_loop<C, D>(
 		client: Arc<C>,
 		samples: u32,
@@ -434,6 +425,7 @@ impl Benchmark {
 		current: &AtomicU32,
 		complete: &AtomicU32,
 		operation: BenchmarkOperation,
+		operation_timeout: Duration,
 		(mut kp, mut vp, mut out): (KeyProvider, ValueProvider, Terminal),
 	) -> Result<Histogram<u64>>
 	where
@@ -460,7 +452,7 @@ impl Benchmark {
 			// short-circuits with the operation name in the error
 			// chain rather than hanging in `block_on`.
 			let time = Instant::now();
-			tokio::time::timeout(OPERATION_TIMEOUT, async {
+			tokio::time::timeout(operation_timeout, async {
 				match &operation {
 					BenchmarkOperation::Create => {
 						let value = vp.generate_value::<D>();
@@ -493,7 +485,7 @@ impl Benchmark {
 			})
 			.await
 			.with_context(|| {
-				format!("{operation} did not complete within {OPERATION_TIMEOUT:?}")
+				format!("{operation} did not complete within {operation_timeout:?}")
 			})??;
 			// Get the completed sample number
 			let sample = complete.fetch_add(1, Ordering::Relaxed);

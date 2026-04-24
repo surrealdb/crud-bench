@@ -104,6 +104,10 @@ pub(crate) struct Args {
 	#[arg(long, default_value = "false")]
 	pub(crate) sync: bool,
 
+	/// Per-operation timeout in seconds
+	#[arg(long, env = "CRUD_BENCH_OPERATION_TIMEOUT", default_value = "1800", value_parser=clap::value_parser!(u64).range(1..))]
+	pub(crate) operation_timeout: u64,
+
 	/// Whether to enable disk persistence for Redis-family databases
 	#[arg(long, default_value = "false")]
 	pub(crate) persisted: bool,
@@ -501,6 +505,7 @@ mod test {
 			threads: 2,
 			samples: 10000,
 			sync: false,
+			operation_timeout: 300,
 			persisted: false,
 			optimised: false,
 			random,
