@@ -318,6 +318,24 @@ impl BenchmarkClient for SurrealDBClient {
 		Ok(())
 	}
 
+	async fn compact(&self) -> Result<()> {
+		// Issue a system compaction request
+		let surql = "ALTER SYSTEM COMPACT";
+		// Compact all databases and namespaces in SurrealDB
+		let response = self.db.query(surql).await.map_err(log_sql_err(surql))?;
+		// Compaction only works on RocksDB storage engine
+		match response.check() {
+			Ok(_) => Ok(()),
+			Err(e) => {
+				if e.to_string().contains("does not support compaction") {
+					Ok(())
+				} else {
+					Err(log_sql_err(surql)(e))
+				}
+			}
+		}
+	}
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.create(key, val).await
 	}

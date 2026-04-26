@@ -26,6 +26,7 @@ mod result;
 mod storage;
 mod system;
 mod terminal;
+mod util;
 mod valueprovider;
 
 // Datastore modules

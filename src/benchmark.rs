@@ -1,22 +1,26 @@
 use crate::dialect::Dialect;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::keyprovider::KeyProvider;
-use crate::result::BenchmarkMetadata;
-use crate::result::{BenchmarkResult, OperationMetric, OperationResult, ScanResult};
+use crate::result::{
+	BenchmarkMetadata, BenchmarkResult, OperationMetric, OperationResult, ScanResult,
+};
 use crate::system::SystemInfo;
 use crate::terminal::Terminal;
+use crate::util::format_duration;
 use crate::valueprovider::ValueProvider;
 use crate::{Args, BatchOperation, Batches, Index, Scan, Scans};
+
 use anyhow::{Context, Result, bail};
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
 use log::{debug, info};
+use tokio::task;
+use tokio::time::Instant;
+
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
-use tokio::task;
-use tokio::time::Instant;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -63,6 +67,22 @@ impl Benchmark {
 		}
 	}
 
+	/// When `COMPACTION` is set in the environment, run the engine-specific
+	/// compaction hook and print elapsed time (same style as phase lines).
+	async fn maybe_compact_datastore<C, E>(&self, engine: &E) -> Result<()>
+	where
+		C: BenchmarkClient + Send + Sync,
+		E: BenchmarkEngine<C> + Send + Sync,
+	{
+		if std::env::var("COMPACTION").is_ok() {
+			println!("Compaction starting");
+			let t = Instant::now();
+			self.wait_for_client(engine).await?.compact().await?;
+			println!("Compaction took {}", format_duration(t.elapsed()));
+		}
+		Ok(())
+	}
+
 	#[allow(clippy::too_many_arguments)]
 	/// Run the benchmark for the desired benchmark engine
 	pub(crate) async fn run<C, D, E>(
@@ -84,9 +104,13 @@ impl Benchmark {
 		// Generate a value sample for the report
 		let sample = vp.generate_value::<D>();
 		// Setup the datastore
+		println!("Setting up the datastore with {} clients", self.clients);
+		// Setup the datastore
 		self.wait_for_client(&engine).await?.startup().await?;
 		// Setup the clients
 		let clients = self.setup_clients(&engine).await?;
+		// Start the benchmark
+		println!("Benchmark starting");
 		// Run the "creates" benchmark
 		let creates = self
 			.run_operation::<C, D>(
@@ -98,17 +122,13 @@ impl Benchmark {
 			)
 			.await?;
 		// Compact the datastore
-		if std::env::var("COMPACTION").is_ok() {
-			self.wait_for_client(&engine).await?.compact().await?;
-		}
+		self.maybe_compact_datastore::<C, E>(&engine).await?;
 		// Run the "reads" benchmark
 		let reads = self
 			.run_operation::<C, D>(&clients, BenchmarkOperation::Read, kp, vp.clone(), self.samples)
 			.await?;
 		// Compact the datastore
-		if std::env::var("COMPACTION").is_ok() {
-			self.wait_for_client(&engine).await?.compact().await?;
-		}
+		self.maybe_compact_datastore::<C, E>(&engine).await?;
 		// Run the "reads" benchmark
 		let updates = self
 			.run_operation::<C, D>(
@@ -120,9 +140,7 @@ impl Benchmark {
 			)
 			.await?;
 		// Compact the datastore
-		if std::env::var("COMPACTION").is_ok() {
-			self.wait_for_client(&engine).await?.compact().await?;
-		}
+		self.maybe_compact_datastore::<C, E>(&engine).await?;
 		// Run the "scan" benchmarks
 		let mut scan_results = Vec::with_capacity(scans.len());
 		for scan in scans {
@@ -217,9 +235,7 @@ impl Benchmark {
 			scan_results.push(result);
 		}
 		// Compact the datastore
-		if std::env::var("COMPACTION").is_ok() {
-			self.wait_for_client(&engine).await?.compact().await?;
-		}
+		self.maybe_compact_datastore::<C, E>(&engine).await?;
 		// Run the "deletes" benchmark
 		let deletes = self
 			.run_operation::<C, D>(
@@ -231,9 +247,7 @@ impl Benchmark {
 			)
 			.await?;
 		// Compact the datastore
-		if std::env::var("COMPACTION").is_ok() {
-			self.wait_for_client(&engine).await?.compact().await?;
-		}
+		self.maybe_compact_datastore::<C, E>(&engine).await?;
 		// Run the "batch" benchmarks
 		let mut batch_results = Vec::with_capacity(batches.len());
 		for batch in batches {
@@ -254,7 +268,9 @@ impl Benchmark {
 			// Store the batch benchmark result
 			batch_results.push((name, samples, groups, duration));
 		}
-		// Setup the datastore
+		// Mark the benchmark as complete
+		println!("Benchmark complete");
+		// Shut down the datastore
 		self.wait_for_client(&engine).await?.shutdown().await?;
 		// Return the benchmark results
 		Ok(BenchmarkResult {
@@ -325,6 +341,10 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
 	{
+		// Announce the phase start on its own
+		// line so external tools can capture
+		// the work precisely per phase.
+		println!("{operation} starting");
 		// Create a new terminal display
 		let mut out = Terminal::default();
 		// Get the total concurrent futures
