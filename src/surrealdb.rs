@@ -9,17 +9,18 @@ use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use log::{error, warn};
-use serde_json::Value;
+use serde_json::Value as Json;
 use std::env;
 use std::time::Duration;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
-use surrealdb::types::{RecordIdKey, SurrealValue, ToSql};
+use surrealdb::types::{Array, RecordId, RecordIdKey, SurrealValue, ToSql, Value};
 use tokio::time::{sleep, timeout};
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
+const TABLE: &str = "record";
 
 /// Wrap a SurrealDB result error so the failing SurrealQL surfaces in two
 /// places: a `log::error!` line emitted immediately (visible in the bench's
@@ -291,8 +292,8 @@ impl SurrealDBClient {
 #[derive(Debug, SurrealValue)]
 #[surreal(crate = "surrealdb::types")]
 struct Bindings<T: SurrealValue> {
-	content: Value,
-	key: T,
+	content: Json,
+	id: T,
 }
 
 impl BenchmarkClient for SurrealDBClient {
@@ -305,24 +306,19 @@ impl BenchmarkClient for SurrealDBClient {
 		// insert/create into the table attempts
 		// to set up the NS+DB+TB, and this causes
 		// 'resource busy' key conflict failures.
-		let surql = "
+		let sql = "
             REMOVE TABLE IF EXISTS record;
 			DEFINE TABLE record;
 		";
-		self.db
-			.query(surql)
-			.await
-			.map_err(log_sql_err(surql))?
-			.check()
-			.map_err(log_sql_err(surql))?;
+		self.db.query(sql).await.map_err(log_sql_err(sql))?.check().map_err(log_sql_err(sql))?;
 		Ok(())
 	}
 
 	async fn compact(&self) -> Result<()> {
 		// Issue a system compaction request
-		let surql = "ALTER SYSTEM COMPACT";
+		let sql = "ALTER SYSTEM COMPACT";
 		// Compact all databases and namespaces in SurrealDB
-		let response = self.db.query(surql).await.map_err(log_sql_err(surql))?;
+		let response = self.db.query(sql).await.map_err(log_sql_err(sql))?;
 		// Compaction only works on RocksDB storage engine
 		match response.check() {
 			Ok(_) => Ok(()),
@@ -330,17 +326,17 @@ impl BenchmarkClient for SurrealDBClient {
 				if e.to_string().contains("does not support compaction") {
 					Ok(())
 				} else {
-					Err(log_sql_err(surql)(e))
+					Err(log_sql_err(sql)(e))
 				}
 			}
 		}
 	}
 
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		self.create(key, val).await
+	async fn create_u32(&self, key: u32, val: Json) -> Result<()> {
+		self.create(key as i64, val).await
 	}
 
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+	async fn create_string(&self, key: String, val: Json) -> Result<()> {
 		self.create(key, val).await
 	}
 
@@ -352,16 +348,16 @@ impl BenchmarkClient for SurrealDBClient {
 		self.read(key).await
 	}
 
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		self.update(key, val).await
+	async fn update_u32(&self, key: u32, val: Json) -> Result<()> {
+		self.update(key as i64, val).await
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+	async fn update_string(&self, key: String, val: Json) -> Result<()> {
 		self.update(key, val).await
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.delete(key).await
+		self.delete(key as i64).await
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
@@ -515,19 +511,63 @@ impl BenchmarkClient for SurrealDBClient {
 	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		self.scan(scan, ctx).await
 	}
+
+	async fn batch_create_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, Json)> + Send,
+	) -> Result<()> {
+		self.batch_create(key_vals.map(|(k, v)| (k as i64, v))).await
+	}
+
+	async fn batch_create_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, Json)> + Send,
+	) -> Result<()> {
+		self.batch_create(key_vals).await
+	}
+
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		self.batch_read(keys.map(|k| k as i64)).await
+	}
+
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		self.batch_read(keys).await
+	}
+
+	async fn batch_update_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, Json)> + Send,
+	) -> Result<()> {
+		self.batch_update(key_vals.map(|(k, v)| (k as i64, v))).await
+	}
+
+	async fn batch_update_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, Json)> + Send,
+	) -> Result<()> {
+		self.batch_update(key_vals).await
+	}
+
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		self.batch_delete(keys.map(|k| k as i64)).await
+	}
+
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		self.batch_delete(keys).await
+	}
 }
 
 impl SurrealDBClient {
-	async fn create<T>(&self, key: T, val: Value) -> Result<()>
+	async fn create<T>(&self, key: T, val: Json) -> Result<()>
 	where
-		T: SurrealValue + 'static,
+		T: Into<RecordIdKey>,
 	{
-		let sql = "CREATE type::record('record', $key) CONTENT $content RETURN NULL";
+		let sql = "CREATE $id CONTENT $content RETURN NULL";
 		let res = self
 			.db
 			.query(sql)
 			.bind(Bindings {
-				key,
+				id: Value::RecordId(RecordId::new(TABLE, key)),
 				content: val,
 			})
 			.await
@@ -547,16 +587,16 @@ impl SurrealDBClient {
 		Ok(())
 	}
 
-	async fn update<T>(&self, key: T, val: Value) -> Result<()>
+	async fn update<T>(&self, key: T, val: Json) -> Result<()>
 	where
-		T: SurrealValue + 'static,
+		T: Into<RecordIdKey>,
 	{
-		let sql = "UPDATE type::record('record', $key) CONTENT $content RETURN NULL";
+		let sql = "UPDATE $id CONTENT $content RETURN NULL";
 		let res = self
 			.db
 			.query(sql)
 			.bind(Bindings {
-				key,
+				id: Value::RecordId(RecordId::new(TABLE, key)),
 				content: val,
 			})
 			.await
@@ -569,13 +609,13 @@ impl SurrealDBClient {
 
 	async fn delete<T>(&self, key: T) -> Result<()>
 	where
-		T: SurrealValue + 'static,
+		T: Into<RecordIdKey>,
 	{
-		let sql = "DELETE type::record('record', $key) RETURN NULL";
+		let sql = "DELETE $id RETURN NULL";
 		let res = self
 			.db
 			.query(sql)
-			.bind(("key", key))
+			.bind(("id", Value::RecordId(RecordId::new(TABLE, key))))
 			.await
 			.map_err(log_sql_err(sql))?
 			.take::<surrealdb::types::Value>(0)
@@ -644,5 +684,110 @@ impl SurrealDBClient {
 				Ok(res.unwrap())
 			}
 		}
+	}
+
+	async fn batch_create<K>(&self, key_vals: impl Iterator<Item = (K, Json)> + Send) -> Result<()>
+	where
+		K: Into<RecordIdKey>,
+	{
+		// Construct the records
+		let rows: Vec<Value> = key_vals
+			.map(|(k, v)| {
+				let mut obj = match v.into_value() {
+					Value::Object(o) => o,
+					_ => panic!("Unexpected value type"),
+				};
+				obj.insert("id", Value::RecordId(RecordId::new(TABLE, k)));
+				Value::Object(obj)
+			})
+			.collect();
+		// Construct the SQL query
+		let sql = "INSERT $rows RETURN NONE";
+		// Execute the SQL query
+		self.db
+			.query(sql)
+			.bind(("rows", Value::Array(Array::from(rows))))
+			.await
+			.map_err(log_sql_err(sql))?
+			.check()
+			.map_err(log_sql_err(sql))?;
+		// All ok
+		Ok(())
+	}
+
+	async fn batch_read<K>(&self, keys: impl Iterator<Item = K> + Send) -> Result<()>
+	where
+		K: Into<RecordIdKey>,
+	{
+		// Construct the Record IDs
+		let ids: Vec<Value> = keys.map(|k| Value::RecordId(RecordId::new("record", k))).collect();
+		// Store the total Record IDs
+		let ids_len = ids.len();
+		// Construct the SQL query
+		let sql = "SELECT * FROM $ids";
+		// Execute the SQL query
+		let res: surrealdb::types::Value = self
+			.db
+			.query(sql)
+			.bind(("ids", Value::Array(Array::from(ids))))
+			.await
+			.map_err(log_sql_err(sql))?
+			.take(0)
+			.map_err(log_sql_err(sql))?;
+		// Check the response
+		let Some(arr) = res.as_array() else {
+			panic!("Unexpected response type");
+		};
+		assert_eq!(arr.len(), ids_len);
+		// All ok
+		Ok(())
+	}
+
+	async fn batch_update<K>(&self, key_vals: impl Iterator<Item = (K, Json)> + Send) -> Result<()>
+	where
+		K: Into<RecordIdKey>,
+	{
+		// Construct the records
+		let rows: Vec<Value> = key_vals
+			.map(|(k, v)| {
+				let mut obj = match v.into_value() {
+					Value::Object(o) => o,
+					_ => panic!("Unexpected value type"),
+				};
+				obj.insert("id", Value::RecordId(RecordId::new(TABLE, k)));
+				Value::Object(obj)
+			})
+			.collect();
+		// Construct the SQL query
+		let sql = "FOR $row IN $rows { UPDATE $row.id CONTENT $row RETURN NONE }";
+		// Execute the SQL query
+		self.db
+			.query(sql)
+			.bind(("rows", Value::Array(Array::from(rows))))
+			.await
+			.map_err(log_sql_err(sql))?
+			.check()
+			.map_err(log_sql_err(sql))?;
+		Ok(())
+	}
+
+	async fn batch_delete<K>(&self, keys: impl Iterator<Item = K> + Send) -> Result<()>
+	where
+		K: Into<RecordIdKey>,
+	{
+		// Construct the Record IDs
+		let ids: Vec<Value> = keys.map(|k| Value::RecordId(RecordId::new("record", k))).collect();
+		// Construct the SQL query
+		let sql = "DELETE $ids";
+		// Execute the SQL query
+		self.db
+			.query(sql)
+			.bind(("ids", Value::Array(Array::from(ids))))
+			.await
+			.map_err(log_sql_err(sql))?
+			.check()
+			.map_err(log_sql_err(sql))?;
+		// All ok
+		Ok(())
 	}
 }
