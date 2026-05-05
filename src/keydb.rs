@@ -3,6 +3,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::util::redis_batch;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -122,6 +123,50 @@ impl BenchmarkClient for KeydbClient {
 
 	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan_bytes(scan).await
+	}
+
+	async fn batch_create_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		redis_batch::batch_create_u32(&self.conn_record, key_vals.collect()).await
+	}
+
+	async fn batch_create_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		redis_batch::batch_create_string(&self.conn_record, key_vals.collect()).await
+	}
+
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		redis_batch::batch_read_u32(&self.conn_record, keys.collect()).await
+	}
+
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		redis_batch::batch_read_string(&self.conn_record, keys.collect()).await
+	}
+
+	async fn batch_update_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+	) -> Result<()> {
+		redis_batch::batch_update_u32(&self.conn_record, key_vals.collect()).await
+	}
+
+	async fn batch_update_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+	) -> Result<()> {
+		redis_batch::batch_update_string(&self.conn_record, key_vals.collect()).await
+	}
+
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		redis_batch::batch_delete_u32(&self.conn_record, keys.collect()).await
+	}
+
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		redis_batch::batch_delete_string(&self.conn_record, keys.collect()).await
 	}
 }
 

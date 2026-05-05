@@ -7,11 +7,12 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
+use arangors::aql::AqlQuery;
 use arangors::client::reqwest::ReqwestClient;
 use arangors::document::options::InsertOptions;
 use arangors::document::options::RemoveOptions;
 use arangors::{Collection, Connection, Database, GenericConnection};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::hint::black_box;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -169,9 +170,151 @@ impl BenchmarkClient for ArangoDBClient {
 			_ => self.scan(scan).await,
 		}
 	}
+
+	async fn batch_create_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, Value)> + Send,
+	) -> Result<()> {
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => {
+				let pairs = key_vals.map(|(k, v)| (k.to_string(), v)).collect::<Vec<_>>();
+				self.batch_create_pairs(pairs).await
+			}
+		}
+	}
+
+	async fn batch_create_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, Value)> + Send,
+	) -> Result<()> {
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.batch_create_pairs(key_vals.collect()).await,
+		}
+	}
+
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => {
+				let ks = keys.map(|k| k.to_string()).collect::<Vec<_>>();
+				self.batch_read_keys(ks).await
+			}
+		}
+	}
+
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.batch_read_keys(keys.collect()).await,
+		}
+	}
+
+	async fn batch_update_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, Value)> + Send,
+	) -> Result<()> {
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => {
+				let pairs = key_vals.map(|(k, v)| (k.to_string(), v)).collect::<Vec<_>>();
+				self.batch_update_pairs(pairs).await
+			}
+		}
+	}
+
+	async fn batch_update_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, Value)> + Send,
+	) -> Result<()> {
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.batch_update_pairs(key_vals.collect()).await,
+		}
+	}
+
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => {
+				let ks = keys.map(|k| k.to_string()).collect::<Vec<_>>();
+				self.batch_delete_keys(ks).await
+			}
+		}
+	}
+
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		match self.keytype {
+			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
+			_ => self.batch_delete_keys(keys.collect()).await,
+		}
+	}
 }
 
 impl ArangoDBClient {
+	async fn batch_create_pairs(&self, pairs: Vec<(String, Value)>) -> Result<()> {
+		if pairs.is_empty() {
+			return Ok(());
+		}
+		let docs: Vec<Value> =
+			pairs.into_iter().map(|(k, v)| Self::to_doc(k, v)).collect::<Result<Vec<_>>>()?;
+		let aql = AqlQuery::builder()
+			.query(
+				"FOR doc IN @docs INSERT doc INTO record OPTIONS { waitForSync: @sync } RETURN 1",
+			)
+			.bind_var("docs", Value::Array(docs))
+			.bind_var("sync", json!(self.sync))
+			.build();
+		let _: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		Ok(())
+	}
+
+	async fn batch_read_keys(&self, keys: Vec<String>) -> Result<()> {
+		if keys.is_empty() {
+			return Ok(());
+		}
+		let aql = AqlQuery::builder()
+			.query("FOR k IN @keys LET d = DOCUMENT('record', k) FILTER d != null RETURN d")
+			.bind_var("keys", Value::Array(keys.into_iter().map(Value::String).collect()))
+			.build();
+		let res: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		assert!(!res.is_empty());
+		Ok(())
+	}
+
+	async fn batch_update_pairs(&self, pairs: Vec<(String, Value)>) -> Result<()> {
+		if pairs.is_empty() {
+			return Ok(());
+		}
+		let docs: Vec<Value> =
+			pairs.into_iter().map(|(k, v)| Self::to_doc(k, v)).collect::<Result<Vec<_>>>()?;
+		let aql = AqlQuery::builder()
+			.query(
+				r#"FOR doc IN @docs INSERT doc INTO record OPTIONS { overwriteMode: "replace", waitForSync: @sync } RETURN 1"#,
+			)
+			.bind_var("docs", Value::Array(docs))
+			.bind_var("sync", json!(self.sync))
+			.build();
+		let _: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		Ok(())
+	}
+
+	async fn batch_delete_keys(&self, keys: Vec<String>) -> Result<()> {
+		if keys.is_empty() {
+			return Ok(());
+		}
+		let aql = AqlQuery::builder()
+			.query(
+				"FOR k IN @keys REMOVE {_key: k} IN record OPTIONS { waitForSync: @sync } RETURN 1",
+			)
+			.bind_var("keys", Value::Array(keys.into_iter().map(Value::String).collect()))
+			.bind_var("sync", json!(self.sync))
+			.build();
+		let _: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		Ok(())
+	}
+
 	fn to_doc(key: String, mut val: Value) -> Result<Value> {
 		let obj = val.as_object_mut().unwrap();
 		obj.insert("_key".to_string(), key.into());
