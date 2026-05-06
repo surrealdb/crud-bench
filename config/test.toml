@@ -1,0 +1,18 @@
+# Minimal bench spec for integration tests (`cargo test`).
+
+[[scans]]
+id = "test_limit"
+name = "limit"
+start = 50
+limit = 100
+expect = 100
+
+[[batches]]
+name = "batch_test"
+operation = "CREATE"
+batch_size = 5
+samples = 10
+
+[value]
+text = "String:50"
+integer = "int"

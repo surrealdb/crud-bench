@@ -132,17 +132,12 @@ AVAILABLE DATASTORES:
     surrealdb-embedded-surrealkv, surrealkv, surrealmx
 
 ENVIRONMENT VARIABLES:
-    CRUD_BENCH_VALUE
-        Configure the data structure/value template for benchmarks.
-        JSON format defining fields with generators (e.g., "text:50", "int:1..5000").
+    CRUD_BENCH_CONFIG
+        Path to benchmark specification TOML (default: config/bench.toml). Defines scans,
+        batches, and the [value] document template.
 
-    CRUD_BENCH_SCANS
-        Configure scan operations for benchmarks.
-        JSON array of scan configurations with name, samples, and projection.
-
-    CRUD_BENCH_BATCHES
-        Configure batch operations for benchmarks.
-        JSON array of batch configurations with operation, batch_size, and samples.
+    CRUD_BENCH_LMDB_DATABASE_SIZE
+        Bytes reserved for the LMDB environment when benchmarking LMDB (default: 53687091200).
 
 EOF
 }
@@ -633,7 +628,7 @@ wait_for_system() {
         local cpu_count=$(get_cpu_count)
         threshold=$(echo "scale=1; $cpu_count / 2" | bc)
     else
-        # Linux: fixed threshold of 2.0
+        # Linux: fixed threshold of 1.0
         threshold="1.0"
     fi
 
@@ -706,7 +701,6 @@ run_benchmark() {
 
     # Set environment variables
     export CRUD_BENCH_LMDB_DATABASE_SIZE="${CRUD_BENCH_LMDB_DATABASE_SIZE:-53687091200}"  # 50 GiB
-    export CRUD_BENCH_VALUE="${CRUD_BENCH_VALUE:-{ \"text\": \"text:50\", \"number\": \"int:1..5000\", \"integer\": \"int\", \"words\": \"words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance\", \"nested\": { \"text\": \"text:1000\", \"array\": [ \"string:50\", \"string:50\", \"string:50\", \"string:50\", \"string:50\" ] } }}"
     export DOCKER_PRE_ARGS="${DOCKER_PRE_ARGS:-}"
     export DOCKER_POST_ARGS="${DOCKER_POST_ARGS:-}"
 

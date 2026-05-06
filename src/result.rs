@@ -1,3 +1,5 @@
+//! Serializable benchmark outcomes: CRUD/scan/batch metrics, terminal tables, CSV, and HTML charts.
+
 use crate::system::SystemInfo;
 use crate::util::format_duration;
 use bytesize::ByteSize;
@@ -17,43 +19,132 @@ use sysinfo::{
 };
 use tokio::task::JoinHandle;
 
+/// Static inputs echoed in JSON results for reproducibility (CLI snapshot).
 #[derive(Clone, Serialize)]
 pub(crate) struct BenchmarkMetadata {
+	/// Row count for core CRUD phases.
 	pub(crate) samples: u32,
+	/// Concurrent datastore connections.
 	pub(crate) clients: u32,
+	/// Worker tasks per client.
 	pub(crate) threads: u32,
+	/// Stringified [`crate::KeyType`].
 	pub(crate) key_type: String,
+	/// Whether primary keys were generated in random order.
 	pub(crate) random: bool,
+	/// Durability / fsync expectations where applicable.
 	pub(crate) sync: bool,
+	/// Redis-family append-only / persistence toggles.
 	pub(crate) persisted: bool,
+	/// Tuned server settings vs defaults where supported.
 	pub(crate) optimised: bool,
 }
 
+/// Full benchmark output: timings per phase plus one representative generated [`serde_json::Value`].
 #[derive(Serialize)]
 pub(crate) struct BenchmarkResult {
+	/// Display name of the datastore under test.
 	pub(crate) database: Option<String>,
+	/// Host snapshot (CPU, memory, disks) when collected.
 	pub(crate) system: Option<SystemInfo>,
+	/// CLI parameters snapshot ([`BenchmarkMetadata`]).
 	pub(crate) metadata: Option<BenchmarkMetadata>,
+	/// Single-record insert phase.
 	pub(crate) creates: Option<OperationResult>,
+	/// Single-record read phase.
 	pub(crate) reads: Option<OperationResult>,
+	/// Single-record update phase.
 	pub(crate) updates: Option<OperationResult>,
+	/// One entry per configured scan id (possibly multiple timed legs inside [`ScanResult::runs`]).
 	pub(crate) scans: Vec<ScanResult>,
+	/// `(batch_case_name, timed_iterations, records_per_batch, histogram_metrics_or_skip)`.
 	pub(crate) batches: Vec<(String, u32, usize, Option<OperationResult>)>,
+	/// Single-record delete phase.
 	pub(crate) deletes: Option<OperationResult>,
+	/// Example document produced by the value template (for inspection / stored results).
 	pub(crate) sample: Value,
 }
 
-#[derive(Serialize)]
-pub(crate) struct ScanResult {
-	pub(crate) name: String,
-	pub(crate) samples: u32,
-	pub(crate) without_index: Option<OperationResult>,
-	pub(crate) index_build: Option<OperationResult>,
-	pub(crate) with_index: Option<OperationResult>,
-	pub(crate) index_remove: Option<OperationResult>,
-	pub(crate) has_index_spec: bool,
+/// Tags each timed scan leg for JSON consumers (`kind` discriminators).
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ScanWorkload {
+	/// Pure read/query workload.
+	Read,
+	/// Read path plus compensating writes at this percentage of samples.
+	ReadWrite {
+		write_ratio_percent: u32,
+	},
 }
 
+/// One timed scan leg (read-only or read+writes, with or without a physical index).
+#[derive(Serialize)]
+pub(crate) struct ScanRun {
+	/// Pure read vs read+writes ([`ScanWorkload`]).
+	pub workload: ScanWorkload,
+	/// Whether this leg used the indexed query path (vs table scan).
+	pub indexed: bool,
+	/// Latency histogram + resource stats; [`None`] when the backend skipped the leg.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub result: Option<OperationResult>,
+}
+
+/// Normalised `with_writes.ratio` for labels and serialised results.
+pub(crate) fn writes_ratio_percent(spec: &crate::ScanWithWrites) -> u32 {
+	(spec.ratio.clamp(0.0, 1.0) * 100.0).round() as u32
+}
+
+/// Table row title for a scan leg (matches `[S]can` markers in stdout tables).
+pub(crate) fn scan_run_row_label(id: &str, name: &str, samples: u32, run: &ScanRun) -> String {
+	let index_slug = if run.indexed {
+		"indexed"
+	} else {
+		"no-index"
+	};
+	let mid = match &run.workload {
+		ScanWorkload::Read => format!("reads - {index_slug}"),
+		ScanWorkload::ReadWrite {
+			write_ratio_percent: p,
+		} => format!("reads+writes ({p}%) - {index_slug}"),
+	};
+	format!("[S]can · {id} · {name} - {mid} ({samples})")
+}
+
+impl ScanRun {
+	/// Short label for charts (query text + leg description).
+	pub(crate) fn chart_label(&self, query: &str) -> String {
+		let index_slug = if self.indexed {
+			"indexed"
+		} else {
+			"no-index"
+		};
+		match &self.workload {
+			ScanWorkload::Read => format!("{query} - reads - {index_slug}"),
+			ScanWorkload::ReadWrite {
+				write_ratio_percent: p,
+			} => format!("{query} - reads+writes ({p}%) - {index_slug}"),
+		}
+	}
+}
+
+#[derive(Serialize)]
+/// Aggregated timings for one logical scan benchmark (`id`) including index ops when applicable.
+pub(crate) struct ScanResult {
+	/// Stable scan identifier from config.
+	pub(crate) id: String,
+	/// Human-readable scan title.
+	pub(crate) name: String,
+	/// Sample count for timed scan legs (may override global default).
+	pub(crate) samples: u32,
+	/// Index creation phase when an indexed leg exists.
+	pub(crate) index_build: Option<OperationResult>,
+	/// Index teardown phase.
+	pub(crate) index_remove: Option<OperationResult>,
+	/// Timed scan legs in benchmark order (baseline → optional write-mix → indexed variants).
+	pub(crate) runs: Vec<ScanRun>,
+}
+
+/// Column titles for the ASCII summary table ([`BenchmarkResult`]'s [`Display`] impl).
 const HEADERS: [&str; 12] = [
 	"Test",
 	"Total time",
@@ -69,6 +160,7 @@ const HEADERS: [&str; 12] = [
 	"Writes",
 ];
 
+/// Extended columns for CSV export (extra quantiles + load averages).
 const CSV_HEADERS: [&str; 22] = [
 	"Test",
 	"Total time",
@@ -94,9 +186,12 @@ const CSV_HEADERS: [&str; 22] = [
 	"System load (1m/5m/15m)",
 ];
 
+/// Placeholder cells when a phase was skipped or unsupported.
 const SKIP: [&str; 11] = ["-"; 11];
+/// Placeholder row for wide CSV rows.
 const CSV_SKIP: [&str; 21] = ["-"; 21];
 
+/// ASCII summary table matching [`HEADERS`] (used by CLI stdout).
 impl Display for BenchmarkResult {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		let mut table = Table::new();
@@ -124,18 +219,18 @@ impl Display for BenchmarkResult {
 			table.add_row(res.output("[D]elete"));
 		}
 		for scan in &self.scans {
-			// Scan without index
-			let label = format!("[S]can::{} ({})", scan.name, scan.samples);
-			if let Some(res) = &scan.without_index {
-				table.add_row(res.output(label));
-			} else {
-				let mut cells = vec![label];
-				cells.extend(SKIP.iter().map(|s| s.to_string()));
-				table.add_row(cells);
+			for run in scan.runs.iter().filter(|r| !r.indexed) {
+				let label = scan_run_row_label(&scan.id, &scan.name, scan.samples, run);
+				if let Some(res) = &run.result {
+					table.add_row(res.output(label));
+				} else {
+					let mut cells = vec![label];
+					cells.extend(SKIP.iter().map(|s| s.to_string()));
+					table.add_row(cells);
+				}
 			}
-			// Index build (only for indexed scans)
-			if scan.has_index_spec {
-				let label = format!("[I]ndex::{}", scan.name);
+			if scan.runs.iter().any(|r| r.indexed) {
+				let label = format!("[I]ndex · {} · build", scan.id);
 				if let Some(res) = &scan.index_build {
 					table.add_row(res.output(label));
 				} else {
@@ -144,10 +239,9 @@ impl Display for BenchmarkResult {
 					table.add_row(cells);
 				}
 			}
-			// Scan with index (only for indexed scans)
-			if scan.has_index_spec {
-				let label = format!("[S]can::{}::indexed ({})", scan.name, scan.samples);
-				if let Some(res) = &scan.with_index {
+			for run in scan.runs.iter().filter(|r| r.indexed) {
+				let label = scan_run_row_label(&scan.id, &scan.name, scan.samples, run);
+				if let Some(res) = &run.result {
 					table.add_row(res.output(label));
 				} else {
 					let mut cells = vec![label];
@@ -155,9 +249,8 @@ impl Display for BenchmarkResult {
 					table.add_row(cells);
 				}
 			}
-			// Remove index (only for indexed scans)
-			if scan.has_index_spec {
-				let label = format!("[R]emoveIndex::{}", scan.name);
+			if scan.runs.iter().any(|r| r.indexed) {
+				let label = format!("[R]emoveIndex · {}", scan.id);
 				if let Some(res) = &scan.index_remove {
 					table.add_row(res.output(label));
 				} else {
@@ -195,6 +288,7 @@ impl Display for BenchmarkResult {
 }
 
 impl BenchmarkResult {
+	/// Writes [`CSV_HEADERS`] and one row per completed phase to `path`.
 	pub(crate) fn to_csv(&self, path: &str) -> Result<(), csv::Error> {
 		let mut w = Writer::from_path(path)?;
 		// Write headers
@@ -217,18 +311,18 @@ impl BenchmarkResult {
 		}
 		// Add the [S]cans results to the output
 		for scan in &self.scans {
-			// Scan without index
-			let label = format!("[S]can::{} ({})", scan.name, scan.samples);
-			if let Some(res) = &scan.without_index {
-				w.write_record(res.output_csv(label))?;
-			} else {
-				let mut cells = vec![label];
-				cells.extend(CSV_SKIP.iter().map(|s| s.to_string()));
-				w.write_record(cells)?;
+			for run in scan.runs.iter().filter(|r| !r.indexed) {
+				let label = scan_run_row_label(&scan.id, &scan.name, scan.samples, run);
+				if let Some(res) = &run.result {
+					w.write_record(res.output_csv(label))?;
+				} else {
+					let mut cells = vec![label];
+					cells.extend(CSV_SKIP.iter().map(|s| s.to_string()));
+					w.write_record(cells)?;
+				}
 			}
-			// Index build (only for indexed scans)
-			if scan.has_index_spec {
-				let label = format!("[I]ndex::{}", scan.name);
+			if scan.runs.iter().any(|r| r.indexed) {
+				let label = format!("[I]ndex · {} · build", scan.id);
 				if let Some(res) = &scan.index_build {
 					w.write_record(res.output_csv(label))?;
 				} else {
@@ -237,10 +331,9 @@ impl BenchmarkResult {
 					w.write_record(cells)?;
 				}
 			}
-			// Scan with index (only for indexed scans)
-			if scan.has_index_spec {
-				let label = format!("[S]can::{}::indexed ({})", scan.name, scan.samples);
-				if let Some(res) = &scan.with_index {
+			for run in scan.runs.iter().filter(|r| r.indexed) {
+				let label = scan_run_row_label(&scan.id, &scan.name, scan.samples, run);
+				if let Some(res) = &run.result {
 					w.write_record(res.output_csv(label))?;
 				} else {
 					let mut cells = vec![label];
@@ -248,9 +341,8 @@ impl BenchmarkResult {
 					w.write_record(cells)?;
 				}
 			}
-			// Remove index (only for indexed scans)
-			if scan.has_index_spec {
-				let label = format!("[R]emoveIndex::{}", scan.name);
+			if scan.runs.iter().any(|r| r.indexed) {
+				let label = format!("[R]emoveIndex · {}", scan.id);
 				if let Some(res) = &scan.index_remove {
 					w.write_record(res.output_csv(label))?;
 				} else {
@@ -276,6 +368,7 @@ impl BenchmarkResult {
 		Ok(())
 	}
 
+	/// Renders interactive latency charts via [`crate::chart::generate_html`].
 	pub(crate) fn to_html_charts(
 		&self,
 		path: &str,
@@ -286,15 +379,20 @@ impl BenchmarkResult {
 	}
 }
 
-/// Stats collector for continuous monitoring during benchmark operations
+/// Rolling samples of CPU, memory, and disk counters from [`OperationMetric`]'s background task.
 struct StatsCollector {
+	/// Normalised CPU usage snapshots (%).
 	cpu_samples: Vec<f32>,
+	/// Resident set size samples (bytes).
 	memory_samples: Vec<u64>,
+	/// Monotonic disk read deltas since baseline.
 	disk_read_samples: Vec<u64>,
+	/// Monotonic disk write deltas since baseline.
 	disk_write_samples: Vec<u64>,
 }
 
 impl StatsCollector {
+	/// Empty collector before the first background sample.
 	fn new() -> Self {
 		Self {
 			cpu_samples: Vec::new(),
@@ -304,6 +402,7 @@ impl StatsCollector {
 		}
 	}
 
+	/// Append one polling snapshot from [`OperationMetric::background_monitor`].
 	fn add_sample(&mut self, cpu: f32, memory: u64, disk_reads: u64, disk_writes: u64) {
 		self.cpu_samples.push(cpu);
 		self.memory_samples.push(memory);
@@ -311,6 +410,7 @@ impl StatsCollector {
 		self.disk_write_samples.push(disk_writes);
 	}
 
+	/// Mean CPU across polled samples.
 	fn cpu_average(&self) -> f32 {
 		if self.cpu_samples.is_empty() {
 			0.0
@@ -319,6 +419,7 @@ impl StatsCollector {
 		}
 	}
 
+	/// Minimum observed CPU sample.
 	fn cpu_min(&self) -> f32 {
 		if self.cpu_samples.is_empty() {
 			0.0
@@ -327,6 +428,7 @@ impl StatsCollector {
 		}
 	}
 
+	/// Maximum observed CPU sample.
 	fn cpu_max(&self) -> f32 {
 		if self.cpu_samples.is_empty() {
 			0.0
@@ -335,6 +437,7 @@ impl StatsCollector {
 		}
 	}
 
+	/// Mean resident memory across polled samples.
 	fn memory_average(&self) -> u64 {
 		if self.memory_samples.is_empty() {
 			0
@@ -343,35 +446,49 @@ impl StatsCollector {
 		}
 	}
 
+	/// Lowest resident memory sample.
 	fn memory_min(&self) -> u64 {
 		self.memory_samples.iter().copied().min().unwrap_or(0)
 	}
 
+	/// Highest resident memory sample (peak RSS-style).
 	fn memory_peak(&self) -> u64 {
 		self.memory_samples.iter().copied().max().unwrap_or(0)
 	}
 
+	/// Last cumulative disk read delta observed by the monitor.
 	fn disk_read_total(&self) -> u64 {
 		self.disk_read_samples.last().copied().unwrap_or(0)
 	}
 
+	/// Last cumulative disk write delta observed by the monitor.
 	fn disk_write_total(&self) -> u64 {
 		self.disk_write_samples.last().copied().unwrap_or(0)
 	}
 }
 
+/// Live [`sysinfo`] handle plus background polling used to build an [`OperationResult`].
 pub(super) struct OperationMetric {
+	/// Shared system state for synchronous refresh calls.
 	system: System,
+	/// Process under test (benchmark worker or explicit `--pid`).
 	pid: Pid,
+	/// Logical operation count for OPS calculation.
 	samples: u32,
+	/// Wall-clock start for elapsed time.
 	start_time: Instant,
+	/// Disk counters before the phase (subtracted for delta I/O).
 	initial_disk_usage: DiskUsage,
+	/// Which process fields to refresh each poll.
 	refresh_kind: ProcessRefreshKind,
+	/// Samples filled by [`StatsCollector`].
 	stats_collector: Arc<Mutex<StatsCollector>>,
+	/// Tokio task driving [`OperationMetric::background_monitor`].
 	monitor_handle: Option<JoinHandle<()>>,
 }
 
 impl OperationMetric {
+	/// Starts periodic polling for the given PID (defaults to current process).
 	pub(super) fn new(pid: Option<u32>, samples: u32) -> Self {
 		// We collect the PID
 		let pid = Pid::from(pid.unwrap_or_else(process::id) as usize);
@@ -411,6 +528,7 @@ impl OperationMetric {
 		metric
 	}
 
+	/// Refreshes and returns the watched [`Process`], if still alive.
 	fn collect_process(&mut self) -> Option<&Process> {
 		self.system.refresh_processes_specifics(
 			ProcessesToUpdate::Some(&[self.pid]),
@@ -420,6 +538,7 @@ impl OperationMetric {
 		self.system.process(self.pid)
 	}
 
+	/// Polls CPU/memory/disk for `pid` on a fixed interval until the process exits.
 	async fn background_monitor(
 		pid: Pid,
 		refresh_kind: ProcessRefreshKind,
@@ -461,34 +580,56 @@ impl OperationMetric {
 }
 
 #[derive(Serialize)]
-pub(super) struct OperationResult {
+/// Histogram-backed latency stats plus resource usage for one benchmark phase.
+pub(crate) struct OperationResult {
+	/// Mean latency (microseconds, HDR histogram centroids).
 	mean: f64,
+	/// Minimum observed latency (µs).
 	min: u64,
+	/// Maximum observed latency (µs).
 	max: u64,
+	/// 99th percentile latency (µs).
 	q99: u64,
+	/// 95th percentile latency (µs).
 	q95: u64,
+	/// 75th percentile latency (µs).
 	q75: u64,
+	/// Median latency (µs).
 	q50: u64,
+	/// 25th percentile latency (µs).
 	q25: u64,
+	/// 1st percentile latency (µs).
 	q01: u64,
+	/// Inter-quartile range (`q75 - q25`).
 	iqr: u64,
+	/// Throughput: `samples / elapsed_seconds`.
 	ops: f64,
+	/// Wall-clock duration of the whole phase.
 	elapsed: Duration,
+	/// Number of logical iterations aggregated into `histogram`.
 	samples: u32,
+	/// Snapshot CPU at end of phase (normalised by core count).
 	cpu_usage: f32,
+	/// Min / max / avg from polled samples when available.
 	cpu_min: f32,
 	cpu_max: f32,
 	cpu_avg: f32,
+	/// Resident memory at final sysinfo snapshot (bytes).
 	used_memory: u64,
+	/// Lowest RSS sample from background polling (bytes).
 	memory_min: u64,
+	/// Peak RSS from polling (bytes).
 	memory_max: u64,
+	/// Mean RSS across polls (bytes).
 	memory_avg: u64,
+	/// Delta disk bytes read/written attributed to the process.
 	disk_usage: DiskUsage,
+	/// Host load averages at end of phase.
 	load_avg: LoadAvg,
 }
 
 impl OperationResult {
-	/// Create a new operataion result
+	/// Finalises histogram + [`OperationMetric`] snapshots into serialisable stats.
 	pub(crate) fn new(mut metric: OperationMetric, histogram: Histogram<u64>) -> Self {
 		let elapsed = metric.start_time.elapsed();
 

@@ -1,4 +1,5 @@
-use crate::result::BenchmarkResult;
+use crate::result::{BenchmarkResult, OperationResult};
+use serde_json::{Map, Value, json};
 
 /// Generate an HTML file with interactive charts for a single benchmark result
 pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> String {
@@ -141,6 +142,77 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
         .apexcharts-tooltip-box strong {{
             color: #333;
         }}
+        .chart-subtitle {{
+            color: #666;
+            font-size: 0.95em;
+            line-height: 1.45;
+            margin: -6px 0 14px 0;
+            max-width: 920px;
+        }}
+        .scan-percentile-table-wrap {{
+            overflow-x: auto;
+            max-width: 100%;
+            margin-top: 4px;
+        }}
+        .scan-percentile-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }}
+        .scan-percentile-table caption {{
+            caption-side: top;
+            text-align: left;
+            font-size: 0.85em;
+            color: #666;
+            padding-bottom: 8px;
+        }}
+        .scan-percentile-table th {{
+            font-weight: 600;
+            background: #f3e8ff;
+            color: #333;
+            white-space: nowrap;
+        }}
+        .scan-percentile-table th, .scan-percentile-table td {{
+            border: 1px solid #e0e0e0;
+            padding: 8px 10px;
+        }}
+        .scan-percentile-table td.num {{
+            font-variant-numeric: tabular-nums;
+            text-align: right;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+        }}
+        .scan-percentile-table td.scan-name {{
+            max-width: 28em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            text-align: left;
+        }}
+        .scan-percentile-table td.spark {{
+            text-align: center;
+            vertical-align: middle;
+            min-width: 130px;
+        }}
+        .scan-percentile-table th.scan-dist-col,
+        .scan-percentile-table td.scan-dist {{
+            border-left: 1px solid #e0e0e0;
+            text-align: center;
+            vertical-align: middle;
+            min-width: 96px;
+        }}
+        .scan-percentile-table tbody tr:nth-child(even) {{
+            background: #fafafa;
+        }}
+        .scan-sparkline {{
+            display: block;
+            margin: 0 auto;
+            flex-shrink: 0;
+        }}
+        .scan-mini-dist {{
+            display: block;
+            margin: 0 auto;
+            flex-shrink: 0;
+        }}
     </style>
 </head>
 <body>
@@ -180,19 +252,14 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
                 <div id="diskChart"></div>
             </div>
 
-            <div class="chart-container">
-                <div class="chart-title">Scan throughput</div>
-                <div id="scanThroughputChart"></div>
-            </div>
-
-            <div class="chart-container">
+            <div class="chart-container full-width">
                 <div class="chart-title">Scan latency distribution</div>
                 <div id="scanLatencyChart"></div>
             </div>
 
             <div class="chart-container full-width">
-                <div class="chart-title">Scan percentile comparison</div>
-                <div id="scanPercentileChart"></div>
+                <div class="chart-title">Scan latency percentiles</div>
+                {scan_percentile_table}
             </div>
 
             <div class="chart-container">
@@ -220,6 +287,7 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
 		database_name = database_name,
 		system_info = system_info_html,
 		stats_cards = generate_stat_cards(result),
+		scan_percentile_table = generate_scan_percentile_table_html(&scan_chart_rows(result)),
 		chart_scripts = generate_chart_scripts(result)
 	)
 }
@@ -351,12 +419,221 @@ fn generate_stat_cards(result: &BenchmarkResult) -> String {
 	cards
 }
 
+fn html_escape(s: &str) -> String {
+	s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// Inline SVG sparkline for Min → Max percentile latencies (same order as the table).
+fn percentile_sparkline_svg(values_us: &[f64]) -> String {
+	if values_us.is_empty() {
+		return String::new();
+	}
+	const W: f64 = 120.0;
+	const H: f64 = 28.0;
+	let min_v = values_us.iter().cloned().fold(f64::INFINITY, f64::min);
+	let max_v = values_us.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+	let range = (max_v - min_v).max(1.0);
+	let n = values_us.len();
+	let mut points = String::new();
+	for (i, &v) in values_us.iter().enumerate() {
+		if i > 0 {
+			points.push(' ');
+		}
+		let x = if n <= 1 {
+			W / 2.0
+		} else {
+			1.0 + (i as f64 / (n - 1) as f64) * (W - 2.0)
+		};
+		let y = (H - 1.0) - ((v - min_v) / range) * (H - 2.0);
+		points.push_str(&format!("{:.1},{:.1}", x, y));
+	}
+	format!(
+		r##"<svg class="scan-sparkline" width="120" height="28" viewBox="0 0 120 28" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><polyline fill="none" stroke="#9600FF" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" points="{points}"/></svg>"##,
+		points = points
+	)
+}
+
+/// Horizontal mini distribution (candlestick-style): min–max baseline, P01/P99 ticks, IQR box, median.
+fn percentile_mini_distribution_svg(values_us: &[f64]) -> String {
+	if values_us.len() != 8 {
+		return String::new();
+	}
+	let min_v = values_us[0];
+	let p01 = values_us[1];
+	let p25 = values_us[2];
+	let p50 = values_us[3];
+	let p75 = values_us[4];
+	let max_v = values_us[7];
+	let p99 = values_us[6];
+
+	const W: f64 = 88.0;
+	const H: f64 = 28.0;
+	let lo = min_v;
+	let hi = max_v;
+	let range = (hi - lo).max(1.0);
+	let pad = 2.0;
+	let usable = W - 2.0 * pad;
+	let xf = |v: f64| pad + ((v - lo) / range) * usable;
+
+	let x_min = xf(min_v);
+	let x_max = xf(max_v);
+	let x_p01 = xf(p01);
+	let x_p25 = xf(p25);
+	let x_p50 = xf(p50);
+	let x_p75 = xf(p75);
+	let x_p99 = xf(p99);
+
+	let box_left = x_p25.min(x_p75);
+	let box_right = x_p25.max(x_p75);
+	let box_w = (box_right - box_left).max(1.25);
+
+	let ym = H / 2.0;
+	let body_top = ym - 5.0;
+	let body_h = 10.0;
+	let tick_top = ym - 5.5;
+	let tick_bot = ym + 5.5;
+
+	format!(
+		r##"<svg class="scan-mini-dist" width="{w}" height="{h}" viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="{x_min}" y1="{ym}" x2="{x_max}" y2="{ym}" stroke="#e8d4ff" stroke-width="1.5" stroke-linecap="round"/><line x1="{x_p01}" y1="{tick_top}" x2="{x_p01}" y2="{tick_bot}" stroke="#9600FF" stroke-width="1" opacity="0.45"/><line x1="{x_p99}" y1="{tick_top}" x2="{x_p99}" y2="{tick_bot}" stroke="#9600FF" stroke-width="1" opacity="0.45"/><rect x="{box_left}" y="{body_top}" width="{box_w}" height="{body_h}" rx="1.5" fill="#C97FFF" stroke="#9600FF" stroke-width="1"/><line x1="{x_p50}" y1="4.5" x2="{x_p50}" y2="23.5" stroke="#9600FF" stroke-width="1.75" stroke-linecap="round"/></svg>"##,
+		w = W as i32,
+		h = H as i32,
+		x_min = x_min,
+		x_max = x_max,
+		x_p01 = x_p01,
+		x_p99 = x_p99,
+		box_left = box_left,
+		box_w = box_w,
+		body_top = body_top,
+		body_h = body_h,
+		x_p50 = x_p50,
+		ym = ym,
+		tick_top = tick_top,
+		tick_bot = tick_bot,
+	)
+}
+
+fn scan_distribution_title_attr(r: &OperationResult) -> String {
+	let s = format!(
+		"Min: {:.3} ms | Q1: {:.3} ms | Median: {:.3} ms | Q3: {:.3} ms | Max: {:.3} ms",
+		r.min() as f64 / 1000.0,
+		r.q25() as f64 / 1000.0,
+		r.q50() as f64 / 1000.0,
+		r.q75() as f64 / 1000.0,
+		r.max() as f64 / 1000.0,
+	);
+	html_escape(&s)
+}
+
+fn generate_scan_percentile_table_html(rows: &[(String, &OperationResult)]) -> String {
+	if rows.is_empty() {
+		return r#"<p class="chart-subtitle">No scan benchmarks in this result.</p>"#.to_string();
+	}
+	let mut out = String::from(
+		r#"<div class="scan-percentile-table-wrap"><table class="scan-percentile-table">
+<thead>
+<tr>
+<th scope="col">Scan</th>
+<th scope="col">Throughput</th>
+<th scope="col">Min</th>
+<th scope="col">P01</th>
+<th scope="col">P25</th>
+<th scope="col">P50</th>
+<th scope="col">P75</th>
+<th scope="col">P95</th>
+<th scope="col">P99</th>
+<th scope="col">Max</th>
+<th scope="col">Trend</th>
+<th scope="col" class="scan-dist-col">Distribution</th>
+</tr>
+</thead>
+<tbody>"#,
+	);
+	for (name, r) in rows {
+		let vals = [
+			r.min() as f64,
+			r.q01() as f64,
+			r.q25() as f64,
+			r.q50() as f64,
+			r.q75() as f64,
+			r.q95() as f64,
+			r.q99() as f64,
+			r.max() as f64,
+		];
+		let spark = percentile_sparkline_svg(&vals);
+		let mini = percentile_mini_distribution_svg(&vals);
+		let dist_title = scan_distribution_title_attr(r);
+		let esc = html_escape(name);
+		let mut row = format!(r#"<tr><td class="scan-name" title="{esc}">{esc}</td>"#);
+		row.push_str(&format!(r#"<td class="num">{:.2}</td>"#, r.ops()));
+		for v in &vals {
+			row.push_str(&format!(r#"<td class="num">{:.3}</td>"#, v / 1000.0));
+		}
+		row.push_str(&format!(r#"<td class="spark">{spark}</td>"#));
+		row.push_str(&format!(r#"<td class="scan-dist" title="{dist_title}">{mini}</td></tr>"#));
+		out.push_str(&row);
+	}
+	out.push_str("</tbody></table></div>");
+	out
+}
+
 fn generate_chart_scripts(result: &BenchmarkResult) -> String {
+	let scan_rows = scan_chart_rows(result);
+	let scan_n = scan_rows.len();
+	let scan_chart_height_bar = scan_chart_bar_height(scan_n);
+	let scan_boxplot_data = scan_boxplot_json(&scan_rows);
+	let scan_ops_lookup = scan_ops_lookup_json(&scan_rows);
+
 	format!(
 		r##"
 // Helper function to format numbers with commas
 function formatNumber(num) {{
     return num.toFixed(0).replace(/\B(?=(\d{{3}})+(?!\d))/g, ",");
+}}
+
+// Native SVG tooltip: hover truncated axis labels to see full scan names
+function apexAttachFullCategoryTitles(chartContext) {{
+    try {{
+        var labels = chartContext.w.globals.labels;
+        if (!labels || labels.length === 0) return;
+        var root = chartContext.el;
+        var groups = root.querySelectorAll('.apexcharts-yaxis-label');
+        if (groups.length === 0) {{
+            groups = root.querySelectorAll('.apexcharts-xaxis-label');
+        }}
+        for (var i = 0; i < groups.length; i++) {{
+            var g = groups[i];
+            var full = labels[i];
+            if (full === undefined || full === null) continue;
+            var old = g.getElementsByTagName('title')[0];
+            if (old) old.remove();
+            var titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+            titleEl.textContent = String(full);
+            g.insertBefore(titleEl, g.firstChild);
+        }}
+    }} catch (e) {{}}
+}}
+
+function apexAttachBoxplotCategoryTitles(chartContext) {{
+    try {{
+        var series = chartContext.w.config.series;
+        var data = series && series[0] && series[0].data;
+        if (!data || !data.length) return;
+        var root = chartContext.el;
+        var groups = root.querySelectorAll('.apexcharts-yaxis-label');
+        if (groups.length === 0) {{
+            groups = root.querySelectorAll('.apexcharts-xaxis-label');
+        }}
+        for (var i = 0; i < groups.length && i < data.length; i++) {{
+            var g = groups[i];
+            var full = data[i].x;
+            if (full === undefined || full === null) continue;
+            var old = g.getElementsByTagName('title')[0];
+            if (old) old.remove();
+            var titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+            titleEl.textContent = String(full);
+            g.insertBefore(titleEl, g.firstChild);
+        }}
+    }} catch (e) {{}}
 }}
 
 // Operations Per Second Chart
@@ -474,6 +751,8 @@ var percentileChart = new ApexCharts(document.querySelector("#percentileChart"),
         }}
     }},
     tooltip: {{
+        shared: false,
+        intersect: false,
         y: {{
             formatter: function(val) {{
                 return (val / 1000).toFixed(3) + ' ms';
@@ -592,47 +871,6 @@ var diskChart = new ApexCharts(document.querySelector("#diskChart"), {{
 }});
 diskChart.render();
 
-// Scan Throughput Chart
-var scanThroughputChart = new ApexCharts(document.querySelector("#scanThroughputChart"), {{
-    series: [{{
-        name: 'Operations/Second',
-        data: {scan_ops_array}
-    }}],
-    chart: {{
-        type: 'bar',
-        height: 350,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        toolbar: {{ show: false }}
-    }},
-    plotOptions: {{
-        bar: {{
-            horizontal: true,
-            borderRadius: 4,
-            distributed: true
-        }}
-    }},
-    colors: ['#9600FF', '#FF00A0', '#C000FF', '#FF33B8', '#9600FF', '#FF00A0', '#C000FF'],
-    dataLabels: {{ enabled: false }},
-    legend: {{ show: false }},
-    xaxis: {{
-        categories: {scan_labels},
-        title: {{ text: 'Operations/Second' }},
-        labels: {{
-            formatter: function(val) {{
-                return formatNumber(val);
-            }}
-        }}
-    }},
-    tooltip: {{
-        y: {{
-            formatter: function(val) {{
-                return formatNumber(val) + ' ops/s';
-            }}
-        }}
-    }}
-}});
-scanThroughputChart.render();
-
 // Scan Latency Distribution Chart
 // Create ops lookup for tooltips
 var scanOpsLookup = {scan_ops_lookup};
@@ -647,14 +885,24 @@ var scanLatencyChart = new ApexCharts(document.querySelector("#scanLatencyChart"
     ],
     chart: {{
         type: 'boxPlot',
-        height: 350,
+        height: {scan_chart_height_bar},
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        toolbar: {{ show: false }}
+        toolbar: {{ show: false }},
+        events: {{
+            mounted: apexAttachBoxplotCategoryTitles,
+            updated: apexAttachBoxplotCategoryTitles
+        }}
+    }},
+    grid: {{
+        padding: {{
+            left: 24,
+            right: 12
+        }}
     }},
     plotOptions: {{
         bar: {{
             horizontal: true,
-            barHeight: '60%'
+            barHeight: '44%'
         }},
         boxPlot: {{
             colors: {{
@@ -667,15 +915,25 @@ var scanLatencyChart = new ApexCharts(document.querySelector("#scanLatencyChart"
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
-        title: {{ text: 'Latency (microseconds)' }},
+        title: {{ text: 'Latency (milliseconds)' }},
         labels: {{
             formatter: function(val) {{
-                return formatNumber(val);
+                return (Number(val) / 1000).toFixed(2);
             }}
         }}
     }},
     yaxis: {{
-        title: {{ text: 'Scan Type' }}
+        title: {{ text: 'Scan' }},
+        labels: {{
+            trim: false,
+            maxWidth: 520,
+            style: {{
+                fontSize: '11px'
+            }}
+        }},
+        tooltip: {{
+            enabled: true
+        }}
     }},
     tooltip: {{
         shared: false,
@@ -706,46 +964,6 @@ var scanLatencyChart = new ApexCharts(document.querySelector("#scanLatencyChart"
 }});
 scanLatencyChart.render();
 
-// Scan Percentile Comparison Chart
-var scanPercentileChart = new ApexCharts(document.querySelector("#scanPercentileChart"), {{
-    series: {scan_percentile_series},
-    chart: {{
-        type: 'line',
-        height: 350,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        toolbar: {{ show: false }}
-    }},
-    stroke: {{
-        width: 3,
-        curve: 'smooth'
-    }},
-    colors: ['#9600FF', '#FF00A0', '#C000FF', '#FF33B8', '#B84FFF', '#FF66CC', '#DA9FFF'],
-    dataLabels: {{ enabled: false }},
-    legend: {{
-        position: 'top',
-        horizontalAlign: 'left'
-    }},
-    xaxis: {{
-        categories: ['Min', 'P01', 'P25', 'P50', 'P75', 'P95', 'P99', 'Max']
-    }},
-    yaxis: {{
-        title: {{ text: 'Latency (microseconds)' }},
-        labels: {{
-            formatter: function(val) {{
-                return formatNumber(val);
-            }}
-        }}
-    }},
-    tooltip: {{
-        y: {{
-            formatter: function(val) {{
-                return (val / 1000).toFixed(3) + ' ms';
-            }}
-        }}
-    }}
-}});
-scanPercentileChart.render();
-
 // Batch Throughput Chart
 var batchThroughputChart = new ApexCharts(document.querySelector("#batchThroughputChart"), {{
     series: [{{
@@ -756,7 +974,11 @@ var batchThroughputChart = new ApexCharts(document.querySelector("#batchThroughp
         type: 'bar',
         height: 350,
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        toolbar: {{ show: false }}
+        toolbar: {{ show: false }},
+        events: {{
+            mounted: apexAttachFullCategoryTitles,
+            updated: apexAttachFullCategoryTitles
+        }}
     }},
     plotOptions: {{
         bar: {{
@@ -774,6 +996,9 @@ var batchThroughputChart = new ApexCharts(document.querySelector("#batchThroughp
             formatter: function(val) {{
                 return formatNumber(val);
             }}
+        }},
+        tooltip: {{
+            enabled: true
         }}
     }},
     tooltip: {{
@@ -802,7 +1027,11 @@ var batchLatencyChart = new ApexCharts(document.querySelector("#batchLatencyChar
         type: 'boxPlot',
         height: 350,
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        toolbar: {{ show: false }}
+        toolbar: {{ show: false }},
+        events: {{
+            mounted: apexAttachBoxplotCategoryTitles,
+            updated: apexAttachBoxplotCategoryTitles
+        }}
     }},
     plotOptions: {{
         bar: {{
@@ -828,7 +1057,10 @@ var batchLatencyChart = new ApexCharts(document.querySelector("#batchLatencyChar
         }}
     }},
     yaxis: {{
-        title: {{ text: 'Batch Type' }}
+        title: {{ text: 'Batch Type' }},
+        tooltip: {{
+            enabled: true
+        }}
     }},
     tooltip: {{
         shared: false,
@@ -890,6 +1122,8 @@ var batchPercentileChart = new ApexCharts(document.querySelector("#batchPercenti
         }}
     }},
     tooltip: {{
+        shared: false,
+        intersect: false,
         y: {{
             formatter: function(val) {{
                 return (val / 1000).toFixed(3) + ' ms';
@@ -910,11 +1144,9 @@ batchPercentileChart.render();
 		disk_labels = get_ops_labels(result),
 		disk_writes = get_disk_writes(result),
 		disk_reads = get_disk_reads(result),
-		scan_labels = get_scan_labels(result),
-		scan_ops_array = get_scan_ops_array(result),
-		scan_boxplot_data = get_scan_boxplot_data(result),
-		scan_ops_lookup = get_scan_ops_lookup(result),
-		scan_percentile_series = get_scan_percentile_series(result),
+		scan_boxplot_data = scan_boxplot_data,
+		scan_ops_lookup = scan_ops_lookup,
+		scan_chart_height_bar = scan_chart_height_bar,
 		batch_labels = get_batch_labels(result),
 		batch_data = get_batch_data(result),
 		batch_boxplot_data = get_batch_boxplot_data(result),
@@ -1070,93 +1302,45 @@ fn get_disk_reads(result: &BenchmarkResult) -> String {
 	format!("[{}]", data.join(", "))
 }
 
-fn get_scan_labels(result: &BenchmarkResult) -> String {
-	let labels: Vec<String> = result
-		.scans
-		.iter()
-		.filter_map(|scan| {
-			scan.without_index
-				.as_ref()
-				.or(scan.with_index.as_ref())
-				.map(|_| format!("\"{}\"", scan.name))
-		})
-		.collect();
-	format!("[{}]", labels.join(", "))
+fn scan_chart_rows(result: &BenchmarkResult) -> Vec<(String, &OperationResult)> {
+	let mut v = Vec::new();
+	for scan in &result.scans {
+		for run in &scan.runs {
+			if let Some(ref r) = run.result {
+				v.push((run.chart_label(scan.name.as_str()), r));
+			}
+		}
+	}
+	v
 }
 
-fn get_scan_ops_array(result: &BenchmarkResult) -> String {
-	let data: Vec<String> = result
-		.scans
-		.iter()
-		.filter_map(|scan| {
-			scan.without_index
-				.as_ref()
-				.or(scan.with_index.as_ref())
-				.map(|r| format!("{:.2}", r.ops()))
-		})
-		.collect();
-	format!("[{}]", data.join(", "))
+fn scan_chart_bar_height(row_count: usize) -> u32 {
+	const ROW_PX: u32 = 23;
+	const PAD: u32 = 120;
+	const MIN: u32 = 320;
+	const MAX: u32 = 8000;
+	MIN.max((row_count as u32).saturating_mul(ROW_PX).saturating_add(PAD)).min(MAX)
 }
 
-fn get_scan_boxplot_data(result: &BenchmarkResult) -> String {
-	let data: Vec<String> = result
-		.scans
+fn scan_boxplot_json(rows: &[(String, &OperationResult)]) -> String {
+	let data: Vec<Value> = rows
 		.iter()
-		.filter_map(|scan| {
-			scan.without_index.as_ref().or(scan.with_index.as_ref()).map(|r| {
-				format!(
-					r##"{{ x: '{}', y: [{}, {}, {}, {}, {}] }}"##,
-					scan.name,
-					r.min(),
-					r.q25(),
-					r.q50(),
-					r.q75(),
-					r.max()
-				)
+		.map(|(name, r)| {
+			json!({
+				"x": name,
+				"y": [r.min(), r.q25(), r.q50(), r.q75(), r.max()],
 			})
 		})
 		.collect();
-	format!("[{}]", data.join(", "))
+	serde_json::to_string(&data).expect("scan boxplot json")
 }
 
-fn get_scan_ops_lookup(result: &BenchmarkResult) -> String {
-	let data: Vec<String> = result
-		.scans
-		.iter()
-		.filter_map(|scan| {
-			scan.without_index
-				.as_ref()
-				.or(scan.with_index.as_ref())
-				.map(|r| format!(r##"'{}': {:.2}"##, scan.name, r.ops()))
-		})
-		.collect();
-	format!("{{{}}}", data.join(", "))
-}
-
-fn get_scan_percentile_series(result: &BenchmarkResult) -> String {
-	let mut series = vec![];
-
-	for scan in &result.scans {
-		if let Some(r) = scan.without_index.as_ref().or(scan.with_index.as_ref()) {
-			series.push(format!(
-				r##"{{
-                        name: '{}',
-                        data: [{}, {}, {}, {}, {}, {}, {}, {}]
-                    }}"##,
-				scan.name,
-				r.min(),
-				r.q01(),
-				r.q25(),
-				r.q50(),
-				r.q75(),
-				r.q95(),
-				r.q99(),
-				r.max()
-			));
-		}
+fn scan_ops_lookup_json(rows: &[(String, &OperationResult)]) -> String {
+	let mut m = Map::new();
+	for (name, r) in rows {
+		m.insert(name.clone(), json!(r.ops()));
 	}
-
-	format!("[{}]", series.join(", "))
+	serde_json::to_string(&Value::Object(m)).expect("scan ops lookup json")
 }
 
 fn get_batch_labels(result: &BenchmarkResult) -> String {

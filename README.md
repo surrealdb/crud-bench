@@ -123,29 +123,33 @@ cargo run -r -- -h
 Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
-  -n, --name <NAME>                          An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>                  The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mariadb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, slatedb, sqlite, surrealdb, surrealds, surrealkv, surrealmx]
-  -i, --image <IMAGE>                        Specify a custom Docker image
-  -p, --privileged                           Whether to run Docker in privileged mode
-  -e, --endpoint <ENDPOINT>                  Specify a custom endpoint to connect to
-  -b, --blocking <BLOCKING>                  Maximum number of blocking threads (default is the number of CPU cores) [default: 12]
-  -w, --workers <WORKERS>                    Number of async runtime workers (default is the number of CPU cores) [default: 12]
-  -c, --clients <CLIENTS>                    Number of concurrent clients [default: 1]
-  -t, --threads <THREADS>                    Number of concurrent threads per client [default: 1]
-  -s, --samples <SAMPLES>                    Number of samples to be created, read, updated, and deleted
-  -r, --random                               Generate the keys in a pseudo-randomized order
-      --sync                                 Whether to ensure data is synced and durable
-      --persisted                            Whether to enable disk persistence for Redis-family databases
-      --optimised                            Use optimised database configurations instead of defaults
-  -k, --key <KEY>                            The type of the key [default: integer] [possible values: integer, string26, string90, string250, string506, uuid]
-      --show-sample                          Print-out an example of a generated value
-      --pid <PID>                            Collect system information for a given pid
-      --store-results                        Store benchmark results in SurrealDB
-      --storage-endpoint <STORAGE_ENDPOINT>  SurrealDB endpoint for storing results [env: CRUD_BENCH_STORAGE_ENDPOINT=] [default: ws://localhost:8000]
-  -v, --value <VALUE>                        Size of the text value [env: CRUD_BENCH_VALUE=]
-      --scans <SCANS>                        An array of scan specifications [env: CRUD_BENCH_SCANS=]
-      --batches <BATCHES>                    An array of batch operation specifications [env: CRUD_BENCH_BATCHES=]
-  -h, --help                                 Print help (see more with '--help')
+  -n, --name <NAME>                            An optional name for the test, used as a suffix for the JSON result file name
+  -d, --database <DATABASE>                    The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mariadb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, slatedb, sqlite, surrealdb, surrealkv, surrealmx, surrealds]
+  -i, --image <IMAGE>                          Specify a custom Docker image
+  -p, --privileged                             Whether to run Docker in privileged mode
+  -e, --endpoint <ENDPOINT>                    Specify a custom endpoint to connect to
+  -b, --blocking <BLOCKING>                    Maximum number of blocking threads (default is the number of CPU cores) [default: 12]
+  -w, --workers <WORKERS>                      Number of async runtime workers (default is the number of CPU cores) [default: 12]
+  -c, --clients <CLIENTS>                      Number of concurrent clients [default: 1]
+  -t, --threads <THREADS>                      Number of concurrent threads per client [default: 1]
+  -s, --samples <SAMPLES>                      Number of samples to be created, read, updated, and deleted
+  -r, --random                                 Generate the keys in a pseudo-randomized order
+      --sync                                   Whether to ensure data is synced and durable
+      --operation-timeout <OPERATION_TIMEOUT>  Per-operation timeout in seconds [env: CRUD_BENCH_OPERATION_TIMEOUT=] [default: 1800]
+      --persisted                              Whether to enable disk persistence for Redis-family databases
+      --optimised                              Use optimised database configurations instead of defaults
+      --color <COLOR>                          When to use colour in terminal output (`NO_COLOR` disables colour for `auto` and `always`) [default: auto] [possible values: auto, always, never]
+  -k, --key <KEY>                              The type of the key [default: integer] [possible values: integer, string26, string90, string250, string506, uuid]
+      --show-sample                            Print-out an example of a generated value
+      --pid <PID>                              Collect system information for a given pid
+      --store-results                          Store benchmark results in SurrealDB
+      --storage-endpoint <STORAGE_ENDPOINT>    SurrealDB endpoint for storing results [env: CRUD_BENCH_STORAGE_ENDPOINT=] [default: ws://localhost:8000]
+      --config <CONFIG>                        Path to the benchmark TOML (`[[scans]]`, `[[batches]]`, `[value]`) [env: CRUD_BENCH_CONFIG=] [default: config/bench.toml]
+      --skip-scans                             Skip all scan benchmarks
+      --skip-batches                           Skip all batch benchmarks
+      --skip-indexes                           Skip index operations, but still table scan queries
+      --emit-phase-markers                     Emit line-oriented phase markers (`… starting`, `Benchmark starting`) for log-based tooling (e.g. `dev.sh` perf windows). Off by default; also on when `CRUD_BENCH_EMIT_PHASE_MARKERS` is `1`, `true`, `yes`, or `on`
+  -h, --help                                   Print help (see more with '--help')
   ```
 
 For more detailed help information run the following command:
@@ -154,11 +158,13 @@ For more detailed help information run the following command:
 cargo run -r -- --help
 ```
 
+Workload shape (document template, scan cases, and batch throughput tests) is defined in a single TOML file. Use
+`--config <PATH>` or the environment variable `CRUD_BENCH_CONFIG` (default: `config/bench.toml`).
+
 ### Value
 
-You can use the argument `-v` or `--value` (or the environment variable `CRUD_BENCH_VALUE`) to customize the row,
-document, or record value which should be used in the benchmark tests. Pass a JSON structure that will serve as a
-template for generating a randomized value.
+The `[value]` table in the benchmark TOML customizes the row, document, or record value used in the benchmark. It uses
+the same JSON-oriented template rules as before, expressed as TOML keys and nested tables.
 
 > [!NOTE]
 > For tabular, or column-oriented databases (e.g. Postgres, MySQL, ScyllaDB), the first-level fields of the JSON
@@ -209,10 +215,9 @@ Within the JSON structure, the following values are replaced by randomly generat
 
 ### Scans
 
-You can use the argument `-a` or `--scans` (or the environment variable `CRUD_BENCH_SCANS`) to customise the range,
-table, or scan queries that are performed in the benchmark. This parameter accepts a JSON array, where each item
-represents a different scan test. Each test is defined as a JSON object specifying the scan parameters and the test
-name.
+Scan workloads are defined by `[[scans]]` entries in the benchmark TOML (see `config/bench.toml`). Each table describes
+one logical benchmark (or multiple `[[scans.runs]]` variants). The JSON examples below remain valid documentation for the
+fields on each scan object.
 
 > [!NOTE]
 > Not every database benchmark adapter supports scans or range queries. In such cases, the benchmark will not fail but
@@ -220,7 +225,9 @@ name.
 
 Each scan object can make use of the following values:
 
-- `name`: A descriptive name for the test.
+- `id` (**required**): Stable identifier for grouping in the CLI, result tables, CSV output, and for **index create/drop** when `with_index` is present and not skipped. Use a simple identifier (e.g. `where_field_integer_eq`); human-readable titles live in `name` / run `name` and may contain characters that are not valid in SurrealDB or Neo4j index names.
+- `name`: A descriptive name for the test (use this **or** `runs`, not both).
+- `runs`: An array of `{ "name", "projection"? }` objects that share the same scan parameters (`samples`, `condition`, `with_index`, and so on). Each run becomes a separate benchmark with its own display name. Per-run `projection` overrides the entry-level `projection` when both are set; if a run omits `projection`, the entry-level value applies (defaulting to full-record scans like a single-object entry without `projection`).
 - `projection`: The projection type of the scan:
     - `"ID"`: only the ID is returned.
     - `"FULL"`: the whole record is returned.
@@ -232,6 +239,7 @@ Each scan object can make use of the following values:
 ```json
 [
   {
+    "id": "paging_limit_100",
     "name": "limit100",
     "projection": "FULL",
     "start": 0,
@@ -239,11 +247,29 @@ Each scan object can make use of the following values:
     "expect": 100
   },
   {
+    "id": "paging_start_100",
     "name": "start100",
     "projection": "ID",
     "start": 100,
     "limit": 100,
     "expect": 100
+  }
+]
+```
+
+Multiple benchmarks that share the same filter, index, and write settings can use `runs` instead of duplicating the object:
+
+```json
+[
+  {
+    "id": "idx_x_eq_1",
+    "runs": [
+      { "name": "select(*) where(x = 1)", "projection": "FULL" },
+      { "name": "count(*) where(x = 1)", "projection": "COUNT" }
+    ],
+    "samples": 10000,
+    "condition": { "sql": "x = 1", "mysql": "x = 1" },
+    "with_index": { "fields": ["x"] }
   }
 ]
 ```

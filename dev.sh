@@ -19,7 +19,8 @@
 # In profiling mode the script watches crud-bench's log for lifecycle and
 # phase markers and brackets a separate perf window per requested phase.
 #
-# crud-bench emits:
+# crud-bench emits (with `--emit-phase-markers` in profiling mode; phase lines stay
+# ASCII at column 0 for tooling; optional leading ANSI SGR may be added later):
 #   "Connecting to datastore" / "Datastore ready"
 #   "Setting up N client(s)"  / "Benchmark starting"
 #   "<Operation> starting"    / "<Operation> took …"     (once per phase)
@@ -35,7 +36,7 @@
 #     create        "Create starting"         → "Create took …"
 #     read          "Read starting"           → "Read took …"
 #     update        "Update starting"         → "Update took …"
-#     scan          "Scan::… starting"        → "Scan::… took …"         (first match)
+#     scan          "Scan ::… starting"       → "Scan ::… took …"         (first match)
 #     delete        "Delete starting"         → "Delete took …"
 #     batch         first "Batch…:: starting" → "Benchmark complete"     (all batches)
 #     all           "Benchmark starting"      → crud-bench exit           (end-to-end)
@@ -76,8 +77,10 @@
 #   SURREAL_PORT      TCP port for SurrealDB             (default: 8000)
 #   PERF_FREQ         perf sampling frequency (Hz)       (default: 997)
 #   PERF_MAX_SECS     Hard cap on each perf window       (default: 600)
-#   CRUD_BENCH_VALUE  Value template (inline JSON or @path)
-#   CRUD_BENCH_SCANS  Scan spec       (inline JSON or @path)
+#   CRUD_BENCH_CONFIG  Path to benchmark TOML (default: config/bench.toml)
+#   CRUD_BENCH_EMIT_PHASE_MARKERS  Set to 1/true/yes/on so crud-bench prints grep-friendly
+#                     `… starting` lines without passing `--emit-phase-markers` (profiling
+#                     mode passes the flag automatically).
 #   FLAMEGRAPH_BIN    Path to flamegraph binary          (default: ~/.cargo/bin/flamegraph)
 #   COMPACTION        Prompted at start; any value set means crud-bench runs storage
 #                     compaction between phases (SurrealDB: ALTER SYSTEM COMPACT). SST
@@ -194,23 +197,26 @@ done
 # start means "attach as soon as crud-bench starts".
 VALID_PHASES="create read update scan delete batch all"
 
+# Match optional leading ANSI (SGR) so profiling still works if crud-bench colours phase lines.
+LINE_START=$'^(\x1b\\[[0-9;]*m)*'
+
 declare -A PHASE_START=(
-	[create]='^Create starting'
-	[read]='^Read starting'
-	[update]='^Update starting'
-	[scan]='^Scan::[A-Za-z0-9_]+ starting'
-	[delete]='^Delete starting'
-	[batch]='^Batch[A-Za-z]+::[A-Za-z0-9_]+ starting'
-	[all]='^Benchmark starting'
+	[create]="${LINE_START}Create starting"
+	[read]="${LINE_START}Read starting"
+	[update]="${LINE_START}Update starting"
+	[scan]="${LINE_START}Scan ::.+ starting"
+	[delete]="${LINE_START}Delete starting"
+	[batch]="${LINE_START}Batch[A-Za-z]+::[A-Za-z0-9_]+ starting"
+	[all]="${LINE_START}Benchmark starting"
 )
 # An empty PHASE_STOP value means "stop when crud-bench exits" (used by
 # the `all` phase so batches/compaction-after-delete are included).
 declare -A PHASE_STOP=(
-	[create]='^Create took'
-	[read]='^Read took'
-	[update]='^Update took'
-	[scan]='Scan::[A-Za-z0-9_]+ took'
-	[delete]='^Delete took'
+	[create]="${LINE_START}Create.*took"
+	[read]="${LINE_START}Read.*took"
+	[update]="${LINE_START}Update.*took"
+	[scan]="${LINE_START}Scan ::.+took"
+	[delete]="${LINE_START}Delete.*took"
 	[batch]='^Benchmark complete'
 	[all]=''
 )
@@ -433,12 +439,17 @@ log "[4/6] Launching crud-bench"
 if [[ -n "${COMPACTION:-}" ]]; then
 	log "      COMPACTION is set — expect \"Compaction took …\" lines in crud-bench.log between phases"
 fi
+CRUD_PHASE_MARKER_ARGS=()
+if [[ "$MODE" == "profiling" ]]; then
+	CRUD_PHASE_MARKER_ARGS=(--emit-phase-markers)
+fi
 (
 	cd "$CRUD_BENCH_DIR"
 	stdbuf -oL -eL "$CRUD_BIN" \
 		-d surrealdb -e "ws://127.0.0.1:$SURREAL_PORT" \
 		-s "$SAMPLES" -c "$CLIENTS" -t "$THREADS" -k "$KEY_TYPE" \
 		-n "dev-$MODE-$TS" -r \
+		"${CRUD_PHASE_MARKER_ARGS[@]}" \
 		"${CRUD_SKIP_ARGS[@]}"
 ) > "$CRUD_LOG" 2>&1 &
 CRUD_PID=$!
@@ -453,8 +464,8 @@ log "      PID=$CRUD_PID  log=$CRUD_LOG"
 #
 #    Phase order printed by crud-bench (AFTER each phase completes):
 #      "Create took …"  →  "Read took …"  →  "Update took …"
-#      → ["Scan::<name> took …", …]
-#      → ["BuildIndex::… took …", "Scan::… took …", "RemoveIndex::… took …"]
+#      → ["Scan ::<ctx> took …", …]
+#      → ["BuildIndex took …", "Scan :: … took …", "RemoveIndex took …"]
 #      → "Delete took …"
 #      → ["Batch… took …", …]
 #
@@ -620,7 +631,7 @@ if [[ "$MODE" == "profiling" ]]; then
 	done
 fi
 echo
-grep -E '(Benchmark (starting|complete)|(Create|Read|Update|Delete|Scan::|BuildIndex::|RemoveIndex::|Batch[A-Za-z]*::|Compaction) (starting|took))' \
+grep -E '(Benchmark (starting|complete)|(Create|Read|Update|Delete|Compaction|BuildIndex|RemoveIndex).*(starting|took)|(Scan ::).*(starting|took)|(Batch[A-Za-z]*::[^[:space:]]+) (starting|took)|ScanWithWrites::.*(starting|took))' \
 	"$CRUD_LOG" | sed 's/^/  /' || true
 echo
 if (( ${#FLAME_SVGS[@]} > 0 )); then
