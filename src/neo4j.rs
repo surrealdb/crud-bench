@@ -406,7 +406,15 @@ impl Neo4jClient {
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		// Neo4j requires a full-text index to exist
 		if ctx == ScanContext::WithoutIndex
-			&& let Some(index) = &scan.index
+			&& let Some(index) = &scan.with_index
+			&& let Some(kind) = &index.index_type
+			&& kind == "fulltext"
+		{
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+		// Ordered full-text scans are not supported
+		if scan.order_by.is_some()
+			&& let Some(index) = &scan.with_index
 			&& let Some(kind) = &index.index_type
 			&& kind == "fulltext"
 		{
@@ -416,11 +424,12 @@ impl Neo4jClient {
 		let s = scan.start.map(|s| format!("SKIP {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
 		let c = Neo4jDialect::filter_clause(scan)?;
+		let o = Neo4jDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
 		let n = &scan.name;
 		// Check if this is a fulltext scan
 		let fts = scan
-			.index
+			.with_index
 			.as_ref()
 			.and_then(|idx| idx.index_type.as_ref())
 			.map(|t| t == "fulltext")
@@ -430,9 +439,9 @@ impl Neo4jClient {
 			Projection::Id => {
 				let stm = match fts {
 					true => format!(
-						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r WITH r {s} {l} RETURN r.id"
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r WITH r {o} {s} {l} RETURN r.id"
 					),
-					false => format!("MATCH (r) {c} {s} {l} RETURN r.id"),
+					false => format!("MATCH (r) {c} WITH r {o} {s} {l} RETURN r.id"),
 				};
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let mut count = 0;
@@ -445,9 +454,9 @@ impl Neo4jClient {
 			Projection::Full => {
 				let stm = match fts {
 					true => format!(
-						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r WITH r {s} {l} RETURN r"
+						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r WITH r {o} {s} {l} RETURN r"
 					),
-					false => format!("MATCH (r) {c} {s} {l} RETURN r"),
+					false => format!("MATCH (r) {c} WITH r {o} {s} {l} RETURN r"),
 				};
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let mut count = 0;
@@ -462,7 +471,7 @@ impl Neo4jClient {
 					true => format!(
 						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r WITH r {s} {l} RETURN count(r) as count"
 					),
-					false => format!("MATCH (r) {c} {s} {l} RETURN count(r) as count"),
+					false => format!("MATCH (r) {c} WITH r {s} {l} RETURN count(r) as count"),
 				};
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let count = res.next().await.unwrap().unwrap().get("count").unwrap();

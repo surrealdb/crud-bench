@@ -372,11 +372,12 @@ impl ArangoDBClient {
 			(None, None) => "".to_string(),
 		};
 		let c = ArangoDBDialect::filter_clause(scan)?;
+		let o = ArangoDBDialect::sort_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stm = format!("FOR r IN record {c} {l} RETURN {{ _id: r._id }}");
+				let stm = format!("FOR r IN record {c} {o} {l} RETURN {{ _id: r._id }}");
 				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
@@ -390,7 +391,7 @@ impl ArangoDBClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("FOR r IN record {c} {l} RETURN r");
+				let stm = format!("FOR r IN record {c} {o} {l} RETURN r");
 				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as

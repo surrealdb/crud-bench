@@ -76,6 +76,7 @@ impl AnsiSqlDialect {
 		let values = values.join(", ");
 		(fields, values)
 	}
+
 	/// Constructs the field clauses for the [U]pdate tests
 	pub fn update_clause(cols: &Columns, val: Value) -> String {
 		let mut updates = Vec::with_capacity(cols.0.len());
@@ -88,6 +89,7 @@ impl AnsiSqlDialect {
 		}
 		updates.join(", ")
 	}
+
 	/// Constructs the WHERE clause for [S]elect tests
 	pub fn filter_clause(scan: &Scan) -> Result<String> {
 		if let Some(ref c) = scan.condition {
@@ -98,6 +100,17 @@ impl AnsiSqlDialect {
 			}
 		}
 		Ok(String::new())
+	}
+
+	/// Constructs the ORDER BY clause for [S]can tests
+	pub fn order_by_clause(scan: &Scan) -> Result<String> {
+		match &scan.order_by {
+			None => Ok(String::new()),
+			Some(o) => match &o.sql {
+				Some(s) if !s.is_empty() => Ok(format!("ORDER BY {s}")),
+				_ => bail!(NOT_SUPPORTED_ERROR),
+			},
+		}
 	}
 }
 
@@ -139,6 +152,7 @@ impl MySqlDialect {
 		let values = values.join(", ");
 		(fields, values)
 	}
+
 	/// Constructs the field clauses for the [U]pdate tests
 	pub fn update_clause(cols: &Columns, val: Value) -> String {
 		let mut updates = Vec::with_capacity(cols.0.len());
@@ -151,6 +165,7 @@ impl MySqlDialect {
 		}
 		updates.join(", ")
 	}
+
 	/// Constructs the WHERE clause for [S]elect tests
 	pub fn filter_clause(scan: &Scan) -> Result<String> {
 		if let Some(ref c) = scan.condition {
@@ -161,6 +176,17 @@ impl MySqlDialect {
 			}
 		}
 		Ok(String::new())
+	}
+
+	/// Constructs the ORDER BY clause for [S]can tests
+	pub fn order_by_clause(scan: &Scan) -> Result<String> {
+		match &scan.order_by {
+			None => Ok(String::new()),
+			Some(o) => match &o.mysql {
+				Some(s) if !s.is_empty() => Ok(format!("ORDER BY {s}")),
+				_ => bail!(NOT_SUPPORTED_ERROR),
+			},
+		}
 	}
 }
 
@@ -195,6 +221,7 @@ impl Neo4jDialect {
 		}
 		Ok(fields.join(", "))
 	}
+
 	/// Constructs the field clauses for the [U]pdate tests
 	pub fn update_clause(val: Value) -> Result<String> {
 		let val = Flattener::new()
@@ -217,11 +244,12 @@ impl Neo4jDialect {
 		}
 		Ok(fields.join(", "))
 	}
+
 	/// Constructs the WHERE clause for [S]elect tests
 	pub fn filter_clause(scan: &Scan) -> Result<String> {
 		if let Some(ref c) = scan.condition {
 			if let Some(ref c) = c.neo4j {
-				if let Some(index) = &scan.index
+				if let Some(index) = &scan.with_index
 					&& let Some(kind) = &index.index_type
 					&& kind == "fulltext"
 				{
@@ -234,6 +262,17 @@ impl Neo4jDialect {
 			}
 		}
 		Ok(String::new())
+	}
+
+	/// Constructs the ORDER BY clause for [S]can tests
+	pub fn order_by_clause(scan: &Scan) -> Result<String> {
+		match &scan.order_by {
+			None => Ok(String::new()),
+			Some(o) => match &o.neo4j {
+				Some(s) if !s.is_empty() => Ok(format!("ORDER BY {s}")),
+				_ => bail!(NOT_SUPPORTED_ERROR),
+			},
+		}
 	}
 }
 
@@ -257,6 +296,17 @@ impl SurrealDBDialect {
 		}
 		Ok(String::new())
 	}
+
+	/// Constructs the ORDER BY clause for [S]can tests
+	pub fn order_by_clause(scan: &Scan) -> Result<String> {
+		match &scan.order_by {
+			None => Ok(String::new()),
+			Some(o) => match &o.surrealdb {
+				Some(s) if !s.is_empty() => Ok(format!("ORDER BY {s}")),
+				_ => bail!(NOT_SUPPORTED_ERROR),
+			},
+		}
+	}
 }
 
 // --------------------------------------------------
@@ -278,6 +328,17 @@ impl ArangoDBDialect {
 			}
 		}
 		Ok(String::new())
+	}
+
+	/// Constructs the ORDER BY clause for [S]can tests
+	pub fn sort_clause(scan: &Scan) -> Result<String> {
+		match &scan.order_by {
+			None => Ok(String::new()),
+			Some(o) => match &o.arangodb {
+				Some(s) if !s.is_empty() => Ok(format!("SORT {s}")),
+				_ => bail!(NOT_SUPPORTED_ERROR),
+			},
+		}
 	}
 }
 
@@ -302,5 +363,16 @@ impl MongoDBDialect {
 			}
 		}
 		Ok(doc! {})
+	}
+
+	/// Constructs the ORDER BY clause for [S]can tests
+	pub fn sort_document(scan: &Scan) -> Result<Option<Document>> {
+		match &scan.order_by {
+			None => Ok(None),
+			Some(o) => match &o.mongodb {
+				Some(v) => Ok(Some(to_document(v)?)),
+				_ => bail!(NOT_SUPPORTED_ERROR),
+			},
+		}
 	}
 }

@@ -393,7 +393,7 @@ impl MysqlClient {
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		// MySQL requires a full-text index to run a MATCH query
 		if ctx == ScanContext::WithoutIndex
-			&& let Some(index) = &scan.index
+			&& let Some(index) = &scan.with_index
 			&& let Some(kind) = &index.index_type
 			&& kind == "fulltext"
 		{
@@ -403,11 +403,12 @@ impl MysqlClient {
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
 		let c = MySqlDialect::filter_clause(scan)?;
+		let o = MySqlDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stm = format!("SELECT id FROM record {c} {l} {s}");
+				let stm = format!("SELECT id FROM record {c} {o} {l} {s}");
 				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
@@ -421,7 +422,7 @@ impl MysqlClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("SELECT * FROM record {c} {l} {s}");
+				let stm = format!("SELECT * FROM record {c} {o} {l} {s}");
 				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as

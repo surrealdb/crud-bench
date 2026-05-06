@@ -361,7 +361,7 @@ impl SqliteClient {
 
 	async fn scan(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		// SQLite doesn't yet support full-text indexes
-		if let Some(index) = &scan.index
+		if let Some(index) = &scan.with_index
 			&& let Some(kind) = &index.index_type
 			&& kind == "fulltext"
 		{
@@ -371,11 +371,12 @@ impl SqliteClient {
 		let s = scan.start.map(|s| format!("OFFSET {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
 		let c = AnsiSqlDialect::filter_clause(scan)?;
+		let o = AnsiSqlDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stm = format!("SELECT id FROM record {c} {l} {s}");
+				let stm = format!("SELECT id FROM record {c} {o} {l} {s}");
 				let res = self.query(Cow::Owned(stm), None).await?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
@@ -389,7 +390,7 @@ impl SqliteClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("SELECT * FROM record {c} {l} {s}");
+				let stm = format!("SELECT * FROM record {c} {o} {l} {s}");
 				let res = self.query(Cow::Owned(stm), None).await?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as

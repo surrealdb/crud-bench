@@ -403,11 +403,12 @@ impl PostgresClient {
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
 		let c = AnsiSqlDialect::filter_clause(scan)?;
+		let o = AnsiSqlDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let stm = format!("SELECT id FROM record {c} {l} {s}");
+				let stm = format!("SELECT id FROM record {c} {o} {l} {s}");
 				let res = self.client.query(&stm, &[]).await?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
@@ -421,7 +422,7 @@ impl PostgresClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("SELECT * FROM record {c} {l} {s}");
+				let stm = format!("SELECT * FROM record {c} {o} {l} {s}");
 				let res = self.client.query(&stm, &[]).await?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as

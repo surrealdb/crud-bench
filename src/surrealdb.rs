@@ -641,7 +641,7 @@ impl SurrealDBClient {
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		// SurrealDB requires a full-text index to use the @@ operator
 		if ctx == ScanContext::WithoutIndex
-			&& let Some(index) = &scan.index
+			&& let Some(index) = &scan.with_index
 			&& let Some(kind) = &index.index_type
 			&& kind == "fulltext"
 		{
@@ -651,11 +651,12 @@ impl SurrealDBClient {
 		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
 		let c = SurrealDBDialect::filter_clause(scan)?;
+		let o = SurrealDBDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let sql = format!("SELECT id FROM record {c} {s} {l}");
+				let sql = format!("SELECT id FROM record {c} {o} {s} {l}");
 				let res: surrealdb::types::Value = self
 					.db
 					.query(&sql)
@@ -669,7 +670,7 @@ impl SurrealDBClient {
 				Ok(arr.len())
 			}
 			Projection::Full => {
-				let sql = format!("SELECT * FROM record {c} {s} {l}");
+				let sql = format!("SELECT * FROM record {c} {o} {s} {l}");
 				let res: surrealdb::types::Value = self
 					.db
 					.query(&sql)

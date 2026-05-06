@@ -6,7 +6,7 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use futures::StreamExt;
 use scylla::_macro_internal::SerializeValue;
 use scylla::client::{PoolSize, session::Session, session_builder::SessionBuilder};
@@ -197,6 +197,10 @@ impl ScylladbClient {
 	}
 
 	async fn scan(&self, scan: &Scan) -> Result<usize> {
+		// Ordered scans are not supported
+		if scan.order_by.is_some() {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
 		// Extract parameters
 		let s = scan.start.unwrap_or_default();
 		let l = scan.limit.map(|l| format!("LIMIT {}", l + s)).unwrap_or_default();

@@ -428,7 +428,7 @@ impl MongoDBClient {
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		// MongoDB requires a full-text index to use a $text query
 		if ctx == ScanContext::WithoutIndex
-			&& let Some(index) = &scan.index
+			&& let Some(index) = &scan.with_index
 			&& let Some(kind) = &index.index_type
 			&& kind == "fulltext"
 		{
@@ -438,6 +438,7 @@ impl MongoDBClient {
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(i64::MAX as usize);
 		let c = MongoDBDialect::filter_clause(scan)?;
+		let o = MongoDBDialect::sort_document(scan)?;
 		let p = scan.projection()?;
 		// Consume documents function
 		let consume = |mut cursor: Cursor<Document>| async move {
@@ -451,21 +452,52 @@ impl MongoDBClient {
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let cursor = self
-					.collection()
-					.find(c)
-					.skip(s as u64)
-					.limit(l as i64)
-					.projection(doc! { "_id": 1 })
-					.await?;
-				consume(cursor).await
+				consume(match o {
+					Some(o) => {
+						self.collection()
+							.find(c)
+							.sort(o)
+							.skip(s as u64)
+							.limit(l as i64)
+							.projection(doc! { "_id": 1 })
+							.await?
+					}
+					None => {
+						self.collection()
+							.find(c)
+							.skip(s as u64)
+							.limit(l as i64)
+							.projection(doc! { "_id": 1 })
+							.await?
+					}
+				})
+				.await
 			}
 			Projection::Full => {
-				let cursor = self.collection().find(c).skip(s as u64).limit(l as i64).await?;
-				consume(cursor).await
+				consume(match o {
+					Some(o) => {
+						self.collection()
+							.find(c)
+							.sort(o)
+							.skip(s as u64)
+							.limit(l as i64)
+							.projection(doc! { "_id": 1 })
+							.await?
+					}
+					None => {
+						self.collection()
+							.find(c)
+							.skip(s as u64)
+							.limit(l as i64)
+							.projection(doc! { "_id": 1 })
+							.await?
+					}
+				})
+				.await
 			}
 			Projection::Count => {
 				let pipeline = vec![
+					doc! { "$match": c },
 					doc! { "$skip": s as i64 },
 					doc! { "$limit": l as i64 },
 					doc! { "$count": "count" },
