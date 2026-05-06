@@ -130,6 +130,9 @@ pub(crate) struct MariadbClient {
 }
 
 impl BenchmarkClient for MariadbClient {
+	// The return type when reading a row
+	type ReadRow = serde_json::Value;
+
 	async fn startup(&self) -> Result<()> {
 		let id_type = match self.kt {
 			KeyType::Integer => "SERIAL",
@@ -174,11 +177,11 @@ impl BenchmarkClient for MariadbClient {
 		self.create(key, val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<Value> {
 		self.read(key as u64).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<Value> {
 		self.read(key).await
 	}
 
@@ -355,15 +358,14 @@ impl MariadbClient {
 		Ok(())
 	}
 
-	async fn read<T>(&self, key: T) -> Result<()>
+	async fn read<T>(&self, key: T) -> Result<Value>
 	where
 		T: ToValue + Sync,
 	{
 		let stm = "SELECT * FROM record WHERE id=?";
 		let res: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
 		assert_eq!(res.len(), 1);
-		black_box(self.consume(res.into_iter().next().unwrap())?);
-		Ok(())
+		Ok(black_box(self.consume(res.into_iter().next().unwrap())?))
 	}
 
 	async fn update<T>(&self, key: T, val: Value) -> Result<()>

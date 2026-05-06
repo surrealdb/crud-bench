@@ -24,6 +24,15 @@ use std::time::Duration;
 
 pub const DEFAULT: &str = "mongodb://root:root@127.0.0.1:27017";
 
+/// Native MongoDB row for single-row reads; converts to [`serde_json::Value`] only via [`From`]/[`Into`].
+pub(crate) struct Row(pub Document);
+
+impl From<Row> for Value {
+	fn from(row: Row) -> Self {
+		serde_json::to_value(&row.0).expect("MongoDB Document serializes to JSON")
+	}
+}
+
 /// Calculate MongoDB specific memory allocation
 fn calculate_mongodb_memory() -> u64 {
 	// Load the system memory
@@ -122,6 +131,9 @@ pub(crate) struct MongoDBClient {
 }
 
 impl BenchmarkClient for MongoDBClient {
+	// The return type when reading a row
+	type ReadRow = Row;
+
 	async fn compact(&self) -> Result<()> {
 		// For a database compaction
 		self.db
@@ -143,16 +155,16 @@ impl BenchmarkClient for MongoDBClient {
 		self.create(key, val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
-		let doc = self.read(key).await?;
-		assert_eq!(doc.unwrap().get("_id").unwrap().as_i64().unwrap() as u32, key);
-		Ok(())
+	async fn read_u32(&self, key: u32) -> Result<Row> {
+		let doc = self.read(key).await?.unwrap();
+		assert_eq!(doc.get("_id").unwrap().as_i64().unwrap() as u32, key);
+		Ok(black_box(Row(doc)))
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
-		let doc = self.read(&key).await?;
-		assert_eq!(doc.unwrap().get_str("_id")?, key);
-		Ok(())
+	async fn read_string(&self, key: String) -> Result<Row> {
+		let doc = self.read(&key).await?.unwrap();
+		assert_eq!(doc.get_str("_id")?, key);
+		Ok(black_box(Row(doc)))
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {

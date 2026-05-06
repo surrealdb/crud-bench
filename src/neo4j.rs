@@ -86,6 +86,9 @@ pub(crate) struct Neo4jClient {
 }
 
 impl BenchmarkClient for Neo4jClient {
+	// The return type when reading a row
+	type ReadRow = serde_json::Value;
+
 	async fn startup(&self) -> Result<()> {
 		let stm = "CREATE INDEX FOR (r:Record) ON (r.id);";
 		self.graph.execute(query(stm)).await?.next().await.ok();
@@ -100,11 +103,11 @@ impl BenchmarkClient for Neo4jClient {
 		self.create(key, val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<Value> {
 		self.read(key).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<Value> {
 		self.read(key).await
 	}
 
@@ -362,16 +365,17 @@ impl Neo4jClient {
 		Ok(())
 	}
 
-	async fn read<T>(&self, key: T) -> Result<()>
+	async fn read<T>(&self, key: T) -> Result<Value>
 	where
 		T: Into<BoltType> + Sync,
 	{
 		let stm = "MATCH (r:Record { id: $id }) RETURN r";
 		let stm = query(stm).param("id", key);
 		let mut res = self.graph.execute(stm).await.unwrap();
-		assert!(matches!(black_box(res.next().await), Ok(Some(_))));
+		let row = black_box(res.next().await).unwrap().unwrap();
+		let val: Value = row.get("r").unwrap();
 		assert!(matches!(res.next().await, Ok(None)));
-		Ok(())
+		Ok(black_box(val))
 	}
 
 	async fn update<T>(&self, key: T, val: Value) -> Result<()>

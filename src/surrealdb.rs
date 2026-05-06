@@ -11,6 +11,7 @@ use anyhow::{Result, bail};
 use log::{error, warn};
 use serde_json::Value as Json;
 use std::env;
+use std::hint::black_box;
 use std::time::Duration;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
@@ -21,6 +22,16 @@ use tokio::time::{sleep, timeout};
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
 const TABLE: &str = "record";
+
+/// Wraps a SurrealDB [`types::Value`](surrealdb::types::Value);
+/// [`serde_json::Value`] is produced only via [`From`]/[`Into`].
+pub(crate) struct Row(pub Value);
+
+impl From<Row> for Json {
+	fn from(row: Row) -> Json {
+		row.0.into_json_value()
+	}
+}
 
 /// Wrap a SurrealDB result error so the failing SurrealQL surfaces in two
 /// places: a `log::error!` line emitted immediately (visible in the bench's
@@ -297,6 +308,9 @@ struct Bindings<T: SurrealValue> {
 }
 
 impl BenchmarkClient for SurrealDBClient {
+	// The return type when reading a row
+	type ReadRow = Row;
+
 	async fn startup(&self) -> Result<()> {
 		// Ensure the table exists. This wouldn't
 		// normally be an issue, as SurrealDB is
@@ -340,11 +354,11 @@ impl BenchmarkClient for SurrealDBClient {
 		self.create(key, val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<Row> {
 		self.read(key as i64).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<Row> {
 		self.read(key).await
 	}
 
@@ -578,13 +592,13 @@ impl SurrealDBClient {
 		Ok(())
 	}
 
-	async fn read<T>(&self, key: T) -> Result<()>
+	async fn read<T>(&self, key: T) -> Result<Row>
 	where
 		T: Into<RecordIdKey>,
 	{
-		let res = self.db.select(Resource::from(("record", key))).await?;
-		assert!(!res.is_none());
-		Ok(())
+		let v: Value = self.db.select(Resource::from(("record", key))).await?;
+		assert!(!v.is_none());
+		Ok(black_box(Row(v)))
 	}
 
 	async fn update<T>(&self, key: T, val: Json) -> Result<()>

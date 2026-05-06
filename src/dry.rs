@@ -2,7 +2,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Scan};
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -26,6 +26,9 @@ impl BenchmarkEngine<DryClient> for DryClientProvider {
 pub(crate) struct DryClient {}
 
 impl BenchmarkClient for DryClient {
+	// The return type when reading a row
+	type ReadRow = serde_json::Value;
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		black_box((key, val));
 		Ok(())
@@ -36,14 +39,12 @@ impl BenchmarkClient for DryClient {
 		Ok(())
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
-		black_box(key);
-		Ok(())
+	async fn read_u32(&self, key: u32) -> Result<Value> {
+		Ok(black_box(json!({ "id": key })))
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
-		black_box(key);
-		Ok(())
+	async fn read_string(&self, key: String) -> Result<Value> {
+		Ok(black_box(json!({ "id": key })))
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {

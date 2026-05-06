@@ -1,11 +1,12 @@
 #![cfg(feature = "scylladb")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::AnsiSqlDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use futures::StreamExt;
 use scylla::_macro_internal::SerializeValue;
 use scylla::client::{PoolSize, session::Session, session_builder::SessionBuilder};
@@ -61,6 +62,9 @@ pub(crate) struct ScylladbClient {
 }
 
 impl BenchmarkClient for ScylladbClient {
+	// The return type when reading a row
+	type ReadRow = serde_json::Value;
+
 	async fn startup(&self) -> Result<()> {
 		self.session
 			.query_unpaged(
@@ -104,6 +108,7 @@ impl BenchmarkClient for ScylladbClient {
 			.await?;
 		Ok(())
 	}
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		self.create(key as i32, val).await
 	}
@@ -112,11 +117,11 @@ impl BenchmarkClient for ScylladbClient {
 		self.create(key, val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<Value> {
 		self.read(key as i32).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<Value> {
 		self.read(key).await
 	}
 
@@ -158,14 +163,17 @@ impl ScylladbClient {
 		Ok(())
 	}
 
-	async fn read<T>(&self, key: T) -> Result<()>
+	async fn read<T>(&self, key: T) -> Result<Value>
 	where
 		T: SerializeValue,
 	{
-		let stm = "SELECT * FROM bench.record WHERE id=?";
+		let stm = "SELECT JSON * FROM bench.record WHERE id=?";
 		let res = self.session.query_unpaged(stm, (&key,)).await?;
-		assert_eq!(res.into_rows_result()?.rows_num(), 1);
-		Ok(())
+		let rows = res.into_rows_result()?;
+		assert_eq!(rows.rows_num(), 1);
+		let (val,): (String,) = rows.single_row().map_err(|e| anyhow!("{e}"))?;
+		let val: Value = serde_json::from_str(&val)?;
+		Ok(black_box(val))
 	}
 
 	async fn update<T>(&self, key: T, val: Value) -> Result<()>

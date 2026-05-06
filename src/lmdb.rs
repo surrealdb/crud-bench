@@ -82,6 +82,9 @@ pub(crate) struct LmDBClient {
 }
 
 impl BenchmarkClient for LmDBClient {
+	// The return type when reading a row
+	type ReadRow = serde_json::Value;
+
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
@@ -97,11 +100,11 @@ impl BenchmarkClient for LmDBClient {
 		self.create_bytes(&key.into_bytes(), val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<Value> {
 		self.read_bytes(&key.to_ne_bytes()).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<Value> {
 		self.read_bytes(&key.into_bytes()).await
 	}
 
@@ -206,7 +209,7 @@ impl LmDBClient {
 		Ok(())
 	}
 
-	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
+	async fn read_bytes(&self, key: &[u8]) -> Result<Value> {
 		// Create a new transaction
 		let txn = self.db.0.read_txn()?;
 		// Process the data
@@ -214,9 +217,12 @@ impl LmDBClient {
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value
-		black_box(res.unwrap());
+		let (val, _) = bincode::serde::decode_from_slice::<Value, _>(
+			res.unwrap(),
+			bincode::config::standard(),
+		)?;
 		// All ok
-		Ok(())
+		Ok(black_box(val))
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
@@ -265,7 +271,12 @@ impl LmDBClient {
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
-			black_box(res.unwrap());
+			let (val, _) = bincode::serde::decode_from_slice::<Value, _>(
+				res.unwrap(),
+				bincode::config::standard(),
+			)?;
+			// Use the value
+			black_box(val);
 		}
 		// All ok
 		Ok(())

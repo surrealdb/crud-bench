@@ -36,6 +36,12 @@ where
 /// A trait for a database benchmark implementation for
 /// running benchmark tests for a client or connection.
 pub(crate) trait BenchmarkClient: Sync + Send + 'static {
+	/// Row payload returned by single-row reads.
+	/// Most backends use [`serde_json::Value`] but
+	/// stores may use a native type which converts
+	/// [`Into`] a [`serde_json::Value`] when required.
+	type ReadRow: Send + Into<Value>;
+
 	/// Initialise the store at startup
 	async fn startup(&self) -> Result<()> {
 		Ok(())
@@ -69,7 +75,11 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	}
 
 	/// Read a single entry with the current client
-	fn read(&self, n: u32, kp: &mut KeyProvider) -> impl Future<Output = Result<()>> + Send {
+	fn read(
+		&self,
+		n: u32,
+		kp: &mut KeyProvider,
+	) -> impl Future<Output = Result<Self::ReadRow>> + Send {
 		async move {
 			match kp {
 				KeyProvider::OrderedInteger(p) => self.read_u32(p.key(n)).await,
@@ -143,10 +153,10 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	fn create_string(&self, key: String, val: Value) -> impl Future<Output = Result<()>> + Send;
 
 	/// Read a single entry with a numeric id
-	fn read_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
+	fn read_u32(&self, key: u32) -> impl Future<Output = Result<Self::ReadRow>> + Send;
 
 	/// Read a single entry with a string id
-	fn read_string(&self, key: String) -> impl Future<Output = Result<()>> + Send;
+	fn read_string(&self, key: String) -> impl Future<Output = Result<Self::ReadRow>> + Send;
 
 	/// Update a single entry with a numeric id
 	fn update_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;

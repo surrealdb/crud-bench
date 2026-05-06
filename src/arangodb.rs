@@ -9,6 +9,7 @@ use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use arangors::aql::AqlQuery;
 use arangors::client::reqwest::ReqwestClient;
+use arangors::document::Document;
 use arangors::document::options::InsertOptions;
 use arangors::document::options::RemoveOptions;
 use arangors::{Collection, Connection, Database, GenericConnection};
@@ -90,6 +91,9 @@ async fn create_arango_client(
 }
 
 impl BenchmarkClient for ArangoDBClient {
+	// The return type when reading a row
+	type ReadRow = serde_json::Value;
+
 	async fn startup(&self) -> Result<()> {
 		// Ensure we drop the database first.
 		// We can drop the database initially
@@ -115,14 +119,14 @@ impl BenchmarkClient for ArangoDBClient {
 		}
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<Value> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
 			_ => self.read(key.to_string()).await,
 		}
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<Value> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
 			_ => self.read(key).await,
@@ -333,11 +337,11 @@ impl ArangoDBClient {
 		Ok(())
 	}
 
-	async fn read(&self, key: String) -> Result<()> {
-		let doc = { self.collection.lock().await.document::<Value>(&key).await? };
-		assert!(doc.is_object());
-		assert_eq!(doc.get("_key").unwrap().as_str().unwrap(), key);
-		Ok(())
+	async fn read(&self, key: String) -> Result<Value> {
+		let doc: Document<Value> = { self.collection.lock().await.document(&key).await? };
+		assert!(doc.document.is_object());
+		assert_eq!(doc.document.get("_key").unwrap().as_str().unwrap(), key);
+		Ok(black_box(doc.document.clone()))
 	}
 
 	async fn update(&self, key: String, val: Value) -> Result<()> {

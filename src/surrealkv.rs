@@ -82,6 +82,9 @@ pub(crate) struct SurrealKVClient {
 }
 
 impl BenchmarkClient for SurrealKVClient {
+	// The return type when reading a row
+	type ReadRow = serde_json::Value;
+
 	async fn shutdown(&self) -> Result<()> {
 		// Close the database
 		self.db.close().await?;
@@ -99,11 +102,11 @@ impl BenchmarkClient for SurrealKVClient {
 		self.create_bytes(&key.into_bytes(), val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<Value> {
 		self.read_bytes(&key.to_ne_bytes()).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<Value> {
 		self.read_bytes(&key.into_bytes()).await
 	}
 
@@ -214,7 +217,7 @@ impl SurrealKVClient {
 		Ok(())
 	}
 
-	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
+	async fn read_bytes(&self, key: &[u8]) -> Result<Value> {
 		// Create a new transaction
 		let txn = self.db.begin_with_mode(ReadOnly)?;
 		// Process the data
@@ -222,9 +225,12 @@ impl SurrealKVClient {
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value
-		black_box(res.unwrap());
+		let (val, _) = bincode::serde::decode_from_slice::<Value, _>(
+			res.unwrap().as_ref(),
+			bincode::config::standard(),
+		)?;
 		// All ok
-		Ok(())
+		Ok(black_box(val))
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
@@ -291,7 +297,12 @@ impl SurrealKVClient {
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
-			black_box(res.unwrap());
+			let (val, _) = bincode::serde::decode_from_slice::<Value, _>(
+				res.unwrap().as_ref(),
+				bincode::config::standard(),
+			)?;
+			// Use the value
+			black_box(val);
 		}
 		// All ok
 		Ok(())

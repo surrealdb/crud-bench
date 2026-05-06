@@ -83,6 +83,9 @@ pub(crate) struct SqliteClient {
 }
 
 impl BenchmarkClient for SqliteClient {
+	// The return type when reading a row
+	type ReadRow = Json;
+
 	async fn shutdown(&self) -> Result<()> {
 		// Remove the database directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
@@ -155,11 +158,11 @@ impl BenchmarkClient for SqliteClient {
 		self.create(key.into(), val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<Json> {
 		self.read(key.into()).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<Json> {
 		self.read(key.into()).await
 	}
 
@@ -307,36 +310,6 @@ impl SqliteClient {
 			.map_err(Into::into)
 	}
 
-	async fn create(&self, key: ToSqlOutput<'static>, val: Json) -> Result<()> {
-		let (fields, values) = AnsiSqlDialect::create_clause(&self.columns, val);
-		let stmt = format!("INSERT INTO record (id, {fields}) VALUES ($1, {values})");
-		let res = self.execute(Cow::Owned(stmt), key).await?;
-		assert_eq!(res, 1);
-		Ok(())
-	}
-
-	async fn read(&self, key: ToSqlOutput<'static>) -> Result<()> {
-		let stm = "SELECT * FROM record WHERE id=$1";
-		let res = self.query(Cow::Borrowed(stm), Some(key)).await?;
-		assert_eq!(res.len(), 1);
-		Ok(())
-	}
-
-	async fn update(&self, key: ToSqlOutput<'static>, val: Json) -> Result<()> {
-		let fields = AnsiSqlDialect::update_clause(&self.columns, val);
-		let stmt = format!("UPDATE record SET {fields} WHERE id=$1");
-		let res = self.execute(Cow::Owned(stmt), key).await?;
-		assert_eq!(res, 1);
-		Ok(())
-	}
-
-	async fn delete(&self, key: ToSqlOutput<'static>) -> Result<()> {
-		let stmt = "DELETE FROM record WHERE id=$1";
-		let res = self.execute(Cow::Borrowed(stmt), key).await?;
-		assert_eq!(res, 1);
-		Ok(())
-	}
-
 	fn consume(&self, row: Row) -> Json {
 		let mut val = Map::new();
 		for (key, value) in row {
@@ -352,6 +325,37 @@ impl SqliteClient {
 			);
 		}
 		val.into()
+	}
+
+	async fn create(&self, key: ToSqlOutput<'static>, val: Json) -> Result<()> {
+		let (fields, values) = AnsiSqlDialect::create_clause(&self.columns, val);
+		let stmt = format!("INSERT INTO record (id, {fields}) VALUES ($1, {values})");
+		let res = self.execute(Cow::Owned(stmt), key).await?;
+		assert_eq!(res, 1);
+		Ok(())
+	}
+
+	async fn read(&self, key: ToSqlOutput<'static>) -> Result<Json> {
+		let stm = "SELECT * FROM record WHERE id=$1";
+		let mut res = self.query(Cow::Borrowed(stm), Some(key)).await?;
+		assert_eq!(res.len(), 1);
+		let row = res.pop().expect("one row");
+		Ok(black_box(self.consume(row)))
+	}
+
+	async fn update(&self, key: ToSqlOutput<'static>, val: Json) -> Result<()> {
+		let fields = AnsiSqlDialect::update_clause(&self.columns, val);
+		let stmt = format!("UPDATE record SET {fields} WHERE id=$1");
+		let res = self.execute(Cow::Owned(stmt), key).await?;
+		assert_eq!(res, 1);
+		Ok(())
+	}
+
+	async fn delete(&self, key: ToSqlOutput<'static>) -> Result<()> {
+		let stmt = "DELETE FROM record WHERE id=$1";
+		let res = self.execute(Cow::Borrowed(stmt), key).await?;
+		assert_eq!(res, 1);
+		Ok(())
 	}
 
 	async fn scan(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {

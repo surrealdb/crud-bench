@@ -48,6 +48,9 @@ impl BenchmarkEngine<MapClient> for MapClientProvider {
 pub(crate) struct MapClient(MapDatabase);
 
 impl BenchmarkClient for MapClient {
+	// The return type when reading a row
+	type ReadRow = serde_json::Value;
+
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
 			assert!(m.insert(key, val).is_none());
@@ -66,22 +69,22 @@ impl BenchmarkClient for MapClient {
 		Ok(())
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<Value> {
 		if let MapDatabase::Integer(m) = &self.0 {
-			assert!(m.get(&key).is_some());
+			let v = m.get(&key).ok_or_else(|| anyhow::anyhow!("missing key {key}"))?;
+			Ok(black_box(v.value().clone()))
 		} else {
 			bail!("Invalid MapDatabase variant");
 		}
-		Ok(())
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<Value> {
 		if let MapDatabase::String(m) = &self.0 {
-			assert!(m.get(&key).is_some());
+			let v = m.get(&key).ok_or_else(|| anyhow::anyhow!("missing key {key}"))?;
+			Ok(black_box(v.value().clone()))
 		} else {
 			bail!("Invalid MapDatabase variant");
 		}
-		Ok(())
 	}
 
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
