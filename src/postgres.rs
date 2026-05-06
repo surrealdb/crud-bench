@@ -154,6 +154,7 @@ impl BenchmarkClient for PostgresClient {
 					ColumnType::String => format!("{n} TEXT NOT NULL"),
 					ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
 					ColumnType::Object => format!("{n} JSONB NOT NULL"),
+					ColumnType::Array => format!("{n} JSONB NOT NULL"),
 					ColumnType::Float => format!("{n} REAL NOT NULL"),
 					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
 					ColumnType::Uuid => format!("{n} UUID NOT NULL"),
@@ -341,6 +342,10 @@ impl PostgresClient {
 							Value::from(v.to_string())
 						}
 						ColumnType::Object => {
+							let v: Json<Value> = row.try_get(n.as_str())?;
+							v.0
+						}
+						ColumnType::Array => {
 							let v: Json<Value> = row.try_get(n.as_str())?;
 							v.0
 						}
@@ -635,6 +640,7 @@ fn get_column_type(column_type: &ColumnType) -> &'static str {
 		ColumnType::Bool => "BOOLEAN",
 		ColumnType::String => "TEXT",
 		ColumnType::Object => "JSONB",
+		ColumnType::Array => "JSONB",
 		ColumnType::DateTime => "TIMESTAMP",
 		ColumnType::Uuid => "UUID",
 	}
@@ -675,7 +681,6 @@ fn convert_json_to_sql_param(
 				Err(anyhow::anyhow!("Expected string for column {column_name}"))
 			}
 		}
-		ColumnType::Object => Ok(Box::new(Json(json_value.clone()))),
 		ColumnType::DateTime => {
 			if let Some(str_val) = json_value.as_str() {
 				Ok(Box::new(str_val.to_string()))
@@ -694,5 +699,7 @@ fn convert_json_to_sql_param(
 				Err(anyhow::anyhow!("Expected UUID string for column {column_name}"))
 			}
 		}
+		ColumnType::Object => Ok(Box::new(Json(json_value.clone()))),
+		ColumnType::Array => Ok(Box::new(Json(json_value.clone()))),
 	}
 }

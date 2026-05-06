@@ -93,6 +93,7 @@ impl BenchmarkClient for ScylladbClient {
 				ColumnType::String => format!("{n} TEXT"),
 				ColumnType::Integer => format!("{n} INT"),
 				ColumnType::Object => format!("{n} TEXT"),
+				ColumnType::Array => format!("{n} TEXT"),
 				ColumnType::Float => format!("{n} FLOAT"),
 				ColumnType::DateTime => format!("{n} TIMESTAMP"),
 				ColumnType::Uuid => format!("{n} UUID"),

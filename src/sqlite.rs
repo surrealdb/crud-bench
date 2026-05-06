@@ -132,6 +132,7 @@ impl BenchmarkClient for SqliteClient {
 					ColumnType::String => format!("{n} TEXT NOT NULL"),
 					ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
 					ColumnType::Object => format!("{n} JSON NOT NULL"),
+					ColumnType::Array => format!("{n} JSON NOT NULL"),
 					ColumnType::Float => format!("{n} REAL NOT NULL"),
 					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
 					ColumnType::Uuid => format!("{n} UUID NOT NULL"),
@@ -672,6 +673,10 @@ fn convert_json_to_sqlite_param(
 			}
 		}
 		ColumnType::Object => {
+			// SQLite stores JSON as text
+			Ok(Box::new(json_value.to_string()))
+		}
+		ColumnType::Array => {
 			// SQLite stores JSON as text
 			Ok(Box::new(json_value.to_string()))
 		}

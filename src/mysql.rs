@@ -155,6 +155,7 @@ impl BenchmarkClient for MysqlClient {
 					ColumnType::String => format!("{n} TEXT NOT NULL"),
 					ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
 					ColumnType::Object => format!("{n} JSON NOT NULL"),
+					ColumnType::Array => format!("{n} JSON NOT NULL"),
 					ColumnType::Float => format!("{n} REAL NOT NULL"),
 					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
 					ColumnType::Uuid => format!("{n} UUID NOT NULL"),

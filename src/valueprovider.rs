@@ -365,7 +365,7 @@ impl Columns {
 	}
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColumnType {
 	String,
 	Integer,
@@ -373,6 +373,7 @@ pub(crate) enum ColumnType {
 	DateTime,
 	Uuid,
 	Object,
+	Array,
 	Bool,
 }
 
@@ -380,6 +381,7 @@ impl ColumnType {
 	fn new(v: &ValueGenerator) -> Result<Self> {
 		let r = match v {
 			ValueGenerator::Object(_) => ColumnType::Object,
+			ValueGenerator::Array(_) => ColumnType::Array,
 			ValueGenerator::StringEnum(_)
 			| ValueGenerator::String(_)
 			| ValueGenerator::Text(_)
@@ -393,9 +395,6 @@ impl ColumnType {
 			ValueGenerator::DateTime => ColumnType::DateTime,
 			ValueGenerator::Bool => ColumnType::Bool,
 			ValueGenerator::Uuid => ColumnType::Uuid,
-			t => {
-				bail!("Invalid data type: {t:?}");
-			}
 		};
 		Ok(r)
 	}
