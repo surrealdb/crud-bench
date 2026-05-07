@@ -368,7 +368,7 @@ projection = "FULL"
 sql = "tags CONTAINS 'omicron'"
 mysql = "tags CONTAINS 'omicron'"
 neo4j = "r.tags CONTAINS 'omicron'"
-arangodb = "r.tags CONTAINS 'omicron'"
+arangodb = "'omicron' IN r.tags"
 surrealdb = "tags CONTAINS 'omicron'"
 mongodb = { tags = "omicron" }
 
