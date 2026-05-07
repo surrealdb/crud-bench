@@ -322,7 +322,7 @@ impl MongoDBClient {
 		let bson = Self::to_doc(key, val)?;
 		let doc = bson.as_document().unwrap();
 		let res = self.collection().replace_one(filter, doc).await?;
-		assert_eq!(res.modified_count, 1);
+		assert_eq!(res.matched_count, 1);
 		Ok(())
 	}
 
@@ -409,7 +409,7 @@ impl MongoDBClient {
 					.build(),
 			)
 			.await?;
-		assert_eq!(res.modified_count, docs_len as i64);
+		assert_eq!(res.matched_count, docs_len as i64);
 		Ok(())
 	}
 
