@@ -61,9 +61,7 @@ impl TryFrom<&Number> for JsonNum {
 		if let Some(u) = n.as_u64() {
 			return Ok(JsonNum::U(u));
 		}
-		let f = n
-			.as_f64()
-			.context("JSON number is not representable as i64, u64, or f64")?;
+		let f = n.as_f64().context("JSON number is not representable as i64, u64, or f64")?;
 		Ok(JsonNum::F(f))
 	}
 }
@@ -83,12 +81,9 @@ impl From<BincodeVal> for Value {
 			}
 			BincodeVal::String(s) => Value::String(s),
 			BincodeVal::Array(a) => Value::Array(a.into_iter().map(Value::from).collect()),
-			BincodeVal::Object(pairs) => Value::Object(
-				pairs
-					.into_iter()
-					.map(|(k, v)| (k, Value::from(v)))
-					.collect(),
-			),
+			BincodeVal::Object(pairs) => {
+				Value::Object(pairs.into_iter().map(|(k, v)| (k, Value::from(v))).collect())
+			}
 		}
 	}
 }

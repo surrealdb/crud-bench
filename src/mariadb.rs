@@ -352,13 +352,12 @@ impl MariadbClient {
 					| consts::ColumnType::MYSQL_TYPE_DATETIME => {
 						let v: Option<NaiveDateTime> = row.take(i);
 						match v {
-							Some(dt) => {
-								Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string())
-							}
+							Some(dt) => Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string()),
 							None => Value::Null,
 						}
 					}
-					consts::ColumnType::MYSQL_TYPE_DATE | consts::ColumnType::MYSQL_TYPE_NEWDATE => {
+					consts::ColumnType::MYSQL_TYPE_DATE
+					| consts::ColumnType::MYSQL_TYPE_NEWDATE => {
 						let v: Option<NaiveDate> = row.take(i);
 						match v {
 							Some(d) => Value::String(d.to_string()),

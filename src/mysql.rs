@@ -354,13 +354,12 @@ impl MysqlClient {
 					| consts::ColumnType::MYSQL_TYPE_DATETIME => {
 						let v: Option<NaiveDateTime> = row.take(i);
 						match v {
-							Some(dt) => {
-								Value::String(Utc.from_utc_datetime(&dt).to_rfc3339())
-							}
+							Some(dt) => Value::String(Utc.from_utc_datetime(&dt).to_rfc3339()),
 							None => Value::Null,
 						}
 					}
-					consts::ColumnType::MYSQL_TYPE_DATE | consts::ColumnType::MYSQL_TYPE_NEWDATE => {
+					consts::ColumnType::MYSQL_TYPE_DATE
+					| consts::ColumnType::MYSQL_TYPE_NEWDATE => {
 						let v: Option<NaiveDate> = row.take(i);
 						match v {
 							Some(d) => Value::String(d.to_string()),

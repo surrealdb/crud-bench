@@ -3,8 +3,8 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
-use crate::util::redis_batch;
 use crate::util::data;
+use crate::util::redis_batch;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
