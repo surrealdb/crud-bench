@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+pub(crate) mod data;
+
 #[cfg(any(feature = "redis", feature = "keydb", feature = "dragonfly"))]
 pub(crate) mod redis_batch;
 

@@ -2,6 +2,7 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::util::data;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -137,7 +138,7 @@ impl BenchmarkClient for LmDBClient {
 		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = data::encode_value(&val)?;
 			Ok((key.to_ne_bytes().to_vec(), val))
 		});
 		self.batch_create_bytes(pairs_iter).await
@@ -148,7 +149,7 @@ impl BenchmarkClient for LmDBClient {
 		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = data::encode_value(&val)?;
 			Ok((key.into_bytes(), val))
 		});
 		self.batch_create_bytes(pairs_iter).await
@@ -169,7 +170,7 @@ impl BenchmarkClient for LmDBClient {
 		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = data::encode_value(&val)?;
 			Ok((key.to_ne_bytes().to_vec(), val))
 		});
 		self.batch_update_bytes(pairs_iter).await
@@ -180,7 +181,7 @@ impl BenchmarkClient for LmDBClient {
 		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = data::encode_value(&val)?;
 			Ok((key.into_bytes(), val))
 		});
 		self.batch_update_bytes(pairs_iter).await
@@ -200,7 +201,7 @@ impl BenchmarkClient for LmDBClient {
 impl LmDBClient {
 	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let val = data::encode_value(&val)?;
 		// Create a new transaction
 		let mut txn = self.db.0.write_txn()?;
 		// Process the data
@@ -217,17 +218,14 @@ impl LmDBClient {
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value
-		let (val, _) = bincode::serde::decode_from_slice::<Value, _>(
-			res.unwrap(),
-			bincode::config::standard(),
-		)?;
+		let val = data::decode_value(res.unwrap())?;
 		// All ok
 		Ok(black_box(val))
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let val = data::encode_value(&val)?;
 		// Create a new transaction
 		let mut txn = self.db.0.write_txn()?;
 		// Process the data
@@ -271,10 +269,7 @@ impl LmDBClient {
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
-			let (val, _) = bincode::serde::decode_from_slice::<Value, _>(
-				res.unwrap(),
-				bincode::config::standard(),
-			)?;
+			let val = data::decode_value(res.unwrap())?;
 			// Use the value
 			black_box(val);
 		}

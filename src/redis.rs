@@ -4,6 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::util::redis_batch;
+use crate::util::data;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -64,14 +65,14 @@ impl BenchmarkClient for RedisClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let val = data::encode_value(&val)?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let val = data::encode_value(&val)?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
@@ -79,7 +80,7 @@ impl BenchmarkClient for RedisClient {
 	async fn read_u32(&self, key: u32) -> Result<Value> {
 		let val: Vec<u8> = self.conn_record.lock().await.get(key).await?;
 		assert!(!val.is_empty());
-		let (val, _) = bincode::serde::decode_from_slice(&val, bincode::config::standard())?;
+		let val = data::decode_value(&val)?;
 		Ok(black_box(val))
 	}
 
@@ -87,20 +88,20 @@ impl BenchmarkClient for RedisClient {
 	async fn read_string(&self, key: String) -> Result<Value> {
 		let val: Vec<u8> = self.conn_record.lock().await.get(key).await?;
 		assert!(!val.is_empty());
-		let (val, _) = bincode::serde::decode_from_slice(&val, bincode::config::standard())?;
+		let val = data::decode_value(&val)?;
 		Ok(black_box(val))
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let val = data::encode_value(&val)?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let val = data::encode_value(&val)?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}

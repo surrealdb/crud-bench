@@ -3,6 +3,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
+use crate::util::data;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -123,7 +124,7 @@ impl BenchmarkClient for ReDBClient {
 	) -> Result<()> {
 		let pairs: Result<Vec<_>> = key_vals
 			.map(|(key, val)| {
-				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				let val = data::encode_value(&val)?;
 				Ok((key.to_ne_bytes().to_vec(), val))
 			})
 			.collect();
@@ -136,7 +137,7 @@ impl BenchmarkClient for ReDBClient {
 	) -> Result<()> {
 		let pairs: Result<Vec<_>> = key_vals
 			.map(|(key, val)| {
-				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				let val = data::encode_value(&val)?;
 				Ok((key.into_bytes(), val))
 			})
 			.collect();
@@ -159,7 +160,7 @@ impl BenchmarkClient for ReDBClient {
 	) -> Result<()> {
 		let pairs: Result<Vec<_>> = key_vals
 			.map(|(key, val)| {
-				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				let val = data::encode_value(&val)?;
 				Ok((key.to_ne_bytes().to_vec(), val))
 			})
 			.collect();
@@ -172,7 +173,7 @@ impl BenchmarkClient for ReDBClient {
 	) -> Result<()> {
 		let pairs: Result<Vec<_>> = key_vals
 			.map(|(key, val)| {
-				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				let val = data::encode_value(&val)?;
 				Ok((key.into_bytes(), val))
 			})
 			.collect();
@@ -198,7 +199,7 @@ impl ReDBClient {
 		// Execute on the blocking threadpool
 		affinitypool::spawn_local(move || -> Result<_> {
 			// Serialise the value
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = data::encode_value(&val)?;
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Set the transaction durability
@@ -233,10 +234,7 @@ impl ReDBClient {
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
-			let (val, _) = bincode::serde::decode_from_slice::<Value, _>(
-				res.unwrap().value().as_ref(),
-				bincode::config::standard(),
-			)?;
+			let val = data::decode_value(res.unwrap().value().as_ref())?;
 			// All ok
 			Ok(black_box(val))
 		})
@@ -250,7 +248,7 @@ impl ReDBClient {
 		// Execute on the blocking threadpool
 		affinitypool::spawn_local(move || -> Result<_> {
 			// Serialise the value
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = data::encode_value(&val)?;
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Set the transaction durability
@@ -345,10 +343,7 @@ impl ReDBClient {
 				// Check the value exists
 				assert!(res.is_some());
 				// Deserialise the value
-				let (val, _) = bincode::serde::decode_from_slice::<Value, _>(
-					res.unwrap().value().as_ref(),
-					bincode::config::standard(),
-				)?;
+				let val = data::decode_value(res.unwrap().value().as_ref())?;
 				// Use the value
 				black_box(val);
 			}

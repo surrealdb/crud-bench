@@ -1,3 +1,4 @@
+use crate::util::data;
 use anyhow::{Result, anyhow};
 use redis::aio::MultiplexedConnection;
 use serde_json::Value;
@@ -14,7 +15,7 @@ pub(crate) async fn batch_create_u32(
 	let mut c = conn.lock().await;
 	let mut pipe = redis::pipe();
 	for (k, v) in key_vals {
-		let val = bincode::serde::encode_to_vec(&v, bincode::config::standard())?;
+		let val = data::encode_value(&v)?;
 		pipe.cmd("SET").arg(k).arg(val).ignore();
 	}
 	pipe.exec_async(&mut *c).await?;
@@ -31,7 +32,7 @@ pub(crate) async fn batch_create_string(
 	let mut c = conn.lock().await;
 	let mut pipe = redis::pipe();
 	for (k, v) in key_vals {
-		let val = bincode::serde::encode_to_vec(&v, bincode::config::standard())?;
+		let val = data::encode_value(&v)?;
 		pipe.cmd("SET").arg(k).arg(val).ignore();
 	}
 	pipe.exec_async(&mut *c).await?;
