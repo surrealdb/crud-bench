@@ -1,13 +1,14 @@
 #![cfg(feature = "mariadb")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
-use crate::dialect::{Dialect, MySqlDialect};
+use crate::dialect::{Dialect, MariaDBDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use mysql_async::consts;
 use mysql_async::prelude::Queryable;
 use mysql_async::prelude::ToValue;
@@ -149,7 +150,7 @@ impl BenchmarkClient for MariadbClient {
 			.0
 			.iter()
 			.map(|(n, t)| {
-				let n = MySqlDialect::escape_field(n.clone());
+				let n = MariaDBDialect::escape_field(n.clone());
 				match t {
 					ColumnType::String => format!("{n} TEXT NOT NULL"),
 					ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
@@ -157,7 +158,7 @@ impl BenchmarkClient for MariadbClient {
 					ColumnType::Array => format!("{n} JSON NOT NULL"),
 					ColumnType::Float => format!("{n} REAL NOT NULL"),
 					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
-					ColumnType::Uuid => format!("{n} UUID NOT NULL"),
+					ColumnType::Uuid => format!("{n} CHAR(36) NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 				}
 			})
@@ -210,17 +211,24 @@ impl BenchmarkClient for MariadbClient {
 			""
 		}
 		.to_string();
-		// Get the fields
-		let fields = spec.fields.join(", ");
 		// Check if an index type is specified
 		let stmt = match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
+				let fields = spec
+					.fields
+					.iter()
+					.cloned()
+					.map(MariaDBDialect::escape_field)
+					.collect::<Vec<_>>()
+					.join(", ");
 				format!("CREATE FULLTEXT INDEX {name} ON record ({fields})")
 			}
 			Some(kind) => {
+				let fields = MariaDBDialect::btree_index_key_list(&self.columns, spec);
 				format!("CREATE INDEX {name} USING {kind} ON record ({fields})")
 			}
 			None => {
+				let fields = MariaDBDialect::btree_index_key_list(&self.columns, spec);
 				format!("CREATE {unique} INDEX {name} ON record ({fields})")
 			}
 		};
@@ -340,6 +348,30 @@ impl MariadbClient {
 						let v: Option<serde_json::Value> = row.take(i);
 						Value::from(v)
 					}
+					consts::ColumnType::MYSQL_TYPE_TIMESTAMP
+					| consts::ColumnType::MYSQL_TYPE_DATETIME => {
+						let v: Option<NaiveDateTime> = row.take(i);
+						match v {
+							Some(dt) => {
+								Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string())
+							}
+							None => Value::Null,
+						}
+					}
+					consts::ColumnType::MYSQL_TYPE_DATE | consts::ColumnType::MYSQL_TYPE_NEWDATE => {
+						let v: Option<NaiveDate> = row.take(i);
+						match v {
+							Some(d) => Value::String(d.to_string()),
+							None => Value::Null,
+						}
+					}
+					consts::ColumnType::MYSQL_TYPE_TIME => {
+						let v: Option<NaiveTime> = row.take(i);
+						match v {
+							Some(t) => Value::String(t.to_string()),
+							None => Value::Null,
+						}
+					}
 					c => {
 						todo!("Not yet implemented {c:?}")
 					}
@@ -353,7 +385,7 @@ impl MariadbClient {
 	where
 		T: ToValue + Sync,
 	{
-		let (fields, values) = MySqlDialect::create_clause(&self.columns, val);
+		let (fields, values) = MariaDBDialect::create_clause(&self.columns, val);
 		let stm = format!("INSERT INTO record (id, {fields}) VALUES (?, {values})");
 		let _: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
 		Ok(())
@@ -373,7 +405,7 @@ impl MariadbClient {
 	where
 		T: ToValue + Sync,
 	{
-		let fields = MySqlDialect::update_clause(&self.columns, val);
+		let fields = MariaDBDialect::update_clause(&self.columns, val);
 		let stm = format!("UPDATE record SET {fields} WHERE id=?");
 		let _: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
 		Ok(())
@@ -400,8 +432,8 @@ impl MariadbClient {
 		// Extract parameters
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
-		let c = MySqlDialect::filter_clause(scan)?;
-		let o = MySqlDialect::order_by_clause(scan)?;
+		let c = MariaDBDialect::filter_clause(scan)?;
+		let o = MariaDBDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
@@ -453,7 +485,7 @@ impl MariadbClient {
 			.columns
 			.0
 			.iter()
-			.map(|(name, _)| MySqlDialect::escape_field(name.clone()))
+			.map(|(name, _)| MariaDBDialect::escape_field(name.clone()))
 			.collect::<Vec<String>>()
 			.join(", ");
 		let placeholders = (0..key_vals.len())
@@ -527,7 +559,7 @@ impl MariadbClient {
 			.columns
 			.0
 			.iter()
-			.map(|(name, _)| MySqlDialect::escape_field(name.clone()))
+			.map(|(name, _)| MariaDBDialect::escape_field(name.clone()))
 			.collect::<Vec<String>>();
 		let case_statements = columns
 			.iter()

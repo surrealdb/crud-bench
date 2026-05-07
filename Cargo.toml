@@ -99,6 +99,7 @@ mongodb = { version = "3.5.2", optional = true }
 mysql_async = { version = "0.36.2", default-features = false, features = [
     "bigdecimal",
     "binlog",
+    "chrono",
     "derive",
     "frunk",
     "rust_decimal",

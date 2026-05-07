@@ -1,6 +1,6 @@
 use crate::Scan;
 use crate::benchmark::NOT_SUPPORTED_ERROR;
-use crate::valueprovider::Columns;
+use crate::valueprovider::{ColumnType, Columns};
 use anyhow::{Result, bail};
 use chrono::{DateTime, TimeZone, Utc};
 use flatten_json_object::ArrayFormatting;
@@ -54,9 +54,13 @@ impl Dialect for AnsiSqlDialect {
 			Value::Null => "null".to_string(),
 			Value::Bool(b) => b.to_string(),
 			Value::Number(n) => n.to_string(),
-			Value::String(s) => format!("'{s}'"),
-			Value::Array(a) => serde_json::to_string(&a).unwrap(),
-			Value::Object(o) => format!("'{}'", serde_json::to_string(&o).unwrap()),
+			Value::String(s) => format!("'{}'", s.replace('\'', "''")),
+			Value::Array(a) => {
+				format!("'{}'", serde_json::to_string(&a).unwrap().replace('\'', "''"))
+			}
+			Value::Object(o) => {
+				format!("'{}'", serde_json::to_string(&o).unwrap().replace('\'', "''"))
+			}
 		}
 	}
 }
@@ -130,9 +134,13 @@ impl Dialect for MySqlDialect {
 			Value::Null => "null".to_string(),
 			Value::Bool(b) => b.to_string(),
 			Value::Number(n) => n.to_string(),
-			Value::String(s) => format!("'{s}'"),
-			Value::Array(a) => serde_json::to_string(&a).unwrap(),
-			Value::Object(o) => format!("'{}'", serde_json::to_string(&o).unwrap()),
+			Value::String(s) => format!("'{}'", s.replace('\'', "''")),
+			Value::Array(a) => {
+				format!("'{}'", serde_json::to_string(&a).unwrap().replace('\'', "''"))
+			}
+			Value::Object(o) => {
+				format!("'{}'", serde_json::to_string(&o).unwrap().replace('\'', "''"))
+			}
 		}
 	}
 }
@@ -187,6 +195,149 @@ impl MySqlDialect {
 				_ => bail!(NOT_SUPPORTED_ERROR),
 			},
 		}
+	}
+
+	/// InnoDB btree indexes require a prefix length on [`ColumnType::String`] (`TEXT`) columns.
+	///
+	/// Bench specs may use Surreal-style `tags.*` on JSON array columns; map those to a MySQL 8
+	/// [multi-valued index](https://dev.mysql.com/doc/refman/8.0/en/create-index.html#create-index-multi-valued)
+	/// expression instead of a bogus column name.
+	pub(crate) fn btree_index_key_list(columns: &Columns, spec: &crate::Index) -> String {
+		spec.fields
+			.iter()
+			.map(|field| {
+				if let Some(base) = field.strip_suffix(".*")
+					&& let Some((_, col_type)) = columns.0.iter().find(|(n, _)| n == base)
+					&& matches!(col_type, ColumnType::Array | ColumnType::Object)
+				{
+					let esc = Self::escape_field(base.to_string());
+					return format!("((CAST({esc} AS CHAR(191) ARRAY)))");
+				}
+
+				let escaped = Self::escape_field(field.clone());
+				let needs_prefix = columns
+					.0
+					.iter()
+					.find(|(n, _)| n == field)
+					.is_some_and(|(_, t)| matches!(t, ColumnType::String));
+				if needs_prefix {
+					format!("{escaped}(191)")
+				} else {
+					escaped
+				}
+			})
+			.collect::<Vec<_>>()
+			.join(", ")
+	}
+}
+
+// --------------------------------------------------
+// MariaDB
+// --------------------------------------------------
+
+pub(crate) struct MariaDBDialect();
+
+impl Dialect for MariaDBDialect {
+	fn date_time(secs_from_epoch: i64) -> Value {
+		let datetime: DateTime<Utc> = Utc.timestamp_opt(secs_from_epoch, 0).unwrap();
+		Value::String(datetime.format("%Y-%m-%d %H:%M:%S").to_string())
+	}
+
+	fn escape_field(field: String) -> String {
+		format!("`{field}`")
+	}
+
+	fn arg_string(val: Value) -> String {
+		match val {
+			Value::Null => "null".to_string(),
+			Value::Bool(b) => b.to_string(),
+			Value::Number(n) => n.to_string(),
+			Value::String(s) => format!("'{}'", s.replace('\'', "''")),
+			Value::Array(a) => {
+				format!("'{}'", serde_json::to_string(&a).unwrap().replace('\'', "''"))
+			}
+			Value::Object(o) => {
+				format!("'{}'", serde_json::to_string(&o).unwrap().replace('\'', "''"))
+			}
+		}
+	}
+}
+
+impl MariaDBDialect {
+	pub fn create_clause(cols: &Columns, val: Value) -> (String, String) {
+		let mut fields = Vec::with_capacity(cols.0.len());
+		let mut values = Vec::with_capacity(cols.0.len());
+		if let Value::Object(map) = val {
+			for (f, v) in map {
+				fields.push(Self::escape_field(f));
+				values.push(Self::arg_string(v));
+			}
+		}
+		let fields = fields.join(", ");
+		let values = values.join(", ");
+		(fields, values)
+	}
+
+	pub fn update_clause(cols: &Columns, val: Value) -> String {
+		let mut updates = Vec::with_capacity(cols.0.len());
+		if let Value::Object(map) = val {
+			for (f, v) in map {
+				let f = Self::escape_field(f);
+				let v = Self::arg_string(v);
+				updates.push(format!("{f} = {v}"));
+			}
+		}
+		updates.join(", ")
+	}
+
+	pub fn filter_clause(scan: &Scan) -> Result<String> {
+		if let Some(ref c) = scan.condition {
+			if let Some(ref c) = c.mysql {
+				return Ok(format!("WHERE {c}"));
+			} else {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+		}
+		Ok(String::new())
+	}
+
+	pub fn order_by_clause(scan: &Scan) -> Result<String> {
+		match &scan.order_by {
+			None => Ok(String::new()),
+			Some(o) => match &o.mysql {
+				Some(s) if !s.is_empty() => Ok(format!("ORDER BY {s}")),
+				_ => bail!(NOT_SUPPORTED_ERROR),
+			},
+		}
+	}
+
+	/// B-tree index key list; unlike MySQL 8 `CAST(… AS … ARRAY)` multi-valued indexes, MariaDB uses a functional `CAST` to `CHAR` for `tags.*` JSON wildcard specs.
+	pub(crate) fn btree_index_key_list(columns: &Columns, spec: &crate::Index) -> String {
+		spec.fields
+			.iter()
+			.map(|field| {
+				if let Some(base) = field.strip_suffix(".*")
+					&& let Some((_, col_type)) = columns.0.iter().find(|(n, _)| n == base)
+					&& matches!(col_type, ColumnType::Array | ColumnType::Object)
+				{
+					let esc = Self::escape_field(base.to_string());
+					return format!("((CAST({esc} AS CHAR(191))))");
+				}
+
+				let escaped = Self::escape_field(field.clone());
+				let needs_prefix = columns
+					.0
+					.iter()
+					.find(|(n, _)| n == field)
+					.is_some_and(|(_, t)| matches!(t, ColumnType::String));
+				if needs_prefix {
+					format!("{escaped}(191)")
+				} else {
+					escaped
+				}
+			})
+			.collect::<Vec<_>>()
+			.join(", ")
 	}
 }
 

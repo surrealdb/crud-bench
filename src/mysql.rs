@@ -8,6 +8,7 @@ use crate::memory::Config;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use mysql_async::consts;
 use mysql_async::prelude::Queryable;
 use mysql_async::prelude::ToValue;
@@ -158,7 +159,7 @@ impl BenchmarkClient for MysqlClient {
 					ColumnType::Array => format!("{n} JSON NOT NULL"),
 					ColumnType::Float => format!("{n} REAL NOT NULL"),
 					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
-					ColumnType::Uuid => format!("{n} UUID NOT NULL"),
+					ColumnType::Uuid => format!("{n} CHAR(36) NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 				}
 			})
@@ -211,17 +212,24 @@ impl BenchmarkClient for MysqlClient {
 			""
 		}
 		.to_string();
-		// Get the fields
-		let fields = spec.fields.join(", ");
 		// Check if an index type is specified
 		let stmt = match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
+				let fields = spec
+					.fields
+					.iter()
+					.cloned()
+					.map(MySqlDialect::escape_field)
+					.collect::<Vec<_>>()
+					.join(", ");
 				format!("CREATE FULLTEXT INDEX {name} ON record ({fields})")
 			}
 			Some(kind) => {
+				let fields = MySqlDialect::btree_index_key_list(&self.columns, spec);
 				format!("CREATE INDEX {name} USING {kind} ON record ({fields})")
 			}
 			None => {
+				let fields = MySqlDialect::btree_index_key_list(&self.columns, spec);
 				format!("CREATE {unique} INDEX {name} ON record ({fields})")
 			}
 		};
@@ -341,6 +349,30 @@ impl MysqlClient {
 					consts::ColumnType::MYSQL_TYPE_JSON => {
 						let v: Option<serde_json::Value> = row.take(i);
 						Value::from(v)
+					}
+					consts::ColumnType::MYSQL_TYPE_TIMESTAMP
+					| consts::ColumnType::MYSQL_TYPE_DATETIME => {
+						let v: Option<NaiveDateTime> = row.take(i);
+						match v {
+							Some(dt) => {
+								Value::String(Utc.from_utc_datetime(&dt).to_rfc3339())
+							}
+							None => Value::Null,
+						}
+					}
+					consts::ColumnType::MYSQL_TYPE_DATE | consts::ColumnType::MYSQL_TYPE_NEWDATE => {
+						let v: Option<NaiveDate> = row.take(i);
+						match v {
+							Some(d) => Value::String(d.to_string()),
+							None => Value::Null,
+						}
+					}
+					consts::ColumnType::MYSQL_TYPE_TIME => {
+						let v: Option<NaiveTime> = row.take(i);
+						match v {
+							Some(t) => Value::String(t.to_string()),
+							None => Value::Null,
+						}
 					}
 					c => {
 						todo!("Not yet implemented {c:?}")

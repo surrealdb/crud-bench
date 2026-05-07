@@ -366,7 +366,7 @@ projection = "FULL"
 
 [scans.condition]
 sql = "tags CONTAINS 'omicron'"
-mysql = "tags CONTAINS 'omicron'"
+mysql = "JSON_CONTAINS(tags, JSON_QUOTE('omicron'), '$')"
 neo4j = "r.tags CONTAINS 'omicron'"
 arangodb = "'omicron' IN r.tags"
 surrealdb = "tags CONTAINS 'omicron'"
