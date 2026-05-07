@@ -7,7 +7,7 @@
 # `name`, `projection`, `samples`, paging (`limit`, `start`, `expect`). Use `[[scans.runs]]`
 # when the same parameters define multiple named runs (each run has `name` and optional
 # `projection`). Conditional scans add `[scans.condition]` with per-dialect filter strings
-# (`sql`, `mysql`, `neo4j`, `arangodb`, `surrealdb`) plus inline `mongodb = { ... }` for the
+# (`sql`, `postgres`, `sqlite`, `mysql`, `neo4j`, `arangodb`, `surrealdb`) plus inline `mongodb = { ... }` for the
 # MongoDB query document. Ordered scans add `[scans.order_by]` (same dialect layout, with
 # inline `mongodb` for sort fields). Indexed scans add `[scans.with_index]` (`fields` array,
 # optional `index_type` such as `fulltext`). Mixed read/write workloads add one or more
@@ -366,6 +366,8 @@ projection = "FULL"
 
 [scans.condition]
 sql = "tags CONTAINS 'omicron'"
+postgres = "tags @> '[\"omicron\"]'::jsonb"
+sqlite = "EXISTS (SELECT 1 FROM json_each(tags) AS j WHERE j.value = 'omicron')"
 mysql = "JSON_CONTAINS(tags, JSON_QUOTE('omicron'), '$')"
 neo4j = "r.tags CONTAINS 'omicron'"
 arangodb = "'omicron' IN r.tags"

@@ -4,15 +4,18 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::AnsiSqlDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::util::sql::json_datetime_to_millis;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, anyhow, bail};
 use futures::StreamExt;
 use scylla::_macro_internal::SerializeValue;
 use scylla::client::{PoolSize, session::Session, session_builder::SessionBuilder};
+use scylla::value::{CqlTimestamp, CqlValue};
 use serde_json::Value;
 use std::hint::black_box;
 use std::num::NonZeroUsize;
+use uuid::Uuid;
 
 pub const DEFAULT: &str = "127.0.0.1:9042";
 
@@ -111,11 +114,11 @@ impl BenchmarkClient for ScylladbClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		self.create(key as i32, val).await
+		self.create_row(CqlValue::Int(key as i32), val).await
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		self.create(key, val).await
+		self.create_row(CqlValue::Text(key), val).await
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<Value> {
@@ -136,11 +139,11 @@ impl BenchmarkClient for ScylladbClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		self.update(key as i32, val).await
+		self.update_row(CqlValue::Int(key as i32), val).await
 	}
 
 	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		self.update(key, val).await
+		self.update_row(CqlValue::Text(key), val).await
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
@@ -153,14 +156,75 @@ impl BenchmarkClient for ScylladbClient {
 	}
 }
 
+fn json_to_cql_value(column_type: &ColumnType, v: &Value) -> Result<CqlValue> {
+	match column_type {
+		ColumnType::Integer => {
+			let i = v.as_i64().ok_or_else(|| anyhow!("expected integer"))?;
+			Ok(CqlValue::Int(
+				i32::try_from(i).map_err(|_| anyhow!("integer out of range for CQL INT"))?,
+			))
+		}
+		ColumnType::Float => {
+			let f = v.as_f64().ok_or_else(|| anyhow!("expected float"))?;
+			Ok(CqlValue::Float(f as f32))
+		}
+		ColumnType::Bool => {
+			let b = v.as_bool().ok_or_else(|| anyhow!("expected boolean"))?;
+			Ok(CqlValue::Boolean(b))
+		}
+		ColumnType::String => {
+			let s = v.as_str().ok_or_else(|| anyhow!("expected string"))?;
+			Ok(CqlValue::Text(s.to_owned()))
+		}
+		ColumnType::Object | ColumnType::Array => Ok(CqlValue::Text(serde_json::to_string(v)?)),
+		ColumnType::DateTime => {
+			let s = v.as_str().ok_or_else(|| anyhow!("expected datetime string"))?;
+			let ms = json_datetime_to_millis(s)?;
+			Ok(CqlValue::Timestamp(CqlTimestamp(ms)))
+		}
+		ColumnType::Uuid => {
+			let s = v.as_str().ok_or_else(|| anyhow!("expected UUID string"))?;
+			Ok(CqlValue::Uuid(Uuid::parse_str(s)?))
+		}
+	}
+}
+
 impl ScylladbClient {
-	async fn create<T>(&self, key: T, val: Value) -> Result<()>
-	where
-		T: SerializeValue,
-	{
-		let (fields, values) = AnsiSqlDialect::create_clause(&self.columns, val);
-		let stm = format!("INSERT INTO bench.record (id, {fields}) VALUES (?, {values})");
-		self.session.query_unpaged(stm, (&key,)).await?;
+	async fn create_row(&self, key: CqlValue, val: Value) -> Result<()> {
+		let Value::Object(obj) = val else {
+			bail!("expected JSON object for row payload");
+		};
+		let field_names: Vec<String> = std::iter::once("id".to_string())
+			.chain(self.columns.0.iter().map(|(n, _)| n.clone()))
+			.collect();
+		let placeholders = (0..field_names.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
+		let stm = format!(
+			"INSERT INTO bench.record ({}) VALUES ({})",
+			field_names.join(", "),
+			placeholders
+		);
+		let mut row: Vec<CqlValue> = vec![key];
+		for (c, ct) in &self.columns.0 {
+			let v = obj.get(c).ok_or_else(|| anyhow!("Missing value for column {c}"))?;
+			row.push(json_to_cql_value(ct, v)?);
+		}
+		self.session.query_unpaged(stm, row).await?;
+		Ok(())
+	}
+
+	async fn update_row(&self, key: CqlValue, val: Value) -> Result<()> {
+		let Value::Object(obj) = val else {
+			bail!("expected JSON object for row payload");
+		};
+		let sets: Vec<String> = self.columns.0.iter().map(|(n, _)| format!("{n} = ?")).collect();
+		let stm = format!("UPDATE bench.record SET {} WHERE id = ?", sets.join(", "));
+		let mut row: Vec<CqlValue> = Vec::new();
+		for (c, ct) in &self.columns.0 {
+			let v = obj.get(c).ok_or_else(|| anyhow!("Missing value for column {c}"))?;
+			row.push(json_to_cql_value(ct, v)?);
+		}
+		row.push(key);
+		self.session.query_unpaged(stm, row).await?;
 		Ok(())
 	}
 
@@ -175,16 +239,6 @@ impl ScylladbClient {
 		let (val,): (String,) = rows.single_row().map_err(|e| anyhow!("{e}"))?;
 		let val: Value = serde_json::from_str(&val)?;
 		Ok(black_box(val))
-	}
-
-	async fn update<T>(&self, key: T, val: Value) -> Result<()>
-	where
-		T: SerializeValue,
-	{
-		let fields = AnsiSqlDialect::update_clause(&self.columns, val);
-		let stm = format!("UPDATE bench.record SET {fields} WHERE id=?");
-		self.session.query_unpaged(stm, (&key,)).await?;
-		Ok(())
 	}
 
 	async fn delete<T>(&self, key: T) -> Result<()>

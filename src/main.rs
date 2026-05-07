@@ -464,8 +464,12 @@ pub(crate) enum Projection {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 /// Per-dialect `WHERE` fragments for a filtered scan.
 pub(crate) struct Condition {
-	/// Generic SQL / Postgres-style predicate text.
+	/// Generic SQL predicate text (ANSI-ish; used where no dialect override exists).
 	sql: Option<String>,
+	/// PostgreSQL predicate (`WHERE` fragment only).
+	postgres: Option<String>,
+	/// SQLite dialect predicate.
+	sqlite: Option<String>,
 	/// MySQL dialect predicate.
 	mysql: Option<String>,
 	/// Cypher predicate fragment for Neo4j.

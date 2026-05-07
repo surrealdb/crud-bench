@@ -96,11 +96,11 @@ impl BenchmarkClient for Neo4jClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		self.create(key, val).await
+		self.create(json!(key), val).await
 	}
 
 	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		self.create(key, val).await
+		self.create(Value::String(key), val).await
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<Value> {
@@ -128,6 +128,14 @@ impl BenchmarkClient for Neo4jClient {
 	}
 
 	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Reject wildcard array specs (`tags.*`). Cypher has no btree equivalent
+		// for array-element indexing, and records are flattened so there is no
+		// single property to index. Other dialects work around this with JSON
+		// or multi-valued indexes; Neo4j has no such facility, so bail and let
+		// the bench framework skip this scan.
+		if spec.fields.iter().any(|f| f.contains(".*")) {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
 		// Get the fields
 		let fields = spec.fields.iter().map(|f| format!("r.{f}")).collect::<Vec<_>>().join(", ");
 		// Check if an index type is specified
@@ -167,176 +175,69 @@ impl BenchmarkClient for Neo4jClient {
 		&self,
 		key_vals: impl Iterator<Item = (u32, Value)> + Send,
 	) -> Result<()> {
-		let rows: Vec<Value> = key_vals
-			.map(|(k, v)| Self::flattened_row_with_id(json!(k), v))
-			.collect::<Result<Vec<_>>>()?;
-		if rows.is_empty() {
-			return Ok(());
-		}
-		let bolt =
-			BoltType::try_from(Value::Array(rows)).map_err(|e| anyhow!("neo4j BoltType: {e}"))?;
-		let mut res = self
-			.graph
-			.execute(
-				query("UNWIND $rows AS row CREATE (r:Record) SET r += row").param("rows", bolt),
-			)
-			.await?;
-		while res.next().await?.is_some() {}
-		Ok(())
+		self.batch_create(key_vals).await
 	}
 
 	async fn batch_create_string(
 		&self,
 		key_vals: impl Iterator<Item = (String, Value)> + Send,
 	) -> Result<()> {
-		let rows: Vec<Value> = key_vals
-			.map(|(k, v)| Self::flattened_row_with_id(Value::String(k), v))
-			.collect::<Result<Vec<_>>>()?;
-		if rows.is_empty() {
-			return Ok(());
-		}
-		let bolt =
-			BoltType::try_from(Value::Array(rows)).map_err(|e| anyhow!("neo4j BoltType: {e}"))?;
-		let mut res = self
-			.graph
-			.execute(
-				query("UNWIND $rows AS row CREATE (r:Record) SET r += row").param("rows", bolt),
-			)
-			.await?;
-		while res.next().await?.is_some() {}
-		Ok(())
+		self.batch_create(key_vals).await
 	}
 
 	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
-		let ids: Vec<Value> = keys.map(|k| json!(k)).collect();
-		if ids.is_empty() {
-			return Ok(());
-		}
-		let bolt =
-			BoltType::try_from(Value::Array(ids)).map_err(|e| anyhow!("neo4j BoltType: {e}"))?;
-		let mut res = self
-			.graph
-			.execute(
-				query("UNWIND $ids AS id MATCH (r:Record { id: id }) RETURN r").param("ids", bolt),
-			)
-			.await?;
-		let mut n = 0;
-		while res.next().await?.is_some() {
-			n += 1;
-		}
-		assert!(n > 0);
-		Ok(())
+		self.batch_read(keys).await
 	}
 
 	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
-		let ids: Vec<Value> = keys.map(Value::String).collect();
-		if ids.is_empty() {
-			return Ok(());
-		}
-		let bolt =
-			BoltType::try_from(Value::Array(ids)).map_err(|e| anyhow!("neo4j BoltType: {e}"))?;
-		let mut res = self
-			.graph
-			.execute(
-				query("UNWIND $ids AS id MATCH (r:Record { id: id }) RETURN r").param("ids", bolt),
-			)
-			.await?;
-		let mut n = 0;
-		while res.next().await?.is_some() {
-			n += 1;
-		}
-		assert!(n > 0);
-		Ok(())
+		self.batch_read(keys).await
 	}
 
 	async fn batch_update_u32(
 		&self,
 		key_vals: impl Iterator<Item = (u32, Value)> + Send,
 	) -> Result<()> {
-		let rows: Vec<Value> = key_vals
-			.map(|(k, v)| Self::flattened_row_with_id(json!(k), v))
-			.collect::<Result<Vec<_>>>()?;
-		if rows.is_empty() {
-			return Ok(());
-		}
-		let bolt =
-			BoltType::try_from(Value::Array(rows)).map_err(|e| anyhow!("neo4j BoltType: {e}"))?;
-		let mut res = self
-			.graph
-			.execute(
-				query(
-					"UNWIND $rows AS row MATCH (r:Record { id: row.id }) SET r += row RETURN r.id",
-				)
-				.param("rows", bolt),
-			)
-			.await?;
-		while res.next().await?.is_some() {}
-		Ok(())
+		self.batch_update(key_vals).await
 	}
 
 	async fn batch_update_string(
 		&self,
 		key_vals: impl Iterator<Item = (String, Value)> + Send,
 	) -> Result<()> {
-		let rows: Vec<Value> = key_vals
-			.map(|(k, v)| Self::flattened_row_with_id(Value::String(k), v))
-			.collect::<Result<Vec<_>>>()?;
-		if rows.is_empty() {
-			return Ok(());
-		}
-		let bolt =
-			BoltType::try_from(Value::Array(rows)).map_err(|e| anyhow!("neo4j BoltType: {e}"))?;
-		let mut res = self
-			.graph
-			.execute(
-				query(
-					"UNWIND $rows AS row MATCH (r:Record { id: row.id }) SET r += row RETURN r.id",
-				)
-				.param("rows", bolt),
-			)
-			.await?;
-		while res.next().await?.is_some() {}
-		Ok(())
+		self.batch_update(key_vals).await
 	}
 
 	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
-		let ids: Vec<Value> = keys.map(|k| json!(k)).collect();
-		if ids.is_empty() {
-			return Ok(());
-		}
-		let bolt =
-			BoltType::try_from(Value::Array(ids)).map_err(|e| anyhow!("neo4j BoltType: {e}"))?;
-		let mut res = self
-			.graph
-			.execute(
-				query("UNWIND $ids AS id MATCH (r:Record { id: id }) DETACH DELETE r")
-					.param("ids", bolt),
-			)
-			.await?;
-		while res.next().await?.is_some() {}
-		Ok(())
+		self.batch_delete(keys).await
 	}
 
 	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
-		let ids: Vec<Value> = keys.map(Value::String).collect();
-		if ids.is_empty() {
-			return Ok(());
-		}
-		let bolt =
-			BoltType::try_from(Value::Array(ids)).map_err(|e| anyhow!("neo4j BoltType: {e}"))?;
-		let mut res = self
-			.graph
-			.execute(
-				query("UNWIND $ids AS id MATCH (r:Record { id: id }) DETACH DELETE r")
-					.param("ids", bolt),
-			)
-			.await?;
-		while res.next().await?.is_some() {}
-		Ok(())
+		self.batch_delete(keys).await
+	}
+}
+
+/// Maps integer and string primary keys to the JSON `id` property stored on `:Record` nodes.
+trait IntoNeo4jId {
+	fn into_neo4j_id(self) -> Value;
+}
+
+impl IntoNeo4jId for u32 {
+	fn into_neo4j_id(self) -> Value {
+		json!(self)
+	}
+}
+
+impl IntoNeo4jId for String {
+	fn into_neo4j_id(self) -> Value {
+		Value::String(self)
 	}
 }
 
 impl Neo4jClient {
+	fn json_vec_to_bolt_array(items: Vec<Value>) -> Result<BoltType> {
+		BoltType::try_from(Value::Array(items)).map_err(|e| anyhow!("neo4j BoltType: {e}"))
+	}
+
 	fn flattened_row_with_id(id: Value, val: Value) -> Result<Value> {
 		let val = Flattener::new()
 			.set_key_separator("_")
@@ -352,14 +253,16 @@ impl Neo4jClient {
 		Ok(Value::Object(m))
 	}
 
-	async fn create<T>(&self, key: T, val: Value) -> Result<()>
-	where
-		T: Into<BoltType> + Sync,
-	{
-		let fields = Neo4jDialect::create_clause(val)?;
-		let stm = format!("CREATE (r:Record {{ id: $id, {fields} }}) RETURN r.id");
-		let stm = query(&stm).param("id", key);
-		let mut res = self.graph.execute(stm).await.unwrap();
+	async fn create(&self, id: Value, val: Value) -> Result<()> {
+		// Flatten the record and inject the primary id property
+		let props = Self::flattened_row_with_id(id, val)?;
+		let bolt = BoltType::try_from(props).map_err(|e| anyhow!("neo4j BoltType: {e}"))?;
+		// Cypher must RETURN a row so the result stream is non-empty;
+		// without RETURN the stream yields zero records even on success
+		let mut res = self
+			.graph
+			.execute(query("CREATE (r:Record) SET r = $props RETURN r.id").param("props", bolt))
+			.await?;
 		assert!(matches!(res.next().await, Ok(Some(_))));
 		assert!(matches!(res.next().await, Ok(None)));
 		Ok(())
@@ -378,14 +281,32 @@ impl Neo4jClient {
 		Ok(black_box(val))
 	}
 
-	async fn update<T>(&self, key: T, val: Value) -> Result<()>
+	async fn update<T>(&self, id: T, val: Value) -> Result<()>
 	where
 		T: Into<BoltType> + Sync,
 	{
-		let fields = Neo4jDialect::update_clause(val)?;
-		let stm = format!("MATCH (r:Record {{ id: $id }}) SET {fields} RETURN r.id");
-		let stm = query(&stm).param("id", key);
-		let mut res = self.graph.execute(stm).await.unwrap();
+		let id: BoltType = id.into();
+		let flat = Flattener::new()
+			.set_key_separator("_")
+			.set_array_formatting(ArrayFormatting::Surrounded {
+				start: "_".to_string(),
+				end: "".to_string(),
+			})
+			.set_preserve_empty_arrays(false)
+			.set_preserve_empty_objects(false)
+			.flatten(&val)?;
+		let update_obj =
+			flat.as_object().cloned().ok_or_else(|| anyhow!("expected JSON object"))?;
+		let props_bt = BoltType::try_from(Value::Object(update_obj))
+			.map_err(|e| anyhow!("neo4j BoltType props: {e}"))?;
+		let mut res = self
+			.graph
+			.execute(
+				query("MATCH (r:Record { id: $id }) SET r += $props RETURN r.id")
+					.param("id", id)
+					.param("props", props_bt),
+			)
+			.await?;
 		assert!(matches!(res.next().await, Ok(Some(_))));
 		assert!(matches!(res.next().await, Ok(None)));
 		Ok(())
@@ -478,5 +399,89 @@ impl Neo4jClient {
 				Ok(count)
 			}
 		}
+	}
+
+	async fn batch_create<K>(&self, key_vals: impl Iterator<Item = (K, Value)> + Send) -> Result<()>
+	where
+		K: IntoNeo4jId,
+	{
+		// Construct the records
+		let rows: Vec<Value> = key_vals
+			.map(|(k, v)| Self::flattened_row_with_id(k.into_neo4j_id(), v))
+			.collect::<Result<Vec<_>>>()?;
+		if rows.is_empty() {
+			return Ok(());
+		}
+		let bolt = Self::json_vec_to_bolt_array(rows)?;
+		// Construct the Cypher query
+		let cypher = "UNWIND $rows AS row CREATE (r:Record) SET r += row";
+		// Execute the Cypher query
+		let mut res = self.graph.execute(query(cypher).param("rows", bolt)).await?;
+		while res.next().await?.is_some() {}
+		// All ok
+		Ok(())
+	}
+
+	async fn batch_read<K>(&self, keys: impl Iterator<Item = K> + Send) -> Result<()>
+	where
+		K: IntoNeo4jId,
+	{
+		// Construct the node ids
+		let ids: Vec<Value> = keys.map(|k| k.into_neo4j_id()).collect();
+		if ids.is_empty() {
+			return Ok(());
+		}
+		let bolt = Self::json_vec_to_bolt_array(ids)?;
+		// Construct the Cypher query
+		let cypher = "UNWIND $ids AS id MATCH (r:Record { id: id }) RETURN r";
+		// Execute the Cypher query
+		let mut res = self.graph.execute(query(cypher).param("ids", bolt)).await?;
+		let mut n = 0;
+		while res.next().await?.is_some() {
+			n += 1;
+		}
+		// Check the response
+		assert!(n > 0);
+		// All ok
+		Ok(())
+	}
+
+	async fn batch_update<K>(&self, key_vals: impl Iterator<Item = (K, Value)> + Send) -> Result<()>
+	where
+		K: IntoNeo4jId,
+	{
+		// Construct the records
+		let rows: Vec<Value> = key_vals
+			.map(|(k, v)| Self::flattened_row_with_id(k.into_neo4j_id(), v))
+			.collect::<Result<Vec<_>>>()?;
+		if rows.is_empty() {
+			return Ok(());
+		}
+		let bolt = Self::json_vec_to_bolt_array(rows)?;
+		// Construct the Cypher query
+		let cypher = "UNWIND $rows AS row MATCH (r:Record { id: row.id }) SET r += row RETURN r.id";
+		// Execute the Cypher query
+		let mut res = self.graph.execute(query(cypher).param("rows", bolt)).await?;
+		while res.next().await?.is_some() {}
+		Ok(())
+	}
+
+	async fn batch_delete<K>(&self, keys: impl Iterator<Item = K> + Send) -> Result<()>
+	where
+		K: IntoNeo4jId,
+	{
+		// Construct the node ids
+		let ids: Vec<Value> = keys.map(|k| k.into_neo4j_id()).collect();
+		if ids.is_empty() {
+			return Ok(());
+		}
+		let bolt = Self::json_vec_to_bolt_array(ids)?;
+		// Construct the Cypher query
+		let cypher = "UNWIND $ids AS id MATCH (r:Record { id: id }) DETACH DELETE r";
+		// Execute the Cypher query
+		let mut res = self.graph.execute(query(cypher).param("ids", bolt)).await?;
+		while res.next().await?.is_some() {}
+		// All ok
+		Ok(())
 	}
 }

@@ -1,12 +1,14 @@
 #![cfg(feature = "postgres")]
 
-use crate::dialect::{AnsiSqlDialect, Dialect};
+use crate::dialect::{AnsiSqlDialect, Dialect, PostgresDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
+use crate::util::sql::json_to_postgres_param;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use serde_json::{Map, Value};
 use std::hint::black_box;
 use tokio_postgres::types::{Json, ToSql};
@@ -211,7 +213,7 @@ impl BenchmarkClient for PostgresClient {
 		}
 		.to_string();
 		// Get the fields
-		let fields = spec.fields.join(", ");
+		let fields = PostgresDialect::btree_index_key_list(&self.columns, spec);
 		// Check if an index type is specified
 		let stmt = match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
@@ -322,8 +324,8 @@ impl PostgresClient {
 							Value::from(v)
 						}
 						ColumnType::Float => {
-							let v: f64 = row.try_get(n.as_str())?;
-							Value::from(v)
+							let v: f32 = row.try_get(n.as_str())?;
+							Value::from(v as f64)
 						}
 						ColumnType::Integer => {
 							let v: i32 = row.try_get(n.as_str())?;
@@ -334,8 +336,8 @@ impl PostgresClient {
 							Value::from(v)
 						}
 						ColumnType::DateTime => {
-							let v: String = row.try_get(n.as_str())?;
-							Value::from(v)
+							let v: NaiveDateTime = row.try_get(n.as_str())?;
+							Value::String(Utc.from_utc_datetime(&v).to_rfc3339())
 						}
 						ColumnType::Uuid => {
 							let v: uuid::Uuid = row.try_get(n.as_str())?;
@@ -358,11 +360,21 @@ impl PostgresClient {
 
 	async fn create<T>(&self, key: T, val: Value) -> Result<()>
 	where
-		T: ToSql + Sync,
+		T: ToSql + Sync + Send,
 	{
-		let (fields, values) = AnsiSqlDialect::create_clause(&self.columns, val);
-		let stm = format!("INSERT INTO record (id, {fields}) VALUES ($1, {values})");
-		let res = self.client.execute(&stm, &[&key]).await?;
+		let Value::Object(obj) = val else {
+			return Err(anyhow!("expected JSON object for row payload"));
+		};
+		let (columns, placeholders) = AnsiSqlDialect::create_clause(&self.columns);
+		let stm = format!("INSERT INTO record (id, {columns}) VALUES ($1, {placeholders})");
+		let mut owned: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(key)];
+		for (column, column_type) in &self.columns.0 {
+			let v = obj.get(column).ok_or_else(|| anyhow!("Missing value for column {column}"))?;
+			owned.push(json_to_postgres_param(column, column_type, v)?);
+		}
+		let params: Vec<&(dyn ToSql + Sync)> =
+			owned.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
+		let res = self.client.execute(&stm, &params).await?;
 		assert_eq!(res, 1);
 		Ok(())
 	}
@@ -379,11 +391,21 @@ impl PostgresClient {
 
 	async fn update<T>(&self, key: T, val: Value) -> Result<()>
 	where
-		T: ToSql + Sync,
+		T: ToSql + Sync + Send,
 	{
-		let fields = AnsiSqlDialect::update_clause(&self.columns, val);
-		let stm = format!("UPDATE record SET {fields} WHERE id=$1");
-		let res = self.client.execute(&stm, &[&key]).await?;
+		let Value::Object(obj) = val else {
+			return Err(anyhow!("expected JSON object for row payload"));
+		};
+		let set = AnsiSqlDialect::update_clause(&self.columns);
+		let stm = format!("UPDATE record SET {set} WHERE id = $1");
+		let mut owned: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(key)];
+		for (column, column_type) in &self.columns.0 {
+			let v = obj.get(column).ok_or_else(|| anyhow!("Missing value for column {column}"))?;
+			owned.push(json_to_postgres_param(column, column_type, v)?);
+		}
+		let params: Vec<&(dyn ToSql + Sync)> =
+			owned.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
+		let res = self.client.execute(&stm, &params).await?;
 		assert_eq!(res, 1);
 		Ok(())
 	}
@@ -402,7 +424,7 @@ impl PostgresClient {
 		// Extract parameters
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
-		let c = AnsiSqlDialect::filter_clause(scan)?;
+		let c = PostgresDialect::filter_clause(scan)?;
 		let o = AnsiSqlDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
@@ -449,13 +471,7 @@ impl PostgresClient {
 		T: ToSql + Sync,
 	{
 		// Fetch the columns to insert
-		let columns = self
-			.columns
-			.0
-			.iter()
-			.map(|(name, _)| AnsiSqlDialect::escape_field(name.clone()))
-			.collect::<Vec<String>>()
-			.join(", ");
+		let columns = AnsiSqlDialect::insert_columns(&self.columns);
 		// Store the records to insert
 		let mut inserts = Vec::with_capacity(key_vals.len());
 		// Store the query parameters
@@ -477,7 +493,7 @@ impl PostgresClient {
 					index += 1;
 					// Add the column value with proper type conversion
 					if let Some(value) = obj.get(column) {
-						let value = convert_json_to_sql_param(column, column_type, value)?;
+						let value = json_to_postgres_param(column, column_type, value)?;
 						values.push(value);
 					} else {
 						return Err(anyhow::anyhow!("Missing value for column {column}"));
@@ -515,7 +531,7 @@ impl PostgresClient {
 			keys.iter().map(|k| k as &(dyn ToSql + Sync)).collect();
 		// Build the IN clause
 		let ids = (1..=keys.len()).map(|i| format!("${i}")).collect::<Vec<String>>().join(", ");
-		// Build and execute the DELETE statement
+		// Build and execute the SELECT statement
 		let stm = format!("SELECT * FROM record WHERE id IN ({ids})");
 		let res = self.client.query(&stm, &params).await?;
 		assert_eq!(res.len(), keys.len());
@@ -540,15 +556,7 @@ impl PostgresClient {
 			.collect::<Vec<String>>()
 			.join(", ");
 		// Store the columns to select
-		let fields = format!(
-			"id, {}",
-			self.columns
-				.0
-				.iter()
-				.map(|(name, _)| AnsiSqlDialect::escape_field(name.clone()))
-				.collect::<Vec<String>>()
-				.join(", ")
-		);
+		let fields = format!("id, {}", AnsiSqlDialect::insert_columns(&self.columns));
 		// Store the records to insert
 		let mut inserts = Vec::with_capacity(key_vals.len());
 		// Store the query parameters
@@ -570,7 +578,7 @@ impl PostgresClient {
 					index += 1;
 					// Add the column value with proper type conversion
 					if let Some(value) = obj.get(column) {
-						let value = convert_json_to_sql_param(column, column_type, value)?;
+						let value = json_to_postgres_param(column, column_type, value)?;
 						values.push(value);
 					} else {
 						return Err(anyhow::anyhow!("Missing value for column {column}"));
@@ -644,63 +652,5 @@ fn get_column_type(column_type: &ColumnType) -> &'static str {
 		ColumnType::Array => "JSONB",
 		ColumnType::DateTime => "TIMESTAMP",
 		ColumnType::Uuid => "UUID",
-	}
-}
-
-/// Convert a JSON value to a PostgreSQL parameter based on column type
-fn convert_json_to_sql_param(
-	column_name: &str,
-	column_type: &ColumnType,
-	json_value: &Value,
-) -> Result<Box<dyn ToSql + Sync + Send>> {
-	match column_type {
-		ColumnType::Integer => {
-			if let Some(int_val) = json_value.as_i64() {
-				Ok(Box::new(int_val as i32))
-			} else {
-				Err(anyhow::anyhow!("Expected integer for column {column_name}"))
-			}
-		}
-		ColumnType::Float => {
-			if let Some(float_val) = json_value.as_f64() {
-				Ok(Box::new(float_val as f32))
-			} else {
-				Err(anyhow::anyhow!("Expected float for column {column_name}"))
-			}
-		}
-		ColumnType::Bool => {
-			if let Some(bool_val) = json_value.as_bool() {
-				Ok(Box::new(bool_val))
-			} else {
-				Err(anyhow::anyhow!("Expected boolean for column {column_name}"))
-			}
-		}
-		ColumnType::String => {
-			if let Some(str_val) = json_value.as_str() {
-				Ok(Box::new(str_val.to_string()))
-			} else {
-				Err(anyhow::anyhow!("Expected string for column {column_name}"))
-			}
-		}
-		ColumnType::DateTime => {
-			if let Some(str_val) = json_value.as_str() {
-				Ok(Box::new(str_val.to_string()))
-			} else {
-				Err(anyhow::anyhow!("Expected datetime string for column {column_name}"))
-			}
-		}
-		ColumnType::Uuid => {
-			if let Some(str_val) = json_value.as_str() {
-				if let Ok(uuid) = uuid::Uuid::parse_str(str_val) {
-					Ok(Box::new(uuid))
-				} else {
-					Err(anyhow::anyhow!("Invalid UUID for column {column_name}"))
-				}
-			} else {
-				Err(anyhow::anyhow!("Expected UUID string for column {column_name}"))
-			}
-		}
-		ColumnType::Object => Ok(Box::new(Json(json_value.clone()))),
-		ColumnType::Array => Ok(Box::new(Json(json_value.clone()))),
 	}
 }

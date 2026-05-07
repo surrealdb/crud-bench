@@ -1,12 +1,13 @@
 #![cfg(feature = "sqlite")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
-use crate::dialect::{AnsiSqlDialect, Dialect};
+use crate::dialect::{AnsiSqlDialect, Dialect, SqliteDialect};
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
+use crate::util::sql::json_to_sqlite_param;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use serde_json::{Map, Value as Json};
 use std::borrow::Cow;
 use std::cmp::max;
@@ -192,7 +193,7 @@ impl BenchmarkClient for SqliteClient {
 		}
 		.to_string();
 		// Get the fields
-		let fields = spec.fields.join(", ");
+		let fields = SqliteDialect::btree_index_key_list(&self.columns, spec);
 		// Check if an index type is specified
 		let stmt = match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
@@ -284,6 +285,23 @@ impl SqliteClient {
 			.map_err(Into::into)
 	}
 
+	async fn execute_params(
+		&self,
+		query: Cow<'static, str>,
+		params: Vec<Box<dyn tokio_rusqlite::types::ToSql + Send + Sync>>,
+	) -> Result<usize> {
+		self.conn
+			.call(move |conn| {
+				let refs: Vec<&dyn tokio_rusqlite::types::ToSql> = params
+					.iter()
+					.map(|p| p.as_ref() as &dyn tokio_rusqlite::types::ToSql)
+					.collect();
+				conn.execute(query.as_ref(), refs.as_slice())
+			})
+			.await
+			.map_err(Into::into)
+	}
+
 	async fn query(
 		&self,
 		stmt: Cow<'static, str>,
@@ -329,9 +347,28 @@ impl SqliteClient {
 	}
 
 	async fn create(&self, key: ToSqlOutput<'static>, val: Json) -> Result<()> {
-		let (fields, values) = AnsiSqlDialect::create_clause(&self.columns, val);
-		let stmt = format!("INSERT INTO record (id, {fields}) VALUES ($1, {values})");
-		let res = self.execute(Cow::Owned(stmt), key).await?;
+		let Json::Object(obj) = val else {
+			return Err(anyhow!("expected JSON object for row payload"));
+		};
+		let columns = self
+			.columns
+			.0
+			.iter()
+			.map(|(name, _)| AnsiSqlDialect::escape_field(name.clone()))
+			.collect::<Vec<String>>()
+			.join(", ");
+		let placeholders = (2..=1 + self.columns.0.len())
+			.map(|i| format!("${i}"))
+			.collect::<Vec<String>>()
+			.join(", ");
+		let stm = format!("INSERT INTO record (id, {columns}) VALUES ($1, {placeholders})");
+		let mut params: Vec<Box<dyn tokio_rusqlite::types::ToSql + Send + Sync>> =
+			vec![Box::new(key)];
+		for (column, column_type) in &self.columns.0 {
+			let v = obj.get(column).ok_or_else(|| anyhow!("Missing value for column {column}"))?;
+			params.push(json_to_sqlite_param(column_type, v)?);
+		}
+		let res = self.execute_params(Cow::Owned(stm), params).await?;
 		assert_eq!(res, 1);
 		Ok(())
 	}
@@ -345,16 +382,35 @@ impl SqliteClient {
 	}
 
 	async fn update(&self, key: ToSqlOutput<'static>, val: Json) -> Result<()> {
-		let fields = AnsiSqlDialect::update_clause(&self.columns, val);
-		let stmt = format!("UPDATE record SET {fields} WHERE id=$1");
-		let res = self.execute(Cow::Owned(stmt), key).await?;
+		let Json::Object(obj) = val else {
+			return Err(anyhow!("expected JSON object for row payload"));
+		};
+		let n = self.columns.0.len();
+		let set = self
+			.columns
+			.0
+			.iter()
+			.enumerate()
+			.map(|(i, (name, _))| {
+				format!("{} = ${}", AnsiSqlDialect::escape_field(name.clone()), i + 1)
+			})
+			.collect::<Vec<String>>()
+			.join(", ");
+		let stm = format!("UPDATE record SET {set} WHERE id = ${}", n + 1);
+		let mut params: Vec<Box<dyn tokio_rusqlite::types::ToSql + Send + Sync>> = Vec::new();
+		for (column, column_type) in &self.columns.0 {
+			let v = obj.get(column).ok_or_else(|| anyhow!("Missing value for column {column}"))?;
+			params.push(json_to_sqlite_param(column_type, v)?);
+		}
+		params.push(Box::new(key));
+		let res = self.execute_params(Cow::Owned(stm), params).await?;
 		assert_eq!(res, 1);
 		Ok(())
 	}
 
 	async fn delete(&self, key: ToSqlOutput<'static>) -> Result<()> {
-		let stmt = "DELETE FROM record WHERE id=$1";
-		let res = self.execute(Cow::Borrowed(stmt), key).await?;
+		let stm = "DELETE FROM record WHERE id=$1";
+		let res = self.execute(Cow::Borrowed(stm), key).await?;
 		assert_eq!(res, 1);
 		Ok(())
 	}
@@ -370,7 +426,7 @@ impl SqliteClient {
 		// Extract parameters
 		let s = scan.start.map(|s| format!("OFFSET {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
-		let c = AnsiSqlDialect::filter_clause(scan)?;
+		let c = SqliteDialect::filter_clause(scan)?;
 		let o = AnsiSqlDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
@@ -418,18 +474,11 @@ impl SqliteClient {
 	where
 		T: Into<ToSqlOutput<'static>> + Send + 'static,
 	{
-		// Fetch the columns to insert
-		let columns = self
-			.columns
-			.0
-			.iter()
-			.map(|(name, _)| AnsiSqlDialect::escape_field(name.clone()))
-			.collect::<Vec<String>>()
-			.join(", ");
-
+		// Clone the connection
 		let conn = self.conn.clone();
+		// Fetch the columns to update
 		let column_defs = self.columns.clone();
-
+		// Execute the batch update on the connection
 		conn.call(move |conn| -> rusqlite::Result<()> {
 			// Store the records to insert
 			let mut inserts = Vec::with_capacity(key_vals.len());
@@ -437,24 +486,21 @@ impl SqliteClient {
 			let mut all_params: Vec<Box<dyn tokio_rusqlite::types::ToSql>> = Vec::new();
 			// Store the parameter index
 			let mut param_index = 1;
-
 			// Iterate over the key-value pairs
 			for (key, val) in key_vals {
 				// Add the id parameter
 				let mut row = vec![format!("${param_index}")];
 				param_index += 1;
 				all_params.push(Box::new(key.into()));
-
 				// Process the columns
 				if let Json::Object(obj) = val {
 					for (column, column_type) in &column_defs.0 {
 						// Add the column placeholder
 						row.push(format!("${param_index}"));
 						param_index += 1;
-
 						// Add the column value with proper type conversion
 						if let Some(value) = obj.get(column) {
-							let param = convert_json_to_sqlite_param(column_type, value)
+							let param = json_to_sqlite_param(column_type, value)
 								.expect("Failed to convert JSON value to SQL parameter");
 							all_params.push(param);
 						} else {
@@ -465,16 +511,21 @@ impl SqliteClient {
 				// Add the row to the inserts
 				inserts.push(format!("({})", row.join(", ")));
 			}
-
+			// Fetch the columns to insert
+			let columns = column_defs
+				.0
+				.iter()
+				.map(|(name, _)| AnsiSqlDialect::escape_field(name.clone()))
+				.collect::<Vec<String>>()
+				.join(", ");
 			// Build the INSERT statement
 			let stmt = format!("INSERT INTO record (id, {columns}) VALUES {}", inserts.join(", "));
-
 			// Convert boxed values to references for execute
 			let params: Vec<&dyn tokio_rusqlite::types::ToSql> =
 				all_params.iter().map(|p| p.as_ref()).collect();
-
 			// Execute the statement
 			let count = conn.execute(&stmt, params.as_slice())?;
+			// Check the number of rows inserted
 			assert_eq!(count, inserts.len());
 			Ok(())
 		})
@@ -486,26 +537,25 @@ impl SqliteClient {
 	where
 		T: Into<ToSqlOutput<'static>> + Send + 'static,
 	{
+		// Clone the connection
 		let conn = self.conn.clone();
-
+		// Execute the batch read on the connection
 		conn.call(move |conn| -> rusqlite::Result<()> {
 			// Build the IN clause with positional parameters
 			let ids = (1..=keys.len()).map(|i| format!("${i}")).collect::<Vec<String>>().join(", ");
-
 			// Convert keys to ToSql parameters
 			let mut all_params: Vec<Box<dyn tokio_rusqlite::types::ToSql>> = Vec::new();
 			for key in keys {
 				all_params.push(Box::new(key.into()));
 			}
-
 			// Build and execute the SELECT statement
 			let stmt = format!("SELECT * FROM record WHERE id IN ({ids})");
 			let params: Vec<&dyn tokio_rusqlite::types::ToSql> =
 				all_params.iter().map(|p| p.as_ref()).collect();
-
+			// Prepare the statement
 			let mut prepared_stmt = conn.prepare(&stmt)?;
 			let mut rows = prepared_stmt.query(params.as_slice())?;
-
+			// Iterate over the rows
 			let mut count = 0;
 			while let Some(row) = rows.next()? {
 				// Consume the row
@@ -514,7 +564,7 @@ impl SqliteClient {
 				for (i, name) in names.into_iter().enumerate() {
 					map.push((name.to_owned(), row.get(i)?));
 				}
-
+				// Build the JSON value
 				let mut val = Map::new();
 				for (key, value) in map {
 					val.insert(
@@ -531,7 +581,7 @@ impl SqliteClient {
 				black_box(Json::from(val));
 				count += 1;
 			}
-
+			// Check the number of rows read
 			assert_eq!(count, all_params.len());
 			Ok(())
 		})
@@ -543,16 +593,15 @@ impl SqliteClient {
 	where
 		T: Into<ToSqlOutput<'static>> + Send + 'static,
 	{
+		// Clone the connection
 		let conn = self.conn.clone();
+		// Fetch the columns to update
 		let column_defs = self.columns.clone();
-
+		// Execute the batch update on the connection
 		conn.call(move |conn| -> rusqlite::Result<()> {
-			// For SQLite, we'll use multiple UPDATE statements in a transaction
-			// since SQLite doesn't support UPDATE FROM as elegantly as PostgreSQL
-
 			// Start a transaction
 			conn.execute_batch("BEGIN")?;
-
+			// Build and execute the statement
 			let result = (|| {
 				for (key, val) in key_vals {
 					if let Json::Object(obj) = val {
@@ -560,39 +609,38 @@ impl SqliteClient {
 						let mut set_parts = Vec::new();
 						let mut params: Vec<Box<dyn tokio_rusqlite::types::ToSql>> = Vec::new();
 						let mut param_index = 1;
-
+						// Iterate over the columns to update
 						for (column, column_type) in &column_defs.0 {
 							let escaped_col = AnsiSqlDialect::escape_field(column.clone());
 							set_parts.push(format!("{escaped_col} = ${param_index}"));
 							param_index += 1;
-
+							// Add the column value with proper type conversion
 							if let Some(value) = obj.get(column) {
-								let param = convert_json_to_sqlite_param(column_type, value)
+								let param = json_to_sqlite_param(column_type, value)
 									.expect("Failed to convert JSON value to SQL parameter");
 								params.push(param);
 							} else {
 								panic!("Missing value for column {column}");
 							}
 						}
-
 						// Add the key parameter at the end
 						params.push(Box::new(key.into()));
-
 						// Build and execute the UPDATE statement
 						let stmt = format!(
 							"UPDATE record SET {} WHERE id = ${param_index}",
 							set_parts.join(", ")
 						);
+						// Convert boxed values to references for execute
 						let param_refs: Vec<&dyn tokio_rusqlite::types::ToSql> =
 							params.iter().map(|p| p.as_ref()).collect();
-
+						// Execute the statement
 						let count = conn.execute(&stmt, param_refs.as_slice())?;
+						// Check the number of rows updated
 						assert_eq!(count, 1);
 					}
 				}
 				Ok(())
 			})();
-
 			// Commit or rollback based on result
 			match result {
 				Ok(_) => {
@@ -613,87 +661,29 @@ impl SqliteClient {
 	where
 		T: Into<ToSqlOutput<'static>> + Send + 'static,
 	{
+		// Clone the connection
 		let conn = self.conn.clone();
-
+		// Execute the batch delete on the connection
 		conn.call(move |conn| -> rusqlite::Result<()> {
 			// Build the IN clause with positional parameters
 			let ids = (1..=keys.len()).map(|i| format!("${i}")).collect::<Vec<String>>().join(", ");
-
 			// Convert keys to ToSql parameters
 			let mut all_params: Vec<Box<dyn tokio_rusqlite::types::ToSql>> = Vec::new();
 			for key in keys {
 				all_params.push(Box::new(key.into()));
 			}
-
-			// Build and execute the DELETE statement
+			// Build the DELETE statement
 			let stmt = format!("DELETE FROM record WHERE id IN ({ids})");
+			// Convert boxed values to references for execute
 			let params: Vec<&dyn tokio_rusqlite::types::ToSql> =
 				all_params.iter().map(|p| p.as_ref()).collect();
-
+			// Execute the statement
 			let count = conn.execute(&stmt, params.as_slice())?;
+			// Check the number of rows deleted
 			assert_eq!(count, all_params.len());
 			Ok(())
 		})
 		.await
 		.map_err(Into::into)
-	}
-}
-
-/// Convert a JSON value to a SQLite parameter based on column type
-fn convert_json_to_sqlite_param(
-	column_type: &ColumnType,
-	json_value: &Json,
-) -> Result<Box<dyn tokio_rusqlite::types::ToSql>> {
-	match column_type {
-		ColumnType::Integer => {
-			if let Some(int_val) = json_value.as_i64() {
-				Ok(Box::new(int_val))
-			} else {
-				Err(anyhow::anyhow!("Expected integer"))
-			}
-		}
-		ColumnType::Float => {
-			if let Some(float_val) = json_value.as_f64() {
-				Ok(Box::new(float_val))
-			} else {
-				Err(anyhow::anyhow!("Expected float"))
-			}
-		}
-		ColumnType::Bool => {
-			if let Some(bool_val) = json_value.as_bool() {
-				Ok(Box::new(bool_val))
-			} else {
-				Err(anyhow::anyhow!("Expected boolean"))
-			}
-		}
-		ColumnType::String => {
-			if let Some(str_val) = json_value.as_str() {
-				Ok(Box::new(str_val.to_string()))
-			} else {
-				Err(anyhow::anyhow!("Expected string"))
-			}
-		}
-		ColumnType::Object => {
-			// SQLite stores JSON as text
-			Ok(Box::new(json_value.to_string()))
-		}
-		ColumnType::Array => {
-			// SQLite stores JSON as text
-			Ok(Box::new(json_value.to_string()))
-		}
-		ColumnType::DateTime => {
-			if let Some(str_val) = json_value.as_str() {
-				Ok(Box::new(str_val.to_string()))
-			} else {
-				Err(anyhow::anyhow!("Expected datetime string"))
-			}
-		}
-		ColumnType::Uuid => {
-			if let Some(str_val) = json_value.as_str() {
-				Ok(Box::new(str_val.to_string()))
-			} else {
-				Err(anyhow::anyhow!("Expected UUID string"))
-			}
-		}
 	}
 }

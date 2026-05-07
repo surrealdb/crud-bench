@@ -5,9 +5,10 @@ use crate::dialect::{Dialect, MySqlDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
+use crate::util::sql::json_to_mysql_value;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use mysql_async::consts;
 use mysql_async::prelude::Queryable;
@@ -386,9 +387,17 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		let (fields, values) = MySqlDialect::create_clause(&self.columns, val);
-		let stm = format!("INSERT INTO record (id, {fields}) VALUES (?, {values})");
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
+		let Value::Object(obj) = val else {
+			return Err(anyhow!("expected JSON object for row payload"));
+		};
+		let (columns, placeholders) = MySqlDialect::create_clause(&self.columns);
+		let stm = format!("INSERT INTO record (id, {columns}) VALUES (?, {placeholders})");
+		let mut params: Vec<mysql_async::Value> = vec![key.to_value()];
+		for (name, column_type) in &self.columns.0 {
+			let v = obj.get(name).ok_or_else(|| anyhow!("Missing value for column {name}"))?;
+			params.push(json_to_mysql_value(column_type, v)?);
+		}
+		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
 		Ok(())
 	}
 
@@ -406,9 +415,18 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		let fields = MySqlDialect::update_clause(&self.columns, val);
-		let stm = format!("UPDATE record SET {fields} WHERE id=?");
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
+		let Value::Object(obj) = val else {
+			return Err(anyhow!("expected JSON object for row payload"));
+		};
+		let set = MySqlDialect::update_clause(&self.columns);
+		let stm = format!("UPDATE record SET {set} WHERE id=?");
+		let mut params: Vec<mysql_async::Value> = Vec::new();
+		for (name, column_type) in &self.columns.0 {
+			let v = obj.get(name).ok_or_else(|| anyhow!("Missing value for column {name}"))?;
+			params.push(json_to_mysql_value(column_type, v)?);
+		}
+		params.push(key.to_value());
+		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
 		Ok(())
 	}
 
@@ -479,48 +497,19 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		if key_vals.is_empty() {
-			return Ok(());
-		}
-		let columns = self
-			.columns
-			.0
-			.iter()
-			.map(|(name, _)| MySqlDialect::escape_field(name.clone()))
-			.collect::<Vec<String>>()
-			.join(", ");
-		let placeholders = (0..key_vals.len())
-			.map(|_| {
-				let value_placeholders =
-					(0..self.columns.0.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
-				format!("(?, {value_placeholders})")
-			})
+		let (columns, placeholders) = MySqlDialect::create_clause(&self.columns);
+		let values = (0..key_vals.len())
+			.map(|_| format!("(?, {placeholders})"))
 			.collect::<Vec<_>>()
 			.join(", ");
-		let stm = format!("INSERT INTO record (id, {columns}) VALUES {placeholders}");
+		let stm = format!("INSERT INTO record (id, {columns}) VALUES {values}");
 		let mut params: Vec<mysql_async::Value> = Vec::new();
 		for (key, val) in key_vals.iter() {
 			params.push(key.to_value());
 			if let Value::Object(map) = val {
-				for (name, _) in &self.columns.0 {
+				for (name, column_type) in &self.columns.0 {
 					if let Some(v) = map.get(name) {
-						params.push(match v {
-							Value::Null => mysql_async::Value::NULL,
-							Value::Bool(b) => mysql_async::Value::Int(*b as i64),
-							Value::Number(n) => {
-								if let Some(i) = n.as_i64() {
-									mysql_async::Value::Int(i)
-								} else if let Some(f) = n.as_f64() {
-									mysql_async::Value::Double(f)
-								} else {
-									mysql_async::Value::NULL
-								}
-							}
-							Value::String(s) => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
-							Value::Array(_) | Value::Object(_) => mysql_async::Value::Bytes(
-								serde_json::to_string(v).unwrap().as_bytes().to_vec(),
-							),
-						});
+						params.push(json_to_mysql_value(column_type, v)?);
 					}
 				}
 			}
@@ -535,12 +524,12 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		if keys.is_empty() {
-			return Ok(());
-		}
-		let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-		let stm = format!("SELECT * FROM record WHERE id IN ({placeholders})");
+		// Store the record ids
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
+		// Build the IN clause
+		let ids = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+		// Build and execute the SELECT statement
+		let stm = format!("SELECT * FROM record WHERE id IN ({ids})");
 		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
 		assert_eq!(res.len(), keys.len());
 		for row in res {
@@ -553,16 +542,8 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		if key_vals.is_empty() {
-			return Ok(());
-		}
-		let columns = self
-			.columns
-			.0
-			.iter()
-			.map(|(name, _)| MySqlDialect::escape_field(name.clone()))
-			.collect::<Vec<String>>();
-		let case_statements = columns
+		let columns = MySqlDialect::escaped_columns(&self.columns);
+		let set = columns
 			.iter()
 			.map(|col| {
 				let when_clauses =
@@ -571,32 +552,16 @@ impl MysqlClient {
 			})
 			.collect::<Vec<_>>()
 			.join(", ");
-		let id_placeholders = key_vals.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-		let stm = format!("UPDATE record SET {case_statements} WHERE id IN ({id_placeholders})");
+		let ids = key_vals.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+		let stm = format!("UPDATE record SET {set} WHERE id IN ({ids})");
 		let mut params: Vec<mysql_async::Value> = Vec::new();
-		for (name, _) in &self.columns.0 {
+		for (name, column_type) in &self.columns.0 {
 			for (key, val) in &key_vals {
 				params.push(key.to_value());
 				if let Value::Object(map) = val
 					&& let Some(v) = map.get(name)
 				{
-					params.push(match v {
-						Value::Null => mysql_async::Value::NULL,
-						Value::Bool(b) => mysql_async::Value::Int(*b as i64),
-						Value::Number(n) => {
-							if let Some(i) = n.as_i64() {
-								mysql_async::Value::Int(i)
-							} else if let Some(f) = n.as_f64() {
-								mysql_async::Value::Double(f)
-							} else {
-								mysql_async::Value::NULL
-							}
-						}
-						Value::String(s) => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
-						Value::Array(_) | Value::Object(_) => mysql_async::Value::Bytes(
-							serde_json::to_string(v).unwrap().as_bytes().to_vec(),
-						),
-					});
+					params.push(json_to_mysql_value(column_type, v)?);
 				}
 			}
 		}
@@ -613,12 +578,12 @@ impl MysqlClient {
 	where
 		T: ToValue + Sync,
 	{
-		if keys.is_empty() {
-			return Ok(());
-		}
-		let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-		let stm = format!("DELETE FROM record WHERE id IN ({placeholders})");
+		// Store the record ids
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
+		// Build the IN clause
+		let ids = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+		// Build and execute the DELETE statement
+		let stm = format!("DELETE FROM record WHERE id IN ({ids})");
 		let mut conn = self.conn.lock().await;
 		let res = conn.exec_iter(stm, params).await?;
 		assert_eq!(res.affected_rows(), keys.len() as u64);

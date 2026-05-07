@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 pub(crate) mod data;
+pub(crate) mod sql;
 
 #[cfg(any(feature = "redis", feature = "keydb", feature = "dragonfly"))]
 pub(crate) mod redis_batch;
