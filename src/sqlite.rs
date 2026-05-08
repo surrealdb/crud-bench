@@ -9,6 +9,8 @@ use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, anyhow, bail};
+use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use std::borrow::Cow;
 use std::cmp::max;
 use std::hint::black_box;
@@ -17,6 +19,7 @@ use std::time::Duration;
 use tokio_rusqlite::types::ToSqlOutput;
 use tokio_rusqlite::types::Value;
 use tokio_rusqlite::{Connection, rusqlite};
+use uuid::Uuid;
 
 const DATABASE_DIR: &str = "sqlite";
 
@@ -24,6 +27,31 @@ const MIN_CACHE_SIZE: u64 = 512 * 1024 * 1024;
 
 // We can't just return `tokio_rusqlite::Row` because it's not Send/Sync
 type Row = Vec<(String, Value)>;
+
+/// Map a SQLite [`Value`] to [`BenchValue`] using schema types (BOOL is INTEGER in SQLite).
+fn sqlite_cell_to_bench(columns: &Columns, key: &str, value: Value) -> BenchValue {
+	let ty = columns.0.iter().find(|(n, _)| n == key).map(|(_, t)| t);
+	match (ty, value) {
+		(Some(ColumnType::Bool), Value::Integer(i)) => BenchValue::Bool(i != 0),
+		(Some(ColumnType::DateTime), Value::Text(s)) => match s.parse::<DateTime<Utc>>() {
+			Ok(dt) => BenchValue::DateTime(dt),
+			Err(_) => BenchValue::String(s),
+		},
+		(Some(ColumnType::Uuid), Value::Text(s)) => match Uuid::parse_str(&s) {
+			Ok(u) => BenchValue::Uuid(u),
+			Err(_) => BenchValue::String(s),
+		},
+		(Some(ColumnType::Decimal), Value::Text(s)) => match s.parse::<Decimal>() {
+			Ok(d) => BenchValue::Decimal(d),
+			Err(_) => BenchValue::String(s),
+		},
+		(_, Value::Null) => BenchValue::Null,
+		(_, Value::Integer(int)) => BenchValue::Int(int),
+		(_, Value::Real(float)) => BenchValue::Float(float),
+		(_, Value::Text(text)) => BenchValue::String(text),
+		(_, Value::Blob(vec)) => BenchValue::Bytes(vec),
+	}
+}
 
 /// Calculate SQLite specific memory allocation
 fn calculate_sqlite_memory() -> u64 {
@@ -334,13 +362,7 @@ impl SqliteClient {
 	fn consume(&self, row: Row) -> BenchValue {
 		let mut val: Vec<(String, BenchValue)> = Vec::with_capacity(row.len());
 		for (key, value) in row {
-			let bv = match value {
-				Value::Null => BenchValue::Null,
-				Value::Integer(int) => BenchValue::Int(int),
-				Value::Real(float) => BenchValue::Float(float),
-				Value::Text(text) => BenchValue::String(text),
-				Value::Blob(vec) => BenchValue::Bytes(vec),
-			};
+			let bv = sqlite_cell_to_bench(&self.columns, &key, value);
 			val.push((key, bv));
 		}
 		BenchValue::Object(val)
@@ -543,6 +565,8 @@ impl SqliteClient {
 	{
 		// Clone the connection
 		let conn = self.conn.clone();
+		// Fetch the columns to read
+		let column_defs = self.columns.clone();
 		// Execute the batch read on the connection
 		conn.call(move |conn| -> rusqlite::Result<()> {
 			// Build the IN clause with positional parameters
@@ -571,13 +595,7 @@ impl SqliteClient {
 				// Build the typed bench value
 				let mut val: Vec<(String, BenchValue)> = Vec::with_capacity(map.len());
 				for (key, value) in map {
-					let bv = match value {
-						Value::Null => BenchValue::Null,
-						Value::Integer(int) => BenchValue::Int(int),
-						Value::Real(float) => BenchValue::Float(float),
-						Value::Text(text) => BenchValue::String(text),
-						Value::Blob(vec) => BenchValue::Bytes(vec),
-					};
+					let bv = sqlite_cell_to_bench(&column_defs, &key, value);
 					val.push((key, bv));
 				}
 				black_box(BenchValue::Object(val));

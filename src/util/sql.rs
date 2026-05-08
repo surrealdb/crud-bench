@@ -55,13 +55,31 @@ pub(crate) fn bench_to_sqlite_param(
 		(ColumnType::Float, BenchValue::Float(f)) => Ok(Box::new(*f)),
 		(ColumnType::Float, BenchValue::Int(i)) => Ok(Box::new(*i as f64)),
 		(ColumnType::Bool, BenchValue::Bool(b)) => Ok(Box::new(*b)),
+		// SQLite stores BOOL as INTEGER 0/1; rows read back as [`BenchValue::Int`].
+		(ColumnType::Bool, BenchValue::Int(i)) => Ok(Box::new(*i != 0)),
+		(ColumnType::Bool, BenchValue::UInt(u)) => Ok(Box::new(*u != 0)),
 		(ColumnType::String, BenchValue::String(s)) => Ok(Box::new(s.clone())),
 		(ColumnType::Object, _) | (ColumnType::Array, _) => {
 			Ok(Box::new(serde_json::to_string(&v.to_json())?))
 		}
 		(ColumnType::DateTime, BenchValue::DateTime(dt)) => Ok(Box::new(dt.to_rfc3339())),
+		// `TIMESTAMP` / UUID / `DECIMAL` columns are TEXT; reads can be [`BenchValue::String`].
+		(ColumnType::DateTime, BenchValue::String(s)) => {
+			let dt: chrono::DateTime<chrono::Utc> =
+				s.parse().map_err(|e| anyhow!("datetime parameter {s:?}: {e}"))?;
+			Ok(Box::new(dt.to_rfc3339()))
+		}
 		(ColumnType::Uuid, BenchValue::Uuid(u)) => Ok(Box::new(u.to_string())),
+		(ColumnType::Uuid, BenchValue::String(s)) => {
+			uuid::Uuid::parse_str(s).map_err(|e| anyhow!("uuid parameter {s:?}: {e}"))?;
+			Ok(Box::new(s.clone()))
+		}
 		(ColumnType::Decimal, BenchValue::Decimal(d)) => Ok(Box::new(d.to_string())),
+		(ColumnType::Decimal, BenchValue::String(s)) => {
+			let d: rust_decimal::Decimal =
+				s.parse().map_err(|e| anyhow!("decimal parameter {s:?}: {e}"))?;
+			Ok(Box::new(d.to_string()))
+		}
 		(ColumnType::Bytes, BenchValue::Bytes(b)) => Ok(Box::new(b.clone())),
 		(t, _) => Err(anyhow!("BenchValue does not match column type {t:?}")),
 	}
