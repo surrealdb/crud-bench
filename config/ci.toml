@@ -57,7 +57,7 @@ geography.description = "words:100;hello,world,foo,bar,test,search,data,query,in
 id = "count"
 name = "count()"
 projection = "COUNT"
-samples = 1000
+samples = 10
 
 # ============================================================================
 # limit
@@ -124,12 +124,7 @@ mongodb = { number = { "$eq" = 21 } }
 fields = ["number"]
 
 [[scans.with_writes]]
-ratio = 0.15
-mode = "interleaved"
-operation = "UPDATE"
-
-[[scans.with_writes]]
-ratio = 0.50
+ratio = 0.10
 mode = "interleaved"
 operation = "UPDATE"
 
@@ -164,12 +159,7 @@ mongodb = { "$or" = [
 fields = ["number"]
 
 [[scans.with_writes]]
-ratio = 0.15
-mode = "interleaved"
-operation = "UPDATE"
-
-[[scans.with_writes]]
-ratio = 0.50
+ratio = 0.10
 mode = "interleaved"
 operation = "UPDATE"
 
@@ -201,12 +191,7 @@ mongodb = { number = { "$gte" = 18, "$lte" = 21 } }
 fields = ["number"]
 
 [[scans.with_writes]]
-ratio = 0.15
-mode = "interleaved"
-operation = "UPDATE"
-
-[[scans.with_writes]]
-ratio = 0.50
+ratio = 0.10
 mode = "interleaved"
 operation = "UPDATE"
 
@@ -246,12 +231,7 @@ mongodb = { number = { "$in" = [
 fields = ["number"]
 
 [[scans.with_writes]]
-ratio = 0.15
-mode = "interleaved"
-operation = "UPDATE"
-
-[[scans.with_writes]]
-ratio = 0.50
+ratio = 0.10
 mode = "interleaved"
 operation = "UPDATE"
 
@@ -292,12 +272,7 @@ mongodb = { created_at = -1 }
 fields = ["status", "created_at"]
 
 [[scans.with_writes]]
-ratio = 0.15
-mode = "interleaved"
-operation = "UPDATE"
-
-[[scans.with_writes]]
-ratio = 0.50
+ratio = 0.10
 mode = "interleaved"
 operation = "UPDATE"
 
@@ -338,12 +313,7 @@ mongodb = { created_at = -1 }
 fields = ["http_status", "created_at"]
 
 [[scans.with_writes]]
-ratio = 0.15
-mode = "interleaved"
-operation = "UPDATE"
-
-[[scans.with_writes]]
-ratio = 0.50
+ratio = 0.10
 mode = "interleaved"
 operation = "UPDATE"
 
@@ -386,12 +356,7 @@ mongodb = { created_at = -1 }
 fields = ["tags.*", "created_at"]
 
 [[scans.with_writes]]
-ratio = 0.15
-mode = "interleaved"
-operation = "UPDATE"
-
-[[scans.with_writes]]
-ratio = 0.50
+ratio = 0.10
 mode = "interleaved"
 operation = "UPDATE"
 
@@ -469,7 +434,7 @@ index_type = "fulltext"
 name = "batch_create_100"
 operation = "CREATE"
 batch_size = 100
-samples = 250
+samples = 10
 
 # ============================================================================
 # batch_read_100
@@ -479,7 +444,7 @@ samples = 250
 name = "batch_read_100"
 operation = "READ"
 batch_size = 100
-samples = 250
+samples = 10
 
 # ============================================================================
 # batch_update_100
@@ -489,7 +454,7 @@ samples = 250
 name = "batch_update_100"
 operation = "UPDATE"
 batch_size = 100
-samples = 250
+samples = 10
 
 # ============================================================================
 # batch_delete_100
@@ -499,44 +464,4 @@ samples = 250
 name = "batch_delete_100"
 operation = "DELETE"
 batch_size = 100
-samples = 250
-
-# ============================================================================
-# batch_create_1000
-# ============================================================================
-
-[[batches]]
-name = "batch_create_1000"
-operation = "CREATE"
-batch_size = 1000
-samples = 250
-
-# ============================================================================
-# batch_read_1000
-# ============================================================================
-
-[[batches]]
-name = "batch_read_1000"
-operation = "READ"
-batch_size = 1000
-samples = 250
-
-# ============================================================================
-# batch_update_1000
-# ============================================================================
-
-[[batches]]
-name = "batch_update_1000"
-operation = "UPDATE"
-batch_size = 1000
-samples = 250
-
-# ============================================================================
-# batch_delete_1000
-# ============================================================================
-
-[[batches]]
-name = "batch_delete_1000"
-operation = "DELETE"
-batch_size = 1000
-samples = 250
+samples = 10
