@@ -1,13 +1,18 @@
-use crate::util::data;
+//! Pipelined Redis batch helpers shared by the Redis-family adapters.
+//!
+//! Values are encoded via [`BenchValue::encode`] before being pushed into a
+//! `redis::pipe()` so the wire format matches the single-row paths in
+//! `redis.rs`, `keydb.rs`, and `dragonfly.rs`.
+
+use crate::value::BenchValue;
 use anyhow::{Result, anyhow};
 use redis::aio::MultiplexedConnection;
-use serde_json::Value;
 use std::hint::black_box;
 use tokio::sync::Mutex;
 
 pub(crate) async fn batch_create_u32(
 	conn: &Mutex<MultiplexedConnection>,
-	key_vals: Vec<(u32, Value)>,
+	key_vals: Vec<(u32, BenchValue)>,
 ) -> Result<()> {
 	if key_vals.is_empty() {
 		return Ok(());
@@ -15,7 +20,7 @@ pub(crate) async fn batch_create_u32(
 	let mut c = conn.lock().await;
 	let mut pipe = redis::pipe();
 	for (k, v) in key_vals {
-		let val = data::encode_value(&v)?;
+		let val = v.encode()?;
 		pipe.cmd("SET").arg(k).arg(val).ignore();
 	}
 	pipe.exec_async(&mut *c).await?;
@@ -24,7 +29,7 @@ pub(crate) async fn batch_create_u32(
 
 pub(crate) async fn batch_create_string(
 	conn: &Mutex<MultiplexedConnection>,
-	key_vals: Vec<(String, Value)>,
+	key_vals: Vec<(String, BenchValue)>,
 ) -> Result<()> {
 	if key_vals.is_empty() {
 		return Ok(());
@@ -32,7 +37,7 @@ pub(crate) async fn batch_create_string(
 	let mut c = conn.lock().await;
 	let mut pipe = redis::pipe();
 	for (k, v) in key_vals {
-		let val = data::encode_value(&v)?;
+		let val = v.encode()?;
 		pipe.cmd("SET").arg(k).arg(val).ignore();
 	}
 	pipe.exec_async(&mut *c).await?;
@@ -85,14 +90,14 @@ pub(crate) async fn batch_read_string(
 
 pub(crate) async fn batch_update_u32(
 	conn: &Mutex<MultiplexedConnection>,
-	key_vals: Vec<(u32, Value)>,
+	key_vals: Vec<(u32, BenchValue)>,
 ) -> Result<()> {
 	batch_create_u32(conn, key_vals).await
 }
 
 pub(crate) async fn batch_update_string(
 	conn: &Mutex<MultiplexedConnection>,
-	key_vals: Vec<(String, Value)>,
+	key_vals: Vec<(String, BenchValue)>,
 ) -> Result<()> {
 	batch_create_string(conn, key_vals).await
 }

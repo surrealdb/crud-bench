@@ -4,11 +4,11 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::{AnsiSqlDialect, Dialect, SqliteDialect};
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
-use crate::util::sql::json_to_sqlite_param;
+use crate::util::sql::bench_to_sqlite_param;
+use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, anyhow, bail};
-use serde_json::{Map, Value as Json};
 use std::borrow::Cow;
 use std::cmp::max;
 use std::hint::black_box;
@@ -85,7 +85,7 @@ pub(crate) struct SqliteClient {
 
 impl BenchmarkClient for SqliteClient {
 	// The return type when reading a row
-	type ReadRow = Json;
+	type ReadRow = BenchValue;
 
 	async fn shutdown(&self) -> Result<()> {
 		// Remove the database directory
@@ -137,7 +137,9 @@ impl BenchmarkClient for SqliteClient {
 					ColumnType::Float => format!("{n} REAL NOT NULL"),
 					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
 					ColumnType::Uuid => format!("{n} UUID NOT NULL"),
+					ColumnType::Decimal => format!("{n} TEXT NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
+					ColumnType::Bytes => format!("{n} BLOB NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
@@ -152,27 +154,27 @@ impl BenchmarkClient for SqliteClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, val: Json) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.create(key.into(), val).await
 	}
 
-	async fn create_string(&self, key: String, val: Json) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.create(key.into(), val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<Json> {
+	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		self.read(key.into()).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<Json> {
+	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		self.read(key.into()).await
 	}
 
-	async fn update_u32(&self, key: u32, val: Json) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.update(key.into(), val).await
 	}
 
-	async fn update_string(&self, key: String, val: Json) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.update(key.into(), val).await
 	}
 
@@ -225,14 +227,14 @@ impl BenchmarkClient for SqliteClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals.collect()).await
 	}
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals.collect()).await
 	}
@@ -247,14 +249,14 @@ impl BenchmarkClient for SqliteClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals.collect()).await
 	}
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals.collect()).await
 	}
@@ -329,27 +331,23 @@ impl SqliteClient {
 			.map_err(Into::into)
 	}
 
-	fn consume(&self, row: Row) -> Json {
-		let mut val = Map::new();
+	fn consume(&self, row: Row) -> BenchValue {
+		let mut val: Vec<(String, BenchValue)> = Vec::with_capacity(row.len());
 		for (key, value) in row {
-			val.insert(
-				key,
-				match value {
-					Value::Null => Json::Null,
-					Value::Integer(int) => int.into(),
-					Value::Real(float) => float.into(),
-					Value::Text(text) => text.into(),
-					Value::Blob(vec) => vec.into(),
-				},
-			);
+			let bv = match value {
+				Value::Null => BenchValue::Null,
+				Value::Integer(int) => BenchValue::Int(int),
+				Value::Real(float) => BenchValue::Float(float),
+				Value::Text(text) => BenchValue::String(text),
+				Value::Blob(vec) => BenchValue::Bytes(vec),
+			};
+			val.push((key, bv));
 		}
-		val.into()
+		BenchValue::Object(val)
 	}
 
-	async fn create(&self, key: ToSqlOutput<'static>, val: Json) -> Result<()> {
-		let Json::Object(obj) = val else {
-			return Err(anyhow!("expected JSON object for row payload"));
-		};
+	async fn create(&self, key: ToSqlOutput<'static>, val: BenchValue) -> Result<()> {
+		let obj = val.into_object()?;
 		let columns = self
 			.columns
 			.0
@@ -365,15 +363,19 @@ impl SqliteClient {
 		let mut params: Vec<Box<dyn tokio_rusqlite::types::ToSql + Send + Sync>> =
 			vec![Box::new(key)];
 		for (column, column_type) in &self.columns.0 {
-			let v = obj.get(column).ok_or_else(|| anyhow!("Missing value for column {column}"))?;
-			params.push(json_to_sqlite_param(column_type, v)?);
+			let v = obj
+				.iter()
+				.find(|(k, _)| k == column)
+				.map(|(_, v)| v)
+				.ok_or_else(|| anyhow!("Missing value for column {column}"))?;
+			params.push(bench_to_sqlite_param(column_type, v)?);
 		}
 		let res = self.execute_params(Cow::Owned(stm), params).await?;
 		assert_eq!(res, 1);
 		Ok(())
 	}
 
-	async fn read(&self, key: ToSqlOutput<'static>) -> Result<Json> {
+	async fn read(&self, key: ToSqlOutput<'static>) -> Result<BenchValue> {
 		let stm = "SELECT * FROM record WHERE id=$1";
 		let mut res = self.query(Cow::Borrowed(stm), Some(key)).await?;
 		assert_eq!(res.len(), 1);
@@ -381,10 +383,8 @@ impl SqliteClient {
 		Ok(black_box(self.consume(row)))
 	}
 
-	async fn update(&self, key: ToSqlOutput<'static>, val: Json) -> Result<()> {
-		let Json::Object(obj) = val else {
-			return Err(anyhow!("expected JSON object for row payload"));
-		};
+	async fn update(&self, key: ToSqlOutput<'static>, val: BenchValue) -> Result<()> {
+		let obj = val.into_object()?;
 		let n = self.columns.0.len();
 		let set = self
 			.columns
@@ -399,8 +399,12 @@ impl SqliteClient {
 		let stm = format!("UPDATE record SET {set} WHERE id = ${}", n + 1);
 		let mut params: Vec<Box<dyn tokio_rusqlite::types::ToSql + Send + Sync>> = Vec::new();
 		for (column, column_type) in &self.columns.0 {
-			let v = obj.get(column).ok_or_else(|| anyhow!("Missing value for column {column}"))?;
-			params.push(json_to_sqlite_param(column_type, v)?);
+			let v = obj
+				.iter()
+				.find(|(k, _)| k == column)
+				.map(|(_, v)| v)
+				.ok_or_else(|| anyhow!("Missing value for column {column}"))?;
+			params.push(bench_to_sqlite_param(column_type, v)?);
 		}
 		params.push(Box::new(key));
 		let res = self.execute_params(Cow::Owned(stm), params).await?;
@@ -470,7 +474,7 @@ impl SqliteClient {
 		}
 	}
 
-	async fn batch_create<T>(&self, key_vals: Vec<(T, Json)>) -> Result<()>
+	async fn batch_create<T>(&self, key_vals: Vec<(T, BenchValue)>) -> Result<()>
 	where
 		T: Into<ToSqlOutput<'static>> + Send + 'static,
 	{
@@ -493,15 +497,15 @@ impl SqliteClient {
 				param_index += 1;
 				all_params.push(Box::new(key.into()));
 				// Process the columns
-				if let Json::Object(obj) = val {
+				if let BenchValue::Object(obj) = val {
 					for (column, column_type) in &column_defs.0 {
 						// Add the column placeholder
 						row.push(format!("${param_index}"));
 						param_index += 1;
 						// Add the column value with proper type conversion
-						if let Some(value) = obj.get(column) {
-							let param = json_to_sqlite_param(column_type, value)
-								.expect("Failed to convert JSON value to SQL parameter");
+						if let Some(value) = obj.iter().find(|(k, _)| k == column).map(|(_, v)| v) {
+							let param = bench_to_sqlite_param(column_type, value)
+								.expect("Failed to convert BenchValue to SQL parameter");
 							all_params.push(param);
 						} else {
 							panic!("Missing value for column {column}");
@@ -564,21 +568,19 @@ impl SqliteClient {
 				for (i, name) in names.into_iter().enumerate() {
 					map.push((name.to_owned(), row.get(i)?));
 				}
-				// Build the JSON value
-				let mut val = Map::new();
+				// Build the typed bench value
+				let mut val: Vec<(String, BenchValue)> = Vec::with_capacity(map.len());
 				for (key, value) in map {
-					val.insert(
-						key,
-						match value {
-							Value::Null => Json::Null,
-							Value::Integer(int) => int.into(),
-							Value::Real(float) => float.into(),
-							Value::Text(text) => text.into(),
-							Value::Blob(vec) => vec.into(),
-						},
-					);
+					let bv = match value {
+						Value::Null => BenchValue::Null,
+						Value::Integer(int) => BenchValue::Int(int),
+						Value::Real(float) => BenchValue::Float(float),
+						Value::Text(text) => BenchValue::String(text),
+						Value::Blob(vec) => BenchValue::Bytes(vec),
+					};
+					val.push((key, bv));
 				}
-				black_box(Json::from(val));
+				black_box(BenchValue::Object(val));
 				count += 1;
 			}
 			// Check the number of rows read
@@ -589,7 +591,7 @@ impl SqliteClient {
 		.map_err(Into::into)
 	}
 
-	async fn batch_update<T>(&self, key_vals: Vec<(T, Json)>) -> Result<()>
+	async fn batch_update<T>(&self, key_vals: Vec<(T, BenchValue)>) -> Result<()>
 	where
 		T: Into<ToSqlOutput<'static>> + Send + 'static,
 	{
@@ -604,7 +606,7 @@ impl SqliteClient {
 			// Build and execute the statement
 			let result = (|| {
 				for (key, val) in key_vals {
-					if let Json::Object(obj) = val {
+					if let BenchValue::Object(obj) = val {
 						// Build the SET clause
 						let mut set_parts = Vec::new();
 						let mut params: Vec<Box<dyn tokio_rusqlite::types::ToSql>> = Vec::new();
@@ -615,9 +617,11 @@ impl SqliteClient {
 							set_parts.push(format!("{escaped_col} = ${param_index}"));
 							param_index += 1;
 							// Add the column value with proper type conversion
-							if let Some(value) = obj.get(column) {
-								let param = json_to_sqlite_param(column_type, value)
-									.expect("Failed to convert JSON value to SQL parameter");
+							if let Some(value) =
+								obj.iter().find(|(k, _)| k == column).map(|(_, v)| v)
+							{
+								let param = bench_to_sqlite_param(column_type, value)
+									.expect("Failed to convert BenchValue to SQL parameter");
 								params.push(param);
 							} else {
 								panic!("Missing value for column {column}");

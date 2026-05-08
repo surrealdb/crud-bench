@@ -2,24 +2,15 @@ use crate::Scan;
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::valueprovider::{ColumnType, Columns};
 use anyhow::{Result, bail};
-use chrono::{DateTime, TimeZone, Utc};
 #[cfg(feature = "mongodb")]
 use mongodb::bson::{Document, doc, to_document};
-use serde_json::Value;
-use uuid::Uuid;
 
-/// Help converting generated values to the right database representation
+/// Per-database-family helpers for SQL identifier escaping and projection /
+/// scan-clause assembly. Datetime / UUID formatting used to live here, but the
+/// `ValueProvider` now produces native [`crate::value::BenchValue`] variants,
+/// so each backend converts directly without round-tripping through strings.
 pub(crate) trait Dialect {
-	fn uuid(u: Uuid) -> Value {
-		Value::String(u.to_string())
-	}
-	fn date_time(secs_from_epoch: i64) -> Value {
-		// Get the current UTC time
-		let datetime: DateTime<Utc> = Utc.timestamp_opt(secs_from_epoch, 0).unwrap();
-		// Format it to the SQL-friendly ISO 8601 format
-		let formatted = datetime.to_rfc3339();
-		Value::String(formatted)
-	}
+	/// Escape a field/identifier for inclusion in a SQL statement.
 	fn escape_field(field: String) -> String {
 		field
 	}

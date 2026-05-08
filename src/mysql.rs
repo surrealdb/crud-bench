@@ -5,7 +5,8 @@ use crate::dialect::{Dialect, MySqlDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
-use crate::util::sql::json_to_mysql_value;
+use crate::util::sql::bench_to_mysql_value;
+use crate::value::{BenchValue, parse_decimal, parse_uuid};
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, anyhow, bail};
@@ -14,7 +15,6 @@ use mysql_async::consts;
 use mysql_async::prelude::Queryable;
 use mysql_async::prelude::ToValue;
 use mysql_async::{Conn, Opts, Row};
-use serde_json::{Map, Value};
 use std::hint::black_box;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -134,7 +134,7 @@ pub(crate) struct MysqlClient {
 
 impl BenchmarkClient for MysqlClient {
 	// The return type when reading a row
-	type ReadRow = serde_json::Value;
+	type ReadRow = BenchValue;
 
 	async fn startup(&self) -> Result<()> {
 		let id_type = match self.kt {
@@ -161,7 +161,9 @@ impl BenchmarkClient for MysqlClient {
 					ColumnType::Float => format!("{n} REAL NOT NULL"),
 					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
 					ColumnType::Uuid => format!("{n} CHAR(36) NOT NULL"),
+					ColumnType::Decimal => format!("{n} DECIMAL(38, 10) NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
+					ColumnType::Bytes => format!("{n} VARBINARY(8192) NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
@@ -173,27 +175,27 @@ impl BenchmarkClient for MysqlClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.create(key as u64, val).await
 	}
 
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.create(key, val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<Value> {
+	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		self.read(key as u64).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<Value> {
+	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		self.read(key).await
 	}
 
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.update(key as u64, val).await
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.update(key, val).await
 	}
 
@@ -256,14 +258,14 @@ impl BenchmarkClient for MysqlClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals.map(|(k, v)| (k as u64, v)).collect()).await
 	}
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals.collect()).await
 	}
@@ -278,14 +280,14 @@ impl BenchmarkClient for MysqlClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals.map(|(k, v)| (k as u64, v)).collect()).await
 	}
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals.collect()).await
 	}
@@ -300,108 +302,151 @@ impl BenchmarkClient for MysqlClient {
 }
 
 impl MysqlClient {
-	fn consume(&self, mut row: Row) -> Result<Value> {
-		let mut val: Map<String, Value> = Map::new();
+	fn consume(&self, mut row: Row) -> Result<BenchValue> {
+		let mut val: Vec<(String, BenchValue)> = Vec::with_capacity(row.columns().len());
 		//
 		for (i, c) in row.columns().iter().enumerate() {
-			val.insert(
-				c.name_str().to_string(),
-				match c.column_type() {
-					consts::ColumnType::MYSQL_TYPE_TINY => {
-						let v: Option<bool> = row.take(i);
-						Value::from(v)
+			let name = c.name_str().to_string();
+			let column_type = self.columns.0.iter().find(|(n, _)| n == &name).map(|(_, t)| *t);
+			let bv = match c.column_type() {
+				consts::ColumnType::MYSQL_TYPE_TINY => {
+					let v: Option<bool> = row.take(i);
+					match v {
+						Some(b) => BenchValue::Bool(b),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_SHORT => {
-						let v: Option<bool> = row.take(i);
-						Value::from(v)
+				}
+				consts::ColumnType::MYSQL_TYPE_SHORT => {
+					let v: Option<bool> = row.take(i);
+					match v {
+						Some(b) => BenchValue::Bool(b),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_VARCHAR => {
-						let v: Option<String> = row.take(i);
-						Value::from(v)
+				}
+				consts::ColumnType::MYSQL_TYPE_VARCHAR
+				| consts::ColumnType::MYSQL_TYPE_VAR_STRING
+				| consts::ColumnType::MYSQL_TYPE_STRING => {
+					let v: Option<String> = row.take(i);
+					match (v, column_type) {
+						(Some(s), Some(ColumnType::Uuid)) => BenchValue::Uuid(parse_uuid(&s)?),
+						(Some(s), _) => BenchValue::String(s),
+						(None, _) => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_VAR_STRING => {
-						let v: Option<String> = row.take(i);
-						Value::from(v)
+				}
+				consts::ColumnType::MYSQL_TYPE_LONG => {
+					let v: Option<i32> = row.take(i);
+					match v {
+						Some(i) => BenchValue::Int(i as i64),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_STRING => {
-						let v: Option<String> = row.take(i);
-						Value::from(v)
+				}
+				consts::ColumnType::MYSQL_TYPE_LONGLONG => {
+					let v: Option<i64> = row.take(i);
+					match v {
+						Some(i) => BenchValue::Int(i),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_LONG => {
-						let v: Option<i32> = row.take(i);
-						Value::from(v)
+				}
+				consts::ColumnType::MYSQL_TYPE_FLOAT => {
+					let v: Option<f32> = row.take(i);
+					match v {
+						Some(f) => BenchValue::Float(f as f64),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_LONGLONG => {
-						let v: Option<i64> = row.take(i);
-						Value::from(v)
+				}
+				consts::ColumnType::MYSQL_TYPE_DOUBLE => {
+					let v: Option<f64> = row.take(i);
+					match v {
+						Some(f) => BenchValue::Float(f),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_FLOAT => {
-						let v: Option<f32> = row.take(i);
-						Value::from(v)
+				}
+				consts::ColumnType::MYSQL_TYPE_DECIMAL
+				| consts::ColumnType::MYSQL_TYPE_NEWDECIMAL => {
+					let v: Option<String> = row.take(i);
+					match v {
+						Some(s) => BenchValue::Decimal(parse_decimal(&s)?),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_DOUBLE => {
-						let v: Option<f64> = row.take(i);
-						Value::from(v)
+				}
+				consts::ColumnType::MYSQL_TYPE_BLOB
+				| consts::ColumnType::MYSQL_TYPE_TINY_BLOB
+				| consts::ColumnType::MYSQL_TYPE_MEDIUM_BLOB
+				| consts::ColumnType::MYSQL_TYPE_LONG_BLOB => {
+					// MySQL returns both binary BLOB and TEXT columns with the
+					// MYSQL_TYPE_BLOB / *_BLOB variants. Disambiguate using
+					// the schema-declared `ColumnType`: bytes-typed columns
+					// stay as `BenchValue::Bytes`, anything else (TEXT,
+					// VARCHAR-as-text, etc.) is decoded as a UTF-8 string.
+					let v: Option<Vec<u8>> = row.take(i);
+					match (v, column_type) {
+						(Some(b), Some(ColumnType::Bytes)) => BenchValue::Bytes(b),
+						(Some(b), _) => match String::from_utf8(b) {
+							Ok(s) => BenchValue::String(s),
+							Err(e) => BenchValue::Bytes(e.into_bytes()),
+						},
+						(None, _) => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_BLOB => {
-						let v: Option<String> = row.take(i);
-						Value::from(v)
+				}
+				consts::ColumnType::MYSQL_TYPE_JSON => {
+					let v: Option<serde_json::Value> = row.take(i);
+					match v {
+						Some(j) => BenchValue::from(&j),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_JSON => {
-						let v: Option<serde_json::Value> = row.take(i);
-						Value::from(v)
+				}
+				consts::ColumnType::MYSQL_TYPE_TIMESTAMP
+				| consts::ColumnType::MYSQL_TYPE_DATETIME => {
+					let v: Option<NaiveDateTime> = row.take(i);
+					match v {
+						Some(dt) => BenchValue::DateTime(Utc.from_utc_datetime(&dt)),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_TIMESTAMP
-					| consts::ColumnType::MYSQL_TYPE_DATETIME => {
-						let v: Option<NaiveDateTime> = row.take(i);
-						match v {
-							Some(dt) => Value::String(Utc.from_utc_datetime(&dt).to_rfc3339()),
-							None => Value::Null,
-						}
+				}
+				consts::ColumnType::MYSQL_TYPE_DATE | consts::ColumnType::MYSQL_TYPE_NEWDATE => {
+					let v: Option<NaiveDate> = row.take(i);
+					match v {
+						Some(d) => BenchValue::String(d.to_string()),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_DATE
-					| consts::ColumnType::MYSQL_TYPE_NEWDATE => {
-						let v: Option<NaiveDate> = row.take(i);
-						match v {
-							Some(d) => Value::String(d.to_string()),
-							None => Value::Null,
-						}
+				}
+				consts::ColumnType::MYSQL_TYPE_TIME => {
+					let v: Option<NaiveTime> = row.take(i);
+					match v {
+						Some(t) => BenchValue::String(t.to_string()),
+						None => BenchValue::Null,
 					}
-					consts::ColumnType::MYSQL_TYPE_TIME => {
-						let v: Option<NaiveTime> = row.take(i);
-						match v {
-							Some(t) => Value::String(t.to_string()),
-							None => Value::Null,
-						}
-					}
-					c => {
-						todo!("Not yet implemented {c:?}")
-					}
-				},
-			);
+				}
+				c => {
+					todo!("Not yet implemented {c:?}")
+				}
+			};
+			val.push((name, bv));
 		}
-		Ok(val.into())
+		Ok(BenchValue::Object(val))
 	}
 
-	async fn create<T>(&self, key: T, val: Value) -> Result<()>
+	async fn create<T>(&self, key: T, val: BenchValue) -> Result<()>
 	where
 		T: ToValue + Sync,
 	{
-		let Value::Object(obj) = val else {
-			return Err(anyhow!("expected JSON object for row payload"));
-		};
+		let obj = val.into_object()?;
 		let (columns, placeholders) = MySqlDialect::create_clause(&self.columns);
 		let stm = format!("INSERT INTO record (id, {columns}) VALUES (?, {placeholders})");
 		let mut params: Vec<mysql_async::Value> = vec![key.to_value()];
 		for (name, column_type) in &self.columns.0 {
-			let v = obj.get(name).ok_or_else(|| anyhow!("Missing value for column {name}"))?;
-			params.push(json_to_mysql_value(column_type, v)?);
+			let v = obj
+				.iter()
+				.find(|(k, _)| k == name)
+				.map(|(_, v)| v)
+				.ok_or_else(|| anyhow!("Missing value for column {name}"))?;
+			params.push(bench_to_mysql_value(column_type, v)?);
 		}
 		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
 		Ok(())
 	}
 
-	async fn read<T>(&self, key: T) -> Result<Value>
+	async fn read<T>(&self, key: T) -> Result<BenchValue>
 	where
 		T: ToValue + Sync,
 	{
@@ -411,19 +456,21 @@ impl MysqlClient {
 		Ok(black_box(self.consume(res.into_iter().next().unwrap())?))
 	}
 
-	async fn update<T>(&self, key: T, val: Value) -> Result<()>
+	async fn update<T>(&self, key: T, val: BenchValue) -> Result<()>
 	where
 		T: ToValue + Sync,
 	{
-		let Value::Object(obj) = val else {
-			return Err(anyhow!("expected JSON object for row payload"));
-		};
+		let obj = val.into_object()?;
 		let set = MySqlDialect::update_clause(&self.columns);
 		let stm = format!("UPDATE record SET {set} WHERE id=?");
 		let mut params: Vec<mysql_async::Value> = Vec::new();
 		for (name, column_type) in &self.columns.0 {
-			let v = obj.get(name).ok_or_else(|| anyhow!("Missing value for column {name}"))?;
-			params.push(json_to_mysql_value(column_type, v)?);
+			let v = obj
+				.iter()
+				.find(|(k, _)| k == name)
+				.map(|(_, v)| v)
+				.ok_or_else(|| anyhow!("Missing value for column {name}"))?;
+			params.push(bench_to_mysql_value(column_type, v)?);
 		}
 		params.push(key.to_value());
 		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
@@ -493,7 +540,7 @@ impl MysqlClient {
 		}
 	}
 
-	async fn batch_create<T>(&self, key_vals: Vec<(T, Value)>) -> Result<()>
+	async fn batch_create<T>(&self, key_vals: Vec<(T, BenchValue)>) -> Result<()>
 	where
 		T: ToValue + Sync,
 	{
@@ -506,10 +553,10 @@ impl MysqlClient {
 		let mut params: Vec<mysql_async::Value> = Vec::new();
 		for (key, val) in key_vals.iter() {
 			params.push(key.to_value());
-			if let Value::Object(map) = val {
+			if let BenchValue::Object(map) = val {
 				for (name, column_type) in &self.columns.0 {
-					if let Some(v) = map.get(name) {
-						params.push(json_to_mysql_value(column_type, v)?);
+					if let Some(v) = map.iter().find(|(k, _)| k == name).map(|(_, v)| v) {
+						params.push(bench_to_mysql_value(column_type, v)?);
 					}
 				}
 			}
@@ -538,7 +585,7 @@ impl MysqlClient {
 		Ok(())
 	}
 
-	async fn batch_update<T>(&self, key_vals: Vec<(T, Value)>) -> Result<()>
+	async fn batch_update<T>(&self, key_vals: Vec<(T, BenchValue)>) -> Result<()>
 	where
 		T: ToValue + Sync,
 	{
@@ -558,10 +605,10 @@ impl MysqlClient {
 		for (name, column_type) in &self.columns.0 {
 			for (key, val) in &key_vals {
 				params.push(key.to_value());
-				if let Value::Object(map) = val
-					&& let Some(v) = map.get(name)
+				if let BenchValue::Object(map) = val
+					&& let Some(v) = map.iter().find(|(k, _)| k == name).map(|(_, v)| v)
 				{
-					params.push(json_to_mysql_value(column_type, v)?);
+					params.push(bench_to_mysql_value(column_type, v)?);
 				}
 			}
 		}

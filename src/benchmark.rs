@@ -128,7 +128,7 @@ impl Benchmark {
 		E: BenchmarkEngine<C> + Send + Sync,
 	{
 		// Generate a value sample for the report
-		let sample = vp.generate_value::<D>();
+		let sample = vp.generate_value();
 		// Setup the datastore
 		self.bench_ui
 			.println_muted(&format!("Setting up the datastore with {} clients", self.clients));
@@ -645,12 +645,12 @@ impl Benchmark {
 			tokio::time::timeout(operation_timeout, async {
 				match &operation {
 					BenchmarkOperation::Create => {
-						let value = vp.generate_value::<D>();
+						let value = vp.generate_value();
 						client.create(sample, value, &mut kp).await
 					}
 					BenchmarkOperation::Read => client.read(sample, &mut kp).await.map(|_| ()),
 					BenchmarkOperation::Update => {
-						let value = vp.generate_value::<D>();
+						let value = vp.generate_value();
 						client.update(sample, value, &mut kp).await
 					}
 					BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await,

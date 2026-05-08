@@ -5,9 +5,9 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, ScanContext};
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
+use crate::value::BenchValue;
 use crate::{Scan, ScanWithWrites, ScanWritesOperation};
 use anyhow::Result;
-use serde_json::Value;
 
 /// Deterministic subset of samples that run writes after the scan (spread via ratio).
 pub(crate) fn sample_includes_writes(sample: u32, ratio: f64) -> bool {
@@ -68,6 +68,19 @@ pub(crate) async fn run_scan_with_writes<C: BenchmarkClient>(
 	}
 }
 
+/// Replace the named field on an object-shaped [`BenchValue`].
+fn replace_field(value: &mut BenchValue, field: &str, new_val: BenchValue) {
+	if let BenchValue::Object(o) = value {
+		for (k, v) in o.iter_mut() {
+			if k == field {
+				*v = new_val;
+				return;
+			}
+		}
+		o.push((field.to_string(), new_val));
+	}
+}
+
 async fn compensating_swap_u32<C: BenchmarkClient>(
 	client: &C,
 	ka: u32,
@@ -81,7 +94,7 @@ async fn compensating_swap_u32<C: BenchmarkClient>(
 
 	let va_res = client.read_u32(ka).await;
 	let vb_res = client.read_u32(kb).await;
-	let (mut va, mut vb): (Value, Value) = match (va_res, vb_res) {
+	let (mut va, mut vb): (BenchValue, BenchValue) = match (va_res, vb_res) {
 		(Err(ea), _) | (_, Err(ea)) if ea.to_string().contains(NOT_SUPPORTED_ERROR) => {
 			return Ok(());
 		}
@@ -90,15 +103,11 @@ async fn compensating_swap_u32<C: BenchmarkClient>(
 		(Ok(va), Ok(vb)) => (va.into(), vb.into()),
 	};
 
-	let a_val = va.get(field).cloned();
-	let b_val = vb.get(field).cloned();
+	let a_val = va.get_field(field).cloned();
+	let b_val = vb.get_field(field).cloned();
 	if let (Some(a), Some(b)) = (a_val, b_val) {
-		if let Some(obja) = va.as_object_mut() {
-			obja.insert(field.to_string(), b);
-		}
-		if let Some(objb) = vb.as_object_mut() {
-			objb.insert(field.to_string(), a);
-		}
+		replace_field(&mut va, field, b);
+		replace_field(&mut vb, field, a);
 		client.update_u32(ka, va).await?;
 		client.update_u32(kb, vb).await?;
 	}
@@ -118,7 +127,7 @@ async fn compensating_swap_string<C: BenchmarkClient>(
 
 	let va_res = client.read_string(ka.clone()).await;
 	let vb_res = client.read_string(kb.clone()).await;
-	let (mut va, mut vb): (Value, Value) = match (va_res, vb_res) {
+	let (mut va, mut vb): (BenchValue, BenchValue) = match (va_res, vb_res) {
 		(Err(ea), _) | (_, Err(ea)) if ea.to_string().contains(NOT_SUPPORTED_ERROR) => {
 			return Ok(());
 		}
@@ -127,15 +136,11 @@ async fn compensating_swap_string<C: BenchmarkClient>(
 		(Ok(va), Ok(vb)) => (va.into(), vb.into()),
 	};
 
-	let a_val = va.get(field).cloned();
-	let b_val = vb.get(field).cloned();
+	let a_val = va.get_field(field).cloned();
+	let b_val = vb.get_field(field).cloned();
 	if let (Some(a), Some(b)) = (a_val, b_val) {
-		if let Some(obja) = va.as_object_mut() {
-			obja.insert(field.to_string(), b);
-		}
-		if let Some(objb) = vb.as_object_mut() {
-			objb.insert(field.to_string(), a);
-		}
+		replace_field(&mut va, field, b);
+		replace_field(&mut vb, field, a);
 		client.update_string(ka, va).await?;
 		client.update_string(kb, vb).await?;
 	}

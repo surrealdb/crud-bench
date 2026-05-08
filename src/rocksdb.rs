@@ -3,7 +3,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
-use crate::util::data;
+use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -13,7 +13,6 @@ use rocksdb::{
 	DBCompressionType, FlushOptions, IteratorMode, LogLevel, OptimisticTransactionDB,
 	OptimisticTransactionOptions, Options, ReadOptions, WaitForCompactOptions, WriteOptions,
 };
-use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
@@ -175,7 +174,7 @@ pub(crate) struct RocksDBClient {
 
 impl BenchmarkClient for RocksDBClient {
 	// The return type when reading a row
-	type ReadRow = serde_json::Value;
+	type ReadRow = BenchValue;
 
 	async fn shutdown(&self) -> Result<()> {
 		// No need to run background jobs
@@ -210,27 +209,27 @@ impl BenchmarkClient for RocksDBClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.create_bytes(&key.to_ne_bytes(), val).await
 	}
 
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.create_bytes(&key.into_bytes(), val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<Value> {
+	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		self.read_bytes(&key.to_ne_bytes()).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<Value> {
+	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		self.read_bytes(&key.into_bytes()).await
 	}
 
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.update_bytes(&key.to_ne_bytes(), val).await
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.update_bytes(&key.into_bytes(), val).await
 	}
 
@@ -252,10 +251,10 @@ impl BenchmarkClient for RocksDBClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = data::encode_value(&val)?;
+			let val = val.encode()?;
 			Ok((key.to_ne_bytes().to_vec(), val))
 		});
 		self.batch_create_bytes(pairs_iter).await
@@ -263,10 +262,10 @@ impl BenchmarkClient for RocksDBClient {
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = data::encode_value(&val)?;
+			let val = val.encode()?;
 			Ok((key.into_bytes(), val))
 		});
 		self.batch_create_bytes(pairs_iter).await
@@ -284,10 +283,10 @@ impl BenchmarkClient for RocksDBClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = data::encode_value(&val)?;
+			let val = val.encode()?;
 			Ok((key.to_ne_bytes().to_vec(), val))
 		});
 		self.batch_update_bytes(pairs_iter).await
@@ -295,10 +294,10 @@ impl BenchmarkClient for RocksDBClient {
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = data::encode_value(&val)?;
+			let val = val.encode()?;
 			Ok((key.into_bytes(), val))
 		});
 		self.batch_update_bytes(pairs_iter).await
@@ -316,9 +315,9 @@ impl BenchmarkClient for RocksDBClient {
 }
 
 impl RocksDBClient {
-	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+	async fn create_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Serialise the value
-		let val = data::encode_value(&val)?;
+		let val = val.encode()?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
@@ -333,7 +332,7 @@ impl RocksDBClient {
 		Ok(())
 	}
 
-	async fn read_bytes(&self, key: &[u8]) -> Result<Value> {
+	async fn read_bytes(&self, key: &[u8]) -> Result<BenchValue> {
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
@@ -353,14 +352,14 @@ impl RocksDBClient {
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value
-		let val = data::decode_value(res.unwrap().as_ref())?;
+		let val = BenchValue::decode(res.unwrap().as_ref())?;
 		// All ok
 		Ok(black_box(val))
 	}
 
-	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+	async fn update_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Serialise the value
-		let val = data::encode_value(&val)?;
+		let val = val.encode()?;
 		// Set the transaction options
 		let mut to = OptimisticTransactionOptions::default();
 		to.set_snapshot(true);
@@ -434,7 +433,7 @@ impl RocksDBClient {
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
-			let val = data::decode_value(res.unwrap().as_ref())?;
+			let val = BenchValue::decode(res.unwrap().as_ref())?;
 			// Use the value
 			black_box(val);
 		}

@@ -2,6 +2,7 @@
 
 use crate::system::SystemInfo;
 use crate::util::format_duration;
+use crate::value::BenchValue;
 use bytesize::ByteSize;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_FULL;
@@ -40,7 +41,7 @@ pub(crate) struct BenchmarkMetadata {
 	pub(crate) optimised: bool,
 }
 
-/// Full benchmark output: timings per phase plus one representative generated [`serde_json::Value`].
+/// Full benchmark output: timings per phase plus one representative generated [`BenchValue`].
 #[derive(Serialize)]
 pub(crate) struct BenchmarkResult {
 	/// Display name of the datastore under test.
@@ -62,7 +63,19 @@ pub(crate) struct BenchmarkResult {
 	/// Single-record delete phase.
 	pub(crate) deletes: Option<OperationResult>,
 	/// Example document produced by the value template (for inspection / stored results).
-	pub(crate) sample: Value,
+	#[serde(serialize_with = "serialize_sample")]
+	pub(crate) sample: BenchValue,
+}
+
+/// Serialise a [`BenchValue`] through its JSON adapter so JSON consumers see the
+/// canonical representation (UUIDs/datetimes/decimals as strings) regardless of
+/// the in-memory variant.
+fn serialize_sample<S>(value: &BenchValue, serializer: S) -> Result<S::Ok, S::Error>
+where
+	S: serde::Serializer,
+{
+	let json: Value = value.to_json();
+	json.serialize(serializer)
 }
 
 /// Tags each timed scan leg for JSON consumers (`kind` discriminators).

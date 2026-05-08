@@ -34,6 +34,7 @@ mod storage;
 mod system;
 mod terminal;
 mod util;
+mod value;
 mod valueprovider;
 mod workloads;
 
@@ -662,7 +663,7 @@ fn run(args: Args) -> Result<()> {
 			println!("{res}");
 			println!("--------------------------------------------------");
 			if args.show_sample {
-				println!("Value sample: {:#}", res.sample);
+				println!("Value sample: {:#}", res.sample.to_json());
 				println!("--------------------------------------------------");
 			}
 

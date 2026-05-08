@@ -3,15 +3,14 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
-use crate::util::data;
 use crate::util::redis_batch;
+use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use futures::StreamExt;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client, ScanOptions};
-use serde_json::Value;
 use std::hint::black_box;
 use tokio::sync::Mutex;
 
@@ -61,47 +60,47 @@ pub(crate) struct RedisClient {
 
 impl BenchmarkClient for RedisClient {
 	// The return type when reading a row
-	type ReadRow = serde_json::Value;
+	type ReadRow = BenchValue;
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
-		let val = data::encode_value(&val)?;
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
+		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
-		let val = data::encode_value(&val)?;
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
+		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<Value> {
+	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		let val: Vec<u8> = self.conn_record.lock().await.get(key).await?;
 		assert!(!val.is_empty());
-		let val = data::decode_value(&val)?;
+		let val = BenchValue::decode(&val)?;
 		Ok(black_box(val))
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn read_string(&self, key: String) -> Result<Value> {
+	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		let val: Vec<u8> = self.conn_record.lock().await.get(key).await?;
 		assert!(!val.is_empty());
-		let val = data::decode_value(&val)?;
+		let val = BenchValue::decode(&val)?;
 		Ok(black_box(val))
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
-		let val = data::encode_value(&val)?;
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
+		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
-		let val = data::encode_value(&val)?;
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
+		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
@@ -128,14 +127,14 @@ impl BenchmarkClient for RedisClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		redis_batch::batch_create_u32(&self.conn_record, key_vals.collect()).await
 	}
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		redis_batch::batch_create_string(&self.conn_record, key_vals.collect()).await
 	}
@@ -150,14 +149,14 @@ impl BenchmarkClient for RedisClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		redis_batch::batch_update_u32(&self.conn_record, key_vals.collect()).await
 	}
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		redis_batch::batch_update_string(&self.conn_record, key_vals.collect()).await
 	}

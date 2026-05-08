@@ -4,12 +4,13 @@ use crate::dialect::{AnsiSqlDialect, Dialect, PostgresDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
-use crate::util::sql::json_to_postgres_param;
+use crate::util::sql::bench_to_postgres_param;
+use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, anyhow};
 use chrono::{NaiveDateTime, TimeZone, Utc};
-use serde_json::{Map, Value};
+use rust_decimal::Decimal;
 use std::hint::black_box;
 use tokio_postgres::types::{Json, ToSql};
 use tokio_postgres::{Client, NoTls, Row};
@@ -133,7 +134,7 @@ pub(crate) struct PostgresClient {
 
 impl BenchmarkClient for PostgresClient {
 	// The return type when reading a row
-	type ReadRow = serde_json::Value;
+	type ReadRow = BenchValue;
 
 	async fn startup(&self) -> Result<()> {
 		let id_type = match self.kt {
@@ -160,7 +161,9 @@ impl BenchmarkClient for PostgresClient {
 					ColumnType::Float => format!("{n} REAL NOT NULL"),
 					ColumnType::DateTime => format!("{n} TIMESTAMP NOT NULL"),
 					ColumnType::Uuid => format!("{n} UUID NOT NULL"),
+					ColumnType::Decimal => format!("{n} NUMERIC(38, 10) NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
+					ColumnType::Bytes => format!("{n} BYTEA NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
@@ -172,27 +175,27 @@ impl BenchmarkClient for PostgresClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.create(key as i32, val).await
 	}
 
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.create(key, val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<Value> {
+	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		self.read(key as i32).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<Value> {
+	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		self.read(key).await
 	}
 
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.update(key as i32, val).await
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.update(key, val).await
 	}
 
@@ -254,14 +257,14 @@ impl BenchmarkClient for PostgresClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals.map(|(k, v)| (k as i32, v)).collect()).await
 	}
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals.collect()).await
 	}
@@ -276,14 +279,14 @@ impl BenchmarkClient for PostgresClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals.map(|(k, v)| (k as i32, v)).collect()).await
 	}
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals.collect()).await
 	}
@@ -298,79 +301,83 @@ impl BenchmarkClient for PostgresClient {
 }
 
 impl PostgresClient {
-	fn consume(&self, row: Row, columns: bool) -> Result<Value> {
-		let mut val: Map<String, Value> = Map::new();
+	fn consume(&self, row: Row, columns: bool) -> Result<BenchValue> {
+		let mut val: Vec<(String, BenchValue)> = Vec::new();
 		match self.kt {
 			KeyType::Integer => {
 				let v: i32 = row.try_get("id")?;
-				val.insert("id".into(), Value::from(v));
+				val.push(("id".into(), BenchValue::Int(v as i64)));
 			}
 			KeyType::String26 | KeyType::String90 | KeyType::String250 | KeyType::String506 => {
 				let v: String = row.try_get("id")?;
-				val.insert("id".into(), Value::from(v));
+				val.push(("id".into(), BenchValue::String(v)));
 			}
 			KeyType::Uuid => {
 				let v: uuid::Uuid = row.try_get("id")?;
-				val.insert("id".into(), Value::from(v.to_string()));
+				val.push(("id".into(), BenchValue::Uuid(v)));
 			}
 		}
 		if columns {
 			for (n, t) in self.columns.0.iter() {
-				val.insert(
-					n.clone(),
-					match t {
-						ColumnType::Bool => {
-							let v: bool = row.try_get(n.as_str())?;
-							Value::from(v)
-						}
-						ColumnType::Float => {
-							let v: f32 = row.try_get(n.as_str())?;
-							Value::from(v as f64)
-						}
-						ColumnType::Integer => {
-							let v: i32 = row.try_get(n.as_str())?;
-							Value::from(v)
-						}
-						ColumnType::String => {
-							let v: String = row.try_get(n.as_str())?;
-							Value::from(v)
-						}
-						ColumnType::DateTime => {
-							let v: NaiveDateTime = row.try_get(n.as_str())?;
-							Value::String(Utc.from_utc_datetime(&v).to_rfc3339())
-						}
-						ColumnType::Uuid => {
-							let v: uuid::Uuid = row.try_get(n.as_str())?;
-							Value::from(v.to_string())
-						}
-						ColumnType::Object => {
-							let v: Json<Value> = row.try_get(n.as_str())?;
-							v.0
-						}
-						ColumnType::Array => {
-							let v: Json<Value> = row.try_get(n.as_str())?;
-							v.0
-						}
-					},
-				);
+				let bv = match t {
+					ColumnType::Bool => {
+						let v: bool = row.try_get(n.as_str())?;
+						BenchValue::Bool(v)
+					}
+					ColumnType::Float => {
+						let v: f32 = row.try_get(n.as_str())?;
+						BenchValue::Float(v as f64)
+					}
+					ColumnType::Integer => {
+						let v: i32 = row.try_get(n.as_str())?;
+						BenchValue::Int(v as i64)
+					}
+					ColumnType::String => {
+						let v: String = row.try_get(n.as_str())?;
+						BenchValue::String(v)
+					}
+					ColumnType::DateTime => {
+						let v: NaiveDateTime = row.try_get(n.as_str())?;
+						BenchValue::DateTime(Utc.from_utc_datetime(&v))
+					}
+					ColumnType::Uuid => {
+						let v: uuid::Uuid = row.try_get(n.as_str())?;
+						BenchValue::Uuid(v)
+					}
+					ColumnType::Decimal => {
+						let v: Decimal = row.try_get(n.as_str())?;
+						BenchValue::Decimal(v)
+					}
+					ColumnType::Bytes => {
+						let v: Vec<u8> = row.try_get(n.as_str())?;
+						BenchValue::Bytes(v)
+					}
+					ColumnType::Object | ColumnType::Array => {
+						let v: Json<serde_json::Value> = row.try_get(n.as_str())?;
+						BenchValue::from(&v.0)
+					}
+				};
+				val.push((n.clone(), bv));
 			}
 		}
-		Ok(val.into())
+		Ok(BenchValue::Object(val))
 	}
 
-	async fn create<T>(&self, key: T, val: Value) -> Result<()>
+	async fn create<T>(&self, key: T, val: BenchValue) -> Result<()>
 	where
 		T: ToSql + Sync + Send,
 	{
-		let Value::Object(obj) = val else {
-			return Err(anyhow!("expected JSON object for row payload"));
-		};
+		let obj = val.into_object()?;
 		let (columns, placeholders) = AnsiSqlDialect::create_clause(&self.columns);
 		let stm = format!("INSERT INTO record (id, {columns}) VALUES ($1, {placeholders})");
 		let mut owned: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(key)];
 		for (column, column_type) in &self.columns.0 {
-			let v = obj.get(column).ok_or_else(|| anyhow!("Missing value for column {column}"))?;
-			owned.push(json_to_postgres_param(column, column_type, v)?);
+			let v = obj
+				.iter()
+				.find(|(k, _)| k == column)
+				.map(|(_, v)| v)
+				.ok_or_else(|| anyhow!("Missing value for column {column}"))?;
+			owned.push(bench_to_postgres_param(column, column_type, v)?);
 		}
 		let params: Vec<&(dyn ToSql + Sync)> =
 			owned.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
@@ -379,7 +386,7 @@ impl PostgresClient {
 		Ok(())
 	}
 
-	async fn read<T>(&self, key: T) -> Result<Value>
+	async fn read<T>(&self, key: T) -> Result<BenchValue>
 	where
 		T: ToSql + Sync,
 	{
@@ -389,19 +396,21 @@ impl PostgresClient {
 		Ok(black_box(self.consume(res.into_iter().next().unwrap(), true)?))
 	}
 
-	async fn update<T>(&self, key: T, val: Value) -> Result<()>
+	async fn update<T>(&self, key: T, val: BenchValue) -> Result<()>
 	where
 		T: ToSql + Sync + Send,
 	{
-		let Value::Object(obj) = val else {
-			return Err(anyhow!("expected JSON object for row payload"));
-		};
+		let obj = val.into_object()?;
 		let set = AnsiSqlDialect::update_clause(&self.columns);
 		let stm = format!("UPDATE record SET {set} WHERE id = $1");
 		let mut owned: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(key)];
 		for (column, column_type) in &self.columns.0 {
-			let v = obj.get(column).ok_or_else(|| anyhow!("Missing value for column {column}"))?;
-			owned.push(json_to_postgres_param(column, column_type, v)?);
+			let v = obj
+				.iter()
+				.find(|(k, _)| k == column)
+				.map(|(_, v)| v)
+				.ok_or_else(|| anyhow!("Missing value for column {column}"))?;
+			owned.push(bench_to_postgres_param(column, column_type, v)?);
 		}
 		let params: Vec<&(dyn ToSql + Sync)> =
 			owned.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
@@ -466,7 +475,7 @@ impl PostgresClient {
 		}
 	}
 
-	async fn batch_create<T>(&self, key_vals: Vec<(T, Value)>) -> Result<()>
+	async fn batch_create<T>(&self, key_vals: Vec<(T, BenchValue)>) -> Result<()>
 	where
 		T: ToSql + Sync,
 	{
@@ -486,14 +495,14 @@ impl PostgresClient {
 			let mut row = vec![format!("${index}")];
 			index += 1;
 			// Process the columns
-			if let Value::Object(obj) = val {
+			if let BenchValue::Object(obj) = val {
 				for (column, column_type) in &self.columns.0 {
 					// Add the column placeholder
 					row.push(format!("${index}"));
 					index += 1;
 					// Add the column value with proper type conversion
-					if let Some(value) = obj.get(column) {
-						let value = json_to_postgres_param(column, column_type, value)?;
+					if let Some(value) = obj.iter().find(|(k, _)| k == column).map(|(_, v)| v) {
+						let value = bench_to_postgres_param(column, column_type, value)?;
 						values.push(value);
 					} else {
 						return Err(anyhow::anyhow!("Missing value for column {column}"));
@@ -508,7 +517,7 @@ impl PostgresClient {
 		// Iterate over the key-value pairs
 		for (key, val) in &key_vals {
 			params.push(key);
-			if let Value::Object(_) = val {
+			if let BenchValue::Object(_) = val {
 				for _ in &self.columns.0 {
 					params.push(values[index].as_ref());
 					index += 1;
@@ -541,7 +550,7 @@ impl PostgresClient {
 		Ok(())
 	}
 
-	async fn batch_update<T>(&self, key_vals: Vec<(T, Value)>) -> Result<()>
+	async fn batch_update<T>(&self, key_vals: Vec<(T, BenchValue)>) -> Result<()>
 	where
 		T: ToSql + Sync,
 	{
@@ -571,14 +580,14 @@ impl PostgresClient {
 			let mut row = vec![format!("${index}::{}", get_key_type(&self.kt))];
 			index += 1;
 			// Process each column value in the record
-			if let Value::Object(obj) = val {
+			if let BenchValue::Object(obj) = val {
 				for (column, column_type) in &self.columns.0 {
 					// Add parameter placeholder for this column
 					row.push(format!("${index}::{}", get_column_type(column_type)));
 					index += 1;
 					// Add the column value with proper type conversion
-					if let Some(value) = obj.get(column) {
-						let value = json_to_postgres_param(column, column_type, value)?;
+					if let Some(value) = obj.iter().find(|(k, _)| k == column).map(|(_, v)| v) {
+						let value = bench_to_postgres_param(column, column_type, value)?;
 						values.push(value);
 					} else {
 						return Err(anyhow::anyhow!("Missing value for column {column}"));
@@ -595,7 +604,7 @@ impl PostgresClient {
 			// Add the key as the first parameter
 			params.push(key);
 			// Add all column values as subsequent parameters
-			if let Value::Object(_) = val {
+			if let BenchValue::Object(_) = val {
 				for _ in &self.columns.0 {
 					params.push(values[index].as_ref());
 					index += 1;
@@ -652,5 +661,7 @@ fn get_column_type(column_type: &ColumnType) -> &'static str {
 		ColumnType::Array => "JSONB",
 		ColumnType::DateTime => "TIMESTAMP",
 		ColumnType::Uuid => "UUID",
+		ColumnType::Decimal => "NUMERIC",
+		ColumnType::Bytes => "BYTEA",
 	}
 }

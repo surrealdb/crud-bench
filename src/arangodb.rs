@@ -4,6 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::ArangoDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
@@ -92,7 +93,7 @@ async fn create_arango_client(
 
 impl BenchmarkClient for ArangoDBClient {
 	// The return type when reading a row
-	type ReadRow = serde_json::Value;
+	type ReadRow = BenchValue;
 
 	async fn startup(&self) -> Result<()> {
 		// Ensure we drop the database first.
@@ -105,42 +106,42 @@ impl BenchmarkClient for ArangoDBClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
 			_ => self.create(key.to_string(), val).await,
 		}
 	}
 
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
 			_ => self.create(key, val).await,
 		}
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<Value> {
+	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
 			_ => self.read(key.to_string()).await,
 		}
 	}
 
-	async fn read_string(&self, key: String) -> Result<Value> {
+	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
 			_ => self.read(key).await,
 		}
 	}
 
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
 			_ => self.update(key.to_string(), val).await,
 		}
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
 			_ => self.update(key, val).await,
@@ -177,7 +178,7 @@ impl BenchmarkClient for ArangoDBClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
@@ -190,7 +191,7 @@ impl BenchmarkClient for ArangoDBClient {
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
@@ -217,7 +218,7 @@ impl BenchmarkClient for ArangoDBClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
@@ -230,7 +231,7 @@ impl BenchmarkClient for ArangoDBClient {
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
@@ -257,7 +258,7 @@ impl BenchmarkClient for ArangoDBClient {
 }
 
 impl ArangoDBClient {
-	async fn batch_create_pairs(&self, pairs: Vec<(String, Value)>) -> Result<()> {
+	async fn batch_create_pairs(&self, pairs: Vec<(String, BenchValue)>) -> Result<()> {
 		if pairs.is_empty() {
 			return Ok(());
 		}
@@ -287,7 +288,7 @@ impl ArangoDBClient {
 		Ok(())
 	}
 
-	async fn batch_update_pairs(&self, pairs: Vec<(String, Value)>) -> Result<()> {
+	async fn batch_update_pairs(&self, pairs: Vec<(String, BenchValue)>) -> Result<()> {
 		if pairs.is_empty() {
 			return Ok(());
 		}
@@ -319,39 +320,42 @@ impl ArangoDBClient {
 		Ok(())
 	}
 
-	fn to_doc(key: String, mut val: Value) -> Result<Value> {
-		let obj = val.as_object_mut().unwrap();
-		obj.insert("_key".to_string(), key.into());
-		Ok(val)
+	fn to_doc(key: String, val: BenchValue) -> Result<Value> {
+		let mut json = val.to_json();
+		let obj = json
+			.as_object_mut()
+			.ok_or_else(|| anyhow::anyhow!("expected object payload for arangodb row"))?;
+		obj.insert("_key".to_string(), Value::String(key));
+		Ok(json)
 	}
 
-	async fn create(&self, key: String, val: Value) -> Result<()> {
-		let val = Self::to_doc(key, val)?;
+	async fn create(&self, key: String, val: BenchValue) -> Result<()> {
+		let json = Self::to_doc(key, val)?;
 		let opt = InsertOptions::builder()
 			.wait_for_sync(self.sync)
 			.return_new(true)
 			.overwrite(false)
 			.build();
-		let res = { self.collection.lock().await.create_document(val, opt).await? };
+		let res = { self.collection.lock().await.create_document(json, opt).await? };
 		assert!(res.new_doc().is_some());
 		Ok(())
 	}
 
-	async fn read(&self, key: String) -> Result<Value> {
+	async fn read(&self, key: String) -> Result<BenchValue> {
 		let doc: Document<Value> = { self.collection.lock().await.document(&key).await? };
 		assert!(doc.document.is_object());
 		assert_eq!(doc.document.get("_key").unwrap().as_str().unwrap(), key);
-		Ok(black_box(doc.document.clone()))
+		Ok(black_box(BenchValue::from(&doc.document)))
 	}
 
-	async fn update(&self, key: String, val: Value) -> Result<()> {
-		let val = Self::to_doc(key, val)?;
+	async fn update(&self, key: String, val: BenchValue) -> Result<()> {
+		let json = Self::to_doc(key, val)?;
 		let opt = InsertOptions::builder()
 			.wait_for_sync(self.sync)
 			.return_new(true)
 			.overwrite(true)
 			.build();
-		let res = { self.collection.lock().await.create_document(val, opt).await? };
+		let res = { self.collection.lock().await.create_document(json, opt).await? };
 		assert!(res.new_doc().is_some());
 		Ok(())
 	}

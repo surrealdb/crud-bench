@@ -4,6 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::Neo4jDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, anyhow, bail};
@@ -87,7 +88,7 @@ pub(crate) struct Neo4jClient {
 
 impl BenchmarkClient for Neo4jClient {
 	// The return type when reading a row
-	type ReadRow = serde_json::Value;
+	type ReadRow = BenchValue;
 
 	async fn startup(&self) -> Result<()> {
 		let stm = "CREATE INDEX FOR (r:Record) ON (r.id);";
@@ -95,27 +96,27 @@ impl BenchmarkClient for Neo4jClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.create(json!(key), val).await
 	}
 
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.create(Value::String(key), val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<Value> {
+	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		self.read(key).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<Value> {
+	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		self.read(key).await
 	}
 
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.update(key, val).await
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.update(key, val).await
 	}
 
@@ -173,14 +174,14 @@ impl BenchmarkClient for Neo4jClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals).await
 	}
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals).await
 	}
@@ -195,14 +196,14 @@ impl BenchmarkClient for Neo4jClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals).await
 	}
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals).await
 	}
@@ -238,7 +239,7 @@ impl Neo4jClient {
 		BoltType::try_from(Value::Array(items)).map_err(|e| anyhow!("neo4j BoltType: {e}"))
 	}
 
-	fn flattened_row_with_id(id: Value, val: Value) -> Result<Value> {
+	fn flattened_row_with_id(id: Value, val: BenchValue) -> Result<Value> {
 		let val = Flattener::new()
 			.set_key_separator("_")
 			.set_array_formatting(ArrayFormatting::Surrounded {
@@ -247,13 +248,13 @@ impl Neo4jClient {
 			})
 			.set_preserve_empty_arrays(false)
 			.set_preserve_empty_objects(false)
-			.flatten(&val)?;
+			.flatten(&val.to_json())?;
 		let mut m = val.as_object().cloned().ok_or_else(|| anyhow!("expected JSON object"))?;
 		m.insert("id".into(), id);
 		Ok(Value::Object(m))
 	}
 
-	async fn create(&self, id: Value, val: Value) -> Result<()> {
+	async fn create(&self, id: Value, val: BenchValue) -> Result<()> {
 		// Flatten the record and inject the primary id property
 		let props = Self::flattened_row_with_id(id, val)?;
 		let bolt = BoltType::try_from(props).map_err(|e| anyhow!("neo4j BoltType: {e}"))?;
@@ -268,7 +269,7 @@ impl Neo4jClient {
 		Ok(())
 	}
 
-	async fn read<T>(&self, key: T) -> Result<Value>
+	async fn read<T>(&self, key: T) -> Result<BenchValue>
 	where
 		T: Into<BoltType> + Sync,
 	{
@@ -278,10 +279,10 @@ impl Neo4jClient {
 		let row = black_box(res.next().await).unwrap().unwrap();
 		let val: Value = row.get("r").unwrap();
 		assert!(matches!(res.next().await, Ok(None)));
-		Ok(black_box(val))
+		Ok(black_box(BenchValue::from(&val)))
 	}
 
-	async fn update<T>(&self, id: T, val: Value) -> Result<()>
+	async fn update<T>(&self, id: T, val: BenchValue) -> Result<()>
 	where
 		T: Into<BoltType> + Sync,
 	{
@@ -294,7 +295,7 @@ impl Neo4jClient {
 			})
 			.set_preserve_empty_arrays(false)
 			.set_preserve_empty_objects(false)
-			.flatten(&val)?;
+			.flatten(&val.to_json())?;
 		let update_obj =
 			flat.as_object().cloned().ok_or_else(|| anyhow!("expected JSON object"))?;
 		let props_bt = BoltType::try_from(Value::Object(update_obj))
@@ -401,7 +402,10 @@ impl Neo4jClient {
 		}
 	}
 
-	async fn batch_create<K>(&self, key_vals: impl Iterator<Item = (K, Value)> + Send) -> Result<()>
+	async fn batch_create<K>(
+		&self,
+		key_vals: impl Iterator<Item = (K, BenchValue)> + Send,
+	) -> Result<()>
 	where
 		K: IntoNeo4jId,
 	{
@@ -446,7 +450,10 @@ impl Neo4jClient {
 		Ok(())
 	}
 
-	async fn batch_update<K>(&self, key_vals: impl Iterator<Item = (K, Value)> + Send) -> Result<()>
+	async fn batch_update<K>(
+		&self,
+		key_vals: impl Iterator<Item = (K, BenchValue)> + Send,
+	) -> Result<()>
 	where
 		K: IntoNeo4jId,
 	{

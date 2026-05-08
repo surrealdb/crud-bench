@@ -5,31 +5,114 @@ use crate::dialect::MongoDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
+use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use futures::{StreamExt, TryStreamExt};
 use mongodb::IndexModel;
 use mongodb::Namespace;
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{Bson, Document, doc, spec::BinarySubtype};
 use mongodb::options::ClientOptions;
 use mongodb::options::DatabaseOptions;
 use mongodb::options::IndexOptions;
 use mongodb::options::ReadConcern;
 use mongodb::options::{Acknowledgment, ReplaceOneModel, WriteConcern, WriteModel};
-use mongodb::{Client, Collection, Cursor, Database, bson};
-use serde_json::Value;
+use mongodb::{Client, Collection, Cursor, Database};
 use std::hint::black_box;
+use std::str::FromStr;
 use std::time::Duration;
 
 pub const DEFAULT: &str = "mongodb://root:root@127.0.0.1:27017";
 
-/// Native MongoDB row for single-row reads; converts to [`serde_json::Value`] only via [`From`]/[`Into`].
+/// Native MongoDB row for single-row reads; converts to [`BenchValue`] only via [`From`]/[`Into`].
 pub(crate) struct Row(pub Document);
 
-impl From<Row> for Value {
+impl From<Row> for BenchValue {
 	fn from(row: Row) -> Self {
-		serde_json::to_value(&row.0).expect("MongoDB Document serializes to JSON")
+		bson_to_bench_value(&Bson::Document(row.0))
+	}
+}
+
+/// Recursively convert a [`Bson`] tree to a [`BenchValue`], preserving native
+/// MongoDB types (UUID and binary subtypes, Decimal128, datetime).
+fn bson_to_bench_value(b: &Bson) -> BenchValue {
+	match b {
+		Bson::Null => BenchValue::Null,
+		Bson::Boolean(b) => BenchValue::Bool(*b),
+		Bson::Int32(i) => BenchValue::Int(*i as i64),
+		Bson::Int64(i) => BenchValue::Int(*i),
+		Bson::Double(f) => BenchValue::Float(*f),
+		Bson::String(s) => BenchValue::String(s.clone()),
+		Bson::Decimal128(d) => match rust_decimal::Decimal::from_str(&d.to_string()) {
+			Ok(dec) => BenchValue::Decimal(dec),
+			Err(_) => BenchValue::String(d.to_string()),
+		},
+		Bson::DateTime(dt) => {
+			match chrono::DateTime::<chrono::Utc>::from_timestamp_millis(dt.timestamp_millis()) {
+				Some(dt) => BenchValue::DateTime(dt),
+				None => BenchValue::Null,
+			}
+		}
+		Bson::Binary(bin) => match bin.subtype {
+			BinarySubtype::Uuid | BinarySubtype::UuidOld => {
+				match uuid::Uuid::from_slice(bin.bytes.as_slice()) {
+					Ok(u) => BenchValue::Uuid(u),
+					Err(_) => BenchValue::Bytes(bin.bytes.clone()),
+				}
+			}
+			_ => BenchValue::Bytes(bin.bytes.clone()),
+		},
+		Bson::Array(a) => BenchValue::Array(a.iter().map(bson_to_bench_value).collect()),
+		Bson::Document(d) => {
+			BenchValue::Object(d.iter().map(|(k, v)| (k.clone(), bson_to_bench_value(v))).collect())
+		}
+		Bson::ObjectId(oid) => BenchValue::String(oid.to_hex()),
+		Bson::Symbol(s) => BenchValue::String(s.clone()),
+		Bson::JavaScriptCode(s) => BenchValue::String(s.clone()),
+		Bson::JavaScriptCodeWithScope(c) => BenchValue::String(c.code.clone()),
+		Bson::Timestamp(ts) => BenchValue::Int(ts.time as i64),
+		Bson::RegularExpression(r) => BenchValue::String(r.pattern.clone()),
+		Bson::Undefined | Bson::MaxKey | Bson::MinKey | Bson::DbPointer(_) => BenchValue::Null,
+	}
+}
+
+/// Recursively convert a [`BenchValue`] into a [`Bson`] preserving native
+/// MongoDB types where the destination supports them.
+fn bench_to_bson(v: &BenchValue) -> Bson {
+	match v {
+		BenchValue::Null => Bson::Null,
+		BenchValue::Bool(b) => Bson::Boolean(*b),
+		BenchValue::Int(i) => Bson::Int64(*i),
+		BenchValue::UInt(u) => match i64::try_from(*u) {
+			Ok(i) => Bson::Int64(i),
+			Err(_) => Bson::String(u.to_string()),
+		},
+		BenchValue::Float(f) => Bson::Double(*f),
+		BenchValue::Decimal(d) => match mongodb::bson::Decimal128::from_str(&d.to_string()) {
+			Ok(dec) => Bson::Decimal128(dec),
+			Err(_) => Bson::String(d.to_string()),
+		},
+		BenchValue::String(s) => Bson::String(s.clone()),
+		BenchValue::Bytes(b) => Bson::Binary(mongodb::bson::Binary {
+			subtype: BinarySubtype::Generic,
+			bytes: b.clone(),
+		}),
+		BenchValue::Uuid(u) => Bson::Binary(mongodb::bson::Binary {
+			subtype: BinarySubtype::Uuid,
+			bytes: u.as_bytes().to_vec(),
+		}),
+		BenchValue::DateTime(dt) => {
+			Bson::DateTime(mongodb::bson::DateTime::from_millis(dt.timestamp_millis()))
+		}
+		BenchValue::Array(a) => Bson::Array(a.iter().map(bench_to_bson).collect()),
+		BenchValue::Object(o) => {
+			let mut doc = Document::new();
+			for (k, v) in o {
+				doc.insert(k.clone(), bench_to_bson(v));
+			}
+			Bson::Document(doc)
+		}
 	}
 }
 
@@ -147,11 +230,11 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.create(key, val).await
 	}
 
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.create(key, val).await
 	}
 
@@ -167,11 +250,11 @@ impl BenchmarkClient for MongoDBClient {
 		Ok(black_box(Row(doc)))
 	}
 
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.update(key, val).await
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.update(key, val).await
 	}
 
@@ -236,14 +319,14 @@ impl BenchmarkClient for MongoDBClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals.collect()).await
 	}
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals.collect()).await
 	}
@@ -258,14 +341,14 @@ impl BenchmarkClient for MongoDBClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals.collect()).await
 	}
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals.collect()).await
 	}
@@ -284,22 +367,24 @@ impl MongoDBClient {
 		self.db.collection("record")
 	}
 
-	fn to_doc<K>(key: K, mut val: Value) -> Result<Bson>
+	fn to_doc<K>(key: K, val: BenchValue) -> Result<Document>
 	where
-		K: Into<Value> + Into<Bson>,
+		K: Into<Bson>,
 	{
-		let obj = val.as_object_mut().unwrap();
-		obj.insert("_id".to_string(), key.into());
-		Ok(bson::to_bson(&val)?)
+		let mut doc = match bench_to_bson(&val) {
+			Bson::Document(d) => d,
+			_ => bail!("expected object payload for row"),
+		};
+		doc.insert("_id".to_string(), key.into());
+		Ok(doc)
 	}
 
-	async fn create<K>(&self, key: K, val: Value) -> Result<()>
+	async fn create<K>(&self, key: K, val: BenchValue) -> Result<()>
 	where
-		K: Into<Value> + Into<Bson>,
+		K: Into<Bson>,
 	{
-		let bson = Self::to_doc(key, val)?;
-		let doc = bson.as_document().unwrap();
-		let res = self.collection().insert_one(doc).await?;
+		let doc = Self::to_doc(key, val)?;
+		let res = self.collection().insert_one(&doc).await?;
 		assert_ne!(res.inserted_id, Bson::Null);
 		Ok(())
 	}
@@ -314,14 +399,13 @@ impl MongoDBClient {
 		Ok(doc)
 	}
 
-	async fn update<K>(&self, key: K, val: Value) -> Result<()>
+	async fn update<K>(&self, key: K, val: BenchValue) -> Result<()>
 	where
-		K: Into<Value> + Into<Bson> + Clone,
+		K: Into<Bson> + Clone,
 	{
 		let filter = doc! { "_id": key.clone() };
-		let bson = Self::to_doc(key, val)?;
-		let doc = bson.as_document().unwrap();
-		let res = self.collection().replace_one(filter, doc).await?;
+		let doc = Self::to_doc(key, val)?;
+		let res = self.collection().replace_one(filter, &doc).await?;
 		assert_eq!(res.matched_count, 1);
 		Ok(())
 	}
@@ -336,14 +420,13 @@ impl MongoDBClient {
 		Ok(())
 	}
 
-	async fn batch_create<K>(&self, key_vals: Vec<(K, Value)>) -> Result<()>
+	async fn batch_create<K>(&self, key_vals: Vec<(K, BenchValue)>) -> Result<()>
 	where
-		K: Into<Value> + Into<Bson>,
+		K: Into<Bson>,
 	{
 		let mut docs = Vec::with_capacity(key_vals.len());
 		for (key, val) in key_vals {
-			let bson = Self::to_doc(key, val)?;
-			docs.push(bson.as_document().unwrap().clone());
+			docs.push(Self::to_doc(key, val)?);
 		}
 		let docs_len = docs.len();
 		let res = self.collection().insert_many(docs).await?;
@@ -367,9 +450,9 @@ impl MongoDBClient {
 		Ok(())
 	}
 
-	async fn batch_update<K>(&self, key_vals: Vec<(K, Value)>) -> Result<()>
+	async fn batch_update<K>(&self, key_vals: Vec<(K, BenchValue)>) -> Result<()>
 	where
-		K: Into<Value> + Into<Bson> + Clone,
+		K: Into<Bson> + Clone,
 	{
 		let namespace = Namespace {
 			db: self.db.name().to_string(),
@@ -378,8 +461,7 @@ impl MongoDBClient {
 		let mut docs = Vec::with_capacity(key_vals.len());
 		for (key, val) in key_vals {
 			let filter = doc! { "_id": Into::<Bson>::into(key.clone()) };
-			let bson = Self::to_doc(key, val)?;
-			let replacement = bson.as_document().unwrap().clone();
+			let replacement = Self::to_doc(key, val)?;
 			let model = ReplaceOneModel::builder()
 				.namespace(namespace.clone())
 				.filter(filter)
