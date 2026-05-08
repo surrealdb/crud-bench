@@ -65,7 +65,7 @@ samples = 1000
 
 [[scans]]
 id = "limit"
-samples = 10
+samples = 10000
 limit = 100
 expect = 100
 
@@ -83,7 +83,7 @@ projection = "FULL"
 
 [[scans]]
 id = "start_limit"
-samples = 10
+samples = 10000
 start = 5000
 limit = 100
 expect = 100
@@ -102,7 +102,7 @@ projection = "FULL"
 
 [[scans]]
 id = "where_field_integer_eq"
-samples = 10
+samples = 10000
 
 [[scans.runs]]
 name = "count(*) where(integer = integer)"
@@ -139,7 +139,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_integer_eq_or_eq"
-samples = 10
+samples = 10000
 
 [[scans.runs]]
 name = "count(*) where(integer = integer OR integer = integer)"
@@ -179,7 +179,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_integer_gte_lte"
-samples = 10
+samples = 10000
 
 [[scans.runs]]
 name = "count(*) where(integer >= integer AND integer <= integer)"
@@ -216,7 +216,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_integer_in_many"
-samples = 10
+samples = 10000
 limit = 1000
 
 [[scans.runs]]
@@ -261,7 +261,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_string_eq_order_by_desc"
-samples = 10
+samples = 10000
 limit = 1000
 
 [[scans.runs]]
@@ -307,7 +307,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_integer_in_many_order_by_desc"
-samples = 10
+samples = 10000
 limit = 1000
 
 [[scans.runs]]
@@ -353,7 +353,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_many_contains_string_order_by_desc"
-samples = 10
+samples = 10000
 limit = 1000
 
 [[scans.runs]]
@@ -403,7 +403,7 @@ operation = "UPDATE"
 id = "where_field_fulltext_single"
 name = "select(*) where(string @@ string) limit(1000) - BM25"
 projection = "FULL"
-samples = 10
+samples = 10000
 limit = 1000
 
 [scans.condition]
@@ -425,7 +425,7 @@ index_type = "fulltext"
 id = "where_field_fulltext_multi_and"
 name = "select(*) where(string @@ string AND string @@ string) limit(1000) - BM25"
 projection = "FULL"
-samples = 10
+samples = 10000
 limit = 1000
 
 [scans.condition]
@@ -447,7 +447,7 @@ index_type = "fulltext"
 id = "where_field_fulltext_multi_or"
 name = "select(*) where(string @@ string OR string @@ string) limit(1000) - BM25"
 projection = "FULL"
-samples = 10
+samples = 10000
 limit = 1000
 
 [scans.condition]
