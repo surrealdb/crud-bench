@@ -12,79 +12,153 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CRUD Benchmark Results - {database_name}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&family=JetBrains+Mono:wght@100..800&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.45.0/dist/apexcharts.min.js"></script>
     <style>
+        :root {{
+            --sd-bg: #0e0c14;
+            --sd-surface: #16141f;
+            --sd-surface-2: #1a1825;
+            --sd-surface-border: rgba(111, 121, 136, 0.2);
+            --sd-text: #e8e4f0;
+            --sd-text-muted: #9990ab;
+            --sd-text-dim: #6f7988;
+            --sd-accent: #7c5cfc;
+            --sd-write: #c471f5;
+            --sd-energy: #d255fe;
+            --sd-passion: #651ddd;
+            --sd-line: #3d3650;
+            --sd-success: #34d399;
+        }}
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: #f5f5f5;
-            padding: 20px;
+            font-family: "Inter", system-ui, sans-serif;
+            font-size: 16px;
+            line-height: 1.6;
+            color: var(--sd-text);
+            background-color: var(--sd-bg);
+            background-image:
+                radial-gradient(ellipse 80% 60% at 50% -10%, rgba(124, 92, 252, 0.15), transparent 60%),
+                radial-gradient(ellipse 60% 40% at 100% 50%, rgba(210, 85, 254, 0.08), transparent 70%),
+                radial-gradient(ellipse 60% 40% at 0% 80%, rgba(101, 29, 221, 0.1), transparent 70%);
+            -webkit-font-smoothing: antialiased;
+            min-height: 100vh;
+            padding: 24px 16px 64px;
         }}
         .container {{
             max-width: 1400px;
             margin: 0 auto;
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 40px 32px 48px;
+        }}
+        @media (max-width: 640px) {{
+            .container {{ padding: 24px 16px 32px; }}
+        }}
+        .eyebrow {{
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 11px;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--sd-text-muted);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }}
+        .eyebrow::before {{
+            content: "";
+            width: 24px;
+            height: 1px;
+            background: var(--sd-accent);
+            display: inline-block;
         }}
         h1 {{
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 2em;
+            font-size: clamp(2rem, 4vw, 3.25rem);
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1.05;
+            margin-bottom: 16px;
+            color: #ffffff;
+        }}
+        h1 .grad {{
+            background: linear-gradient(135deg, var(--sd-energy), var(--sd-passion));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
         }}
         .subtitle {{
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 1.1em;
+            color: var(--sd-text-muted);
+            font-size: 1.125rem;
+            line-height: 1.55;
+            font-style: italic;
+            margin-bottom: 40px;
+            max-width: 720px;
         }}
         .chart-grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
-            gap: 30px;
-            margin-bottom: 30px;
+            gap: 28px;
+            margin-bottom: 28px;
+        }}
+        @media (max-width: 700px) {{
+            .chart-grid {{ grid-template-columns: 1fr; }}
         }}
         .chart-container {{
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            border: 1px solid #e0e0e0;
+            background:
+                linear-gradient(var(--sd-surface), var(--sd-surface)) padding-box,
+                linear-gradient(135deg, rgba(124, 92, 252, 0.18), rgba(124, 92, 252, 0.04)) border-box;
+            border: 1px solid transparent;
+            border-radius: 12px;
+            padding: 22px 26px;
         }}
         .chart-title {{
-            font-size: 1.3em;
+            font-size: 1.375rem;
             font-weight: 600;
-            margin-bottom: 15px;
-            color: #444;
+            letter-spacing: -0.02em;
+            margin-bottom: 14px;
+            color: #ffffff;
         }}
         .stats-grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
+            gap: 16px;
+            margin-bottom: 36px;
         }}
         .stat-card {{
-            background: linear-gradient(135deg, #9600FF 0%, #7000CC 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 8px;
+            background:
+                linear-gradient(var(--sd-surface), var(--sd-surface)) padding-box,
+                linear-gradient(135deg, rgba(124, 92, 252, 0.22), rgba(124, 92, 252, 0.05)) border-box;
+            border: 1px solid transparent;
+            border-radius: 12px;
+            padding: 20px 18px;
             text-align: center;
+            border-top: 3px solid var(--sd-accent);
+            color: var(--sd-text);
         }}
-        .stat-card.blue {{ background: linear-gradient(135deg, #9600FF 0%, #7000CC 100%); }}
-        .stat-card.green {{ background: linear-gradient(135deg, #FF00A0 0%, #CC0080 100%); }}
-        .stat-card.orange {{ background: linear-gradient(135deg, #C000FF 0%, #9600FF 100%); }}
-        .stat-card.red {{ background: linear-gradient(135deg, #FF33B8 0%, #FF00A0 100%); }}
+        .stat-card.blue {{ border-top-color: #7c5cfc; }}
+        .stat-card.green {{ border-top-color: #34d399; }}
+        .stat-card.orange {{ border-top-color: #d255fe; }}
+        .stat-card.red {{ border-top-color: #c471f5; }}
         .stat-label {{
-            font-size: 0.9em;
-            opacity: 0.9;
-            margin-bottom: 5px;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 10px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--sd-text-dim);
+            margin-bottom: 8px;
         }}
         .stat-value {{
-            font-size: 2em;
-            font-weight: bold;
+            font-size: 1.85rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: #ffffff;
         }}
         .stat-unit {{
-            font-size: 0.7em;
-            opacity: 0.8;
+            font-size: 0.65rem;
+            font-weight: 500;
+            color: var(--sd-text-muted);
+            margin-left: 2px;
         }}
         .chart {{
             max-height: 400px;
@@ -93,57 +167,63 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
             grid-column: 1 / -1;
         }}
         .system-info {{
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 25px;
-            margin-bottom: 30px;
-            border: 1px solid #e0e0e0;
+            background:
+                linear-gradient(var(--sd-surface), var(--sd-surface)) padding-box,
+                linear-gradient(135deg, rgba(124, 92, 252, 0.18), rgba(124, 92, 252, 0.04)) border-box;
+            border: 1px solid transparent;
+            border-radius: 12px;
+            padding: 24px 26px;
+            margin-bottom: 36px;
         }}
         .system-info-title {{
-            font-size: 1.4em;
+            font-size: 1.25rem;
             font-weight: 600;
-            margin-bottom: 15px;
-            color: #333;
+            letter-spacing: -0.02em;
+            margin-bottom: 18px;
+            color: #ffffff;
         }}
         .system-info-grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 15px;
+            gap: 12px;
         }}
         .system-info-item {{
             display: flex;
             align-items: center;
-            padding: 12px;
-            background: white;
-            border-radius: 6px;
-            border: 1px solid #e8e8e8;
+            padding: 12px 14px;
+            background: var(--sd-surface-2);
+            border-radius: 8px;
+            border: 1px solid var(--sd-surface-border);
         }}
         .system-info-label {{
             font-weight: 600;
-            color: #666;
+            color: var(--sd-text-muted);
             margin-right: 8px;
             min-width: 120px;
+            font-size: 0.9rem;
         }}
         .system-info-value {{
-            color: #333;
-            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
-            font-size: 0.95em;
+            color: var(--sd-text);
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 0.875rem;
         }}
         .apexcharts-tooltip-box {{
-            padding: 10px;
-            background: white;
-            border: 1px solid #e0e0e0;
-            border-radius: 4px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 10px 12px;
+            background: var(--sd-surface) !important;
+            border: 1px solid var(--sd-surface-border) !important;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+            color: var(--sd-text);
         }}
         .apexcharts-tooltip-box > div {{
             padding: 3px 0;
+            color: var(--sd-text-muted);
         }}
         .apexcharts-tooltip-box strong {{
-            color: #333;
+            color: var(--sd-text);
         }}
         .chart-subtitle {{
-            color: #666;
+            color: var(--sd-text-muted);
             font-size: 0.95em;
             line-height: 1.45;
             margin: -6px 0 14px 0;
@@ -158,28 +238,34 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
             width: 100%;
             border-collapse: collapse;
             font-size: 12px;
+            color: var(--sd-text-muted);
         }}
         .scan-percentile-table caption {{
             caption-side: top;
             text-align: left;
             font-size: 0.85em;
-            color: #666;
+            color: var(--sd-text-muted);
             padding-bottom: 8px;
         }}
         .scan-percentile-table th {{
             font-weight: 600;
-            background: #f3e8ff;
-            color: #333;
+            background: var(--sd-surface-2);
+            color: var(--sd-text);
             white-space: nowrap;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 10px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
         }}
         .scan-percentile-table th, .scan-percentile-table td {{
-            border: 1px solid #e0e0e0;
+            border: 1px solid var(--sd-surface-border);
             padding: 8px 10px;
         }}
         .scan-percentile-table td.num {{
             font-variant-numeric: tabular-nums;
             text-align: right;
-            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            color: var(--sd-text);
         }}
         .scan-percentile-table td.scan-name {{
             max-width: 28em;
@@ -187,21 +273,24 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
             text-overflow: ellipsis;
             white-space: nowrap;
             text-align: left;
+            color: var(--sd-text);
         }}
         .scan-percentile-table td.spark {{
             text-align: center;
             vertical-align: middle;
             min-width: 130px;
+            background: rgba(22, 20, 31, 0.5);
         }}
         .scan-percentile-table th.scan-dist-col,
         .scan-percentile-table td.scan-dist {{
-            border-left: 1px solid #e0e0e0;
+            border-left: 1px solid var(--sd-line);
             text-align: center;
             vertical-align: middle;
             min-width: 96px;
+            background: rgba(22, 20, 31, 0.35);
         }}
         .scan-percentile-table tbody tr:nth-child(even) {{
-            background: #fafafa;
+            background: rgba(26, 24, 37, 0.45);
         }}
         .scan-sparkline {{
             display: block;
@@ -213,11 +302,42 @@ pub(crate) fn generate_html(result: &BenchmarkResult, database_name: &str) -> St
             margin: 0 auto;
             flex-shrink: 0;
         }}
+        .chart-container .apexcharts-svg .apexcharts-background {{
+            fill: var(--sd-surface) !important;
+        }}
+        .chart-container line.apexcharts-gridline {{
+            stroke: var(--sd-surface-border) !important;
+            opacity: 0.75;
+        }}
+        .chart-container .apexcharts-grid-borders line {{
+            stroke: var(--sd-surface-border) !important;
+            opacity: 0.8;
+        }}
+        .chart-container .apexcharts-yaxis line {{
+            stroke: var(--sd-surface-border) !important;
+            opacity: 0.95;
+        }}
+        .chart-container .apexcharts-xaxis line {{
+            stroke: var(--sd-surface-border) !important;
+            opacity: 0.95;
+        }}
+        .chart-container .apexcharts-boxPlot-series path.apexcharts-boxPlot-area {{
+            stroke-width: 2.25px !important;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }}
+        .chart-container #scanLatencyChart path.apexcharts-boxPlot-area {{
+            stroke: #faf7ff !important;
+        }}
+        .chart-container #batchLatencyChart path.apexcharts-boxPlot-area {{
+            stroke: #fff6fb !important;
+        }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Benchmark Results</h1>
+        <div class="eyebrow">CRUD Benchmark</div>
+        <h1>Benchmark <span class="grad">Results</span></h1>
         <div class="subtitle">{database_name}</div>
 
         {system_info}
@@ -448,7 +568,7 @@ fn percentile_sparkline_svg(values_us: &[f64]) -> String {
 		points.push_str(&format!("{:.1},{:.1}", x, y));
 	}
 	format!(
-		r##"<svg class="scan-sparkline" width="120" height="28" viewBox="0 0 120 28" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><polyline fill="none" stroke="#9600FF" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" points="{points}"/></svg>"##,
+		r##"<svg class="scan-sparkline" width="120" height="28" viewBox="0 0 120 28" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><polyline fill="none" stroke="#dcc6ff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" points="{points}"/></svg>"##,
 		points = points
 	)
 }
@@ -494,7 +614,7 @@ fn percentile_mini_distribution_svg(values_us: &[f64]) -> String {
 	let tick_bot = ym + 5.5;
 
 	format!(
-		r##"<svg class="scan-mini-dist" width="{w}" height="{h}" viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="{x_min}" y1="{ym}" x2="{x_max}" y2="{ym}" stroke="#e8d4ff" stroke-width="1.5" stroke-linecap="round"/><line x1="{x_p01}" y1="{tick_top}" x2="{x_p01}" y2="{tick_bot}" stroke="#9600FF" stroke-width="1" opacity="0.45"/><line x1="{x_p99}" y1="{tick_top}" x2="{x_p99}" y2="{tick_bot}" stroke="#9600FF" stroke-width="1" opacity="0.45"/><rect x="{box_left}" y="{body_top}" width="{box_w}" height="{body_h}" rx="1.5" fill="#C97FFF" stroke="#9600FF" stroke-width="1"/><line x1="{x_p50}" y1="4.5" x2="{x_p50}" y2="23.5" stroke="#9600FF" stroke-width="1.75" stroke-linecap="round"/></svg>"##,
+		r##"<svg class="scan-mini-dist" width="{w}" height="{h}" viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="{x_min}" y1="{ym}" x2="{x_max}" y2="{ym}" stroke="rgba(111,121,136,0.28)" stroke-width="1.5" stroke-linecap="round"/><line x1="{x_p01}" y1="{tick_top}" x2="{x_p01}" y2="{tick_bot}" stroke="#dcc6ff" stroke-width="1.15" opacity="0.95"/><line x1="{x_p99}" y1="{tick_top}" x2="{x_p99}" y2="{tick_bot}" stroke="#dcc6ff" stroke-width="1.15" opacity="0.95"/><rect x="{box_left}" y="{body_top}" width="{box_w}" height="{body_h}" rx="1.5" fill="#b794ff" opacity="0.65" stroke="#ebd9ff" stroke-width="1.15"/><line x1="{x_p50}" y1="4.5" x2="{x_p50}" y2="23.5" stroke="#f5eeff" stroke-width="2" stroke-linecap="round"/></svg>"##,
 		w = W as i32,
 		h = H as i32,
 		x_min = x_min,
@@ -590,6 +710,21 @@ function formatNumber(num) {{
     return num.toFixed(0).replace(/\B(?=(\d{{3}})+(?!\d))/g, ",");
 }}
 
+// Matches :root Spectron tokens (--sd-*)
+var SD = {{
+    text: '#e8e4f0',
+    muted: '#9990ab',
+    dim: '#6f7988',
+    line: '#3d3650',
+    surfaceBorder: 'rgba(111, 121, 136, 0.2)',
+    surface: '#16141f',
+    accent: '#7c5cfc',
+    energy: '#d255fe',
+    passion: '#651ddd',
+    write: '#c471f5',
+    success: '#34d399'
+}};
+
 // Native SVG tooltip: hover truncated axis labels to see full scan names
 function apexAttachFullCategoryTitles(chartContext) {{
     try {{
@@ -645,8 +780,15 @@ var opsChart = new ApexCharts(document.querySelector("#opsChart"), {{
     chart: {{
         type: 'bar',
         height: 350,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontFamily: '"Inter", system-ui, sans-serif',
+        foreColor: SD.muted,
+        background: SD.surface,
         toolbar: {{ show: false }}
+    }},
+    theme: {{ mode: 'dark' }},
+    grid: {{
+        borderColor: SD.surfaceBorder,
+        strokeDashArray: 4
     }},
     plotOptions: {{
         bar: {{
@@ -654,7 +796,7 @@ var opsChart = new ApexCharts(document.querySelector("#opsChart"), {{
             borderRadius: 4
         }}
     }},
-    colors: ['#9600FF', '#FF00A0', '#C000FF', '#FF33B8'],
+    colors: ['#7c5cfc', '#d255fe', '#651ddd', '#c471f5'],
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
@@ -687,8 +829,15 @@ var latencyChart = new ApexCharts(document.querySelector("#latencyChart"), {{
     chart: {{
         type: 'bar',
         height: 350,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontFamily: '"Inter", system-ui, sans-serif',
+        foreColor: SD.muted,
+        background: SD.surface,
         toolbar: {{ show: false }}
+    }},
+    theme: {{ mode: 'dark' }},
+    grid: {{
+        borderColor: SD.surfaceBorder,
+        strokeDashArray: 4
     }},
     plotOptions: {{
         bar: {{
@@ -696,7 +845,7 @@ var latencyChart = new ApexCharts(document.querySelector("#latencyChart"), {{
             borderRadius: 4
         }}
     }},
-    colors: ['#9600FF', '#B84FFF', '#C97FFF', '#DA9FFF'],
+    colors: ['#7c5cfc', '#a78bfa', '#d255fe', '#c471f5'],
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
@@ -726,18 +875,29 @@ var percentileChart = new ApexCharts(document.querySelector("#percentileChart"),
     chart: {{
         type: 'line',
         height: 350,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontFamily: '"Inter", system-ui, sans-serif',
+        foreColor: SD.muted,
+        background: SD.surface,
         toolbar: {{ show: false }}
+    }},
+    theme: {{ mode: 'dark' }},
+    grid: {{
+        borderColor: SD.surfaceBorder,
+        strokeDashArray: 4
     }},
     stroke: {{
         width: 3,
         curve: 'smooth'
     }},
-    colors: ['#9600FF', '#FF00A0', '#C000FF', '#FF33B8'],
+    colors: ['#7c5cfc', '#d255fe', '#651ddd', '#c471f5'],
     dataLabels: {{ enabled: false }},
     legend: {{
         position: 'top',
-        horizontalAlign: 'left'
+        horizontalAlign: 'left',
+        labels: {{ colors: SD.text }},
+        markers: {{
+            strokeColors: SD.surface
+        }}
     }},
     xaxis: {{
         categories: ['Min', 'P01', 'P25', 'P50', 'P75', 'P95', 'P99', 'Max']
@@ -779,8 +939,15 @@ var resourceChart = new ApexCharts(document.querySelector("#resourceChart"), {{
     chart: {{
         type: 'line',
         height: 350,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontFamily: '"Inter", system-ui, sans-serif',
+        foreColor: SD.muted,
+        background: SD.surface,
         toolbar: {{ show: false }}
+    }},
+    theme: {{ mode: 'dark' }},
+    grid: {{
+        borderColor: SD.surfaceBorder,
+        strokeDashArray: 4
     }},
     stroke: {{
         width: [0, 0]
@@ -790,11 +957,15 @@ var resourceChart = new ApexCharts(document.querySelector("#resourceChart"), {{
             borderRadius: 4
         }}
     }},
-    colors: ['#FF00A0', '#9600FF'],
+    colors: ['#d255fe', '#7c5cfc'],
     dataLabels: {{ enabled: false }},
     legend: {{
         position: 'top',
-        horizontalAlign: 'left'
+        horizontalAlign: 'left',
+        labels: {{ colors: SD.text }},
+        markers: {{
+            strokeColors: SD.surface
+        }}
     }},
     xaxis: {{
         categories: {resource_labels}
@@ -836,19 +1007,30 @@ var diskChart = new ApexCharts(document.querySelector("#diskChart"), {{
     chart: {{
         type: 'bar',
         height: 350,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontFamily: '"Inter", system-ui, sans-serif',
+        foreColor: SD.muted,
+        background: SD.surface,
         toolbar: {{ show: false }}
+    }},
+    theme: {{ mode: 'dark' }},
+    grid: {{
+        borderColor: SD.surfaceBorder,
+        strokeDashArray: 4
     }},
     plotOptions: {{
         bar: {{
             borderRadius: 4
         }}
     }},
-    colors: ['#FF00A0', '#9600FF'],
+    colors: ['#d255fe', '#7c5cfc'],
     dataLabels: {{ enabled: false }},
     legend: {{
         position: 'top',
-        horizontalAlign: 'left'
+        horizontalAlign: 'left',
+        labels: {{ colors: SD.text }},
+        markers: {{
+            strokeColors: SD.surface
+        }}
     }},
     xaxis: {{
         categories: {disk_labels}
@@ -886,14 +1068,26 @@ var scanLatencyChart = new ApexCharts(document.querySelector("#scanLatencyChart"
     chart: {{
         type: 'boxPlot',
         height: {scan_chart_height_bar},
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontFamily: '"Inter", system-ui, sans-serif',
+        foreColor: SD.muted,
+        background: SD.surface,
         toolbar: {{ show: false }},
         events: {{
             mounted: apexAttachBoxplotCategoryTitles,
             updated: apexAttachBoxplotCategoryTitles
         }}
     }},
+    theme: {{ mode: 'dark' }},
+    stroke: {{
+        show: true,
+        width: 2.25,
+        colors: ['#faf7ff'],
+        lineCap: 'round',
+        lineJoin: 'round'
+    }},
     grid: {{
+        borderColor: SD.surfaceBorder,
+        strokeDashArray: 4,
         padding: {{
             left: 24,
             right: 12
@@ -906,12 +1100,12 @@ var scanLatencyChart = new ApexCharts(document.querySelector("#scanLatencyChart"
         }},
         boxPlot: {{
             colors: {{
-                upper: '#9600FF',
-                lower: '#C97FFF'
+                upper: '#d4c4ff',
+                lower: '#6d3dff'
             }}
         }}
     }},
-    colors: ['#9600FF'],
+    colors: ['#c9acff'],
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
@@ -950,14 +1144,14 @@ var scanLatencyChart = new ApexCharts(document.querySelector("#scanLatencyChart"
             const ops = scanOpsLookup[data.x] || 0;
 
             return '<div class="apexcharts-tooltip-box" style="min-width: 200px;">' +
-                '<div style="font-weight: 600; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #e0e0e0;">' + data.x + '</div>' +
+                '<div style="font-weight: 600; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid ' + SD.line + '; color: ' + SD.text + ';">' + data.x + '</div>' +
                 '<div style="margin-bottom: 4px;"><strong>Latency Distribution:</strong></div>' +
                 '<div style="margin-left: 10px;">Min: ' + (min / 1000).toFixed(2) + ' ms</div>' +
                 '<div style="margin-left: 10px;">Q1: ' + (q1 / 1000).toFixed(2) + ' ms</div>' +
                 '<div style="margin-left: 10px;">Median: ' + (median / 1000).toFixed(2) + ' ms</div>' +
                 '<div style="margin-left: 10px;">Q3: ' + (q3 / 1000).toFixed(2) + ' ms</div>' +
                 '<div style="margin-left: 10px;">Max: ' + (max / 1000).toFixed(2) + ' ms</div>' +
-                '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e0e0e0;"><strong>Throughput:</strong> ' + formatNumber(ops) + ' ops/s</div>' +
+                '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid ' + SD.line + ';"><strong>Throughput:</strong> ' + formatNumber(ops) + ' ops/s</div>' +
                 '</div>';
         }}
     }}
@@ -973,12 +1167,19 @@ var batchThroughputChart = new ApexCharts(document.querySelector("#batchThroughp
     chart: {{
         type: 'bar',
         height: 350,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontFamily: '"Inter", system-ui, sans-serif',
+        foreColor: SD.muted,
+        background: SD.surface,
         toolbar: {{ show: false }},
         events: {{
             mounted: apexAttachFullCategoryTitles,
             updated: apexAttachFullCategoryTitles
         }}
+    }},
+    theme: {{ mode: 'dark' }},
+    grid: {{
+        borderColor: SD.surfaceBorder,
+        strokeDashArray: 4
     }},
     plotOptions: {{
         bar: {{
@@ -986,7 +1187,7 @@ var batchThroughputChart = new ApexCharts(document.querySelector("#batchThroughp
             borderRadius: 4
         }}
     }},
-    colors: ['#FF00A0'],
+    colors: ['#ff9eed'],
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
@@ -1026,12 +1227,26 @@ var batchLatencyChart = new ApexCharts(document.querySelector("#batchLatencyChar
     chart: {{
         type: 'boxPlot',
         height: 350,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontFamily: '"Inter", system-ui, sans-serif',
+        foreColor: SD.muted,
+        background: SD.surface,
         toolbar: {{ show: false }},
         events: {{
             mounted: apexAttachBoxplotCategoryTitles,
             updated: apexAttachBoxplotCategoryTitles
         }}
+    }},
+    theme: {{ mode: 'dark' }},
+    stroke: {{
+        show: true,
+        width: 2.25,
+        colors: ['#fff5fc'],
+        lineCap: 'round',
+        lineJoin: 'round'
+    }},
+    grid: {{
+        borderColor: SD.surfaceBorder,
+        strokeDashArray: 4
     }},
     plotOptions: {{
         bar: {{
@@ -1040,12 +1255,12 @@ var batchLatencyChart = new ApexCharts(document.querySelector("#batchLatencyChar
         }},
         boxPlot: {{
             colors: {{
-                upper: '#FF00A0',
-                lower: '#FF99D6'
+                upper: '#ffc8ef',
+                lower: '#e93dcd'
             }}
         }}
     }},
-    colors: ['#FF00A0'],
+    colors: ['#ff9eed'],
     dataLabels: {{ enabled: false }},
     legend: {{ show: false }},
     xaxis: {{
@@ -1077,14 +1292,14 @@ var batchLatencyChart = new ApexCharts(document.querySelector("#batchLatencyChar
             const ops = batchOpsLookup[data.x] || 0;
 
             return '<div class="apexcharts-tooltip-box" style="min-width: 200px;">' +
-                '<div style="font-weight: 600; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #e0e0e0;">' + data.x + '</div>' +
+                '<div style="font-weight: 600; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid ' + SD.line + '; color: ' + SD.text + ';">' + data.x + '</div>' +
                 '<div style="margin-bottom: 4px;"><strong>Latency Distribution:</strong></div>' +
                 '<div style="margin-left: 10px;">Min: ' + (min / 1000).toFixed(2) + ' ms</div>' +
                 '<div style="margin-left: 10px;">Q1: ' + (q1 / 1000).toFixed(2) + ' ms</div>' +
                 '<div style="margin-left: 10px;">Median: ' + (median / 1000).toFixed(2) + ' ms</div>' +
                 '<div style="margin-left: 10px;">Q3: ' + (q3 / 1000).toFixed(2) + ' ms</div>' +
                 '<div style="margin-left: 10px;">Max: ' + (max / 1000).toFixed(2) + ' ms</div>' +
-                '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e0e0e0;"><strong>Throughput:</strong> ' + formatNumber(ops) + ' ops/s</div>' +
+                '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid ' + SD.line + ';"><strong>Throughput:</strong> ' + formatNumber(ops) + ' ops/s</div>' +
                 '</div>';
         }}
     }}
@@ -1097,18 +1312,29 @@ var batchPercentileChart = new ApexCharts(document.querySelector("#batchPercenti
     chart: {{
         type: 'line',
         height: 350,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontFamily: '"Inter", system-ui, sans-serif',
+        foreColor: SD.muted,
+        background: SD.surface,
         toolbar: {{ show: false }}
+    }},
+    theme: {{ mode: 'dark' }},
+    grid: {{
+        borderColor: SD.surfaceBorder,
+        strokeDashArray: 4
     }},
     stroke: {{
         width: 3,
         curve: 'smooth'
     }},
-    colors: ['#FF00A0', '#9600FF', '#FF33B8', '#C000FF', '#FF66CC', '#B84FFF', '#FF99D6', '#DA9FFF'],
+    colors: ['#d255fe', '#7c5cfc', '#c471f5', '#651ddd', '#a78bfa', '#9b7dfb', '#e879f9', '#c084fc'],
     dataLabels: {{ enabled: false }},
     legend: {{
         position: 'top',
-        horizontalAlign: 'left'
+        horizontalAlign: 'left',
+        labels: {{ colors: SD.text }},
+        markers: {{
+            strokeColors: SD.surface
+        }}
     }},
     xaxis: {{
         categories: ['Min', 'P01', 'P25', 'P50', 'P75', 'P95', 'P99', 'Max']
