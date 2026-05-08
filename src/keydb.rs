@@ -3,11 +3,10 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
-use crate::util::redis_batch;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use futures::StreamExt;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client, ScanOptions};
@@ -132,44 +131,110 @@ impl BenchmarkClient for KeydbClient {
 		&self,
 		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
-		redis_batch::batch_create_u32(&self.conn_record, key_vals.collect()).await
+		// Build the SET pipeline
+		let mut conn = self.conn_record.lock().await;
+		let mut pipe = redis::pipe();
+		for (k, v) in key_vals {
+			pipe.cmd("SET").arg(k).arg(v.encode()?).ignore();
+		}
+		// Execute the pipeline
+		pipe.exec_async(&mut *conn).await?;
+		Ok(())
 	}
 
 	async fn batch_create_string(
 		&self,
 		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
-		redis_batch::batch_create_string(&self.conn_record, key_vals.collect()).await
+		// Build the SET pipeline
+		let mut conn = self.conn_record.lock().await;
+		let mut pipe = redis::pipe();
+		for (k, v) in key_vals {
+			pipe.cmd("SET").arg(k).arg(v.encode()?).ignore();
+		}
+		// Execute the pipeline
+		pipe.exec_async(&mut *conn).await?;
+		Ok(())
 	}
 
 	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
-		redis_batch::batch_read_u32(&self.conn_record, keys.collect()).await
+		// Build the GET pipeline
+		let mut conn = self.conn_record.lock().await;
+		let mut pipe = redis::pipe();
+		let mut count = 0usize;
+		for k in keys {
+			pipe.cmd("GET").arg(k);
+			count += 1;
+		}
+		// Execute the pipeline and inspect the responses
+		let vals: Vec<Option<Vec<u8>>> = pipe.query_async(&mut *conn).await?;
+		assert_eq!(vals.len(), count);
+		for v in vals {
+			let v = v.ok_or_else(|| anyhow!("missing key"))?;
+			assert!(!v.is_empty());
+			black_box(v);
+		}
+		Ok(())
 	}
 
 	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
-		redis_batch::batch_read_string(&self.conn_record, keys.collect()).await
+		// Build the GET pipeline
+		let mut conn = self.conn_record.lock().await;
+		let mut pipe = redis::pipe();
+		let mut count = 0usize;
+		for k in keys {
+			pipe.cmd("GET").arg(k);
+			count += 1;
+		}
+		// Execute the pipeline and inspect the responses
+		let vals: Vec<Option<Vec<u8>>> = pipe.query_async(&mut *conn).await?;
+		assert_eq!(vals.len(), count);
+		for v in vals {
+			let v = v.ok_or_else(|| anyhow!("missing key"))?;
+			assert!(!v.is_empty());
+			black_box(v);
+		}
+		Ok(())
 	}
 
 	async fn batch_update_u32(
 		&self,
 		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
-		redis_batch::batch_update_u32(&self.conn_record, key_vals.collect()).await
+		// SET overwrites in KeyDB, so update has identical wire shape to create.
+		self.batch_create_u32(key_vals).await
 	}
 
 	async fn batch_update_string(
 		&self,
 		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
-		redis_batch::batch_update_string(&self.conn_record, key_vals.collect()).await
+		// SET overwrites in KeyDB, so update has identical wire shape to create.
+		self.batch_create_string(key_vals).await
 	}
 
 	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
-		redis_batch::batch_delete_u32(&self.conn_record, keys.collect()).await
+		// Build the DEL pipeline
+		let mut conn = self.conn_record.lock().await;
+		let mut pipe = redis::pipe();
+		for k in keys {
+			pipe.cmd("DEL").arg(k).ignore();
+		}
+		// Execute the pipeline
+		pipe.exec_async(&mut *conn).await?;
+		Ok(())
 	}
 
 	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
-		redis_batch::batch_delete_string(&self.conn_record, keys.collect()).await
+		// Build the DEL pipeline
+		let mut conn = self.conn_record.lock().await;
+		let mut pipe = redis::pipe();
+		for k in keys {
+			pipe.cmd("DEL").arg(k).ignore();
+		}
+		// Execute the pipeline
+		pipe.exec_async(&mut *conn).await?;
+		Ok(())
 	}
 }
 
