@@ -158,6 +158,10 @@ For more detailed help information run the following command:
 cargo run -r -- --help
 ```
 
+### Comparing `result*.json` files in the browser
+
+Open [`compare/index.html`](compare/index.html) locally (drag and drop benchmark JSON artefacts). Rows and labels match CLI/CSV ordering from [`src/result.rs`](src/result.rs). Nothing is uploaded; ApexCharts loads from jsDelivr (works offline only if that script is cached or vendored beside the HTML file).
+
 Workload shape (document template, scan cases, and batch throughput tests) is defined in a single TOML file. Use
 `--config <PATH>` or the environment variable `CRUD_BENCH_CONFIG` (default: `config/bench.toml`).
 
