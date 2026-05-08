@@ -585,11 +585,15 @@ impl MongoDBClient {
 				];
 				let mut cursor = self.collection().aggregate(pipeline).await?;
 				if let Some(result) = cursor.next().await {
-					let doc: Document = result?;
-					let count = doc.get_i32("count").unwrap_or(0);
-					Ok(count as usize)
+					let count = match result?.get("count") {
+						Some(Bson::Int32(i)) => *i as i64,
+						Some(Bson::Int64(i)) => *i,
+						_ => 0,
+					};
+					Ok(count.max(0) as usize)
 				} else {
-					bail!("No row returned");
+					// `$count` emits no documents when the result is empty
+					Ok(0)
 				}
 			}
 		}
