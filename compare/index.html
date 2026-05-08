@@ -1,0 +1,2310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CRUD Benchmark — JSON comparison</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&family=JetBrains+Mono:wght@100..800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.45.0/dist/apexcharts.min.js"></script>
+  <style>
+    :root {
+      --sd-bg: #0e0c14;
+      --sd-surface: #16141f;
+      --sd-surface-2: #1a1825;
+      --sd-surface-border: rgba(111, 121, 136, 0.2);
+      --sd-text: #e8e4f0;
+      --sd-text-muted: #9990ab;
+      --sd-text-dim: #6f7988;
+      --sd-accent: #7c5cfc;
+      --sd-write: #c471f5;
+      --sd-energy: #d255fe;
+      --sd-passion: #651ddd;
+      --sd-line: #3d3650;
+      --sd-success: #34d399;
+      --sd-fail: #f87171;
+      --sd-warn-border: rgba(251, 191, 36, 0.45);
+      --sd-err-border: rgba(248, 113, 113, 0.35);
+      --sd-baseline: #fbbf24;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "Inter", system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.55;
+      color: var(--sd-text);
+      background-color: var(--sd-bg);
+      background-image:
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(124, 92, 252, 0.15), transparent 60%),
+        radial-gradient(ellipse 60% 40% at 100% 50%, rgba(210, 85, 254, 0.08), transparent 70%),
+        radial-gradient(ellipse 60% 40% at 0% 80%, rgba(101, 29, 221, 0.1), transparent 70%);
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+      padding: 24px 16px 64px;
+    }
+    code {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 0.875em;
+      background: var(--sd-surface-2);
+      border: 1px solid var(--sd-surface-border);
+      border-radius: 6px;
+      padding: 0.12em 0.45em;
+      color: var(--sd-write);
+    }
+    .container {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 24px 20px 48px;
+    }
+    @media (max-width: 640px) {
+      .container { padding: 16px 12px 32px; }
+    }
+    .eyebrow {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--sd-text-muted);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 24px;
+      height: 1px;
+      background: var(--sd-accent);
+      display: inline-block;
+    }
+    h1 {
+      font-size: clamp(2rem, 4vw, 3rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.06;
+      margin-bottom: 16px;
+      color: #fff;
+    }
+    h1 .grad {
+      background: linear-gradient(135deg, var(--sd-energy), var(--sd-passion));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      color: var(--sd-text-muted);
+      font-size: 1.1rem;
+      line-height: 1.55;
+      font-style: italic;
+      margin-bottom: 40px;
+      max-width: 820px;
+    }
+    .chart-container {
+      background:
+        linear-gradient(var(--sd-surface), var(--sd-surface)) padding-box,
+        linear-gradient(135deg, rgba(124, 92, 252, 0.18), rgba(124, 92, 252, 0.04)) border-box;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      padding: 22px 26px;
+      margin-bottom: 28px;
+    }
+    .chart-title {
+      font-size: 1.375rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 14px;
+      color: #fff;
+    }
+    .banner-warn {
+      padding: 14px 18px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      font-size: 0.92rem;
+      background: rgba(26, 24, 37, 0.85);
+      border: 1px solid var(--sd-warn-border);
+      color: var(--sd-text-muted);
+    }
+    .banner-warn.banner-err {
+      border-color: var(--sd-err-border);
+      background: rgba(26, 24, 37, 0.9);
+      color: var(--sd-text-muted);
+    }
+    .banner-warn strong { display: block; margin-bottom: 8px; color: var(--sd-text); }
+    /** Full-window hint while dragging external files onto the compare page */
+    html.page-json-drag::before {
+      content: "";
+      position: fixed;
+      inset: 12px;
+      border: 2px dashed rgba(124, 92, 252, 0.58);
+      border-radius: 14px;
+      pointer-events: none;
+      z-index: 2147483646;
+      box-shadow:
+        inset 0 0 0 9999px rgba(14, 12, 20, 0.22),
+        0 0 40px rgba(124, 92, 252, 0.12);
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 18px;
+    }
+    .control-group label {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--sd-text-dim);
+      margin-bottom: 8px;
+      display: block;
+    }
+    select {
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--sd-surface-border);
+      font-size: 0.875rem;
+      background: var(--sd-surface-2);
+      color: var(--sd-text);
+      min-width: 11rem;
+    }
+    select:focus {
+      outline: none;
+      border-color: rgba(124, 92, 252, 0.55);
+      box-shadow: 0 0 0 2px rgba(124, 92, 252, 0.2);
+    }
+    .btn-outline {
+      font-family: "Inter", sans-serif;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(124, 92, 252, 0.45);
+      background: rgba(124, 92, 252, 0.12);
+      color: var(--sd-text);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .btn-outline:hover {
+      background: rgba(124, 92, 252, 0.22);
+      border-color: var(--sd-accent);
+    }
+    .controls-row-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 20px;
+    }
+    .runs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background:
+        linear-gradient(var(--sd-surface-2), var(--sd-surface-2)) padding-box,
+        linear-gradient(135deg, rgba(124, 92, 252, 0.35), rgba(124, 92, 252, 0.08)) border-box;
+      border: 1px solid transparent;
+      color: var(--sd-text);
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 0.825rem;
+      max-width: 100%;
+    }
+    .chip small {
+      opacity: 0.9;
+      font-weight: normal;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 220px;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 0.72rem;
+      color: var(--sd-text-dim);
+    }
+    .chip input.label-edit {
+      background: rgba(14, 12, 20, 0.6);
+      border: 1px solid var(--sd-surface-border);
+      color: var(--sd-text);
+      padding: 4px 10px;
+      border-radius: 6px;
+      width: 164px;
+    }
+    .chip button.rm {
+      background: transparent;
+      border: none;
+      color: var(--sd-text-muted);
+      cursor: pointer;
+      font-size: 1.15rem;
+      line-height: 1;
+      padding: 0 4px;
+    }
+    .chip button.rm:hover { color: var(--sd-fail); }
+    .chip.baseline-ring { outline: 2px solid var(--sd-baseline); outline-offset: 3px; }
+    .table-scroll { overflow-x: auto; margin-top: 8px; }
+    table.compare {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      color: var(--sd-text-muted);
+    }
+    table.compare th {
+      font-weight: 600;
+      background: var(--sd-surface-2);
+      color: var(--sd-text);
+      white-space: nowrap;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    table.compare th, table.compare td {
+      border: 1px solid var(--sd-surface-border);
+      padding: 10px 12px;
+      vertical-align: top;
+      font-variant-numeric: tabular-nums;
+    }
+    table.compare tbody tr:nth-child(even) { background: rgba(26, 24, 37, 0.45); }
+    table.compare td.test-key {
+      font-size: 11px;
+      max-width: 420px;
+      word-break: break-word;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      color: var(--sd-text-muted);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    table.compare tbody td:not(.test-key):not(.num):not(.delta-pos):not(.delta-neg):not(.out-cell) {
+      color: var(--sd-text);
+    }
+    table.compare tbody td:not(.test-key) {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+    }
+    table.compare tbody td.delta-pos {
+      color: var(--sd-success);
+      font-weight: 600;
+    }
+    table.compare tbody td.delta-neg {
+      color: var(--sd-fail);
+      font-weight: 600;
+    }
+    table.compare tbody td.out-cell {
+      color: var(--sd-baseline);
+      font-weight: 600;
+    }
+    table.compare tbody td.out-cell > .skew {
+      color: var(--sd-text-muted);
+      font-weight: 400;
+    }
+    .skew {
+      font-size: 11px;
+      color: var(--sd-write);
+      margin-top: 6px;
+      font-style: italic;
+    }
+    .chart-panel { min-height: 420px; overflow: visible; }
+    /* Per-test mini charts wrap; avoid tall empty panel like single mega-chart */
+    #boxchart.chart-panel {
+      min-height: auto;
+      padding-bottom: 8px;
+    }
+    .chart-subtitle {
+      color: var(--sd-text-muted);
+      font-size: 0.95rem;
+      line-height: 1.45;
+      margin: -4px 0 16px 0;
+      max-width: 920px;
+    }
+    .summary-panel {
+      margin-top: 6px;
+    }
+    .summary-lead {
+      margin: 0 0 16px;
+      font-size: 0.95rem;
+      line-height: 1.55;
+      color: var(--sd-text-muted);
+    }
+    .summary-section {
+      margin-bottom: 20px;
+    }
+    .summary-section:last-child {
+      margin-bottom: 6px;
+    }
+    .summary-section-heading {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--sd-text-dim);
+      margin: 0 0 10px;
+    }
+    table.summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      color: var(--sd-text-muted);
+    }
+    table.summary-table th,
+    table.summary-table td {
+      border: 1px solid var(--sd-surface-border);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    table.summary-table th {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--sd-text-muted);
+      background: var(--sd-surface-2);
+    }
+    table.summary-table tbody tr:nth-child(even) {
+      background: rgba(26, 24, 37, 0.4);
+    }
+    table.summary-table td.summary-num {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      color: var(--sd-text);
+    }
+    table.summary-table td.summary-num.delta-pos,
+    table.summary-table td.summary-num.delta-neg {
+      font-weight: 600;
+    }
+    table.summary-table td.summary-num.delta-pos {
+      color: var(--sd-success);
+    }
+    table.summary-table td.summary-num.delta-neg {
+      color: var(--sd-fail);
+    }
+    table.summary-table td.summary-num span.delta-pos,
+    table.summary-table td.summary-num span.delta-neg {
+      font-weight: 600;
+    }
+    table.summary-table td.summary-num span.delta-pos {
+      color: var(--sd-success);
+    }
+    table.summary-table td.summary-num span.delta-neg {
+      color: var(--sd-fail);
+    }
+    table.summary-table td.summary-num.summary-delta-na {
+      color: var(--sd-text-muted);
+      font-weight: 400;
+    }
+    .summary-test-cell {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 11px;
+      line-height: 1.35;
+      max-width: min(560px, 52vw);
+      word-break: break-word;
+      color: var(--sd-text-muted);
+    }
+    .summary-note {
+      font-size: 0.82rem;
+      color: var(--sd-text-dim);
+      margin: 8px 0 0;
+      line-height: 1.45;
+      max-width: 880px;
+    }
+    ul.summary-skews {
+      list-style: none;
+      padding-left: 0;
+      margin: 0;
+      font-size: 11px;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      color: var(--sd-write);
+      line-height: 1.45;
+    }
+    ul.summary-skews li {
+      margin: 6px 0;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border-left: 3px solid rgba(196, 113, 245, 0.55);
+      background: rgba(26, 24, 37, 0.5);
+    }
+    .alerts-panel {
+      margin-top: 4px;
+    }
+    .alerts-table-scroll {
+      max-height: 240px;
+      overflow: auto;
+      border: 1px solid var(--sd-surface-border);
+      border-radius: 8px;
+      background: rgba(15, 14, 22, 0.35);
+    }
+    table.alerts-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      color: var(--sd-text-muted);
+    }
+    table.alerts-table td {
+      border-bottom: 1px solid var(--sd-surface-border);
+      padding: 4px 10px;
+      vertical-align: top;
+    }
+    table.alerts-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+    table.alerts-table td.alert-kind {
+      width: 48px;
+      white-space: nowrap;
+    }
+    table.alerts-table td.alert-run {
+      max-width: 140px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px;
+      color: var(--sd-text);
+    }
+    table.alerts-table td.alert-bench {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px;
+      line-height: 1.3;
+      word-break: break-word;
+      color: var(--sd-text-muted);
+    }
+    .alert-tag {
+      display: inline-block;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 2px 5px;
+      border-radius: 3px;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+    }
+    .alert-tag-ops {
+      background: rgba(251, 191, 36, 0.18);
+      color: var(--sd-baseline);
+    }
+    .alert-tag-mean {
+      background: rgba(125, 211, 252, 0.12);
+      color: #7dd3fc;
+    }
+    .alert-tag-p99 {
+      background: rgba(196, 113, 245, 0.16);
+      color: #d8b4fe;
+    }
+    .alert-tag-cv {
+      background: rgba(248, 113, 113, 0.12);
+      color: var(--sd-fail);
+    }
+    p.alerts-foot {
+      margin: 6px 0 0;
+      font-size: 0.78rem;
+      color: var(--sd-text-dim);
+    }
+    p.alerts-empty {
+      margin-top: 8px;
+    }
+    .muted {
+      font-size: 0.9rem;
+      color: var(--sd-text-dim);
+      margin-top: 12px;
+    }
+    .baseline-hint { font-size: 0.82rem; color: var(--sd-text-muted); }
+    .apexcharts-tooltip-box {
+      padding: 10px 12px !important;
+      background: var(--sd-surface) !important;
+      border: 1px solid var(--sd-surface-border) !important;
+      border-radius: 8px !important;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+      color: var(--sd-text) !important;
+    }
+    .apexcharts-tooltip-box > div { color: var(--sd-text-muted) !important; }
+    .chart-container .apexcharts-svg .apexcharts-background { fill: var(--sd-surface) !important; }
+    .chart-container line.apexcharts-gridline {
+      stroke: var(--sd-surface-border) !important;
+      opacity: 1 !important;
+      stroke-dasharray: none !important;
+    }
+    .chart-container .apexcharts-grid-borders path,
+    .chart-container path.apexcharts-yaxis-path,
+    .chart-container path.apexcharts-xaxis-path {
+      stroke: var(--sd-surface-border) !important;
+      opacity: 1 !important;
+      stroke-dasharray: none !important;
+    }
+    .chart-container .apexcharts-grid-borders line,
+    .chart-container .apexcharts-yaxis line,
+    .chart-container .apexcharts-xaxis line {
+      stroke: var(--sd-surface-border) !important;
+      opacity: 1 !important;
+      stroke-dasharray: none !important;
+    }
+    .chart-container path.apexcharts-boxPlot-area {
+      stroke-linecap: round !important;
+      stroke-linejoin: round !important;
+    }
+    .boxplot-compare-wrap { margin-top: 4px; }
+    .boxplot-compare-intro {
+      margin-bottom: 4px;
+    }
+    .boxplot-compare-intro strong {
+      display: block;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--sd-text);
+      letter-spacing: -0.02em;
+    }
+    .boxplot-compare-intro .muted { margin-top: 8px; margin-bottom: 0; max-width: 920px; }
+    .boxplot-compare-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+      margin: 14px 0 22px 0;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: var(--sd-surface-2);
+      border: 1px solid var(--sd-surface-border);
+    }
+    .boxplot-leg-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--sd-text-muted);
+      max-width: 320px;
+    }
+    .boxplot-leg-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      flex-shrink: 0;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+    }
+    .boxplot-mini-section {
+      margin-bottom: 22px;
+      padding: 16px 18px 14px;
+      border-radius: 11px;
+      border: 1px solid var(--sd-surface-border);
+      background: linear-gradient(
+        155deg,
+        rgba(26, 24, 37, 0.55) 0%,
+        rgba(22, 20, 34, 0.75) 100%
+      );
+      transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+    .boxplot-mini-section:hover {
+      border-color: rgba(124, 92, 252, 0.38);
+      box-shadow: 0 10px 36px rgba(0, 0, 0, 0.4);
+    }
+    .boxplot-mini-section:last-child { margin-bottom: 8px; }
+    .boxplot-mini-key {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 11px;
+      line-height: 1.52;
+      color: var(--sd-text-muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 10px;
+    }
+    /* Run→colour cue next to chart (readable when scrolled past global legend). */
+    .boxplot-mini-runs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      margin: 0 0 12px 0;
+      padding-bottom: 2px;
+    }
+    .boxplot-mini-run-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--sd-text-muted);
+      max-width: min(340px, 100%);
+      font-family: "Inter", system-ui, sans-serif;
+    }
+    .boxplot-mini-run-chip span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .boxplot-mini-chart {
+      min-height: 128px;
+    }
+    /* Slightly bolder verticals than outer grid — still subdued */
+    .chart-container #boxchart .boxplot-mini-chart line.apexcharts-gridline {
+      stroke: rgba(130, 122, 168, 0.28) !important;
+      opacity: 1 !important;
+    }
+    .chart-container #boxchart .boxplot-mini-chart .apexcharts-xaxis-title-text,
+    .chart-container #boxchart .boxplot-mini-chart .apexcharts-xaxis-label text {
+      fill: var(--sd-text-muted) !important;
+    }
+    .chart-container #boxchart .boxplot-mini-chart .apexcharts-xcrosshairs {
+      stroke-dasharray: 4 3 !important;
+    }
+    .chart-container #boxchart path.apexcharts-boxPlot-area {
+      stroke-width: 2.25px !important;
+      filter: drop-shadow(0 0 10px rgba(124, 92, 252, 0.12));
+    }
+    .chart-container #boxchart .apexcharts-yaxis-label text,
+    .chart-container #boxchart .apexcharts-yaxis-label tspan {
+      fill: var(--sd-text-muted);
+      font-family: "JetBrains Mono", ui-monospace, monospace !important;
+      font-size: 10px !important;
+      font-weight: 500;
+    }
+    .chart-container #boxchart .apexcharts-xaxis-label text {
+      fill: var(--sd-text-muted);
+      font-family: "Inter", system-ui, sans-serif;
+      font-size: 11px;
+    }
+    .chart-container #boxchart .apexcharts-title-text {
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .chart-container #boxchart .apexcharts-subtitle-text {
+      font-family: "Inter", system-ui, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="eyebrow">CRUD Benchmark</div>
+    <h1><span class="grad">Compare</span> results</h1>
+    <div class="subtitle">Drag and drop <code>result.json</code> (or <code>result-*.json</code>) anywhere on this page.</div>
+
+    <div id="warnings"></div>
+
+    <div class="chart-container">
+      <div class="runs" id="runs"></div>
+
+      <div class="controls">
+        <div class="control-group">
+          <label for="baselineSel">Baseline for deltas</label>
+          <select id="baselineSel"></select>
+        </div>
+        <div class="control-group">
+          <label for="metricSel">Chart / column metric</label>
+          <select id="metricSel">
+            <option value="ops">Throughput (OPS)</option>
+            <option value="mean">Mean latency (µs)</option>
+            <option value="q99">p99 latency (µs)</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label for="keyScope">Tests in chart</label>
+          <select id="keyScope">
+            <option value="union">Union (all rows; gaps if missing)</option>
+            <option value="common">Intersection only</option>
+            <option value="crud_batch">[C]/[R]/[U]/[D] / [B]atch only</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label for="capSel">Chart cap</label>
+          <select id="capSel">
+            <option value="all">Show all categories</option>
+            <option value="40div" selected>Top 40 by max spread (OPS)</option>
+            <option value="50">First 50 in table order</option>
+          </select>
+        </div>
+      </div>
+      <div class="controls-row-actions">
+        <button type="button" class="btn-outline" id="setBaselineBtn" title="Baseline = first chip">Mark first run as baseline</button>
+        <span class="baseline-hint">Δ% vs baseline — OPS ↑ green; latency ↓ green.</span>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Summary</div>
+      <div class="chart-subtitle">
+        Compact throughput-only notes: benchmarks are ranked by how much OPS differs across loaded runs — not latency. Full detail is in the table and grouped chart.</div>
+      <div id="summary" class="summary-panel"></div>
+      <p class="muted" id="summaryEmpty">Load at least two valid runs to summarise comparisons.</p>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Alerts</div>
+      <div class="chart-subtitle">
+        ≥3 runs: median outliers on OPS / mean µs / p99 µs; high OPS variability across runs (<code style="font-size:inherit">CV &gt; 0.35</code>).</div>
+      <div id="alerts" class="alerts-panel" aria-live="polite"></div>
+      <p class="muted alerts-empty" id="alertsEmpty">Load three or more benchmark files to populate alerts.</p>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Comparison table</div>
+      <div class="chart-subtitle">Rows follow the same <code>Test</code> order as CSV output from crud-bench.</div>
+      <div class="table-scroll" id="tableHost"></div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Grouped chart</div>
+      <div class="chart-subtitle">Horizontal bars; truncate axis labels — hover tooltip shows the full test name.</div>
+      <div id="chart" class="chart-panel"></div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Latency spread (distribution)</div>
+      <div class="chart-subtitle">Each test gets its own chart: latency axis spans only that test so millisecond workloads are not squeezed next to minute-long scans. Colours match the legend; hover a box for full stats. Requires min / q25 / q50 / q75 / max in every run.</div>
+      <div id="boxchart" class="chart-panel"></div>
+    </div>
+  </div>
+
+  <script>
+(function () {
+  "use strict";
+
+  /** @typedef {{ secs: number, nanos?: number }} ElapsedSerde */
+  /** @typedef {{
+   * mean: number, min?: number, max?: number, q99: number, q95?: number,
+   * q75?: number, q50?: number, ops: number,
+   * elapsed?: ElapsedSerde
+   * }} OperationResultLike */
+
+  const runs = []; // { id, fileName, displayLabel, data, flattened: { keyOrder: string[], byKey: Map }, error?: string }
+
+  /** Separate run id from test keys (handles `[B]atch::` etc.) */
+  const OD = "\u0001";
+  /** @param {number} rid @param {string} key */
+  function outlierCellKey(rid, key) {
+    return String(rid) + OD + key;
+  }
+  function parseOutlierCellKey(s) {
+    const i = s.indexOf(OD);
+    if (i <= 0) return { rid: NaN, key: s };
+    return { rid: +s.slice(0, i), key: s.slice(i + OD.length) };
+  }
+
+  /** Apex / chart.rs palette (Spectron-aligned) */
+  const SD = {
+    text: "#e8e4f0",
+    muted: "#9990ab",
+    dim: "#6f7988",
+    line: "#3d3650",
+    /** Matches `table.compare` / `--sd-surface-border` — used for Apex grid + axis in config */
+    surfaceBorder: "rgba(111, 121, 136, 0.2)",
+    surface: "#16141f",
+    accent: "#7c5cfc",
+    energy: "#d255fe",
+    passion: "#651ddd",
+    write: "#c471f5",
+    success: "#34d399",
+  };
+  SD.axisStroke = SD.surfaceBorder;
+  SD.gridLine = SD.surfaceBorder;
+
+  /** Native SVG tooltip: hover truncated axis labels for full category (matches result HTML). */
+  function apexAttachFullCategoryTitles(chartContext) {
+    try {
+      const labels = chartContext.w.globals.labels;
+      if (!labels || labels.length === 0) return;
+      const root = chartContext.el;
+      let groups = root.querySelectorAll(".apexcharts-yaxis-label");
+      if (groups.length === 0) groups = root.querySelectorAll(".apexcharts-xaxis-label");
+      for (let i = 0; i < groups.length; i++) {
+        const g = groups[i];
+        const full = labels[i];
+        if (full === undefined || full === null) continue;
+        const old = g.getElementsByTagName("title")[0];
+        if (old) old.remove();
+        const titleEl = document.createElementNS("http://www.w3.org/2000/svg", "title");
+        titleEl.textContent = String(full);
+        g.insertBefore(titleEl, g.firstChild);
+      }
+    } catch (e) {}
+  }
+
+  let chartInstance = null;
+  /** One ApexCharts instance per capped test row */
+  let boxPlotChartInstances = [];
+  let runIdSeq = 0;
+
+  /** @returns {typeof runs[0]} */
+  function addRun(parsed, fileName) {
+    const id = ++runIdSeq;
+    const flattened = flattenBenchmark(parsed);
+    const db = parsed.database != null ? String(parsed.database) : "";
+    const displayLabel = fileName;
+    runs.push({ id, fileName, displayLabel, db, data: parsed, flattened, error: null });
+    return runs[runs.length - 1];
+  }
+
+  function scanRunRowLabel(id, scanName, samples, run) {
+    const indexSlug = run.indexed ? "indexed" : "no-index";
+    const w = run.workload || {};
+    let mid;
+    const k = w.kind || (w.Kind);
+    if (k === "read_write" || k === "ReadWrite") {
+      const p = typeof w.write_ratio_percent === "number" ? w.write_ratio_percent : "?";
+      mid = `reads+writes (${p}%) - ${indexSlug}`;
+    } else {
+      mid = `reads - ${indexSlug}`;
+    }
+    return `[S]can · ${id} · ${scanName} - ${mid} (${samples})`;
+  }
+
+  /**
+   * Mirror crud-bench result.rs Display / CSV row order exactly.
+   * @returns {{ keyOrder: string[], rows: { testKey: string, op: OperationResultLike|null }[] }}
+   */
+  function flattenBenchmark(data) {
+    const rows = [];
+    /** @param {string} key @param {OperationResultLike|null|undefined} op */
+    function row(key, op) {
+      rows.push({ testKey: key, op: op == null ? null : op });
+    }
+
+    if (data.creates != null) row("[C]reate", data.creates);
+    if (data.reads != null) row("[R]ead", data.reads);
+    if (data.updates != null) row("[U]pdate", data.updates);
+    if (data.deletes != null) row("[D]elete", data.deletes);
+
+    const scans = Array.isArray(data.scans) ? data.scans : [];
+    for (const scan of scans) {
+      const id = scan.id;
+      const name = scan.name;
+      const samp = typeof scan.samples === "number" ? scan.samples : 0;
+      const runList = Array.isArray(scan.runs) ? scan.runs : [];
+
+      for (const r of runList) {
+        if (r.indexed) continue;
+        const label = scanRunRowLabel(id, name, samp, r);
+        row(label, r.result ?? null);
+      }
+
+      const hasIndexed = runList.some((r) => r.indexed);
+      if (hasIndexed) {
+        const ibLabel = `[I]ndex · ${id} · build`;
+        row(ibLabel, scan.index_build ?? null);
+      }
+      for (const r of runList) {
+        if (!r.indexed) continue;
+        const label = scanRunRowLabel(id, name, samp, r);
+        row(label, r.result ?? null);
+      }
+      if (hasIndexed) {
+        const rmLabel = `[R]emoveIndex · ${id}`;
+        row(rmLabel, scan.index_remove ?? null);
+      }
+    }
+
+    const batches = Array.isArray(data.batches) ? data.batches : [];
+    for (const b of batches) {
+      let namePart;
+      let s;
+      let g;
+      let res;
+      if (Array.isArray(b) && b.length >= 3) {
+        namePart = b[0];
+        s = b[1];
+        g = b[2];
+        res = b[3];
+      } else if (typeof b === "object" && b) {
+        continue;
+      } else continue;
+      const bk = `[B]atch::${namePart} (${s} batches of ${g})`;
+      row(bk, res ?? null);
+    }
+
+    return { rows, keyOrder: rows.map((x) => x.testKey), byKey: new Map(rows.map((x) => [x.testKey, x])) };
+  }
+
+  function looksLikeBench(obj) {
+    if (!obj || typeof obj !== "object") return false;
+    if (obj.metadata && typeof obj.metadata === "object") return true;
+    if (obj.creates || obj.reads || obj.updates || obj.deletes || (Array.isArray(obj.scans) && obj.scans.length)) return true;
+    if (Array.isArray(obj.batches) && obj.batches.length) return true;
+    return false;
+  }
+
+  function stableMergeKeyOrders(lists) {
+    const seen = new Set();
+    const out = [];
+    for (const keys of lists) {
+      for (const k of keys) {
+        if (!seen.has(k)) {
+          seen.add(k);
+          out.push(k);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** @returns {{ missing: boolean, mismatches: { field: string, values: string[] }[], detail: string }} */
+  function compareMetadataAcrossRuns(okRuns) {
+    if (!okRuns.length) return { missing: false, mismatches: [], detail: "" };
+    const normals = okRuns.map((r) => r.data.metadata);
+    const anyMissing = normals.some((m) => m == null || typeof m !== "object");
+    const fields = ["samples", "clients", "threads", "key_type", "random", "sync", "persisted", "optimised"];
+    const mismatches = [];
+    for (const f of fields) {
+      const vals = new Map();
+      for (const rr of okRuns) {
+        const nm = rr.data.metadata;
+        if (nm == null) continue;
+        const v = nm[f];
+        const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+        if (!vals.has(s)) vals.set(s, []);
+        vals.get(s).push(rr.displayLabel || rr.fileName);
+      }
+      if (vals.size > 1) {
+        mismatches.push({
+          field: f,
+          values: [...vals.entries()].map(([val, labs]) => `${val} ← ${labs.join(", ")}`),
+        });
+      }
+    }
+    const detail = mismatches.map((m) => `** ${m.field} **\n${m.values.join("\n")}`).join("\n\n");
+    return {
+      missing: anyMissing,
+      mismatches,
+      detail,
+    };
+  }
+
+  /** @param {OperationResultLike|null} op */
+  function getMetric(op, metric) {
+    if (!op || typeof op !== "object") return null;
+    if (metric === "ops") return typeof op.ops === "number" ? op.ops : null;
+    if (metric === "mean") return typeof op.mean === "number" ? op.mean : null;
+    if (metric === "q99") return typeof op.q99 === "number" ? op.q99 : Number(op.q99);
+    return null;
+  }
+
+  /** Five-number summary for box plot (µs), matches crud-bench `scan_boxplot_json`. */
+  /** @param {OperationResultLike|null} op */
+  function µsBoxTuple(op) {
+    if (!op || typeof op !== "object") return null;
+    const min = op.min;
+    const q25 = op.q25;
+    const q50 = op.q50;
+    const q75 = op.q75;
+    const max = op.max;
+    if (![min, q25, q50, q75, max].every((v) => typeof v === "number" && Number.isFinite(v))) return null;
+    const a = Number(min);
+    const e = Number(max);
+    if (e < a) return null;
+    return [a, Number(q25), Number(q50), Number(q75), e];
+  }
+
+  /** X-axis bounds for one test: all five-number summaries across runs, padded (µs). */
+  /** @param {(number[]|null|undefined)[]} tuples each [min,q25,q50,q75,max] or null */
+  function xAxisRangeForBoxTuples(tuples) {
+    const flat = [];
+    for (const t of tuples) {
+      if (t && Array.isArray(t) && t.length >= 5) flat.push(...t);
+    }
+    if (!flat.length) return { min: 0, max: 1 };
+    let lo = Math.min(...flat);
+    let hi = Math.max(...flat);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { min: 0, max: 1 };
+    if (hi < lo) [lo, hi] = [hi, lo];
+    let span = hi - lo;
+    if (!(span > 0)) {
+      const base = hi > 0 ? hi : lo > 0 ? lo : 1;
+      span = Math.max(Math.abs(base) * 0.12, 1);
+    }
+    const pad = Math.max(span * 0.08, Math.abs(hi) * 0.02, 1e-6);
+    return {
+      min: Math.max(0, lo - pad),
+      max: hi + pad,
+    };
+  }
+
+  /** Same category cap as grouped bar chart. */
+  function buildCatKeys(filteredKeys, okRuns, capSel) {
+    const keys = [...filteredKeys];
+    let catKeys = [...keys];
+    let capApplied = "";
+    if (capSel === "40div" && keys.length > 40) {
+      catKeys = keysBySpread(keys, okRuns, 40);
+      capApplied = " (top 40 by OPS spread)";
+    } else if (capSel === "50" && keys.length > 50) {
+      catKeys = keys.slice(0, 50);
+      capApplied = " (first 50)";
+    }
+    return { catKeys, capApplied };
+  }
+
+  /**
+   * Reorder chart categories to match comparison table / CSV row order (`tableKeyOrder`).
+   * Keeps only keys from `catKeys`; any stragglers append at the end (defensive).
+   */
+  function orderCatKeysLikeTable(catKeys, tableKeyOrder) {
+    const allowed = new Set(catKeys);
+    const out = [];
+    const seen = new Set();
+    for (const k of tableKeyOrder) {
+      if (allowed.has(k) && !seen.has(k)) {
+        out.push(k);
+        seen.add(k);
+      }
+    }
+    for (const k of catKeys) {
+      if (!seen.has(k)) {
+        out.push(k);
+        seen.add(k);
+      }
+    }
+    return out;
+  }
+
+  function median(arr) {
+    const xs = [...arr].filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
+    if (!xs.length) return null;
+    const m = Math.floor(xs.length / 2);
+    return xs.length % 2 ? xs[m] : (xs[m - 1] + xs[m]) / 2;
+  }
+
+  function mean(arr) {
+    const xs = arr.filter((x) => Number.isFinite(x));
+    if (!xs.length) return null;
+    return xs.reduce((a, b) => a + b, 0) / xs.length;
+  }
+
+  function stdev(arr) {
+    const m = mean(arr);
+    if (m == null || !arr.length) return null;
+    const xs = arr.filter((x) => Number.isFinite(x));
+    if (xs.length < 2) return 0;
+    const v = xs.reduce((s, x) => s + (x - m) * (x - m), 0) / (xs.length - 1);
+    return Math.sqrt(v);
+  }
+
+  /** @returns {HTMLElement} */
+  function renderWarnings(okRuns, mdMeta) {
+    const el = document.getElementById("warnings");
+    el.innerHTML = "";
+    const parts = [];
+    if (mdMeta.missing) {
+      const d = document.createElement("div");
+      d.className = "banner-warn banner-err";
+      d.innerHTML = "<strong>Metadata missing on some runs</strong><p>Workload parameters may differ. Treat comparisons cautiously.</p>";
+      parts.push(d);
+    }
+    if (mdMeta.mismatches.length) {
+      const d = document.createElement("div");
+      d.className = "banner-warn";
+      d.innerHTML = "<strong>Benchmark metadata differs between runs</strong>" + mdMeta.mismatches.map((m) =>
+        `<p><strong>${escapeHtml(m.field)}</strong>: ${escapeHtml(m.values.join(" · "))}</p>`).join("");
+      parts.push(d);
+    }
+    for (const p of runs) {
+      if (p.error) {
+        const d = document.createElement("div");
+        d.className = "banner-warn banner-err";
+        d.innerHTML = `<strong>${escapeHtml(p.displayLabel)}</strong>${escapeHtml(p.error)}`;
+        parts.push(d);
+      }
+    }
+    for (const p of parts) el.appendChild(p);
+    return el;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function renderRunsList() {
+    const host = document.getElementById("runs");
+    host.innerHTML = "";
+    const baseId = baselineId();
+    runs.forEach((r) => {
+      const chip = document.createElement("div");
+      chip.className = "chip" + (r.id === baseId ? " baseline-ring" : "");
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.className = "label-edit";
+      inp.value = r.displayLabel;
+      inp.title = "Display label";
+      inp.addEventListener("change", () => {
+        r.displayLabel = inp.value.trim() || r.fileName;
+        refreshBaselineSelect();
+      });
+      const sm = document.createElement("small");
+      sm.title = r.fileName;
+      sm.textContent = r.db ? `[${r.db}]` : r.fileName;
+      const bt = document.createElement("button");
+      bt.type = "button";
+      bt.className = "rm";
+      bt.textContent = "×";
+      bt.addEventListener("click", () => {
+        const i = runs.findIndex((x) => x.id === r.id);
+        if (i >= 0) runs.splice(i, 1);
+        refreshAll();
+      });
+      chip.appendChild(inp);
+      chip.appendChild(sm);
+      chip.appendChild(bt);
+      host.appendChild(chip);
+    });
+    refreshBaselineSelect();
+  }
+
+  function baselineId() {
+    const sel = document.getElementById("baselineSel");
+    const v = parseInt(sel && sel.value, 10);
+    if (runs.length === 0) return null;
+    if (Number.isFinite(v) && runs.some((x) => x.id === v)) return v;
+    return runs[0].id;
+  }
+
+  /** Baseline run first — table columns left of deltas, grouped chart / box rows top-first. */
+  function runsOrderedBaselineFirst(okRuns, baseline) {
+    if (!okRuns.length) return [];
+    const idx = okRuns.findIndex((r) => r.id === baseline);
+    if (idx === -1 || idx === 0) return okRuns.slice();
+    const next = okRuns.slice();
+    const [chosen] = next.splice(idx, 1);
+    return [chosen, ...next];
+  }
+
+  function refreshBaselineSelect() {
+    const sel = document.getElementById("baselineSel");
+    if (!sel) return;
+    const cur = baselineId();
+    sel.innerHTML = "";
+    runs.forEach((r) => {
+      const o = document.createElement("option");
+      o.value = String(r.id);
+      o.textContent = `${r.displayLabel}`;
+      sel.appendChild(o);
+    });
+    if (runs.length && cur != null && runs.some((x) => x.id === cur)) sel.value = String(cur);
+    else if (runs.length) sel.selectedIndex = 0;
+    sel.removeEventListener("change", sel._hdl);
+    sel._hdl = renderAllDebounced;
+    sel.addEventListener("change", renderAllDebounced);
+  }
+
+  function filterKeys(keyOrderUnion, scope, okRuns) {
+    let keys = keyOrderUnion;
+    if (scope === "common") {
+      keys = keys.filter((k) => okRuns.every((r) => {
+        const rr = r.flattened.byKey.get(k);
+        return rr != null && rr.op != null;
+      }));
+    } else if (scope === "crud_batch") {
+      keys = keys.filter((t) =>
+        /^(\[C\]reate|\[R\]ead|\[U\]pdate|\[D\]elete|\[B\]atch::)/.test(t));
+    }
+    return keys;
+  }
+
+  /** Top N keys by spread of OPS across runs */
+  function keysBySpread(keys, okRuns, n) {
+    const scored = keys.map((k) => {
+      const ops = okRuns.map((r) => getMetric(r.flattened.byKey.get(k)?.op ?? null, "ops")).filter((x) => x != null && Number.isFinite(x));
+      let spread = 0;
+      if (ops.length >= 2) {
+        spread = Math.max(...ops) - Math.min(...ops);
+      }
+      return { k, spread };
+    });
+    scored.sort((a, b) => b.spread - a.spread);
+    return scored.slice(0, n).map((x) => x.k);
+  }
+
+  /** @returns {HTMLElement} */
+  function buildTable(okRuns, keyOrderFiltered, baseline, metric) {
+    const host = document.getElementById("tableHost");
+    host.innerHTML = "";
+    if (!okRuns.length) {
+      host.textContent = "";
+      return host;
+    }
+    const baseRun = okRuns.find((x) => x.id === baseline) || okRuns[0];
+    const tbl = document.createElement("table");
+    tbl.className = "compare";
+    const thead = document.createElement("thead");
+    const trh = document.createElement("tr");
+    trh.appendChild(document.createElement("th")).textContent = "Test";
+    okRuns.forEach((r) => {
+      const th = document.createElement("th");
+      th.textContent = r.displayLabel + (metric === "ops" ? "\nOPS" : metric === "mean" ? "\nµs mean" : "\nµs p99");
+      trh.appendChild(th);
+      if (r.id !== baseline) {
+        const th2 = document.createElement("th");
+        th2.textContent = "% vs baseline";
+        trh.appendChild(th2);
+      }
+    });
+    thead.appendChild(trh);
+    tbl.appendChild(thead);
+    const tb = document.createElement("tbody");
+
+    const outliers = computeOutlierCells(okRuns);
+
+    for (const k of keyOrderFiltered) {
+      const tr = document.createElement("tr");
+      const td0 = document.createElement("td");
+      td0.className = "test-key";
+      td0.textContent = k;
+      tr.appendChild(td0);
+      const brEntry = baseRun.flattened.byKey.get(k);
+
+      okRuns.forEach((r) => {
+        const op = r.flattened.byKey.get(k)?.op ?? null;
+        const v = getMetric(op, metric);
+        const td = document.createElement("td");
+        if (v == null || !Number.isFinite(v)) {
+          td.textContent = "-";
+          tr.appendChild(td);
+          if (r.id !== baseline) tr.appendChild(document.createElement("td")).textContent = "-";
+          return;
+        }
+        td.textContent = metric === "ops" ? Number(v.toFixed(2)) : Number(v.toFixed(2));
+
+        const okey = outlierCellKey(r.id, k);
+        if (outliers.outOps.has(okey) || outliers.outLatMean.has(okey) || outliers.outLatP99.has(okey)) td.classList.add("out-cell");
+
+        if (skewNote(op)) {
+          const dm = document.createElement("div");
+          dm.className = "skew";
+          dm.textContent = skewNote(op);
+          td.appendChild(dm);
+        }
+        tr.appendChild(td);
+
+        if (r.id !== baseline) {
+          const bv = brEntry?.op ? getMetric(brEntry.op, metric) : null;
+          const tdd = document.createElement("td");
+          if (bv == null || !Number.isFinite(bv) || bv === 0) {
+            tdd.textContent = "-";
+          } else {
+            const pct = ((v - bv) / Math.abs(bv)) * 100;
+            const good =
+              metric === "ops"
+                ? v >= bv
+                : v <= bv;
+            tdd.textContent = (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
+            tdd.className = good ? "delta-pos" : "delta-neg";
+          }
+          tr.appendChild(tdd);
+        }
+      });
+
+      tb.appendChild(tr);
+    }
+    tbl.appendChild(tb);
+    host.appendChild(tbl);
+    return host;
+  }
+
+  /** @param {OperationResultLike|null} op */
+  function skewNote(op) {
+    if (!op || typeof op !== "object") return "";
+    const mean = typeof op.mean === "number" ? op.mean : null;
+    const p99 = typeof op.q99 === "number" ? op.q99 : Number(op.q99);
+    if (mean == null || !Number.isFinite(mean) || !Number.isFinite(p99) || mean <= 0) return "";
+    if (p99 / mean > 3) return "Heavy tail (p99 >> mean)";
+    return "";
+  }
+
+  function computeOutlierCells(okRuns) {
+    const outOps = new Set();
+    const outLatMean = new Set();
+    const outLatP99 = new Set();
+    /** @type {Set<string>} */
+    const hiCv = new Set();
+
+    const allKeys = stableMergeKeyOrders(okRuns.map((r) => r.flattened.keyOrder));
+
+    for (const k of allKeys) {
+      const opsList = [];
+      okRuns.forEach((r) => {
+        const v = getMetric(r.flattened.byKey.get(k)?.op ?? null, "ops");
+        if (v != null && Number.isFinite(v)) opsList.push({ r, v });
+      });
+      const medOPS = median(opsList.map((x) => x.v));
+      if (medOPS != null && opsList.length >= 3) {
+        opsList.forEach(({ r, v }) => {
+          if (v < medOPS * 0.65 || v > medOPS * 1.5) outOps.add(outlierCellKey(r.id, k));
+        });
+        const ovs = opsList.map((x) => x.v);
+        const mn = mean(ovs), sd = stdev(ovs);
+        if (mn != null && sd != null && mn > 1e-9 && sd / mn > 0.35) hiCv.add(k);
+      }
+
+      const meanList = [];
+      okRuns.forEach((r) => {
+        const v = getMetric(r.flattened.byKey.get(k)?.op ?? null, "mean");
+        if (v != null && Number.isFinite(v)) meanList.push({ r, v });
+      });
+      const medM = median(meanList.map((x) => x.v));
+      if (medM != null && meanList.length >= 3 && medM > 0) {
+        meanList.forEach(({ r, v }) => {
+          if (v < medM * 0.65 || v > medM * 1.5) outLatMean.add(outlierCellKey(r.id, k));
+        });
+      }
+
+      const p99List = [];
+      okRuns.forEach((r) => {
+        const vv = getMetric(r.flattened.byKey.get(k)?.op ?? null, "q99");
+        if (vv != null && Number.isFinite(vv)) p99List.push({ r, v: vv });
+      });
+      const medP99 = median(p99List.map((x) => x.v));
+      if (medP99 != null && p99List.length >= 3 && medP99 > 0) {
+        p99List.forEach(({ r, v }) => {
+          if (v < medP99 * 0.65 || v > medP99 * 1.5) outLatP99.add(outlierCellKey(r.id, k));
+        });
+      }
+    }
+
+    return { outOps, outLatMean, outLatP99, hiCvKeys: hiCv };
+  }
+
+  function renderSummary(okRuns) {
+    const panel = document.getElementById("summary");
+    const empty = document.getElementById("summaryEmpty");
+    panel.innerHTML = "";
+    empty.style.display = "none";
+
+    const base = baselineId();
+    const br = okRuns.find((x) => x.id === base) || okRuns[0];
+    if (!br || okRuns.length < 2) {
+      empty.textContent = "Load at least two valid runs to summarise comparisons.";
+      empty.style.display = "block";
+      return;
+    }
+
+    const lead = document.createElement("p");
+    lead.className = "summary-lead";
+    lead.innerHTML =
+      `${okRuns.length} runs · baseline <strong>${escapeHtml(br.displayLabel)}</strong>`;
+    panel.appendChild(lead);
+
+    const unionKeys = stableMergeKeyOrders(okRuns.map((x) => x.flattened.keyOrder));
+    const SPREAD_POOL = 20;
+    const SHOW_BEST_ROWS = 8;
+    const MAX_DELTA_ROWS = 6;
+    const MAX_SKEW = 4;
+
+    const spotlightPool = keysBySpread(unionKeys, okRuns, SPREAD_POOL);
+    const bestRowsData = [];
+    for (const k of spotlightPool) {
+      const opsVals = [];
+      let bestRun = null;
+      let bestOps = null;
+      okRuns.forEach((r) => {
+        const o = getMetric(r.flattened.byKey.get(k)?.op ?? null, "ops");
+        if (o == null || !Number.isFinite(o)) return;
+        opsVals.push(o);
+        if (bestOps == null || o > bestOps) {
+          bestOps = o;
+          bestRun = r;
+        }
+      });
+      if (bestRun != null && bestOps != null) {
+        let spreadOps = null;
+        let spreadPctVsMin = null;
+        if (opsVals.length >= 2) {
+          const minOps = Math.min(...opsVals);
+          spreadOps = bestOps - minOps;
+          if (minOps > 0) spreadPctVsMin = (spreadOps / minOps) * 100;
+        }
+        bestRowsData.push({
+          k, bestRun, bestOps, spreadOps, spreadPctVsMin,
+        });
+      }
+    }
+
+    let sections = 0;
+    const bestSlice = bestRowsData.slice(0, SHOW_BEST_ROWS);
+
+    if (bestSlice.length) {
+      const sec = document.createElement("section");
+      sec.className = "summary-section";
+      const h = document.createElement("h4");
+      h.className = "summary-section-heading";
+      h.textContent = "Where OPS disagrees most — winning run";
+      sec.appendChild(h);
+      const scroll = document.createElement("div");
+      scroll.className = "table-scroll";
+      const tbl = document.createElement("table");
+      tbl.className = "summary-table";
+      const thead = document.createElement("thead");
+      const hr = document.createElement("tr");
+      ["", "Benchmark", "Winning run", "OPS", ""].forEach((lab, j) => {
+        const th = document.createElement("th");
+        th.textContent = j === 4 ? "Δ OPS" : lab;
+        if (j === 4) {
+          th.title =
+            "Span = max − min OPS across runs. Text colour vs baseline on this benchmark: green baseline at peak throughput, red another run is faster.";
+        }
+        hr.appendChild(th);
+      });
+      thead.appendChild(hr);
+      tbl.appendChild(thead);
+      const tb = document.createElement("tbody");
+      bestSlice.forEach((row, i) => {
+        const tr = document.createElement("tr");
+        const tdN = document.createElement("td");
+        tdN.textContent = String(i + 1);
+        const tdBench = document.createElement("td");
+        const kb = document.createElement("span");
+        kb.className = "summary-test-cell";
+        kb.textContent = truncate(row.k, 96);
+        kb.title = row.k;
+        tdBench.appendChild(kb);
+        const tdWin = document.createElement("td");
+        tdWin.style.color = "var(--sd-text)";
+        tdWin.textContent = row.bestRun.displayLabel;
+        const tdOps = document.createElement("td");
+        tdOps.className = "summary-num";
+        tdOps.textContent = row.bestOps.toFixed(2);
+        const tdDelta = document.createElement("td");
+        tdDelta.className = "summary-num";
+        const bBaseline = br.flattened.byKey.get(row.k)?.op ?? null;
+        const bOpsBaseline = getMetric(bBaseline, "ops");
+        const tol = Math.max(1e-9, Math.abs(row.bestOps) * 1e-12);
+        const baselineVerdictKnown = Number.isFinite(bOpsBaseline);
+        const baselineBeaten =
+          baselineVerdictKnown ? row.bestOps > bOpsBaseline + tol : false;
+
+        let valStr =
+          row.spreadOps != null ? row.spreadOps.toFixed(2) : "—";
+        let spanNote = "";
+        if (row.spreadOps != null) {
+          spanNote = `(max − min across runs) = ${row.spreadOps.toFixed(2)}`;
+          if (row.spreadPctVsMin != null) {
+            spanNote += ` · slowest vs winner: ${row.spreadPctVsMin.toFixed(1)}%`;
+          }
+        } else spanNote =
+          "Span needs OPS from ≥2 loaded runs on this benchmark.";
+        let tipBits = [spanNote];
+        if (baselineVerdictKnown) {
+          tdDelta.textContent = valStr;
+          tdDelta.classList.add(baselineBeaten ? "delta-neg" : "delta-pos");
+          if (baselineBeaten) {
+            const gapPct = bOpsBaseline > 0
+              ? ((row.bestOps - bOpsBaseline) / bOpsBaseline) * 100
+              : null;
+            tipBits.push(
+              `Baseline ${br.displayLabel} is slower than the fastest run on this test.`,
+            );
+            if (gapPct != null) {
+              tipBits.push(`Fastest ahead of baseline by ${gapPct.toFixed(1)}% OPS.`);
+            }
+          } else {
+            tipBits.push(
+              `Baseline ${br.displayLabel} matches peak throughput among loaded runs.`,
+            );
+          }
+        } else {
+          tdDelta.textContent = valStr;
+          tdDelta.classList.add("summary-delta-na");
+          tipBits.push(
+            `No OPS for baseline "${br.displayLabel}" on this benchmark — verdict n/a.`,
+          );
+        }
+        tdDelta.title = tipBits.join(" ");
+        tr.appendChild(tdN); tr.appendChild(tdBench); tr.appendChild(tdWin); tr.appendChild(tdOps);
+        tr.appendChild(tdDelta);
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb);
+      scroll.appendChild(tbl);
+      sec.appendChild(scroll);
+      const note = document.createElement("p");
+      note.className = "summary-note";
+      note.textContent =
+        `${SPREAD_POOL} benchmarks with the widest OPS span across your files · fastest run named per row (cap ${SHOW_BEST_ROWS}). Δ OPS = max − min throughput across loaded runs; cell text is green when baseline matches peak throughput on that row, red when another run is faster. Hover cells for detail. Hover benchmark text when truncated for the full CSV row label.`;
+      sec.appendChild(note);
+      panel.appendChild(sec);
+      sections++;
+    }
+
+    const deltaRows = [];
+    unionKeys.forEach((k) => {
+      okRuns.forEach((r) => {
+        if (r.id === br.id) return;
+        const bo = br.flattened.byKey.get(k)?.op ?? null;
+        const o = r.flattened.byKey.get(k)?.op ?? null;
+        const bvv = getMetric(bo, "ops");
+        const vv = getMetric(o, "ops");
+        if (bvv == null || vv == null || bvv <= 0) return;
+        deltaRows.push({ k, run: r.displayLabel, pct: ((vv - bvv) / bvv) * 100 });
+      });
+    });
+    deltaRows.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
+    const deltaSlice = deltaRows.slice(0, MAX_DELTA_ROWS);
+
+    if (deltaSlice.length) {
+      const sec = document.createElement("section");
+      sec.className = "summary-section";
+      const h = document.createElement("h4");
+      h.className = "summary-section-heading";
+      h.textContent = "Largest OPS delta vs baseline";
+      sec.appendChild(h);
+      const scroll = document.createElement("div");
+      scroll.className = "table-scroll";
+      const tbl = document.createElement("table");
+      tbl.className = "summary-table";
+      const thead = document.createElement("thead");
+      const hdr = document.createElement("tr");
+      ["Benchmark", "Run", "Δ vs baseline"].forEach((lab) => {
+        const th = document.createElement("th");
+        th.textContent = lab;
+        hdr.appendChild(th);
+      });
+      thead.appendChild(hdr);
+      tbl.appendChild(thead);
+      const tb = document.createElement("tbody");
+      deltaSlice.forEach((d) => {
+        const tr = document.createElement("tr");
+        const tdK = document.createElement("td");
+        const ks = document.createElement("span");
+        ks.className = "summary-test-cell";
+        ks.textContent = truncate(d.k, 88);
+        ks.title = d.k;
+        tdK.appendChild(ks);
+        const tdRun = document.createElement("td");
+        tdRun.style.color = "var(--sd-text)";
+        tdRun.textContent = d.run;
+        const tdPct = document.createElement("td");
+        tdPct.className = "summary-num";
+        const sp = document.createElement("span");
+        sp.textContent = (d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%";
+        sp.className = d.pct >= 0 ? "delta-pos" : "delta-neg";
+        tdPct.appendChild(sp);
+        tr.appendChild(tdK); tr.appendChild(tdRun); tr.appendChild(tdPct);
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb);
+      scroll.appendChild(tbl);
+      sec.appendChild(scroll);
+      const note = document.createElement("p");
+      note.className = "summary-note";
+      note.textContent =
+        "Signed % versus baseline OPS (positive = this run faster). Showing top "
+        + String(MAX_DELTA_ROWS) + " gaps by magnitude.";
+      sec.appendChild(note);
+      panel.appendChild(sec);
+      sections++;
+    }
+
+    const tailIssues = [];
+    unionKeys.slice(0, 80).forEach((k) => {
+      okRuns.forEach((r) => {
+        const skewTxt = skewNote(r.flattened.byKey.get(k)?.op ?? null);
+        if (skewTxt) tailIssues.push({ run: r.displayLabel, kFull: k, kShort: truncate(k, 84), skew: skewTxt });
+      });
+    });
+    const skewSlice = tailIssues.slice(0, MAX_SKEW);
+
+    if (skewSlice.length) {
+      const sec = document.createElement("section");
+      sec.className = "summary-section";
+      const h = document.createElement("h4");
+      h.className = "summary-section-heading";
+      h.textContent = "Throughput shape hints";
+      sec.appendChild(h);
+      const uls = document.createElement("ul");
+      uls.className = "summary-skews";
+      skewSlice.forEach((t) => {
+        const li = document.createElement("li");
+        li.textContent = `${truncate(t.run, 52)} · ${t.kShort} · ${t.skew}`;
+        li.title = `${t.run} · ${t.kFull}`;
+        uls.appendChild(li);
+      });
+      sec.appendChild(uls);
+      panel.appendChild(sec);
+      sections++;
+    }
+
+    if (!sections) {
+      panel.innerHTML = "";
+      empty.textContent = "No overlapping OPS metrics to summarise for these runs.";
+      empty.style.display = "block";
+    }
+  }
+
+  function truncate(s, n = 80) {
+    s = String(s);
+    return s.length <= n ? s : s.slice(0, n) + "…";
+  }
+
+  /**
+   * Multi-line benchmark keys for Apex y-axis: split on " · ", else soft-wrap at spaces.
+   * Apex renders embedded newlines as stacked lines under one category.
+   */
+  function wrapBenchLabel(s, maxChunk = 52) {
+    s = String(s);
+    const segs = s.split(/\s*·\s*/);
+    if (segs.length > 1) {
+      const lines = [];
+      let cur = "";
+      for (let p = 0; p < segs.length; p++) {
+        const segment = segs[p];
+        const glued = cur ? `${cur} · ${segment}` : segment;
+        if (glued.length <= maxChunk || !cur) {
+          cur = glued;
+        } else {
+          lines.push(cur);
+          cur = segment;
+        }
+      }
+      if (cur) lines.push(cur);
+      return lines.join("\n");
+    }
+    if (s.length <= maxChunk) return s;
+    const lines = [];
+    let i = 0;
+    while (i < s.length) {
+      let end = Math.min(i + maxChunk, s.length);
+      if (end < s.length) {
+        const sp = s.lastIndexOf(" ", end);
+        if (sp > i + 24) end = sp;
+      }
+      lines.push(s.slice(i, end).trim());
+      i = end;
+      while (i < s.length && s[i] === " ") i++;
+    }
+    return lines.filter(Boolean).join("\n");
+  }
+
+  function renderAlerts(okRuns) {
+    const panel = document.getElementById("alerts");
+    const empt = document.getElementById("alertsEmpty");
+    panel.innerHTML = "";
+    if (okRuns.length < 3) {
+      empt.textContent = "Add at least three runs for median-based alerts.";
+      empt.style.display = "block";
+      return;
+    }
+    empt.style.display = "none";
+
+    const { outOps, outLatMean, outLatP99, hiCvKeys } = computeOutlierCells(okRuns);
+    const CAP = 5;
+    let hidden =
+      Math.max(0, outOps.size - CAP)
+      + Math.max(0, outLatMean.size - CAP)
+      + Math.max(0, outLatP99.size - CAP)
+      + Math.max(0, hiCvKeys.size - CAP);
+
+    /** @type {{ tag: string, tagLabel: string, run: string, key: string }[]} */
+    const rows = [];
+    for (const cell of [...outOps].slice(0, CAP)) {
+      const { rid, key: kk } = parseOutlierCellKey(cell);
+      const r = okRuns.find((x) => x.id === rid);
+      rows.push({
+        tag: "ops", tagLabel: "OPS",
+        run: (r || {}).displayLabel || String(rid),
+        key: kk,
+      });
+    }
+    for (const cell of [...outLatMean].slice(0, CAP)) {
+      const { rid, key: kk } = parseOutlierCellKey(cell);
+      const r = okRuns.find((x) => x.id === rid);
+      rows.push({
+        tag: "mean", tagLabel: "MEAN",
+        run: (r || {}).displayLabel || String(rid),
+        key: kk,
+      });
+    }
+    for (const cell of [...outLatP99].slice(0, CAP)) {
+      const { rid, key: kk } = parseOutlierCellKey(cell);
+      const r = okRuns.find((x) => x.id === rid);
+      rows.push({
+        tag: "p99", tagLabel: "p99",
+        run: (r || {}).displayLabel || String(rid),
+        key: kk,
+      });
+    }
+    for (const kk of [...hiCvKeys].slice(0, CAP)) {
+      rows.push({ tag: "cv", tagLabel: "CV", run: "(all runs)", key: kk });
+    }
+
+    if (!rows.length) {
+      empt.textContent = "No alerts under current rules.";
+      empt.style.display = "block";
+      return;
+    }
+
+    const scroll = document.createElement("div");
+    scroll.className = "alerts-table-scroll";
+    const tbl = document.createElement("table");
+    tbl.className = "alerts-table";
+    const tb = document.createElement("tbody");
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+      const td0 = document.createElement("td");
+      td0.className = "alert-kind";
+      const tag = document.createElement("span");
+      tag.className = "alert-tag alert-tag-" + row.tag;
+      tag.textContent = row.tagLabel;
+      td0.appendChild(tag);
+      const td1 = document.createElement("td");
+      td1.className = "alert-run";
+      td1.textContent = truncate(row.run, 32);
+      td1.title = row.run;
+      const td2 = document.createElement("td");
+      td2.className = "alert-bench";
+      const bench = document.createElement("span");
+      bench.textContent = truncate(row.key, 88);
+      bench.title = row.key;
+      td2.appendChild(bench);
+      tr.appendChild(td0);
+      tr.appendChild(td1);
+      tr.appendChild(td2);
+      tb.appendChild(tr);
+    }
+    tbl.appendChild(tb);
+    scroll.appendChild(tbl);
+    panel.appendChild(scroll);
+    if (hidden > 0) {
+      const foot = document.createElement("p");
+      foot.className = "alerts-foot";
+      foot.textContent = `+${hidden} more not shown (${CAP} per signal).`;
+      panel.appendChild(foot);
+    }
+  }
+
+  /** @param {{ okRuns: typeof runs, keyUnion: string[] }} arg */
+  function renderChart(okRuns, keyUnionFiltered, metric, capSel) {
+    const el = document.getElementById("chart");
+    if (chartInstance) {
+      chartInstance.destroy();
+      chartInstance = null;
+    }
+    el.innerHTML = "";
+    if (!okRuns.length || keyUnionFiltered.length === 0) {
+      el.textContent = "Add benchmark JSON files to see charts.";
+      el.style.fontStyle = "italic";
+      el.style.color = "#6f7988";
+      return;
+    }
+    el.style.fontStyle = "";
+    el.style.color = "";
+
+    const { catKeys: rawCatKeys, capApplied } = buildCatKeys(keyUnionFiltered, okRuns, capSel);
+    const catKeys = orderCatKeysLikeTable(rawCatKeys, keyUnionFiltered);
+    const categories = catKeys.map((k) => truncate(k, 72));
+
+    const series = okRuns.map((r) => ({
+      name: r.displayLabel,
+      data: catKeys.map((k) => {
+        const vv = getMetric(r.flattened.byKey.get(k)?.op ?? null, metric);
+        return vv != null && Number.isFinite(vv) ? Number(vv.toFixed(4)) : null;
+      }),
+    }));
+
+    const seriesCount = Math.max(series.length, 1);
+    // Grouped horizontal bars need much more vertical room than length * 14.
+    const legendTitlePad = 240;
+    const pxPerCategory = Math.min(92, Math.max(48, 28 + seriesCount * 14));
+    const height = Math.max(560, Math.round(catKeys.length * pxPerCategory + legendTitlePad));
+
+    const palette = ["#7c5cfc", "#d255fe", "#651ddd", "#c471f5", "#34d399"];
+    const colorsOut = [];
+    for (let i = 0; i < series.length; i++) colorsOut.push(palette[i % palette.length]);
+
+    const opts = {
+      chart: {
+        type: "bar",
+        height,
+        fontFamily: '"Inter", system-ui, sans-serif',
+        foreColor: SD.muted,
+        background: SD.surface,
+        toolbar: { show: true },
+        zoom: { enabled: true },
+        events: {
+          mounted(ctx) {
+            apexAttachFullCategoryTitles(ctx);
+          },
+          updated(ctx) {
+            apexAttachFullCategoryTitles(ctx);
+          },
+        },
+      },
+      theme: { mode: "dark" },
+      grid: {
+        borderColor: SD.gridLine,
+        strokeDashArray: 0,
+      },
+      plotOptions: {
+        bar: {
+          horizontal: true,
+          borderRadius: 5,
+          barHeight: "62%",
+        },
+      },
+      dataLabels: { enabled: false },
+      series,
+      colors: colorsOut,
+      xaxis: {
+        categories,
+        labels: { style: { colors: SD.muted, fontSize: "11px" } },
+        axisBorder: { show: true, color: SD.axisStroke },
+        axisTicks: { show: true, color: SD.axisStroke },
+      },
+      yaxis: {
+        labels: {
+          maxWidth: 420,
+          style: { colors: SD.muted },
+        },
+        axisBorder: { show: true, color: SD.axisStroke },
+        axisTicks: { show: true, color: SD.axisStroke },
+      },
+      legend: {
+        position: "top",
+        horizontalAlign: "left",
+        fontWeight: 500,
+        labels: { colors: SD.text },
+      },
+      tooltip: {
+        theme: "dark",
+        fillSeriesColor: false,
+        style: {
+          fontSize: "12px",
+        },
+        x: {
+          show: false,
+        },
+        y: {
+          formatter(val, tooltipOpts) {
+            const idx = tooltipOpts.dataPointIndex;
+            const full = catKeys[idx] || "";
+            const unit = metric === "ops" ? " ops" : " µs";
+            const show = val != null && typeof val === "number" ? val + unit : "—";
+            return `${show}\n\n${full}`;
+          },
+        },
+      },
+      title: {
+        text: `${metric === "ops" ? "Throughput (OPS)" : metric === "mean" ? "Mean latency (µs)" : "p99 latency (µs)"}${capApplied}`,
+        align: "left",
+        style: {
+          fontSize: "15px",
+          fontWeight: 600,
+          color: SD.text,
+        },
+      },
+    };
+
+    chartInstance = new ApexCharts(el, opts);
+    chartInstance.render();
+  }
+
+  /**
+   * One mini horizontal box-plot per test (same caps as grouped chart). Each chart’s x-axis
+   * spans only that test’s latencies across runs — fast workloads are no longer glued to zero
+   * when mixed with multi-minute scans.
+   */
+  function renderLatencySpreadBoxChart(okRuns, keyUnionFiltered, capSel) {
+    const el = document.getElementById("boxchart");
+    for (let bi = 0; bi < boxPlotChartInstances.length; bi++) {
+      try {
+        boxPlotChartInstances[bi].destroy();
+      } catch (e) {}
+    }
+    boxPlotChartInstances = [];
+    el.innerHTML = "";
+    if (!okRuns.length || keyUnionFiltered.length === 0) {
+      el.textContent =
+        "Add benchmark JSON files to compare latency distributions (min, quartiles, max).";
+      el.style.fontStyle = "italic";
+      el.style.color = "#6f7988";
+      return;
+    }
+    el.style.fontStyle = "";
+    el.style.color = "";
+
+    const { catKeys: rawCatKeys, capApplied } = buildCatKeys(keyUnionFiltered, okRuns, capSel);
+    const catKeys = orderCatKeysLikeTable(rawCatKeys, keyUnionFiltered);
+    const boxCatKeys = catKeys.filter((k) =>
+      okRuns.every((r) => µsBoxTuple(r.flattened.byKey.get(k)?.op ?? null) != null));
+    const droppedIncomplete = catKeys.length - boxCatKeys.length;
+
+    if (!boxCatKeys.length) {
+      const capNote = capApplied ? ` ${escapeHtml(capApplied.trim())}.` : "";
+      el.innerHTML =
+        `<p style="margin:0;font-style:italic;color:var(--sd-text-dim, #6f7988);">` +
+        `None of the ${catKeys.length} chart categor${catKeys.length === 1 ? "y" : "ies"} have complete ` +
+        `latency fields (min, q25, q50, q75, max) for every loaded run.${capNote}</p>`;
+      return;
+    }
+
+    const palette = ["#7c5cfc", "#d255fe", "#651ddd", "#c471f5", "#34d399"];
+    const colorsOut = okRuns.map((_, i) => palette[i % palette.length]);
+
+    const subtitleText =
+      droppedIncomplete > 0
+        ? `${droppedIncomplete} categor${droppedIncomplete === 1 ? "y" : "ies"} hidden — incomplete quartiles on some runs.`
+        : "";
+
+    const wrap = document.createElement("div");
+    wrap.className = "boxplot-compare-wrap";
+
+    const intro = document.createElement("div");
+    intro.className = "boxplot-compare-intro";
+    const head = document.createElement("strong");
+    head.textContent = `Latency spread — one chart per test (axis fit to each row)${capApplied}`;
+    intro.appendChild(head);
+    if (subtitleText) {
+      const pSub = document.createElement("p");
+      pSub.className = "muted";
+      pSub.textContent = subtitleText;
+      intro.appendChild(pSub);
+    }
+    const pHint = document.createElement("p");
+    pHint.className = "muted";
+    pHint.style.marginTop = subtitleText ? "6px" : "8px";
+    pHint.textContent =
+      "Each row uses its own µs scale for the boxes you loaded, so milliseconds and minute-long scans are both readable.";
+    intro.appendChild(pHint);
+    wrap.appendChild(intro);
+
+    if (okRuns.length > 1) {
+      const leg = document.createElement("div");
+      leg.className = "boxplot-compare-legend";
+      leg.setAttribute("aria-label", "Run colours");
+      for (let i = 0; i < okRuns.length; i++) {
+        const item = document.createElement("span");
+        item.className = "boxplot-leg-item";
+        const dot = document.createElement("span");
+        dot.className = "boxplot-leg-dot";
+        dot.style.background = colorsOut[i];
+        const lab = document.createElement("span");
+        lab.textContent = okRuns[i].displayLabel;
+        item.appendChild(dot);
+        item.appendChild(lab);
+        leg.appendChild(item);
+      }
+      wrap.appendChild(leg);
+    }
+
+    el.appendChild(wrap);
+
+    const seriesCount = Math.max(okRuns.length, 1);
+    /** Extra chart height feeds vertical breathing room once barHeight is capped. */
+    const miniHeight = Math.max(152, 100 + seriesCount * 44);
+
+    for (let ki = 0; ki < boxCatKeys.length; ki++) {
+      const testKey = boxCatKeys[ki];
+      const tuples = okRuns.map((r) => µsBoxTuple(r.flattened.byKey.get(testKey)?.op ?? null));
+      const range = xAxisRangeForBoxTuples(tuples);
+      const spanUs = Math.max(range.max - range.min, 1e-9);
+      function formatMiniAxis(val) {
+        const n = typeof val === "number" ? val : Number(val);
+        if (!Number.isFinite(n)) return String(val);
+        if (spanUs < 8000) {
+          return n.toLocaleString(undefined, { maximumFractionDigits: spanUs < 500 ? 2 : 1 });
+        }
+        try {
+          return new Intl.NumberFormat(undefined, {
+            notation: "compact",
+            maximumFractionDigits: 2,
+          }).format(n);
+        } catch (e) {
+          return String(Math.round(n));
+        }
+      }
+
+      const section = document.createElement("section");
+      section.className = "boxplot-mini-section";
+
+      const keyEl = document.createElement("div");
+      keyEl.className = "boxplot-mini-key";
+      keyEl.textContent = wrapBenchLabel(testKey, 120);
+
+      const chartMount = document.createElement("div");
+      chartMount.className = "boxplot-mini-chart";
+
+      section.appendChild(keyEl);
+      if (okRuns.length > 1) {
+        const runRow = document.createElement("div");
+        runRow.className = "boxplot-mini-runs";
+        runRow.setAttribute("aria-label", "Which colour is which run");
+        for (let ri = 0; ri < okRuns.length; ri++) {
+          const chip = document.createElement("span");
+          chip.className = "boxplot-mini-run-chip";
+          chip.title = okRuns[ri].displayLabel;
+          const dot = document.createElement("span");
+          dot.className = "boxplot-leg-dot";
+          dot.style.background = colorsOut[ri];
+          const lab = document.createElement("span");
+          lab.textContent = truncate(okRuns[ri].displayLabel, 48);
+          chip.appendChild(dot);
+          chip.appendChild(lab);
+          runRow.appendChild(chip);
+        }
+        section.appendChild(runRow);
+      }
+      section.appendChild(chartMount);
+      wrap.appendChild(section);
+
+      const series = okRuns.map((r) => ({
+        name: r.displayLabel,
+        type: "boxPlot",
+        data: [
+          {
+            x: "\u2003",
+            y: µsBoxTuple(r.flattened.byKey.get(testKey)?.op ?? null),
+          },
+        ],
+      }));
+
+      const miniOpts = {
+        series,
+        chart: {
+          type: "boxPlot",
+          height: miniHeight,
+          fontFamily: '"Inter", system-ui, sans-serif',
+          foreColor: SD.muted,
+          background: SD.surface,
+          toolbar: { show: false },
+          zoom: { enabled: false },
+          animations: { enabled: false },
+          dropShadow: {
+            enabled: true,
+            top: 0,
+            left: 0,
+            blur: 6,
+            opacity: 0.22,
+          },
+        },
+        theme: { mode: "dark" },
+        stroke: {
+          show: true,
+          width: 2.25,
+          colors: colorsOut,
+          lineCap: "round",
+          lineJoin: "round",
+        },
+        grid: {
+          borderColor: SD.gridLine,
+          strokeDashArray: 0,
+          padding: { top: 20, right: 14, bottom: 26, left: 6 },
+          xaxis: { lines: { show: true } },
+        },
+        plotOptions: {
+          bar: {
+            horizontal: true,
+            barHeight: "54%",
+          },
+          boxPlot: {
+            colors: {
+              upper: "rgba(220, 210, 255, 0.48)",
+              lower: "rgba(110, 70, 238, 0.58)",
+            },
+          },
+        },
+        colors: colorsOut,
+        dataLabels: { enabled: false },
+        legend: { show: false },
+        xaxis: {
+          type: "numeric",
+          min: range.min,
+          max: range.max,
+          tickAmount: 6,
+          forceNiceScale: true,
+          crosshairs: {
+            show: true,
+          },
+          title: {
+            text: `Latency (\u03bcs) · axis fitted to this row`,
+            style: { color: SD.muted, fontWeight: 500, fontSize: "11px" },
+            offsetY: 6,
+          },
+          labels: {
+            style: { colors: SD.muted, fontSize: "10px" },
+            hideOverlappingLabels: true,
+            formatter: formatMiniAxis,
+          },
+          axisBorder: { show: true, color: SD.axisStroke },
+          axisTicks: { show: true, color: SD.axisStroke },
+        },
+        yaxis: {
+          show: false,
+        },
+        tooltip: {
+          theme: "dark",
+          shared: false,
+          custom(opts) {
+            const si = opts.seriesIndex;
+            const pt = opts.w?.globals?.initialSeries?.[si]?.data?.[0];
+            if (!pt || !Array.isArray(pt.y) || pt.y.length < 5) return "";
+            const run = okRuns[si];
+            const y = pt.y;
+            const rn = escapeHtml(run ? run.displayLabel : `Series ${si}`);
+            const kHtml = escapeHtml(testKey ?? "");
+            const line = (label, v) =>
+              `<div style="margin-left:10px">${label}: ${(v / 1000).toFixed(3)} ms <span style="opacity:0.75">(${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })} µs)</span></div>`;
+            return (
+              `<div class="apexcharts-tooltip-box" style="min-width:220px">` +
+              `<div style="font-weight:600;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid ${SD.line};color:${SD.text}">${rn}</div>` +
+              `<div style="margin-bottom:4px;color:${SD.muted};font-size:11px">${kHtml}</div>` +
+              `<div style="margin-bottom:4px"><strong>Latency</strong></div>` +
+              line("Min", y[0]) +
+              line("Q1", y[1]) +
+              line("Median", y[2]) +
+              line("Q3", y[3]) +
+              line("Max", y[4]) +
+              `</div>`
+            );
+          },
+        },
+      };
+
+      const chart = new ApexCharts(chartMount, miniOpts);
+      boxPlotChartInstances.push(chart);
+      chart.render();
+    }
+  }
+
+  let deb;
+  function renderAllDebounced() {
+    clearTimeout(deb);
+    deb = setTimeout(renderAll, 60);
+  }
+
+  function renderAll() {
+    const okRuns = runs.filter((r) => !r.error && r.data);
+    const keyUnion = stableMergeKeyOrders(okRuns.map((x) => x.flattened.keyOrder));
+    const scope = document.getElementById("keyScope").value;
+
+    renderRunsList();
+    const filteredKeys = filterKeys(keyUnion, scope, okRuns);
+    renderWarnings(okRuns, compareMetadataAcrossRuns(okRuns));
+
+    const base = baselineId();
+    const metric = document.getElementById("metricSel").value;
+    const displayRuns = runsOrderedBaselineFirst(okRuns, base);
+    buildTable(displayRuns, filteredKeys, base, metric);
+
+    const capSel = document.getElementById("capSel").value;
+    renderChart(displayRuns, filteredKeys, metric, capSel);
+    renderLatencySpreadBoxChart(displayRuns, filteredKeys, capSel);
+    renderSummary(okRuns);
+    renderAlerts(okRuns);
+  }
+
+  function consumeFiles(files) {
+    [...files].forEach((file) => {
+      if (!file.name.toLowerCase().endsWith(".json")) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        /** @type {any} */
+        let parsed;
+        try {
+          parsed = JSON.parse(reader.result);
+        } catch (e) {
+          runs.push({ id: ++runIdSeq, fileName: file.name, displayLabel: file.name, db: "", data: null, flattened: { keyOrder: [], rows: [], byKey: new Map() }, error: ": invalid JSON (" + String(e.message || e) + ")" });
+          refreshAll();
+          return;
+        }
+        if (!looksLikeBench(parsed)) {
+          runs.push({ id: ++runIdSeq, fileName: file.name, displayLabel: file.name, db: "", data: parsed, flattened: { keyOrder: [], rows: [], byKey: new Map() }, error: ": not a crud-bench result JSON" });
+          refreshAll();
+          return;
+        }
+        addRun(parsed, file.name);
+        refreshAll();
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  function refreshAll() {
+    renderAll();
+  }
+
+  /** True when the drag payload can include files (desktop / OS file drag). */
+  function dragHasExternalFiles(ev) {
+    const dt = ev.dataTransfer;
+    if (!dt) return false;
+    if (dt.types) {
+      for (let i = 0; i < dt.types.length; i++) {
+        const t = dt.types[i];
+        if (t === "Files" || t === "application/x-moz-file") return true;
+      }
+    }
+    if (dt.items) {
+      for (let i = 0; i < dt.items.length; i++) {
+        if (dt.items[i].kind === "file") return true;
+      }
+    }
+    return false;
+  }
+
+  let fileDragDepth = 0;
+  function syncFileDragChrome() {
+    if (fileDragDepth > 0) document.documentElement.classList.add("page-json-drag");
+    else document.documentElement.classList.remove("page-json-drag");
+  }
+
+  window.addEventListener(
+    "dragenter",
+    (ev) => {
+      if (!dragHasExternalFiles(ev)) return;
+      ev.preventDefault();
+      fileDragDepth++;
+      syncFileDragChrome();
+    },
+    true,
+  );
+
+  window.addEventListener(
+    "dragleave",
+    (ev) => {
+      if (!dragHasExternalFiles(ev)) return;
+      fileDragDepth = Math.max(0, fileDragDepth - 1);
+      syncFileDragChrome();
+    },
+    true,
+  );
+
+  window.addEventListener(
+    "dragover",
+    (ev) => {
+      if (!dragHasExternalFiles(ev)) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "copy";
+    },
+    true,
+  );
+
+  window.addEventListener(
+    "drop",
+    (ev) => {
+      fileDragDepth = 0;
+      syncFileDragChrome();
+      if (!dragHasExternalFiles(ev)) return;
+      ev.preventDefault();
+      if (ev.dataTransfer.files && ev.dataTransfer.files.length) consumeFiles(ev.dataTransfer.files);
+    },
+    true,
+  );
+
+  window.addEventListener(
+    "dragend",
+    () => {
+      fileDragDepth = 0;
+      syncFileDragChrome();
+    },
+    true,
+  );
+
+  ["metricSel", "keyScope", "capSel"].forEach((id) =>
+    document.getElementById(id).addEventListener("change", renderAllDebounced));
+
+  document.getElementById("setBaselineBtn").addEventListener("click", () => {
+    if (!runs.length) return;
+    const sel = document.getElementById("baselineSel");
+    sel.value = String(runs[0].id);
+    renderAllDebounced();
+  });
+
+  refreshBaselineSelect();
+  renderAll();
+})();
+  </script>
+</body>
+</html>

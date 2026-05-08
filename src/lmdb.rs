@@ -2,13 +2,13 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use heed::types::Bytes;
 use heed::{Database, EnvOpenOptions};
 use heed::{Env, EnvFlags, WithoutTls};
-use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -82,6 +82,9 @@ pub(crate) struct LmDBClient {
 }
 
 impl BenchmarkClient for LmDBClient {
+	// The return type when reading a row
+	type ReadRow = BenchValue;
+
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
@@ -89,27 +92,27 @@ impl BenchmarkClient for LmDBClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.create_bytes(&key.to_ne_bytes(), val).await
 	}
 
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.create_bytes(&key.into_bytes(), val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		self.read_bytes(&key.to_ne_bytes()).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		self.read_bytes(&key.into_bytes()).await
 	}
 
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.update_bytes(&key.to_ne_bytes(), val).await
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.update_bytes(&key.into_bytes(), val).await
 	}
 
@@ -131,10 +134,10 @@ impl BenchmarkClient for LmDBClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = val.encode()?;
 			Ok((key.to_ne_bytes().to_vec(), val))
 		});
 		self.batch_create_bytes(pairs_iter).await
@@ -142,10 +145,10 @@ impl BenchmarkClient for LmDBClient {
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = val.encode()?;
 			Ok((key.into_bytes(), val))
 		});
 		self.batch_create_bytes(pairs_iter).await
@@ -163,10 +166,10 @@ impl BenchmarkClient for LmDBClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = val.encode()?;
 			Ok((key.to_ne_bytes().to_vec(), val))
 		});
 		self.batch_update_bytes(pairs_iter).await
@@ -174,10 +177,10 @@ impl BenchmarkClient for LmDBClient {
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = val.encode()?;
 			Ok((key.into_bytes(), val))
 		});
 		self.batch_update_bytes(pairs_iter).await
@@ -195,9 +198,9 @@ impl BenchmarkClient for LmDBClient {
 }
 
 impl LmDBClient {
-	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+	async fn create_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let val = val.encode()?;
 		// Create a new transaction
 		let mut txn = self.db.0.write_txn()?;
 		// Process the data
@@ -206,7 +209,7 @@ impl LmDBClient {
 		Ok(())
 	}
 
-	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
+	async fn read_bytes(&self, key: &[u8]) -> Result<BenchValue> {
 		// Create a new transaction
 		let txn = self.db.0.read_txn()?;
 		// Process the data
@@ -214,14 +217,14 @@ impl LmDBClient {
 		// Check the value exists
 		assert!(res.is_some());
 		// Deserialise the value
-		black_box(res.unwrap());
+		let val = BenchValue::decode(res.unwrap())?;
 		// All ok
-		Ok(())
+		Ok(black_box(val))
 	}
 
-	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+	async fn update_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Serialise the value
-		let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+		let val = val.encode()?;
 		// Create a new transaction
 		let mut txn = self.db.0.write_txn()?;
 		// Process the data
@@ -265,7 +268,9 @@ impl LmDBClient {
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
-			black_box(res.unwrap());
+			let val = BenchValue::decode(res.unwrap())?;
+			// Use the value
+			black_box(val);
 		}
 		// All ok
 		Ok(())

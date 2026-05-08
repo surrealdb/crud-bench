@@ -1,10 +1,10 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use dashmap::DashMap;
-use serde_json::Value;
 use std::hash::Hash;
 use std::hint::black_box;
 use std::sync::Arc;
@@ -12,8 +12,8 @@ use std::time::Duration;
 
 #[derive(Clone)]
 pub(crate) enum MapDatabase {
-	Integer(Arc<DashMap<u32, Value>>),
-	String(Arc<DashMap<String, Value>>),
+	Integer(Arc<DashMap<u32, BenchValue>>),
+	String(Arc<DashMap<String, BenchValue>>),
 }
 
 impl From<KeyType> for MapDatabase {
@@ -48,7 +48,10 @@ impl BenchmarkEngine<MapClient> for MapClientProvider {
 pub(crate) struct MapClient(MapDatabase);
 
 impl BenchmarkClient for MapClient {
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+	// The return type when reading a row
+	type ReadRow = BenchValue;
+
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
 			assert!(m.insert(key, val).is_none());
 		} else {
@@ -57,7 +60,7 @@ impl BenchmarkClient for MapClient {
 		Ok(())
 	}
 
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		if let MapDatabase::String(m) = &self.0 {
 			assert!(m.insert(key, val).is_none());
 		} else {
@@ -66,25 +69,25 @@ impl BenchmarkClient for MapClient {
 		Ok(())
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		if let MapDatabase::Integer(m) = &self.0 {
-			assert!(m.get(&key).is_some());
+			let v = m.get(&key).ok_or_else(|| anyhow::anyhow!("missing key {key}"))?;
+			Ok(black_box(v.value().clone()))
 		} else {
 			bail!("Invalid MapDatabase variant");
 		}
-		Ok(())
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		if let MapDatabase::String(m) = &self.0 {
-			assert!(m.get(&key).is_some());
+			let v = m.get(&key).ok_or_else(|| anyhow::anyhow!("missing key {key}"))?;
+			Ok(black_box(v.value().clone()))
 		} else {
 			bail!("Invalid MapDatabase variant");
 		}
-		Ok(())
 	}
 
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
 			assert!(m.insert(key, val).is_some());
 		} else {
@@ -93,7 +96,7 @@ impl BenchmarkClient for MapClient {
 		Ok(())
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		if let MapDatabase::String(m) = &self.0 {
 			assert!(m.insert(key, val).is_some());
 		} else {
@@ -138,7 +141,7 @@ impl BenchmarkClient for MapClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
 			for (key, val) in key_vals {
@@ -152,7 +155,7 @@ impl BenchmarkClient for MapClient {
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		if let MapDatabase::String(m) = &self.0 {
 			for (key, val) in key_vals {
@@ -188,7 +191,7 @@ impl BenchmarkClient for MapClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		if let MapDatabase::Integer(m) = &self.0 {
 			for (key, val) in key_vals {
@@ -202,7 +205,7 @@ impl BenchmarkClient for MapClient {
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		if let MapDatabase::String(m) = &self.0 {
 			for (key, val) in key_vals {
@@ -238,7 +241,7 @@ impl BenchmarkClient for MapClient {
 }
 
 impl MapClient {
-	async fn scan<T>(m: &DashMap<T, Value>, scan: &Scan) -> Result<usize>
+	async fn scan<T>(m: &DashMap<T, BenchValue>, scan: &Scan) -> Result<usize>
 	where
 		T: Eq + Hash,
 	{

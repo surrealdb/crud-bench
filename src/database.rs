@@ -3,8 +3,8 @@ use crate::KeyType;
 use crate::Scan;
 use crate::benchmark::Benchmark;
 use crate::dialect::{
-	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MongoDBDialect, MySqlDialect, Neo4jDialect,
-	SurrealDBDialect,
+	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MariaDBDialect, MongoDBDialect, MySqlDialect,
+	Neo4jDialect, SurrealDBDialect,
 };
 use crate::docker::{Container, DockerParams};
 use crate::dry::DryClientProvider;
@@ -263,7 +263,7 @@ impl Database {
 			#[cfg(feature = "mariadb")]
 			Database::Mariadb => {
 				benchmark
-					.run::<_, MySqlDialect, _>(
+					.run::<_, MariaDBDialect, _>(
 						crate::mariadb::MariadbClientProvider::setup(kt, vp.columns(), benchmark)
 							.await?,
 						kp,

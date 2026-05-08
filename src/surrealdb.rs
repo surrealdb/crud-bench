@@ -5,22 +5,96 @@ use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
+use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use log::{error, warn};
-use serde_json::Value as Json;
 use std::env;
+use std::hint::black_box;
 use std::time::Duration;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
-use surrealdb::types::{Array, RecordId, RecordIdKey, SurrealValue, ToSql, Value};
+use surrealdb::types::{
+	Array, Bytes as SurrealBytes, Datetime, Number, Object, RecordId, RecordIdKey, SurrealValue,
+	ToSql, Uuid as SurrealUuid, Value,
+};
 use tokio::time::{sleep, timeout};
+
+/// Convert a [`BenchValue`] to a native [`surrealdb::types::Value`]. UUID,
+/// datetime, decimal, and bytes go through directly without a JSON detour.
+fn bench_to_surreal_value(v: BenchValue) -> Value {
+	match v {
+		BenchValue::Null => Value::Null,
+		BenchValue::Bool(b) => Value::Bool(b),
+		BenchValue::Int(i) => Value::Number(Number::Int(i)),
+		BenchValue::UInt(u) => match i64::try_from(u) {
+			Ok(i) => Value::Number(Number::Int(i)),
+			Err(_) => Value::Number(Number::Float(u as f64)),
+		},
+		BenchValue::Float(f) => Value::Number(Number::Float(f)),
+		BenchValue::Decimal(d) => Value::Number(Number::Decimal(d)),
+		BenchValue::String(s) => Value::String(s),
+		BenchValue::Bytes(b) => Value::Bytes(SurrealBytes::from(b)),
+		BenchValue::Uuid(u) => Value::Uuid(SurrealUuid::from(u)),
+		BenchValue::DateTime(dt) => Value::Datetime(Datetime::from(dt)),
+		BenchValue::Array(a) => {
+			Value::Array(Array::from(a.into_iter().map(bench_to_surreal_value).collect::<Vec<_>>()))
+		}
+		BenchValue::Object(o) => {
+			let mut obj = Object::new();
+			for (k, v) in o {
+				obj.insert(k, bench_to_surreal_value(v));
+			}
+			Value::Object(obj)
+		}
+	}
+}
+
+/// Convert a native [`surrealdb::types::Value`] back to a [`BenchValue`] for
+/// round-trip fidelity at the read path.
+fn surreal_to_bench_value(v: Value) -> BenchValue {
+	match v {
+		Value::None | Value::Null => BenchValue::Null,
+		Value::Bool(b) => BenchValue::Bool(b),
+		Value::Number(Number::Int(i)) => BenchValue::Int(i),
+		Value::Number(Number::Float(f)) => BenchValue::Float(f),
+		Value::Number(Number::Decimal(d)) => BenchValue::Decimal(d),
+		Value::String(s) => BenchValue::String(s),
+		Value::Bytes(b) => BenchValue::Bytes(b.to_vec()),
+		Value::Uuid(u) => BenchValue::Uuid(u.into()),
+		Value::Datetime(dt) => BenchValue::DateTime(*dt),
+		Value::Array(a) => {
+			BenchValue::Array(Vec::from(a).into_iter().map(surreal_to_bench_value).collect())
+		}
+		Value::Object(o) => {
+			let mut out: Vec<(String, BenchValue)> = Vec::new();
+			for (k, v) in o.into_inner() {
+				out.push((k, surreal_to_bench_value(v)));
+			}
+			BenchValue::Object(out)
+		}
+		// Fall back to canonical SQL-style printing for SurrealDB-specific
+		// types that do not have a direct BenchValue variant (Duration,
+		// Geometry, RecordId, etc.).
+		other => BenchValue::String(other.to_sql()),
+	}
+}
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
 const TABLE: &str = "record";
+
+/// Wraps a SurrealDB [`types::Value`](surrealdb::types::Value);
+/// [`BenchValue`] is produced only via [`From`]/[`Into`].
+pub(crate) struct Row(pub Value);
+
+impl From<Row> for BenchValue {
+	fn from(row: Row) -> BenchValue {
+		surreal_to_bench_value(row.0)
+	}
+}
 
 /// Wrap a SurrealDB result error so the failing SurrealQL surfaces in two
 /// places: a `log::error!` line emitted immediately (visible in the bench's
@@ -292,11 +366,14 @@ impl SurrealDBClient {
 #[derive(Debug, SurrealValue)]
 #[surreal(crate = "surrealdb::types")]
 struct Bindings<T: SurrealValue> {
-	content: Json,
+	content: Value,
 	id: T,
 }
 
 impl BenchmarkClient for SurrealDBClient {
+	// The return type when reading a row
+	type ReadRow = Row;
+
 	async fn startup(&self) -> Result<()> {
 		// Ensure the table exists. This wouldn't
 		// normally be an issue, as SurrealDB is
@@ -332,27 +409,27 @@ impl BenchmarkClient for SurrealDBClient {
 		}
 	}
 
-	async fn create_u32(&self, key: u32, val: Json) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.create(key as i64, val).await
 	}
 
-	async fn create_string(&self, key: String, val: Json) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.create(key, val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<Row> {
 		self.read(key as i64).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<Row> {
 		self.read(key).await
 	}
 
-	async fn update_u32(&self, key: u32, val: Json) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.update(key as i64, val).await
 	}
 
-	async fn update_string(&self, key: String, val: Json) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.update(key, val).await
 	}
 
@@ -514,14 +591,14 @@ impl BenchmarkClient for SurrealDBClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, Json)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals.map(|(k, v)| (k as i64, v))).await
 	}
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, Json)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_create(key_vals).await
 	}
@@ -536,14 +613,14 @@ impl BenchmarkClient for SurrealDBClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, Json)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals.map(|(k, v)| (k as i64, v))).await
 	}
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, Json)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		self.batch_update(key_vals).await
 	}
@@ -558,17 +635,18 @@ impl BenchmarkClient for SurrealDBClient {
 }
 
 impl SurrealDBClient {
-	async fn create<T>(&self, key: T, val: Json) -> Result<()>
+	async fn create<T>(&self, key: T, val: BenchValue) -> Result<()>
 	where
 		T: Into<RecordIdKey>,
 	{
 		let sql = "CREATE $id CONTENT $content RETURN NULL";
+		let content = bench_to_surreal_value(val);
 		let res = self
 			.db
 			.query(sql)
 			.bind(Bindings {
 				id: Value::RecordId(RecordId::new(TABLE, key)),
-				content: val,
+				content,
 			})
 			.await
 			.map_err(log_sql_err(sql))?
@@ -578,26 +656,27 @@ impl SurrealDBClient {
 		Ok(())
 	}
 
-	async fn read<T>(&self, key: T) -> Result<()>
+	async fn read<T>(&self, key: T) -> Result<Row>
 	where
 		T: Into<RecordIdKey>,
 	{
-		let res = self.db.select(Resource::from(("record", key))).await?;
-		assert!(!res.is_none());
-		Ok(())
+		let v: Value = self.db.select(Resource::from(("record", key))).await?;
+		assert!(!v.is_none());
+		Ok(black_box(Row(v)))
 	}
 
-	async fn update<T>(&self, key: T, val: Json) -> Result<()>
+	async fn update<T>(&self, key: T, val: BenchValue) -> Result<()>
 	where
 		T: Into<RecordIdKey>,
 	{
 		let sql = "UPDATE $id CONTENT $content RETURN NULL";
+		let content = bench_to_surreal_value(val);
 		let res = self
 			.db
 			.query(sql)
 			.bind(Bindings {
 				id: Value::RecordId(RecordId::new(TABLE, key)),
-				content: val,
+				content,
 			})
 			.await
 			.map_err(log_sql_err(sql))?
@@ -627,7 +706,7 @@ impl SurrealDBClient {
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		// SurrealDB requires a full-text index to use the @@ operator
 		if ctx == ScanContext::WithoutIndex
-			&& let Some(index) = &scan.index
+			&& let Some(index) = &scan.with_index
 			&& let Some(kind) = &index.index_type
 			&& kind == "fulltext"
 		{
@@ -637,11 +716,12 @@ impl SurrealDBClient {
 		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
 		let c = SurrealDBDialect::filter_clause(scan)?;
+		let o = SurrealDBDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let sql = format!("SELECT id FROM record {c} {s} {l}");
+				let sql = format!("SELECT id FROM record {c} {o} {s} {l}");
 				let res: surrealdb::types::Value = self
 					.db
 					.query(&sql)
@@ -655,7 +735,7 @@ impl SurrealDBClient {
 				Ok(arr.len())
 			}
 			Projection::Full => {
-				let sql = format!("SELECT * FROM record {c} {s} {l}");
+				let sql = format!("SELECT * FROM record {c} {o} {s} {l}");
 				let res: surrealdb::types::Value = self
 					.db
 					.query(&sql)
@@ -686,14 +766,17 @@ impl SurrealDBClient {
 		}
 	}
 
-	async fn batch_create<K>(&self, key_vals: impl Iterator<Item = (K, Json)> + Send) -> Result<()>
+	async fn batch_create<K>(
+		&self,
+		key_vals: impl Iterator<Item = (K, BenchValue)> + Send,
+	) -> Result<()>
 	where
 		K: Into<RecordIdKey>,
 	{
 		// Construct the records
 		let rows: Vec<Value> = key_vals
 			.map(|(k, v)| {
-				let mut obj = match v.into_value() {
+				let mut obj = match bench_to_surreal_value(v) {
 					Value::Object(o) => o,
 					_ => panic!("Unexpected value type"),
 				};
@@ -743,14 +826,17 @@ impl SurrealDBClient {
 		Ok(())
 	}
 
-	async fn batch_update<K>(&self, key_vals: impl Iterator<Item = (K, Json)> + Send) -> Result<()>
+	async fn batch_update<K>(
+		&self,
+		key_vals: impl Iterator<Item = (K, BenchValue)> + Send,
+	) -> Result<()>
 	where
 		K: Into<RecordIdKey>,
 	{
 		// Construct the records
 		let rows: Vec<Value> = key_vals
 			.map(|(k, v)| {
-				let mut obj = match v.into_value() {
+				let mut obj = match bench_to_surreal_value(v) {
 					Value::Object(o) => o,
 					_ => panic!("Unexpected value type"),
 				};

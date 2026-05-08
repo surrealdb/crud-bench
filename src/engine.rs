@@ -1,10 +1,10 @@
 use crate::Benchmark;
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
+use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{BatchOperation, Index, KeyType, Scan};
 use anyhow::{Result, bail};
-use serde_json::Value;
 use std::future::Future;
 use std::time::Duration;
 
@@ -36,6 +36,12 @@ where
 /// A trait for a database benchmark implementation for
 /// running benchmark tests for a client or connection.
 pub(crate) trait BenchmarkClient: Sync + Send + 'static {
+	/// Row payload returned by single-row reads. Backends may use a native
+	/// driver row type that converts [`Into<BenchValue>`] for round-trip
+	/// fidelity at the boundary; for backends that already produce
+	/// [`BenchValue`] internally, set this to [`BenchValue`] directly.
+	type ReadRow: Send + Into<BenchValue>;
+
 	/// Initialise the store at startup
 	async fn startup(&self) -> Result<()> {
 		Ok(())
@@ -55,7 +61,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	fn create(
 		&self,
 		n: u32,
-		val: Value,
+		val: BenchValue,
 		kp: &mut KeyProvider,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move {
@@ -69,7 +75,11 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	}
 
 	/// Read a single entry with the current client
-	fn read(&self, n: u32, kp: &mut KeyProvider) -> impl Future<Output = Result<()>> + Send {
+	fn read(
+		&self,
+		n: u32,
+		kp: &mut KeyProvider,
+	) -> impl Future<Output = Result<Self::ReadRow>> + Send {
 		async move {
 			match kp {
 				KeyProvider::OrderedInteger(p) => self.read_u32(p.key(n)).await,
@@ -84,7 +94,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	fn update(
 		&self,
 		n: u32,
-		val: Value,
+		val: BenchValue,
 		kp: &mut KeyProvider,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move {
@@ -137,22 +147,30 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	}
 
 	/// Create a single entry with a numeric id
-	fn create_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;
+	fn create_u32(&self, key: u32, val: BenchValue) -> impl Future<Output = Result<()>> + Send;
 
 	/// Create a single entry with a string id
-	fn create_string(&self, key: String, val: Value) -> impl Future<Output = Result<()>> + Send;
+	fn create_string(
+		&self,
+		key: String,
+		val: BenchValue,
+	) -> impl Future<Output = Result<()>> + Send;
 
 	/// Read a single entry with a numeric id
-	fn read_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
+	fn read_u32(&self, key: u32) -> impl Future<Output = Result<Self::ReadRow>> + Send;
 
 	/// Read a single entry with a string id
-	fn read_string(&self, key: String) -> impl Future<Output = Result<()>> + Send;
+	fn read_string(&self, key: String) -> impl Future<Output = Result<Self::ReadRow>> + Send;
 
 	/// Update a single entry with a numeric id
-	fn update_u32(&self, key: u32, val: Value) -> impl Future<Output = Result<()>> + Send;
+	fn update_u32(&self, key: u32, val: BenchValue) -> impl Future<Output = Result<()>> + Send;
 
 	/// Update a single entry with a string id
-	fn update_string(&self, key: String, val: Value) -> impl Future<Output = Result<()>> + Send;
+	fn update_string(
+		&self,
+		key: String,
+		val: BenchValue,
+	) -> impl Future<Output = Result<()>> + Send;
 
 	/// Delete a single entry with a numeric id
 	fn delete_u32(&self, key: u32) -> impl Future<Output = Result<()>> + Send;
@@ -309,7 +327,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch create operation with numeric keys
 	fn batch_create_u32(
 		&self,
-		_key_value_pairs: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		_key_value_pairs: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
@@ -317,7 +335,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch create operation with string keys
 	fn batch_create_string(
 		&self,
-		_key_value_pairs: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		_key_value_pairs: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
@@ -341,7 +359,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch update operation with numeric keys
 	fn batch_update_u32(
 		&self,
-		_key_value_pairs: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		_key_value_pairs: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
@@ -349,7 +367,7 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Perform a batch update operation with string keys
 	fn batch_update_string(
 		&self,
-		_key_value_pairs: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		_key_value_pairs: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> impl Future<Output = Result<()>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
@@ -441,13 +459,13 @@ struct IntegerKeyValuesIter<'a> {
 }
 
 impl<'a> Iterator for IntegerKeyValuesIter<'a> {
-	type Item = (u32, serde_json::Value);
+	type Item = (u32, BenchValue);
 
 	fn next(&mut self) -> Option<Self::Item> {
 		if self.current < self.batch_size {
 			let sample_idx = self.n * self.batch_size as u32 + self.current as u32;
 			let key = self.kp.key(sample_idx);
-			let value = self.vp.generate_value::<crate::dialect::DefaultDialect>();
+			let value = self.vp.generate_value();
 			self.current += 1;
 			Some((key, value))
 		} else {
@@ -473,13 +491,13 @@ struct StringKeyValuesIter<'a> {
 }
 
 impl<'a> Iterator for StringKeyValuesIter<'a> {
-	type Item = (String, serde_json::Value);
+	type Item = (String, BenchValue);
 
 	fn next(&mut self) -> Option<Self::Item> {
 		if self.current < self.batch_size {
 			let sample_idx = self.n * self.batch_size as u32 + self.current as u32;
 			let key = self.kp.key(sample_idx);
-			let value = self.vp.generate_value::<crate::dialect::DefaultDialect>();
+			let value = self.vp.generate_value();
 			self.current += 1;
 			Some((key, value))
 		} else {

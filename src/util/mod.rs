@@ -2,8 +2,7 @@
 
 use std::time::Duration;
 
-#[cfg(any(feature = "redis", feature = "keydb", feature = "dragonfly"))]
-pub(crate) mod redis_batch;
+pub(crate) mod sql;
 
 pub(crate) fn format_duration(duration: Duration) -> String {
 	let secs = duration.as_secs();

@@ -3,11 +3,11 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
+use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
-use serde_json::Value;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
@@ -67,6 +67,9 @@ pub(crate) struct ReDBClient {
 }
 
 impl BenchmarkClient for ReDBClient {
+	// The return type when reading a row
+	type ReadRow = BenchValue;
+
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
 		std::fs::remove_file(DATABASE_DIR).ok();
@@ -74,27 +77,27 @@ impl BenchmarkClient for ReDBClient {
 		Ok(())
 	}
 
-	async fn create_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.create_bytes(&key.to_ne_bytes(), val).await
 	}
 
-	async fn create_string(&self, key: String, val: Value) -> Result<()> {
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.create_bytes(&key.into_bytes(), val).await
 	}
 
-	async fn read_u32(&self, key: u32) -> Result<()> {
+	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		self.read_bytes(&key.to_ne_bytes()).await
 	}
 
-	async fn read_string(&self, key: String) -> Result<()> {
+	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		self.read_bytes(&key.into_bytes()).await
 	}
 
-	async fn update_u32(&self, key: u32, val: Value) -> Result<()> {
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.update_bytes(&key.to_ne_bytes(), val).await
 	}
 
-	async fn update_string(&self, key: String, val: Value) -> Result<()> {
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.update_bytes(&key.into_bytes(), val).await
 	}
 
@@ -116,11 +119,11 @@ impl BenchmarkClient for ReDBClient {
 
 	async fn batch_create_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs: Result<Vec<_>> = key_vals
 			.map(|(key, val)| {
-				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				let val = val.encode()?;
 				Ok((key.to_ne_bytes().to_vec(), val))
 			})
 			.collect();
@@ -129,11 +132,11 @@ impl BenchmarkClient for ReDBClient {
 
 	async fn batch_create_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs: Result<Vec<_>> = key_vals
 			.map(|(key, val)| {
-				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				let val = val.encode()?;
 				Ok((key.into_bytes(), val))
 			})
 			.collect();
@@ -152,11 +155,11 @@ impl BenchmarkClient for ReDBClient {
 
 	async fn batch_update_u32(
 		&self,
-		key_vals: impl Iterator<Item = (u32, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs: Result<Vec<_>> = key_vals
 			.map(|(key, val)| {
-				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				let val = val.encode()?;
 				Ok((key.to_ne_bytes().to_vec(), val))
 			})
 			.collect();
@@ -165,11 +168,11 @@ impl BenchmarkClient for ReDBClient {
 
 	async fn batch_update_string(
 		&self,
-		key_vals: impl Iterator<Item = (String, serde_json::Value)> + Send,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
 	) -> Result<()> {
 		let pairs: Result<Vec<_>> = key_vals
 			.map(|(key, val)| {
-				let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+				let val = val.encode()?;
 				Ok((key.into_bytes(), val))
 			})
 			.collect();
@@ -188,14 +191,14 @@ impl BenchmarkClient for ReDBClient {
 }
 
 impl ReDBClient {
-	async fn create_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+	async fn create_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Clone the datastore and sync flag
 		let db = self.db.clone();
 		let sync = self.sync;
 		// Execute on the blocking threadpool
 		affinitypool::spawn_local(move || -> Result<_> {
 			// Serialise the value
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = val.encode()?;
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Set the transaction durability
@@ -215,7 +218,7 @@ impl ReDBClient {
 		.await
 	}
 
-	async fn read_bytes(&self, key: &[u8]) -> Result<()> {
+	async fn read_bytes(&self, key: &[u8]) -> Result<BenchValue> {
 		// Clone the datastore and key
 		let db = self.db.clone();
 		let key = key.to_vec();
@@ -230,21 +233,21 @@ impl ReDBClient {
 			// Check the value exists
 			assert!(res.is_some());
 			// Deserialise the value
-			black_box(res.unwrap().value());
+			let val = BenchValue::decode(res.unwrap().value().as_ref())?;
 			// All ok
-			Ok(())
+			Ok(black_box(val))
 		})
 		.await
 	}
 
-	async fn update_bytes(&self, key: &[u8], val: Value) -> Result<()> {
+	async fn update_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Clone the datastore and sync flag
 		let db = self.db.clone();
 		let sync = self.sync;
 		// Execute on the blocking threadpool
 		affinitypool::spawn_local(move || -> Result<_> {
 			// Serialise the value
-			let val = bincode::serde::encode_to_vec(&val, bincode::config::standard())?;
+			let val = val.encode()?;
 			// Create a new transaction
 			let mut txn = db.begin_write()?;
 			// Set the transaction durability
@@ -339,7 +342,9 @@ impl ReDBClient {
 				// Check the value exists
 				assert!(res.is_some());
 				// Deserialise the value
-				black_box(res.unwrap().value());
+				let val = BenchValue::decode(res.unwrap().value().as_ref())?;
+				// Use the value
+				black_box(val);
 			}
 			// All ok
 			Ok(())
