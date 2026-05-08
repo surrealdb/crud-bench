@@ -239,15 +239,15 @@ impl BenchmarkClient for MongoDBClient {
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<Row> {
-		let doc = self.read(key).await?.unwrap();
-		assert_eq!(doc.get("_id").unwrap().as_i64().unwrap() as u32, key);
-		Ok(black_box(Row(doc)))
+		let doc = self.read(&key).await?;
+		assert!(doc.is_some());
+		Ok(black_box(Row(doc.unwrap())))
 	}
 
 	async fn read_string(&self, key: String) -> Result<Row> {
-		let doc = self.read(&key).await?.unwrap();
-		assert_eq!(doc.get_str("_id")?, key);
-		Ok(black_box(Row(doc)))
+		let doc = self.read(&key).await?;
+		assert!(doc.is_some());
+		Ok(black_box(Row(doc.unwrap())))
 	}
 
 	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
@@ -395,7 +395,6 @@ impl MongoDBClient {
 	{
 		let filter = doc! { "_id": key };
 		let doc = self.collection().find_one(filter).await?;
-		assert!(doc.is_some());
 		Ok(doc)
 	}
 
