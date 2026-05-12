@@ -253,7 +253,14 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		Endpoint::Docker(Docker::Memory) => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
-			post_args: format!("start --user {username} --pass {password} memory"),
+			post_args: match options.persisted {
+				true => {
+					format!("start --user {username} --pass {password} mem://?crud-bench.db?aol=sync&sync={sync}")
+				}
+				false => {
+					format!("start --user {username} --pass {password} mem://")
+				}
+			},
 		},
 		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
