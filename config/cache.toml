@@ -1,0 +1,177 @@
+# crud-bench benchmark specification (TOML).
+#
+# Three parts: document shape (`[value]`), scan workloads (`[[scans]]`), and batch throughput
+# tests (`[[batches]]`).
+#
+# Scans — Each `[[scans]]` row is one logical benchmark. Optional keys include `id`,
+# `name`, `projection`, `samples`, paging (`limit`, `start`, `expect`). Use `[[scans.runs]]`
+# when the same parameters define multiple named runs (each run has `name` and optional
+# `projection`). Conditional scans add `[scans.condition]` with per-dialect filter strings
+# (`sql`, `postgres`, `sqlite`, `mysql`, `neo4j`, `arangodb`, `surrealdb`) plus inline `mongodb = { ... }` for the
+# MongoDB query document. Ordered scans add `[scans.order_by]` (same dialect layout, with
+# inline `mongodb` for sort fields). Indexed scans add `[scans.with_index]` (`fields` array,
+# optional `index_type` such as `fulltext`). Mixed read/write workloads add one or more
+# `[[scans.with_writes]]` blocks (`ratio`, `mode`, `operation`).
+#
+# Batches — Each `[[batches]]` row names a throughput case: `name`, `operation` (CREATE,
+# READ, UPDATE, DELETE), `batch_size`, and `samples` (how many timed iterations).
+#
+# Value — The `[value]` table defines the generated document shape for each row.
+#
+
+# ============================================================================
+# value
+# ============================================================================
+
+[value]
+text = "string:50"
+name = "string:20"
+age = "int:1..100"
+city = "string_enum:London,Paris,Berlin,Tokyo,New York,Sydney,Madrid,Rome,Beijing,Tokyo"
+score = "float:0.0..100.0"
+number = "int:1..5000"
+integer = "int"
+active = "bool"
+created_at = "datetime"
+http_status = "int_enum:200,201,400,404,500"
+request_id = "uuid"
+status = "string_enum:draft,published,archived"
+description = "text:100..400"
+tier = "int_enum:0,1,2,3"
+words = "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
+tags = [
+    "string_enum:alpha,beta,gamma,delta,epsilon",
+    "string_enum:theta,iota,kappa,lambda,mu",
+    "string_enum:nu,xi,omicron,pi,rho"
+]
+geography.code = "string:3"
+geography.text = "string:15"
+geography.location = "string_enum:Africa,Antarctica,Asia,Europe,North America,South America,Oceania"
+geography.description = "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
+
+# ============================================================================
+# count
+# ============================================================================
+
+[[scans]]
+id = "count"
+name = "count()"
+projection = "COUNT"
+samples = 1000
+
+# ============================================================================
+# limit
+# ============================================================================
+
+[[scans]]
+id = "limit"
+samples = 10000
+limit = 100
+expect = 100
+
+[[scans.runs]]
+name = "select(id) limit(100)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) limit(100)"
+projection = "FULL"
+
+# ============================================================================
+# start_limit
+# ============================================================================
+
+[[scans]]
+id = "start_limit"
+samples = 10000
+start = 5000
+limit = 100
+expect = 100
+
+[[scans.runs]]
+name = "select(id) start(5000) limit(100)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) start(5000) limit(100)"
+projection = "FULL"
+
+# ============================================================================
+# batch_create_100
+# ============================================================================
+
+[[batches]]
+name = "batch_create_100"
+operation = "CREATE"
+batch_size = 100
+samples = 1000
+
+# ============================================================================
+# batch_read_100
+# ============================================================================
+
+[[batches]]
+name = "batch_read_100"
+operation = "READ"
+batch_size = 100
+samples = 1000
+
+# ============================================================================
+# batch_update_100
+# ============================================================================
+
+[[batches]]
+name = "batch_update_100"
+operation = "UPDATE"
+batch_size = 100
+samples = 1000
+
+# ============================================================================
+# batch_delete_100
+# ============================================================================
+
+[[batches]]
+name = "batch_delete_100"
+operation = "DELETE"
+batch_size = 100
+samples = 1000
+
+# ============================================================================
+# batch_create_1000
+# ============================================================================
+
+[[batches]]
+name = "batch_create_1000"
+operation = "CREATE"
+batch_size = 1000
+samples = 1000
+
+# ============================================================================
+# batch_read_1000
+# ============================================================================
+
+[[batches]]
+name = "batch_read_1000"
+operation = "READ"
+batch_size = 1000
+samples = 1000
+
+# ============================================================================
+# batch_update_1000
+# ============================================================================
+
+[[batches]]
+name = "batch_update_1000"
+operation = "UPDATE"
+batch_size = 1000
+samples = 1000
+
+# ============================================================================
+# batch_delete_1000
+# ============================================================================
+
+[[batches]]
+name = "batch_delete_1000"
+operation = "DELETE"
+batch_size = 1000
+samples = 1000
