@@ -63,7 +63,6 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--join-buffer-size=32M \
 				--tmp-table-size=1G \
 				--max-heap-table-size=1G \
-				--query-cache-size=0 \
 				--log-bin=mysql-bin \
 				--binlog-format=ROW \
 				--server-id=1 \
