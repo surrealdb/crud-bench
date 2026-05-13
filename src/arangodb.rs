@@ -4,6 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::ArangoDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::memory::Config;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
@@ -17,7 +18,6 @@ use arangors::{Collection, Connection, Database, GenericConnection};
 use serde_json::{Value, json};
 use std::hint::black_box;
 use std::time::Duration;
-use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "http://127.0.0.1:8529";
 
@@ -26,7 +26,23 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		image: "arangodb",
 		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1".to_string(),
 		post_args: match options.optimised {
-			true => "--server.scheduler-queue-size 8192 --server.prio1-size 8192 --server.prio2-size 8192 --server.maximal-queue-size 8192".to_string(),
+			true => {
+				let cache_gb = Config::new().cache_gb.max(1);
+				let block_cache_bytes = cache_gb * 1024 * 1024 * 1024 / 2;
+				let total_write_buffer_bytes = cache_gb * 1024 * 1024 * 1024 / 4;
+				format!(
+					"--server.scheduler-queue-size 8192 \
+					 --server.prio1-size 8192 \
+					 --server.prio2-size 8192 \
+					 --server.maximal-queue-size 8192 \
+					 --rocksdb.block-cache-size {block_cache_bytes} \
+					 --rocksdb.total-write-buffer-size {total_write_buffer_bytes} \
+					 --rocksdb.enable-pipelined-write true \
+					 --rocksdb.max-background-jobs 16 \
+					 --rocksdb.max-write-buffer-number 8 \
+					 --cache.size {block_cache_bytes}"
+				)
+			}
 			false => "".to_string(),
 		},
 	}
@@ -54,8 +70,8 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 			sync: self.sync,
 			keytype: self.key,
 			connection: conn,
-			database: Mutex::new(db),
-			collection: Mutex::new(co),
+			database: db,
+			collection: co,
 		})
 	}
 	/// The number of seconds to wait before connecting
@@ -68,8 +84,8 @@ pub(crate) struct ArangoDBClient {
 	sync: bool,
 	keytype: KeyType,
 	connection: GenericConnection<ReqwestClient>,
-	database: Mutex<Database<ReqwestClient>>,
-	collection: Mutex<Collection<ReqwestClient>>,
+	database: Database<ReqwestClient>,
+	collection: Collection<ReqwestClient>,
 }
 
 async fn create_arango_client(
@@ -271,7 +287,7 @@ impl ArangoDBClient {
 			.bind_var("docs", Value::Array(docs))
 			.bind_var("sync", json!(self.sync))
 			.build();
-		let _: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		let _: Vec<Value> = self.database.aql_query(aql).await?;
 		Ok(())
 	}
 
@@ -283,7 +299,7 @@ impl ArangoDBClient {
 			.query("FOR k IN @keys LET d = DOCUMENT('record', k) FILTER d != null RETURN d")
 			.bind_var("keys", Value::Array(keys.into_iter().map(Value::String).collect()))
 			.build();
-		let res: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		let res: Vec<Value> = self.database.aql_query(aql).await?;
 		assert!(!res.is_empty());
 		Ok(())
 	}
@@ -301,7 +317,7 @@ impl ArangoDBClient {
 			.bind_var("docs", Value::Array(docs))
 			.bind_var("sync", json!(self.sync))
 			.build();
-		let _: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		let _: Vec<Value> = self.database.aql_query(aql).await?;
 		Ok(())
 	}
 
@@ -316,7 +332,7 @@ impl ArangoDBClient {
 			.bind_var("keys", Value::Array(keys.into_iter().map(Value::String).collect()))
 			.bind_var("sync", json!(self.sync))
 			.build();
-		let _: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		let _: Vec<Value> = self.database.aql_query(aql).await?;
 		Ok(())
 	}
 
@@ -333,16 +349,15 @@ impl ArangoDBClient {
 		let json = Self::to_doc(key, val)?;
 		let opt = InsertOptions::builder()
 			.wait_for_sync(self.sync)
-			.return_new(true)
+			.return_new(false)
 			.overwrite(false)
 			.build();
-		let res = { self.collection.lock().await.create_document(json, opt).await? };
-		assert!(res.new_doc().is_some());
+		self.collection.create_document(json, opt).await?;
 		Ok(())
 	}
 
 	async fn read(&self, key: String) -> Result<BenchValue> {
-		let doc: Document<Value> = { self.collection.lock().await.document(&key).await? };
+		let doc: Document<Value> = self.collection.document(&key).await?;
 		assert!(doc.document.is_object());
 		assert_eq!(doc.document.get("_key").unwrap().as_str().unwrap(), key);
 		Ok(black_box(BenchValue::from(&doc.document)))
@@ -352,18 +367,16 @@ impl ArangoDBClient {
 		let json = Self::to_doc(key, val)?;
 		let opt = InsertOptions::builder()
 			.wait_for_sync(self.sync)
-			.return_new(true)
+			.return_new(false)
 			.overwrite(true)
 			.build();
-		let res = { self.collection.lock().await.create_document(json, opt).await? };
-		assert!(res.new_doc().is_some());
+		self.collection.create_document(json, opt).await?;
 		Ok(())
 	}
 
 	async fn delete(&self, key: String) -> Result<()> {
 		let opt = RemoveOptions::builder().wait_for_sync(self.sync).build();
-		let res = { self.collection.lock().await.remove_document::<Value>(&key, opt, None).await? };
-		assert!(res.has_response());
+		self.collection.remove_document::<Value>(&key, opt, None).await?;
 		Ok(())
 	}
 
@@ -382,7 +395,7 @@ impl ArangoDBClient {
 		match p {
 			Projection::Id => {
 				let stm = format!("FOR r IN record {c} {o} {l} RETURN {{ _id: r._id }}");
-				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
+				let res: Vec<Value> = { self.database.aql_str(&stm).await.unwrap() };
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -396,7 +409,7 @@ impl ArangoDBClient {
 			}
 			Projection::Full => {
 				let stm = format!("FOR r IN record {c} {o} {l} RETURN r");
-				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
+				let res: Vec<Value> = { self.database.aql_str(&stm).await.unwrap() };
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -411,7 +424,7 @@ impl ArangoDBClient {
 			Projection::Count => {
 				let stm =
 					format!("FOR r IN record {c} {l} COLLECT WITH COUNT INTO count RETURN count");
-				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
+				let res: Vec<Value> = { self.database.aql_str(&stm).await.unwrap() };
 				let count = res.first().unwrap().as_i64().unwrap();
 				Ok(count as usize)
 			}

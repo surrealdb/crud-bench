@@ -68,6 +68,7 @@ pub(crate) struct SqliteClientProvider {
 	kt: KeyType,
 	columns: Columns,
 	sync: bool,
+	optimised: bool,
 }
 
 impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
@@ -91,6 +92,7 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 			kt,
 			columns,
 			sync: options.sync,
+			optimised: options.optimised,
 		})
 	}
 	/// Creates a new client for this benchmarking engine
@@ -100,6 +102,7 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 			kt: self.kt,
 			columns: self.columns.clone(),
 			sync: self.sync,
+			optimised: self.optimised,
 		})
 	}
 }
@@ -109,6 +112,7 @@ pub(crate) struct SqliteClient {
 	kt: KeyType,
 	columns: Columns,
 	sync: bool,
+	optimised: bool,
 }
 
 impl BenchmarkClient for SqliteClient {
@@ -123,22 +127,36 @@ impl BenchmarkClient for SqliteClient {
 	}
 
 	async fn startup(&self) -> Result<()> {
-		// Calculate the size of the page cache
-		let cache = calculate_sqlite_memory() / 16384;
-		// Configure SQLite with optimized settings
+		// Calculate the size of the page cache (in pages of 16 KiB).
+		let cache_pages = calculate_sqlite_memory() / 16384;
+		// synchronous mode:
+		//   - sync=true  → FULL  (fsync on every commit; full durability)
+		//   - sync=false → OFF   (no fsync, fastest; matches the default sync=false
+		//     intent of other adapters that disable fsync entirely)
+		let synchronous = if self.sync {
+			"FULL"
+		} else {
+			"OFF"
+		};
+		// mmap_size (optimised only): 1 GiB memory-mapped reads. Off by default
+		// because some hosts (small VMs, restricted containers) reject large mmaps.
+		let mmap_size: u64 = if self.optimised {
+			1024 * 1024 * 1024
+		} else {
+			0
+		};
+		// temp_store=MEMORY keeps temp B-trees in RAM (used by ORDER BY / GROUP BY).
 		let stmt = format!(
 			"
-			PRAGMA synchronous = {};
 			PRAGMA journal_mode = WAL;
+			PRAGMA synchronous = {synchronous};
 			PRAGMA page_size = 16384;
-			PRAGMA cache_size = {cache};
+			PRAGMA cache_size = {cache_pages};
+			PRAGMA temp_store = MEMORY;
+			PRAGMA mmap_size = {mmap_size};
 			PRAGMA locking_mode = EXCLUSIVE;
-		",
-			if self.sync {
-				"ON"
-			} else {
-				"NORMAL"
-			}
+			PRAGMA wal_autocheckpoint = 10000;
+		"
 		);
 		self.execute_batch(Cow::Owned(stmt)).await?;
 		let id_type = match self.kt {

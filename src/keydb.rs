@@ -16,18 +16,34 @@ use tokio::sync::Mutex;
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// KeyDB's defining feature is multi-threading; without `--server-threads`
+	// it behaves like single-threaded Redis. Pin to the number of host CPU
+	// cores (capped at the practical KeyDB recommendation of 8).
+	let server_threads = num_cpus::get().clamp(2, 8);
+	// Persistence: AOF on/off + sync flush. When persisted=true we also
+	// disable RDB explicitly so the default snapshot schedule doesn't
+	// contend with AOF writes during the benchmark.
+	let persistence = match (options.persisted, options.sync) {
+		(false, _) => "--appendonly no --save ''".to_string(),
+		(true, false) => "--appendonly yes --appendfsync everysec --save ''".to_string(),
+		(true, true) => "--appendonly yes --appendfsync always --save ''".to_string(),
+	};
+	// Memory cap (optimised only) — without one the container OOM-kills
+	// rather than evicting; this keeps comparisons deterministic.
+	let memory = match options.optimised {
+		true => {
+			let cache_gb = crate::memory::Config::new().cache_gb.max(1);
+			format!("--maxmemory {cache_gb}gb --maxmemory-policy noeviction")
+		}
+		false => String::new(),
+	};
 	DockerParams {
 		image: "eqalpha/keydb",
 		pre_args: "-p 127.0.0.1:6379:6379".to_string(),
-		post_args: match (options.persisted, options.sync) {
-			(false, _) => "keydb-server --requirepass root --appendonly no --save ''".to_string(),
-			(true, false) => {
-				"keydb-server --requirepass root --appendonly yes --appendfsync no".to_string()
-			}
-			(true, true) => {
-				"keydb-server --requirepass root --appendonly yes --appendfsync always".to_string()
-			}
-		},
+		post_args: format!(
+			"keydb-server --requirepass root --server-threads {server_threads} \
+			 --server-thread-affinity true {persistence} {memory}"
+		),
 	}
 }
 
