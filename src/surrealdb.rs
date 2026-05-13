@@ -255,7 +255,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
 			post_args: match options.persisted {
 				true => {
-					format!("start --user {username} --pass {password} mem://?crud-bench.db?aol=sync&sync={sync}")
+					format!(
+						"start --user {username} --pass {password} mem://?crud-bench.db?aol=sync&sync={sync}"
+					)
 				}
 				false => {
 					format!("start --user {username} --pass {password} mem://")
