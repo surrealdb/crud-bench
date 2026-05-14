@@ -115,11 +115,14 @@ impl BenchmarkEngine<MysqlClient> for MysqlClientProvider {
 	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Get the custom endpoint if specified
 		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
-		// Size the pool so every worker (`clients * threads`) can hold a
-		// connection simultaneously, bounded by the server-side cap of 1024
-		// set in the optimised post_args.
-		let max_conns = (options.clients * options.threads).clamp(8, 1024);
-		let constraints = PoolConstraints::new(0, max_conns as usize)
+		// Size the pool at `clients`. The pool itself is the concurrency
+		// throttle: `Pool::get_conn` awaits when all slots are busy, so
+		// at most `clients` queries are in flight at any moment. This
+		// matches the old `Mutex<Conn>`-per-client semantics — `-c` is
+		// the concurrency knob — but without serialising threads of one
+		// client onto a single connection while others sit idle.
+		let max_conns = (options.clients as usize).clamp(2, 1024);
+		let constraints = PoolConstraints::new(0, max_conns)
 			.ok_or_else(|| anyhow!("invalid pool constraints"))?;
 		let pool_opts = PoolOpts::default().with_constraints(constraints);
 		let opts: Opts = OptsBuilder::from_opts(Opts::from_url(&url)?).pool_opts(pool_opts).into();
