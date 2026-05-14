@@ -16,9 +16,16 @@ use tokio::sync::Mutex;
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
-	// Redis 6+ supports `io-threads` for network I/O parallelism. The Redis
-	// docs recommend not exceeding 8 and leaving room for the main thread.
-	let io_threads = num_cpus::get().saturating_sub(1).clamp(2, 8);
+	// Redis 6+ supports `io-threads` for network I/O parallelism (command
+	// execution itself is still single-threaded). Docs recommend capping at
+	// 8 and leaving room for the main thread. With `appendfsync always`
+	// (i.e. --sync) the main thread is fsync-bound and the I/O threads sit
+	// idle, so we drop back to one thread in that case.
+	let io_threads = if options.sync {
+		1
+	} else {
+		num_cpus::get().saturating_sub(1).clamp(2, 8)
+	};
 	// Persistence: AOF on/off + sync flush. When persisted=true we also
 	// disable RDB explicitly so the default snapshot schedule doesn't
 	// contend with AOF writes during the benchmark.
@@ -41,7 +48,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		pre_args: "-p 127.0.0.1:6379:6379".to_string(),
 		post_args: format!(
 			"redis-server --requirepass root --io-threads {io_threads} \
-			 --io-threads-do-reads yes {persistence} {memory}"
+			 {persistence} {memory}"
 		),
 	}
 }

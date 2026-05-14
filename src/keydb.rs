@@ -18,8 +18,17 @@ pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// KeyDB's defining feature is multi-threading; without `--server-threads`
 	// it behaves like single-threaded Redis. Pin to the number of host CPU
-	// cores (capped at the practical KeyDB recommendation of 8).
-	let server_threads = num_cpus::get().clamp(2, 8);
+	// cores (capped at the practical KeyDB recommendation of 8). With
+	// `appendfsync always` (i.e. --sync) multiple I/O threads each take the
+	// AOF lock and fsync independently, which defeats the per-iteration
+	// fsync batching and is dramatically slower than single-threaded — so
+	// we drop back to one thread in that case.
+	let threading = if options.sync {
+		"--server-threads 1".to_string()
+	} else {
+		let n = num_cpus::get().clamp(2, 8);
+		format!("--server-threads {n} --server-thread-affinity true")
+	};
 	// Persistence: AOF on/off + sync flush. When persisted=true we also
 	// disable RDB explicitly so the default snapshot schedule doesn't
 	// contend with AOF writes during the benchmark.
@@ -40,10 +49,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "eqalpha/keydb",
 		pre_args: "-p 127.0.0.1:6379:6379".to_string(),
-		post_args: format!(
-			"keydb-server --requirepass root --server-threads {server_threads} \
-			 --server-thread-affinity true {persistence} {memory}"
-		),
+		post_args: format!("keydb-server --requirepass root {threading} {persistence} {memory}"),
 	}
 }
 
