@@ -135,6 +135,12 @@ impl BenchmarkEngine<MysqlClient> for MysqlClientProvider {
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<MysqlClient> {
+		// Force a real TCP round-trip so this also serves as the
+		// readiness probe used by `wait_for_client`. Without it,
+		// `Pool::clone` returns instantly even when mysqld is still
+		// starting, and the first real query in `startup()` fails
+		// with ECONNREFUSED.
+		drop(self.pool.get_conn().await?);
 		Ok(MysqlClient {
 			pool: self.pool.clone(),
 			kt: self.kt,
