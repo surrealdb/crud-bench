@@ -30,6 +30,7 @@ mod keyprovider;
 mod memory;
 mod profiling;
 mod result;
+#[cfg(feature = "surrealdb")]
 mod storage;
 mod system;
 mod terminal;
@@ -699,6 +700,7 @@ fn run(args: Args) -> Result<()> {
 			println!("📊 Interactive charts saved to: {}", result_html_name);
 
 			// Store results in SurrealDB if requested
+			#[cfg(feature = "surrealdb")]
 			if args.store_results {
 				match runtime.block_on(async {
 					let client = storage::StorageClient::connect(&args.storage_endpoint).await?;
@@ -709,6 +711,12 @@ fn run(args: Args) -> Result<()> {
 					}
 					Err(e) => eprintln!("⚠️ Failed to store results in SurrealDB: {e}"),
 				}
+			}
+			#[cfg(not(feature = "surrealdb"))]
+			if args.store_results {
+				eprintln!(
+					"⚠️ --store-results requires the `surrealdb` feature to be enabled at build time"
+				);
 			}
 
 			Ok(())

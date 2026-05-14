@@ -2,10 +2,12 @@ use crate::BatchOperation;
 use crate::KeyType;
 use crate::Scan;
 use crate::benchmark::Benchmark;
+#[allow(unused_imports)]
 use crate::dialect::{
 	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MariaDBDialect, MongoDBDialect, MySqlDialect,
 	Neo4jDialect, SurrealDBDialect,
 };
+#[allow(unused_imports)]
 use crate::docker::{Container, DockerParams};
 use crate::dry::DryClientProvider;
 use crate::engine::BenchmarkEngine;
@@ -87,6 +89,7 @@ impl Database {
 	}
 
 	/// Start the Docker container if necessary
+	#[allow(unused_variables, unreachable_code)]
 	pub(crate) fn start_docker(&self, options: &Benchmark) -> Option<Container> {
 		// Get any pre-defined Docker configuration
 		let params: DockerParams = match self {
