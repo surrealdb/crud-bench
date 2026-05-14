@@ -48,6 +48,10 @@ pub(crate) enum Database {
 	Redis,
 	#[cfg(feature = "rocksdb")]
 	Rocksdb,
+	#[cfg(feature = "rocksdb")]
+	RocksdbPlain,
+	#[cfg(feature = "clouddb")]
+	Clouddb,
 	#[cfg(feature = "scylladb")]
 	Scylladb,
 	#[cfg(feature = "slatedb")]
@@ -387,6 +391,42 @@ impl Database {
 					)
 					.await
 			}
+			#[cfg(feature = "rocksdb")]
+			Database::RocksdbPlain => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::rocksdb_plain::RocksDBPlainClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
+			#[cfg(feature = "clouddb")]
+			Database::Clouddb => {
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::clouddb::CloudDBClientProvider::setup(kt, vp.columns(), benchmark)
+							.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
 			#[cfg(feature = "scylladb")]
 			Database::Scylladb => {
 				benchmark
@@ -531,6 +571,10 @@ impl Database {
 			Database::Dragonfly => "Dragonfly",
 			#[cfg(feature = "rocksdb")]
 			Database::Rocksdb => "RocksDB",
+			#[cfg(feature = "rocksdb")]
+			Database::RocksdbPlain => "RocksDB (plain)",
+			#[cfg(feature = "clouddb")]
+			Database::Clouddb => "CloudDB",
 			#[cfg(feature = "lmdb")]
 			Database::Lmdb => "LMDB",
 			#[cfg(feature = "mdbx")]

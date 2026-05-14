@@ -56,9 +56,14 @@ lmdb/
 mdbx/
 fjall/
 rocksdb/
+rocksdb-plain/
+clouddb/
 slatedb/
 surrealkv/
 surrealmx/
+
+# --- Ignore AWS C++ SDK build tree (used by the clouddb benchmark)
+.do-not-commit/
 
 # --- Ignore generated result files
 result.csv

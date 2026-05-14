@@ -456,6 +456,37 @@ RocksDB is a transactional, ACID-compliant, embedded, key-value datastore, based
 cargo run -r -- -d rocksdb -s 100000 -c 12 -t 24 -r
 ```
 
+The default `rocksdb` engine wraps every operation in an `OptimisticTransactionDB` transaction. A second `rocksdb-plain` engine is also available, which uses plain `DB` with no transaction wrapping — useful as a directly-comparable baseline against the `clouddb` engine below.
+
+```bash
+cargo run -r --features rocksdb -- -d rocksdb-plain -s 100000 -c 12 -t 24 -r
+# or:
+make bench-rocksdb-plain ARGS="-s 100000 -c 12 -t 24 -r"
+```
+
+### CloudDB (local-only mode)
+
+`clouddb` benchmarks `surrealdb-rocksdb`'s `CloudDB` with **no source or destination bucket attached**, so all reads and writes go to the local filesystem. This is intended as a controlled comparison against `rocksdb-plain` to measure the overhead of CloudDB's manifest layout when no actual cloud storage is involved.
+
+Building this engine requires the AWS C++ SDK to be available to the linker — the FFI entry point for `CloudFileSystem` is unconditionally compiled against AWS S3 even when no bucket is configured.
+
+- **macOS:** install via Homebrew:
+  ```bash
+  brew install aws-sdk-cpp
+  ```
+- **Linux:** install `cmake`, `libcurl4-openssl-dev`, and `libssl-dev`, then build the SDK from source (one-off, ~5 min):
+  ```bash
+  make ensure-aws-sdk
+  ```
+
+Then run the benchmark:
+
+```bash
+make bench-clouddb ARGS="-s 100000 -c 12 -t 24 -r"
+```
+
+The `Makefile` sets the platform-specific env vars (`AWS_SDK_INSTALL_DIR`, `CXXFLAGS`, `RUSTFLAGS`) needed by `surrealdb-librocksdb-sys` to link against the SDK.
+
 ### [ScyllaDB](https://www.scylladb.com/)
 
 ScyllaDB is a distributed, NoSQL, wide-column datastore, designed to be compatible with Cassandra.
