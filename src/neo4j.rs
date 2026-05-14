@@ -4,6 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::Neo4jDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::memory::Config;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
@@ -28,26 +29,38 @@ const ARRAY_INDEX_END: &str = "";
 pub const DEFAULT: &str = "127.0.0.1:7687";
 
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// Per-tx fsync control is not exposed; checkpoint cadence is the closest knob.
+	let checkpoint = match options.sync {
+		true => "-e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=1",
+		false => {
+			"-e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=10000"
+		}
+	};
+	// JVM heap and pagecache default to a few hundred MB; on a heavy benchmark this
+	// triggers GC thrash long before disk I/O. When optimised, split the recommended
+	// cache budget between heap (1/3) and pagecache (2/3).
+	let memory = match options.optimised {
+		true => {
+			let cache_gb = Config::new().cache_gb.max(2);
+			let heap_gb = (cache_gb / 3).max(1);
+			let pagecache_gb = cache_gb - heap_gb;
+			format!(
+				"-e NEO4J_server_memory_heap_initial__size={heap_gb}g \
+				 -e NEO4J_server_memory_heap_max__size={heap_gb}g \
+				 -e NEO4J_server_memory_pagecache_size={pagecache_gb}g \
+				 -e NEO4J_db_memory_transaction_total_max=0 \
+				 -e NEO4J_db_memory_transaction_max=0"
+			)
+		}
+		false => String::new(),
+	};
 	DockerParams {
 		image: "neo4j",
-		pre_args: match options.sync {
-			true => {
-				// Neo4j does not have the ability to configure
-				// per-transaction on-disk sync control, so the
-				// closest option when sync is true, is to
-				// checkpoint after every transaction, and to
-				// checkpoint in the background every second
-				"--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=1".to_string()
-			}
-			false => {
-				// Neo4j does not have the ability to configure
-				// per-transaction on-disk sync control, so the
-				// closest option when sync is false, is to
-				// checkpoint in the background every second,
-				// and to checkpoint every 10,000 transactions
-				"--ulimit nofile=65536:65536 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 -e NEO4J_AUTH=none -e NEO4J_dbms_checkpoint_interval_time=1s -e NEO4J_dbms_checkpoint_interval_tx=10000".to_string()
-			}
-		},
+		pre_args: format!(
+			"--ulimit nofile=65536:65536 \
+			 -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 \
+			 -e NEO4J_AUTH=none {checkpoint} {memory}"
+		),
 		post_args: "".to_string(),
 	}
 }

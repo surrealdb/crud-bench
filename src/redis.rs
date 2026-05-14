@@ -16,18 +16,33 @@ use tokio::sync::Mutex;
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// Redis 6+ supports `io-threads` for network I/O parallelism. The Redis
+	// docs recommend not exceeding 8 and leaving room for the main thread.
+	let io_threads = num_cpus::get().saturating_sub(1).clamp(2, 8);
+	// Persistence: AOF on/off + sync flush. When persisted=true we also
+	// disable RDB explicitly so the default snapshot schedule doesn't
+	// contend with AOF writes during the benchmark.
+	let persistence = match (options.persisted, options.sync) {
+		(false, _) => "--appendonly no --save ''".to_string(),
+		(true, false) => "--appendonly yes --appendfsync everysec --save ''".to_string(),
+		(true, true) => "--appendonly yes --appendfsync always --save ''".to_string(),
+	};
+	// Memory cap (optimised only) — without one the container OOM-kills
+	// rather than evicting; this keeps comparisons deterministic.
+	let memory = match options.optimised {
+		true => {
+			let cache_gb = crate::memory::Config::new().cache_gb.max(1);
+			format!("--maxmemory {cache_gb}gb --maxmemory-policy noeviction")
+		}
+		false => String::new(),
+	};
 	DockerParams {
 		image: "redis",
 		pre_args: "-p 127.0.0.1:6379:6379".to_string(),
-		post_args: match (options.persisted, options.sync) {
-			(false, _) => "redis-server --requirepass root --appendonly no --save ''".to_string(),
-			(true, false) => {
-				"redis-server --requirepass root --appendonly yes --appendfsync no".to_string()
-			}
-			(true, true) => {
-				"redis-server --requirepass root --appendonly yes --appendfsync always".to_string()
-			}
-		},
+		post_args: format!(
+			"redis-server --requirepass root --io-threads {io_threads} \
+			 --io-threads-do-reads yes {persistence} {memory}"
+		),
 	}
 }
 

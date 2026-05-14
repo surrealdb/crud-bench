@@ -21,6 +21,7 @@ CLIENTS="128"
 THREADS="48"
 KEY_TYPE="string26"
 SYNC="false"
+PERSISTED="false"
 OPTIMISED="false"
 ELEVATED="false"
 TIMEOUT=""
@@ -87,6 +88,7 @@ OPTIONS:
                               Options: integer, string26, string90, string250, string506
     --name <name>             Custom name for this benchmark run (default: database name)
     --sync                    Acknowledge disk writes (default: false)
+    --persisted               Enable disk persistence where supported (e.g. Redis family, SurrealMX)
     --optimised               Use optimised database configurations (default: false)
     --elevated                Run with elevated priorities (sudo, nice, ionice, taskset, --privileged)
                               Requires sudo access. Use on bare metal for maximum isolation.
@@ -123,6 +125,9 @@ EXAMPLES:
 
     # Run with custom parameters
     $0 -d rocksdb -s 1000000 -c 64 -t 24 --sync --optimised
+
+    # Run Redis/KeyDB with append-only persistence (combine with --sync for appendfsync always)
+    $0 -d redis --persisted
 
 AVAILABLE DATASTORES:
     arangodb, dragonfly, dry, fjall, keydb, lmdb, map, mdbx, mongodb,
@@ -175,6 +180,10 @@ parse_args() {
                 ;;
             --sync)
                 SYNC="true"
+                shift
+                ;;
+            --persisted)
+                PERSISTED="true"
                 shift
                 ;;
             --optimised)
@@ -611,7 +620,7 @@ normalize_system() {
 # Ensures system is ready for benchmarking
 # Threshold:
 #   - macOS: Half the CPU count (e.g., 4.0 for 8-core system)
-#   - Linux: 2.0 (dedicated benchmarking machine)
+#   - Linux: 0.5 (dedicated benchmarking machine)
 # Timeout: 900 seconds (15 minutes)
 # Exits with error if timeout is reached
 wait_for_system() {
@@ -628,8 +637,8 @@ wait_for_system() {
         local cpu_count=$(get_cpu_count)
         threshold=$(echo "scale=1; $cpu_count / 2" | bc)
     else
-        # Linux: fixed threshold of 1.0
-        threshold="1.0"
+        # Linux: fixed threshold of 0.5
+        threshold="0.5"
     fi
 
     while true; do
@@ -693,6 +702,12 @@ run_benchmark() {
         sync_flag="--sync"
     fi
 
+    # Build persisted flag
+    local persisted_flag=""
+    if [[ "$PERSISTED" == "true" ]]; then
+        persisted_flag="--persisted"
+    fi
+
     # Build optimised flag
     local optimised_flag=""
     if [[ "$OPTIMISED" == "true" ]]; then
@@ -743,20 +758,20 @@ run_benchmark() {
     local bench_cmd
     if [[ "$FLAMEGRAPH" == "true" ]]; then
         # Flamegraph mode: cargo flamegraph doesn't work well with sudo/nice/ionice wrappers
-        bench_cmd="$binary_path $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+        bench_cmd="$binary_path $sync_flag $persisted_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
     elif [[ "$ELEVATED" == "true" ]]; then
         # Elevated mode: use sudo, nice/ionice, taskset (Linux), and --privileged
         if [[ "$IS_LINUX" == "true" ]]; then
             # Linux: use taskset for CPU affinity
             local cpu_range="0-$((num_cpus - 1))"
-            bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+            bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $persisted_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
         else
             # macOS: no taskset, just nice
-            bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+            bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $persisted_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
         fi
     else
         # Normal mode: no sudo, no nice/ionice, no taskset, no --privileged
-        bench_cmd="$binary_path $sync_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+        bench_cmd="$binary_path $sync_flag $persisted_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
     fi
 
     # Run the benchmark with timeout (if specified)

@@ -25,8 +25,10 @@ pub const DEFAULT: &str = "mysql://root:mariadb@127.0.0.1:3306/bench";
 fn calculate_mariadb_memory() -> (u64, u64, u64) {
 	// Load the system memory
 	let memory = Config::new();
-	// Use ~100% of recommended cache allocation
-	let buffer_pool_gb = memory.cache_gb;
+	// Use ~50% of recommended cache allocation. Equal fraction to Postgres
+	// `shared_buffers` and MySQL `innodb_buffer_pool_size` so the SQL
+	// adapters get the same in-process cache budget under `--optimised`.
+	let buffer_pool_gb = (memory.cache_gb / 2).max(1);
 	// Use ~10% of buffer pool for redo log capacity, min 1GB, max 8GB
 	let redo_log_gb = (memory.cache_gb / 10).clamp(1, 8);
 	// Use 1 buffer pool instance per 2GB, max 64
@@ -48,7 +50,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"--max-connections=1024 \
 				--innodb-buffer-pool-size={buffer_pool_gb}G \
 				--innodb-buffer-pool-instances={buffer_pool_instances} \
-				--innodb-redo-log-capacity={redo_log_gb}G \
+				--innodb-log-file-size={redo_log_gb}G \
 				--innodb-log-buffer-size=256M \
 				--innodb-flush-method=O_DIRECT \
 				--innodb-io-capacity=2000 \
@@ -114,7 +116,11 @@ impl BenchmarkEngine<MariadbClient> for MariadbClientProvider {
 		// Create the client provider
 		Ok(Self(kt, columns, url))
 	}
-	/// Creates a new client for this benchmarking engine
+	/// Creates a new client for this benchmarking engine. `Conn::new` does
+	/// a real TCP handshake, so this also serves as the readiness probe
+	/// used by `wait_for_client`. One `Mutex<Conn>` per client serialises
+	/// the `-t` worker tasks per client to one in-flight query at a time,
+	/// matching the pre-049e85c semantics — `-c` is the concurrency knob.
 	async fn create_client(&self) -> Result<MariadbClient> {
 		let conn = Conn::new(Opts::from_url(&self.2)?).await?;
 		Ok(MariadbClient {

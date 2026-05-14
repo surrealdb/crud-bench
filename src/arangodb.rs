@@ -4,6 +4,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::ArangoDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::memory::Config;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
@@ -24,9 +25,31 @@ pub const DEFAULT: &str = "http://127.0.0.1:8529";
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "arangodb",
-		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1".to_string(),
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1"
+			.to_string(),
 		post_args: match options.optimised {
-			true => "--server.scheduler-queue-size 8192 --server.prio1-size 8192 --server.prio2-size 8192 --server.maximal-queue-size 8192".to_string(),
+			true => {
+				let cache_gb = Config::new().cache_gb.max(1);
+				let block_cache_bytes = cache_gb * 1024 * 1024 * 1024 / 2;
+				let total_write_buffer_bytes = cache_gb * 1024 * 1024 * 1024 / 4;
+				// I/O threads handle network reads/writes; the default of 1
+				// causes the kernel SYN queue to fill under heavy parallel
+				// HTTP load, producing ETIMEDOUT errors on the client side.
+				let io_threads = num_cpus::get().clamp(2, 8);
+				format!(
+					"--server.io-threads {io_threads} \
+					 --server.scheduler-queue-size 8192 \
+					 --server.prio1-size 8192 \
+					 --server.prio2-size 8192 \
+					 --server.maximal-queue-size 8192 \
+					 --rocksdb.block-cache-size {block_cache_bytes} \
+					 --rocksdb.total-write-buffer-size {total_write_buffer_bytes} \
+					 --rocksdb.enable-pipelined-write true \
+					 --rocksdb.max-background-jobs 16 \
+					 --rocksdb.max-write-buffer-number 8 \
+					 --cache.size {block_cache_bytes}"
+				)
+			}
 			false => "".to_string(),
 		},
 	}
@@ -50,6 +73,13 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ArangoDBClient> {
 		let (conn, db, co) = create_arango_client(&self.url).await?;
+		// Wrap the database/collection handles in `Mutex` per client. The
+		// lock isn't there to protect state — both handles are `Clone` and
+		// thread-safe — but to serialise the `-t` worker tasks per client
+		// down to one in-flight HTTP request, capping process-wide
+		// concurrency at `-c`. Without this throttle, all `clients *
+		// threads` workers fire fresh TCP opens in a burst and overflow
+		// arangod's accept queue (ETIMEDOUT).
 		Ok(ArangoDBClient {
 			sync: self.sync,
 			keytype: self.key,
@@ -333,16 +363,15 @@ impl ArangoDBClient {
 		let json = Self::to_doc(key, val)?;
 		let opt = InsertOptions::builder()
 			.wait_for_sync(self.sync)
-			.return_new(true)
+			.return_new(false)
 			.overwrite(false)
 			.build();
-		let res = { self.collection.lock().await.create_document(json, opt).await? };
-		assert!(res.new_doc().is_some());
+		self.collection.lock().await.create_document(json, opt).await?;
 		Ok(())
 	}
 
 	async fn read(&self, key: String) -> Result<BenchValue> {
-		let doc: Document<Value> = { self.collection.lock().await.document(&key).await? };
+		let doc: Document<Value> = self.collection.lock().await.document(&key).await?;
 		assert!(doc.document.is_object());
 		assert_eq!(doc.document.get("_key").unwrap().as_str().unwrap(), key);
 		Ok(black_box(BenchValue::from(&doc.document)))
@@ -352,18 +381,16 @@ impl ArangoDBClient {
 		let json = Self::to_doc(key, val)?;
 		let opt = InsertOptions::builder()
 			.wait_for_sync(self.sync)
-			.return_new(true)
+			.return_new(false)
 			.overwrite(true)
 			.build();
-		let res = { self.collection.lock().await.create_document(json, opt).await? };
-		assert!(res.new_doc().is_some());
+		self.collection.lock().await.create_document(json, opt).await?;
 		Ok(())
 	}
 
 	async fn delete(&self, key: String) -> Result<()> {
 		let opt = RemoveOptions::builder().wait_for_sync(self.sync).build();
-		let res = { self.collection.lock().await.remove_document::<Value>(&key, opt, None).await? };
-		assert!(res.has_response());
+		self.collection.lock().await.remove_document::<Value>(&key, opt, None).await?;
 		Ok(())
 	}
 

@@ -25,8 +25,10 @@ pub const DEFAULT: &str = "mysql://root:mysql@127.0.0.1:3306/bench";
 fn calculate_mysql_memory() -> (u64, u64, u64) {
 	// Load the system memory
 	let memory = Config::new();
-	// Use ~100% of recommended cache allocation
-	let buffer_pool_gb = memory.cache_gb;
+	// Use ~50% of recommended cache allocation. Equal fraction to Postgres
+	// `shared_buffers` so the two SQL adapters get the same in-process cache
+	// budget under `--optimised`.
+	let buffer_pool_gb = (memory.cache_gb / 2).max(1);
 	// Use ~10% of buffer pool for redo log capacity, min 1GB, max 8GB
 	let redo_log_gb = (memory.cache_gb / 10).clamp(1, 8);
 	// Use 1 buffer pool instance per 2GB, max 64
@@ -63,7 +65,6 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--join-buffer-size=32M \
 				--tmp-table-size=1G \
 				--max-heap-table-size=1G \
-				--query-cache-size=0 \
 				--log-bin=mysql-bin \
 				--binlog-format=ROW \
 				--server-id=1 \
@@ -115,7 +116,11 @@ impl BenchmarkEngine<MysqlClient> for MysqlClientProvider {
 		// Create the client provider
 		Ok(Self(kt, columns, url))
 	}
-	/// Creates a new client for this benchmarking engine
+	/// Creates a new client for this benchmarking engine. `Conn::new` does
+	/// a real TCP handshake, so this also serves as the readiness probe
+	/// used by `wait_for_client`. One `Mutex<Conn>` per client serialises
+	/// the `-t` worker tasks per client to one in-flight query at a time,
+	/// matching the pre-049e85c semantics — `-c` is the concurrency knob.
 	async fn create_client(&self) -> Result<MysqlClient> {
 		let conn = Conn::new(Opts::from_url(&self.2)?).await?;
 		Ok(MysqlClient {
