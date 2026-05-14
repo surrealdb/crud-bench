@@ -41,6 +41,7 @@ mod workloads;
 
 // Datastore modules
 mod arangodb;
+mod clouddb;
 mod dragonfly;
 mod dry;
 mod fjall;
@@ -54,7 +55,6 @@ mod mysql;
 mod neo4j;
 mod postgres;
 mod redb;
-mod clouddb;
 mod redis;
 mod rocksdb;
 mod rocksdb_plain;

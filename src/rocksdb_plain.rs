@@ -124,7 +124,10 @@ impl BenchmarkClient for RocksDBPlainClient {
 
 	async fn shutdown(&self) -> Result<()> {
 		self.db.cancel_all_background_work(true);
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		// Set CRUD_BENCH_KEEP_DATA=1 to inspect the on-disk layout after a run.
+		if std::env::var("CRUD_BENCH_KEEP_DATA").is_err() {
+			std::fs::remove_dir_all(DATABASE_DIR).ok();
+		}
 		Ok(())
 	}
 
