@@ -25,7 +25,8 @@ pub const DEFAULT: &str = "http://127.0.0.1:8529";
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	DockerParams {
 		image: "arangodb",
-		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1".to_string(),
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:8529:8529 -e ARANGO_NO_AUTH=1"
+			.to_string(),
 		post_args: match options.optimised {
 			true => {
 				let cache_gb = Config::new().cache_gb.max(1);
