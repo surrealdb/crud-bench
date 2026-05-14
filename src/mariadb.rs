@@ -14,10 +14,8 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use mysql_async::consts;
 use mysql_async::prelude::Queryable;
 use mysql_async::prelude::ToValue;
-use mysql_async::{Conn, Opts, Row};
+use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row};
 use std::hint::black_box;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "mysql://root:mariadb@127.0.0.1:3306/bench";
 
@@ -25,8 +23,10 @@ pub const DEFAULT: &str = "mysql://root:mariadb@127.0.0.1:3306/bench";
 fn calculate_mariadb_memory() -> (u64, u64, u64) {
 	// Load the system memory
 	let memory = Config::new();
-	// Use ~100% of recommended cache allocation
-	let buffer_pool_gb = memory.cache_gb;
+	// Use ~50% of recommended cache allocation. Equal fraction to Postgres
+	// `shared_buffers` and MySQL `innodb_buffer_pool_size` so the SQL
+	// adapters get the same in-process cache budget under `--optimised`.
+	let buffer_pool_gb = (memory.cache_gb / 2).max(1);
 	// Use ~10% of buffer pool for redo log capacity, min 1GB, max 8GB
 	let redo_log_gb = (memory.cache_gb / 10).clamp(1, 8);
 	// Use 1 buffer pool instance per 2GB, max 64
@@ -48,7 +48,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"--max-connections=1024 \
 				--innodb-buffer-pool-size={buffer_pool_gb}G \
 				--innodb-buffer-pool-instances={buffer_pool_instances} \
-				--innodb-redo-log-capacity={redo_log_gb}G \
+				--innodb-log-file-size={redo_log_gb}G \
 				--innodb-log-buffer-size=256M \
 				--innodb-flush-method=O_DIRECT \
 				--innodb-io-capacity=2000 \
@@ -104,29 +104,44 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	}
 }
 
-pub(crate) struct MariadbClientProvider(KeyType, Columns, String);
+pub(crate) struct MariadbClientProvider {
+	pool: Pool,
+	kt: KeyType,
+	columns: Columns,
+}
 
 impl BenchmarkEngine<MariadbClient> for MariadbClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Get the custom endpoint if specified
 		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
+		// Size the pool so every worker (`clients * threads`) can hold a
+		// connection simultaneously, bounded by the server-side cap of 1024
+		// set in the optimised post_args.
+		let max_conns = (options.clients * options.threads).clamp(8, 1024);
+		let constraints = PoolConstraints::new(0, max_conns as usize)
+			.ok_or_else(|| anyhow!("invalid pool constraints"))?;
+		let pool_opts = PoolOpts::default().with_constraints(constraints);
+		let opts: Opts = OptsBuilder::from_opts(Opts::from_url(&url)?).pool_opts(pool_opts).into();
 		// Create the client provider
-		Ok(Self(kt, columns, url))
+		Ok(Self {
+			pool: Pool::new(opts),
+			kt,
+			columns,
+		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<MariadbClient> {
-		let conn = Conn::new(Opts::from_url(&self.2)?).await?;
 		Ok(MariadbClient {
-			conn: Arc::new(Mutex::new(conn)),
-			kt: self.0,
-			columns: self.1.clone(),
+			pool: self.pool.clone(),
+			kt: self.kt,
+			columns: self.columns.clone(),
 		})
 	}
 }
 
 pub(crate) struct MariadbClient {
-	conn: Arc<Mutex<Conn>>,
+	pool: Pool,
 	kt: KeyType,
 	columns: Columns,
 }
@@ -170,7 +185,7 @@ impl BenchmarkClient for MariadbClient {
 		let stm = format!(
 			"DROP TABLE IF EXISTS record; CREATE TABLE record ( id {id_type} PRIMARY KEY, {fields}) ENGINE=InnoDB;"
 		);
-		self.conn.lock().await.query_drop(&stm).await?;
+		self.pool.get_conn().await?.query_drop(&stm).await?;
 		Ok(())
 	}
 
@@ -236,14 +251,14 @@ impl BenchmarkClient for MariadbClient {
 			}
 		};
 		// Create the index
-		self.conn.lock().await.query_drop(&stmt).await?;
+		self.pool.get_conn().await?.query_drop(&stmt).await?;
 		// All ok
 		Ok(())
 	}
 
 	async fn drop_index(&self, name: &str) -> Result<()> {
 		let stmt = format!("DROP INDEX {name} ON record");
-		self.conn.lock().await.query_drop(&stmt).await?;
+		self.pool.get_conn().await?.query_drop(&stmt).await?;
 		Ok(())
 	}
 
@@ -441,7 +456,7 @@ impl MariadbClient {
 				.ok_or_else(|| anyhow!("Missing value for column {name}"))?;
 			params.push(bench_to_mysql_value(column_type, v)?);
 		}
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		let _: Vec<Row> = self.pool.get_conn().await?.exec(stm, params).await?;
 		Ok(())
 	}
 
@@ -450,7 +465,7 @@ impl MariadbClient {
 		T: ToValue + Sync,
 	{
 		let stm = "SELECT * FROM record WHERE id=?";
-		let res: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
+		let res: Vec<Row> = self.pool.get_conn().await?.exec(stm, (key.to_value(),)).await?;
 		assert_eq!(res.len(), 1);
 		Ok(black_box(self.consume(res.into_iter().next().unwrap())?))
 	}
@@ -472,7 +487,7 @@ impl MariadbClient {
 			params.push(bench_to_mysql_value(column_type, v)?);
 		}
 		params.push(key.to_value());
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		let _: Vec<Row> = self.pool.get_conn().await?.exec(stm, params).await?;
 		Ok(())
 	}
 
@@ -481,7 +496,7 @@ impl MariadbClient {
 		T: ToValue + Sync,
 	{
 		let stm = "DELETE FROM record WHERE id=?";
-		let _: Vec<Row> = self.conn.lock().await.exec(stm, (key.to_value(),)).await?;
+		let _: Vec<Row> = self.pool.get_conn().await?.exec(stm, (key.to_value(),)).await?;
 		Ok(())
 	}
 
@@ -504,7 +519,7 @@ impl MariadbClient {
 		match p {
 			Projection::Id => {
 				let stm = format!("SELECT id FROM record {c} {o} {l} {s}");
-				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
+				let res: Vec<Row> = self.pool.get_conn().await?.query(stm).await?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -518,7 +533,7 @@ impl MariadbClient {
 			}
 			Projection::Full => {
 				let stm = format!("SELECT * FROM record {c} {o} {l} {s}");
-				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
+				let res: Vec<Row> = self.pool.get_conn().await?.query(stm).await?;
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -532,7 +547,7 @@ impl MariadbClient {
 			}
 			Projection::Count => {
 				let stm = format!("SELECT COUNT(*) FROM (SELECT id FROM record {c} {l} {s}) AS T");
-				let res: Vec<Row> = self.conn.lock().await.query(stm).await?;
+				let res: Vec<Row> = self.pool.get_conn().await?.query(stm).await?;
 				let count: i64 = res.first().unwrap().get(0).unwrap();
 				Ok(count as usize)
 			}
@@ -563,7 +578,7 @@ impl MariadbClient {
 				}
 			}
 		}
-		let mut conn = self.conn.lock().await;
+		let mut conn = self.pool.get_conn().await?;
 		let res = conn.exec_iter(stm, params).await?;
 		assert_eq!(res.affected_rows(), key_vals.len() as u64);
 		Ok(())
@@ -579,7 +594,7 @@ impl MariadbClient {
 		let ids = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 		let stm = format!("SELECT * FROM record WHERE id IN ({ids})");
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
-		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
+		let res: Vec<Row> = self.pool.get_conn().await?.exec(stm, params).await?;
 		assert_eq!(res.len(), keys.len());
 		for row in res {
 			black_box(self.consume(row).unwrap());
@@ -620,7 +635,7 @@ impl MariadbClient {
 		for (key, _) in &key_vals {
 			params.push(key.to_value());
 		}
-		let mut conn = self.conn.lock().await;
+		let mut conn = self.pool.get_conn().await?;
 		let res = conn.exec_iter(stm, params).await?;
 		assert_eq!(res.affected_rows(), key_vals.len() as u64);
 		Ok(())
@@ -636,7 +651,7 @@ impl MariadbClient {
 		let ids = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 		let stm = format!("DELETE FROM record WHERE id IN ({ids})");
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
-		let mut conn = self.conn.lock().await;
+		let mut conn = self.pool.get_conn().await?;
 		let res = conn.exec_iter(stm, params).await?;
 		assert_eq!(res.affected_rows(), keys.len() as u64);
 		Ok(())

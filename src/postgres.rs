@@ -21,9 +21,13 @@ pub const DEFAULT: &str = "host=127.0.0.1 user=postgres password=postgres";
 fn calculate_postgres_memory() -> (u64, u64, u64, u64, u64, u64) {
 	// Load the system memory
 	let memory = Config::new();
-	// Use ~33% of recommended cache allocation
-	let shared_buffers_gb = (memory.cache_gb / 3).max(1);
-	// Use ~75% of total system memory for caching
+	// Use ~50% of recommended cache allocation. Equal fraction to MySQL
+	// `innodb_buffer_pool_size` and MariaDB equivalent so all three SQL
+	// adapters get the same in-process cache budget under `--optimised`.
+	let shared_buffers_gb = (memory.cache_gb / 2).max(1);
+	// `effective_cache_size` is a planner hint, not an allocation; it tells
+	// Postgres how much memory is available across shared_buffers + OS page
+	// cache. Keep it at the full cache budget.
 	let effective_cache_gb = memory.cache_gb;
 	// Scale work_mem with shared_buffers
 	let work_mem_mb = (shared_buffers_gb * 64).max(32);
@@ -53,6 +57,14 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		max_wal_gb,
 		min_wal_gb,
 	) = calculate_postgres_memory();
+	// fsync and synchronous_commit must agree: with fsync=off the WAL is not
+	// flushed to disk, so synchronous_commit=on cannot give the durability it
+	// claims. Set both consistently based on `options.sync`.
+	let sync_setting = if options.sync {
+		"on"
+	} else {
+		"off"
+	};
 	// Return Docker parameters
 	DockerParams {
 		image: "postgres",
@@ -74,24 +86,14 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				-c effective_io_concurrency=200 \
 				-c min_wal_size={min_wal_gb}GB \
 				-c max_wal_size={max_wal_gb}GB \
-				-c fsync={} \
-				-c synchronous_commit=on",
-				if options.sync {
-					"on"
-				} else {
-					"off"
-				}
+				-c fsync={sync_setting} \
+				-c synchronous_commit={sync_setting}"
 			),
 			// Default configuration
 			false => format!(
 				"postgres -N 1024 \
-				-c fsync={} \
-				-c synchronous_commit=on",
-				if options.sync {
-					"on"
-				} else {
-					"off"
-				}
+				-c fsync={sync_setting} \
+				-c synchronous_commit={sync_setting}"
 			),
 		},
 	}
