@@ -117,7 +117,9 @@ serde = { version = "1.0.228", features = ["derive"] }
 slatedb = { version = "0.10.1", features = ["snappy", "foyer"], optional = true }
 serde_json = "1.0.149"
 serial_test = "3.4.0"
-surrealdb = { version = "3.0.5", default-features = false, optional = true }
+# Temporary: use SurrealDB main; revert to crates.io for releases.
+# surrealdb = { version = "3.0.5", default-features = false, optional = true }
+surrealdb = { git = "https://github.com/surrealdb/surrealdb", branch = "main", default-features = false, optional = true }
 surrealkv = { version = "0.21.2", optional = true }
 surrealmx = { version = "0.18.0", optional = true }
 sysinfo = { version = "0.37.2", features = ["serde"] }
