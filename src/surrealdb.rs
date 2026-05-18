@@ -582,10 +582,10 @@ impl BenchmarkClient for SurrealDBClient {
 		};
 		// Remove the index
 		let sql = format!("REMOVE INDEX IF EXISTS {name} ON TABLE record");
-		retry(sql, Duration::from_secs(120)).await?;
+		retry(sql, Duration::from_secs(300)).await?;
 		// Remove the analyzer
 		let sql = format!("REMOVE ANALYZER IF EXISTS {name}");
-		retry(sql, Duration::from_secs(60)).await?;
+		retry(sql, Duration::from_secs(180)).await?;
 		// All ok
 		Ok(())
 	}

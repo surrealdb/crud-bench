@@ -780,6 +780,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "castaway"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dec551ab6e7578819132c713a93c022a05d60159dc86e7a7050223577484c55a"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2564,7 +2573,6 @@ version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3901269ec6d4f6068d3f09e5f02f995bd076398dcd1dfec407cd230b02d11b"
 dependencies = [
- "earcutr",
  "float_next_after",
  "geo-types",
  "geographiclib-rs",
@@ -2576,7 +2584,6 @@ dependencies = [
  "rstar 0.12.2",
  "serde",
  "sif-itree",
- "spade",
 ]
 
 [[package]]
@@ -7031,9 +7038,8 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surrealdb"
-version = "3.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "504a96b55e86ef8653a03b6b97e771f49c954e26bcc0308160b0134d94f334fd"
+version = "3.1.0-alpha"
+source = "git+https://github.com/surrealdb/surrealdb?branch=main#de35b0212e3fe37a645658d339040f26eb2118ce"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -7069,9 +7075,8 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-core"
-version = "3.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3e6a7f248c958fd5000c4fab5759503663bf93c622be10a6d7bf7d2d676b8fc"
+version = "3.1.0-alpha"
+source = "git+https://github.com/surrealdb/surrealdb?branch=main#de35b0212e3fe37a645658d339040f26eb2118ce"
 dependencies = [
  "addr",
  "affinitypool",
@@ -7176,9 +7181,9 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-protocol"
-version = "0.8.3"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb37698e0493bcfac3229ecb6ec6894a3ad705a3a2087b1562eeb881b3db19d4"
+checksum = "f57065763bbd36486c449132252b3aac5a5e20f5669393ded0e967e8f8289ea2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7186,7 +7191,7 @@ dependencies = [
  "chrono",
  "flatbuffers",
  "futures",
- "geo 0.32.0",
+ "geo 0.31.0",
  "prost 0.14.3",
  "prost-types 0.14.3",
  "rust_decimal",
@@ -7210,12 +7215,13 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-types"
-version = "3.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c79e71d035367b933cf528c09b7ed186bc17dea58c66a1bca84d22f9abf167db"
+version = "3.1.0-alpha"
+source = "git+https://github.com/surrealdb/surrealdb?branch=main#de35b0212e3fe37a645658d339040f26eb2118ce"
 dependencies = [
  "anyhow",
+ "async-channel",
  "bytes",
+ "castaway",
  "chrono",
  "flatbuffers",
  "geo 0.32.0",
@@ -7224,22 +7230,26 @@ dependencies = [
  "papaya",
  "rand 0.8.6",
  "regex",
+ "reqwest 0.13.2",
  "rstest",
  "rust_decimal",
+ "semver",
  "serde",
  "serde_json",
  "surrealdb-protocol",
  "surrealdb-types-derive",
+ "tracing",
  "ulid",
+ "url",
  "uuid",
 ]
 
 [[package]]
 name = "surrealdb-types-derive"
-version = "3.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a76abdbfc597e062daae5269251e18a84553f9090cfff423591f57c8c6765aa8"
+version = "3.1.0-alpha"
+source = "git+https://github.com/surrealdb/surrealdb?branch=main#de35b0212e3fe37a645658d339040f26eb2118ce"
 dependencies = [
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",

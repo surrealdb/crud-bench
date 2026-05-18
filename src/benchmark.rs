@@ -22,7 +22,7 @@ use futures::future::try_join_all;
 use hdrhistogram::Histogram;
 use indicatif::ProgressBar;
 use log::{debug, info};
-use tokio::task;
+use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 use std::fmt::{Display, Formatter};
@@ -247,6 +247,8 @@ impl Benchmark {
 					)
 					.await?;
 				let (with_index, index_remove, indexed_write_results) = if index_build.is_some() {
+					// Compact the datastore so the indexed-scan phases benchmark a compacted index.
+					self.maybe_compact_datastore::<C, E>(&engine).await?;
 					// Same query shape using the new index
 					let with_index = self
 						.run_operation::<C, D>(
@@ -500,8 +502,6 @@ impl Benchmark {
 		}
 		let progress =
 			self.bench_ui.progress_bar(samples as u64, &progress_short_label(&operation));
-		// Get the total concurrent futures
-		let total = (self.clients * self.threads) as usize;
 		// Whether we have experienced an error
 		let error = Arc::new(AtomicBool::new(false));
 		// Wether the test should be skipped
@@ -510,8 +510,8 @@ impl Benchmark {
 		let current = Arc::new(AtomicU32::new(0));
 		// The total records processed so far
 		let complete = Arc::new(AtomicU32::new(0));
-		// Store the futures in a vector
-		let mut futures = Vec::with_capacity(total);
+		// Store the worker tasks in a join set so failures can stop the operation promptly.
+		let mut tasks = JoinSet::new();
 		// Measure the starting time
 		let metric = OperationMetric::new(self.pid, samples);
 		// Loop over the clients
@@ -527,7 +527,7 @@ impl Benchmark {
 				let vp = vp.clone();
 				let operation = operation.clone();
 				let operation_timeout = self.operation_timeout;
-				futures.push(task::spawn(async move {
+				tasks.spawn(async move {
 					match Self::operation_loop::<C, D>(
 						client,
 						samples,
@@ -551,32 +551,42 @@ impl Benchmark {
 						}
 						Ok(h) => Ok(Some(h)),
 					}
-				}));
+				});
 			}
 		}
-		// Wait for all the threads to complete
+		// Wait for the threads to complete, aborting the remaining tasks on the first failure.
 		let mut global_histogram = Histogram::new(3)?;
-		let join = try_join_all(futures).await;
+		while let Some(result) = tasks.join_next().await {
+			match result {
+				Ok(Ok(Some(histogram))) => {
+					global_histogram.add(histogram)?;
+				}
+				Ok(Ok(None)) => {}
+				Ok(Err(e)) => {
+					error.store(true, Ordering::Relaxed);
+					tasks.abort_all();
+					while tasks.join_next().await.is_some() {}
+					if let Some(ref pb) = progress {
+						pb.finish_and_clear();
+					}
+					return Err(e).with_context(|| format!("{operation} worker failed"));
+				}
+				Err(e) => {
+					error.store(true, Ordering::Relaxed);
+					tasks.abort_all();
+					while tasks.join_next().await.is_some() {}
+					if let Some(ref pb) = progress {
+						pb.finish_and_clear();
+					}
+					return Err(e).with_context(|| format!("{operation} task failed"));
+				}
+			}
+		}
 		// Finish the progress bar at 100% before tearing it down
 		if let Some(ref pb) = progress {
 			pb.set_position(samples as u64);
 			pb.finish_and_clear();
 		}
-		match join {
-			Ok(results) => {
-				// Merge per-worker HDR histograms into one distribution for this phase
-				for res in results {
-					if let Some(histogram) = res? {
-						global_histogram.add(histogram)?;
-					}
-				}
-			}
-			Err(e) => {
-				// Join error (e.g. worker panic): surface after marking failure
-				error.store(true, Ordering::Relaxed);
-				Err(e)?;
-			}
-		};
 		if error.load(Ordering::Relaxed) {
 			bail!("Task failure");
 		}
@@ -638,7 +648,7 @@ impl Benchmark {
 			// (e.g. a WebSocket reply that never lands because the
 			// connection was torn down without completing the
 			// matching oneshot) returns an error here instead of
-			// parking the worker task forever; `try_join_all` then
+			// parking the worker task forever; the operation `JoinSet` then
 			// short-circuits with the operation name in the error
 			// chain rather than hanging in `block_on`.
 			let time = Instant::now();
