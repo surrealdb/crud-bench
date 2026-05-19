@@ -11,6 +11,7 @@ use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
+use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::cmp::max;
 use std::hint::black_box;
@@ -45,6 +46,15 @@ fn sqlite_cell_to_bench(columns: &Columns, key: &str, value: Value) -> BenchValu
 			Ok(d) => BenchValue::Decimal(d),
 			Err(_) => BenchValue::String(s),
 		},
+		// JSON columns are stored as TEXT; parse back into structured [`BenchValue`]
+		// so subsequent writes don't re-escape the raw JSON string (which would grow
+		// the column on every read/write cycle and eventually trip `SQLITE_TOOBIG`).
+		(Some(ColumnType::Object), Value::Text(s)) | (Some(ColumnType::Array), Value::Text(s)) => {
+			match serde_json::from_str::<JsonValue>(&s) {
+				Ok(j) => BenchValue::from(j),
+				Err(_) => BenchValue::String(s),
+			}
+		}
 		(_, Value::Null) => BenchValue::Null,
 		(_, Value::Integer(int)) => BenchValue::Int(int),
 		(_, Value::Real(float)) => BenchValue::Float(float),
