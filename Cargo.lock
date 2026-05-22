@@ -42,21 +42,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "affinitypool"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1246999cbde492ecd2cf27c5b43bd46ca6cbd35f343f65a8a24d0e3d75ff255"
-dependencies = [
- "arc-swap",
- "crossbeam",
- "libc",
- "num_cpus",
- "parking_lot",
- "thiserror 2.0.18",
- "winapi",
-]
-
-[[package]]
 name = "ahash"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1296,7 +1281,7 @@ dependencies = [
 name = "crud-bench"
 version = "0.1.0"
 dependencies = [
- "affinitypool 0.4.0",
+ "affinitypool",
  "anyhow",
  "arangors",
  "bincode 2.0.1",
@@ -1334,7 +1319,7 @@ dependencies = [
  "surrealdb",
  "surrealdb-rocksdb",
  "surrealkv",
- "surrealmx 0.18.0",
+ "surrealmx",
  "sysinfo 0.37.2",
  "tokio",
  "tokio-postgres",
@@ -1731,64 +1716,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "diskann"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14f755600588b562720091e462e48440ea32bfe519465470765533bc86c05f39"
-dependencies = [
- "anyhow",
- "bytemuck",
- "diskann-utils",
- "diskann-vector",
- "diskann-wide",
- "futures-util",
- "half",
- "hashbrown 0.16.1",
- "num-traits",
- "rand 0.9.4",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
-name = "diskann-utils"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ee26b0559c0b249fb5e26859c7b5607886c2bd0055def1b102e8b912830fba8"
-dependencies = [
- "bytemuck",
- "cfg-if",
- "diskann-vector",
- "diskann-wide",
- "half",
- "rand 0.9.4",
- "rand_distr",
- "rayon",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "diskann-vector"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f029366de6314c9e8a294012b0d8f53986c7c8a63a9e09fc18ca39a42ac38a6f"
-dependencies = [
- "cfg-if",
- "diskann-wide",
- "half",
-]
-
-[[package]]
-name = "diskann-wide"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ae2fe23f8f0fecc81b561a4ff06f7da6fc0e5da355d41b8abcd440ed6f41a0f"
-dependencies = [
- "cfg-if",
- "half",
-]
-
-[[package]]
 name = "displaydoc"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2131,19 +2058,6 @@ name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
-
-[[package]]
-name = "ferntree"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1c631d458d3a990f4281cbf6e3d92f7b47ff3935e03841a62aa1100085f11f4"
-dependencies = [
- "bytes",
- "crossbeam-epoch",
- "parking_lot",
- "parking_lot_core",
- "thiserror 2.0.18",
-]
 
 [[package]]
 name = "ff"
@@ -2652,6 +2566,25 @@ dependencies = [
 
 [[package]]
 name = "geo"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fc1a1678e54befc9b4bcab6cd43b8e7f834ae8ea121118b0fd8c42747675b4a"
+dependencies = [
+ "earcutr",
+ "float_next_after",
+ "geo-types",
+ "geographiclib-rs",
+ "i_overlay",
+ "log",
+ "num-traits",
+ "robust",
+ "rstar 0.12.2",
+ "serde",
+ "spade",
+]
+
+[[package]]
+name = "geo"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3901269ec6d4f6068d3f09e5f02f995bd076398dcd1dfec407cd230b02d11b"
@@ -2804,12 +2737,8 @@ version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
 dependencies = [
- "bytemuck",
  "cfg-if",
  "crunchy",
- "num-traits",
- "rand 0.9.4",
- "rand_distr",
  "zerocopy",
 ]
 
@@ -5734,16 +5663,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
-name = "rand_distr"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
-dependencies = [
- "num-traits",
- "rand 0.9.4",
-]
-
-[[package]]
 name = "rand_pcg"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5988,13 +5907,13 @@ checksum = "4389f1d5789befaf6029ebd9f7dac4af7f7e3d61b69d4f30e2ac02b57e7712b0"
 
 [[package]]
 name = "revision"
-version = "0.23.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65f9ed06d35b440507177492b41a7edc82e60eb03175c84296d9f4595280ae9e"
+checksum = "3b66f44139d1fe8e1b6c21bf1a855f12df38517aab94e21cea2a077e9753f216"
 dependencies = [
  "bytes",
  "chrono",
- "geo",
+ "geo 0.31.0",
  "regex",
  "revision-derive",
  "roaring",
@@ -6004,9 +5923,9 @@ dependencies = [
 
 [[package]]
 name = "revision-derive"
-version = "0.23.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdbf03d5e019736198cac5417fff65a67f6ed46726db4c78e70468f2f4ecd052"
+checksum = "696cbf6f9d0bdeb7d75ef3a037c8295ea9fb665c89c6b70c23022f5918713353"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7145,7 +7064,8 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surrealdb"
-version = "3.1.0-beta"
+version = "3.1.0-alpha"
+source = "git+https://github.com/surrealdb/surrealdb?branch=main#a97d3af85d79aa7101238bbe389d211284e7cd98"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -7180,25 +7100,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "surrealdb-collections"
-version = "3.1.0-beta"
-dependencies = [
- "revision",
- "storekey",
-]
-
-[[package]]
 name = "surrealdb-core"
-version = "3.1.0-beta"
+version = "3.1.0-alpha"
+source = "git+https://github.com/surrealdb/surrealdb?branch=main#a97d3af85d79aa7101238bbe389d211284e7cd98"
 dependencies = [
  "addr",
- "affinitypool 0.5.0",
+ "affinitypool",
  "ahash 0.8.12",
  "ammonia",
  "anyhow",
  "argon2",
  "async-channel",
  "async-stream",
+ "async-trait",
  "base64 0.22.1",
  "bcrypt",
  "blake3",
@@ -7207,19 +7121,15 @@ dependencies = [
  "ciborium",
  "dashmap",
  "deunicode",
- "diskann",
- "diskann-utils",
- "diskann-vector",
  "dmp",
  "ext-sort",
  "fastnum",
  "fst",
  "futures",
  "fuzzy-matcher",
- "geo",
+ "geo 0.32.0",
  "geo-types",
  "getrandom 0.3.4",
- "half",
  "headers",
  "hex",
  "http",
@@ -7228,7 +7138,6 @@ dependencies = [
  "jsonwebtoken",
  "lexicmp",
  "md-5 0.10.6",
- "memchr",
  "mime",
  "ndarray",
  "ndarray-stats",
@@ -7242,8 +7151,7 @@ dependencies = [
  "pin-project-lite",
  "quick_cache",
  "radix_trie",
- "rand 0.9.4",
- "rand_core 0.6.4",
+ "rand 0.8.6",
  "rayon",
  "reblessive",
  "regex",
@@ -7261,13 +7169,11 @@ dependencies = [
  "storekey",
  "strsim 0.11.1",
  "subtle",
- "surrealdb-collections",
  "surrealdb-protocol",
  "surrealdb-rocksdb",
- "surrealdb-strand",
  "surrealdb-types",
  "surrealkv",
- "surrealmx 0.21.0",
+ "surrealmx",
  "sysinfo 0.37.2",
  "tempfile",
  "thiserror 2.0.18",
@@ -7311,7 +7217,7 @@ dependencies = [
  "chrono",
  "flatbuffers",
  "futures",
- "geo",
+ "geo 0.32.0",
  "prost 0.14.3",
  "prost-types 0.14.3",
  "rust_decimal",
@@ -7334,17 +7240,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "surrealdb-strand"
-version = "3.1.0-beta"
-dependencies = [
- "revision",
- "serde",
- "storekey",
-]
-
-[[package]]
 name = "surrealdb-types"
-version = "3.1.0-beta"
+version = "3.1.0-alpha"
+source = "git+https://github.com/surrealdb/surrealdb?branch=main#a97d3af85d79aa7101238bbe389d211284e7cd98"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -7352,11 +7250,11 @@ dependencies = [
  "castaway",
  "chrono",
  "flatbuffers",
- "geo",
+ "geo 0.32.0",
  "hex",
  "http",
  "papaya",
- "rand 0.9.4",
+ "rand 0.8.6",
  "regex",
  "reqwest 0.13.2",
  "rstest",
@@ -7374,7 +7272,8 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-types-derive"
-version = "3.1.0-beta"
+version = "3.1.0-alpha"
+source = "git+https://github.com/surrealdb/surrealdb?branch=main#a97d3af85d79aa7101238bbe389d211284e7cd98"
 dependencies = [
  "heck 0.4.1",
  "proc-macro2",
@@ -7423,29 +7322,6 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-queue",
  "crossbeam-skiplist",
- "lz4",
- "papaya",
- "parking_lot",
- "serde",
- "smallvec",
- "thiserror 2.0.18",
- "tracing",
- "web-time",
-]
-
-[[package]]
-name = "surrealmx"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b13327a21d61feb345e74f2cab34c911605d9e3459c79800800843bf3c6b5d4d"
-dependencies = [
- "arc-swap",
- "bincode 2.0.1",
- "bytes",
- "crossbeam-deque",
- "crossbeam-queue",
- "crossbeam-skiplist",
- "ferntree",
  "lz4",
  "papaya",
  "parking_lot",
