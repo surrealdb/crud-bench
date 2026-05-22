@@ -169,7 +169,9 @@ impl BenchmarkClient for MysqlClient {
 					ColumnType::Decimal => format!("{n} DECIMAL(38, 10) NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} VARBINARY(8192) NOT NULL"),
-					ColumnType::FloatVector(_) => format!("{n} LONGBLOB NOT NULL"),
+					// Match MariaDB: VARBINARY keeps small embeddings in-row
+					// under DYNAMIC format. LONGBLOB always lives off-page.
+					ColumnType::FloatVector(_) => format!("{n} VARBINARY(8192) NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()

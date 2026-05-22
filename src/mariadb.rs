@@ -169,7 +169,13 @@ impl BenchmarkClient for MariadbClient {
 					ColumnType::Decimal => format!("{n} DECIMAL(38, 10) NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} VARBINARY(8192) NOT NULL"),
-					ColumnType::FloatVector(_) => format!("{n} LONGBLOB NOT NULL"),
+					// VARBINARY rather than LONGBLOB: small embeddings (up to
+					// 2048-dim at 4 bytes/float) stay in-row under InnoDB's
+					// DYNAMIC row format, avoiding off-page I/O thrash during
+					// the high-concurrency UPDATE workloads. LONGBLOB always
+					// stores off-page, which crashed the combined-workload
+					// scan leg on MariaDB under default `binlog-row-image=FULL`.
+					ColumnType::FloatVector(_) => format!("{n} VARBINARY(8192) NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
