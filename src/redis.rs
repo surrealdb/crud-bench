@@ -171,7 +171,12 @@ impl BenchmarkClient for RedisClient {
 		dim: usize,
 		name: &str,
 	) -> Result<()> {
-		let metric = redis_distance_metric(vq.distance);
+		let Some(metric) = redis_distance_metric(vq.distance) else {
+			// Redis Stack lacks a native L1/Manhattan metric — refuse to
+			// silently substitute another metric (which would produce
+			// incorrect KNN results) and let the framework skip the run.
+			bail!(NOT_SUPPORTED_ERROR);
+		};
 		let (algo, params): (&'static str, String) = match vq.index_strategy {
 			VectorIndexStrategy::Bruteforce => {
 				("FLAT", format!("6 TYPE FLOAT32 DIM {dim} DISTANCE_METRIC {metric}"))
@@ -342,13 +347,18 @@ impl BenchmarkClient for RedisClient {
 }
 
 /// Map the benchmark's distance enum to Redis Stack's distance metric keyword.
-fn redis_distance_metric(d: VectorDistance) -> &'static str {
+///
+/// Returns `None` for metrics Redis Stack does not implement natively — the
+/// caller is responsible for surfacing this as `NOT_SUPPORTED_ERROR` rather
+/// than silently substituting another metric (which would corrupt the
+/// reported KNN results).
+fn redis_distance_metric(d: VectorDistance) -> Option<&'static str> {
 	match d {
-		VectorDistance::Cosine => "COSINE",
-		VectorDistance::Euclidean => "L2",
-		VectorDistance::InnerProduct => "IP",
-		// Redis Stack has no native L1; mark as NotSupported by the caller.
-		VectorDistance::Manhattan => "IP",
+		VectorDistance::Cosine => Some("COSINE"),
+		VectorDistance::Euclidean => Some("L2"),
+		VectorDistance::InnerProduct => Some("IP"),
+		// Redis Stack has no native L1 / Manhattan.
+		VectorDistance::Manhattan => None,
 	}
 }
 

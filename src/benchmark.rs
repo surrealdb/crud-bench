@@ -57,13 +57,18 @@ impl VectorQuerySet {
 	}
 }
 
-/// Pull a `FloatVector` out of a row's named column, accepting either the
-/// packed [`BenchValue::FloatVector`] or the generic `Array<Float>` shape some
-/// engines (notably SurrealDB) return.
+/// Pull a `FloatVector` out of a row's named column, accepting the packed
+/// [`BenchValue::FloatVector`], a generic `Array<Float>` (SurrealDB), or a
+/// `Bytes` payload of packed little-endian f32s (SQL backends that fall back
+/// to BYTEA/BLOB columns for vectors).
+///
+/// Any other shape — including a missing field — bails with
+/// [`NOT_SUPPORTED_ERROR`] so the scan skips cleanly on backends that don't
+/// round-trip vector payloads in any of these forms.
 fn extract_vector_field(row: &BenchValue, field: &str) -> Result<Vec<f32>> {
-	let v = row
-		.get_field(field)
-		.ok_or_else(|| anyhow::anyhow!("holdout row missing field `{field}`"))?;
+	let Some(v) = row.get_field(field) else {
+		bail!(NOT_SUPPORTED_ERROR);
+	};
 	match v {
 		BenchValue::FloatVector(v) => Ok(v.clone()),
 		BenchValue::Array(a) => {
@@ -76,12 +81,13 @@ fn extract_vector_field(row: &BenchValue, field: &str) -> Result<Vec<f32>> {
 					BenchValue::Decimal(d) => {
 						out.push(rust_decimal::prelude::ToPrimitive::to_f32(d).unwrap_or(0.0))
 					}
-					_ => bail!("holdout vector element is not numeric: {elem:?}"),
+					_ => bail!(NOT_SUPPORTED_ERROR),
 				}
 			}
 			Ok(out)
 		}
-		_ => bail!("holdout field `{field}` is not a vector"),
+		BenchValue::Bytes(b) if b.len() % 4 == 0 => Ok(bytemuck::cast_slice::<u8, f32>(b).to_vec()),
+		_ => bail!(NOT_SUPPORTED_ERROR),
 	}
 }
 
@@ -260,9 +266,13 @@ impl Benchmark {
 			let w = write_specs.len();
 			let index_spec = scan.with_index.as_ref().filter(|i| !i.skip);
 
-			// Vector-search scans take a dedicated path: build a holdout query set
-			// from the inserted records, then dispatch BuildVectorIndex (when an
-			// index is needed) → VectorScan → RemoveIndex.
+			// Vector-search scans take a dedicated path. Order matters:
+			//   1. Build the holdout query set (skipped if the engine can't
+			//      surface a readable vector — same skip semantics as fulltext).
+			//   2. Build the vector index when the strategy needs one
+			//      (HNSW/DiskANN). Bruteforce skips this step.
+			//   3. Run the timed VectorScan.
+			//   4. Remove the index — strictly after the scan, never before.
 			let result = if let Some(vq) = scan.vector_query.clone() {
 				let dim = vp
 					.columns()
@@ -279,83 +289,110 @@ impl Benchmark {
 							vq.field
 						)
 					})?;
-				let query_set = self
-					.build_vector_query_set::<C, E>(&engine, &scan, &vq, kp, self.samples)
-					.await?;
-				let mut runs = Vec::with_capacity(1);
 				let needs_index = matches!(
 					vq.index_strategy,
 					VectorIndexStrategy::Hnsw { .. } | VectorIndexStrategy::DiskAnn { .. }
 				);
-				let (vec_index_build, vec_index_remove) = if needs_index {
-					let idx_spec = scan.with_index.clone().ok_or_else(|| {
-						anyhow::anyhow!(
-							"scan `{}`: hnsw/diskann needs `with_index` (validated upstream)",
-							name
-						)
-					})?;
-					let built = self
-						.run_operation::<C, D>(
-							&clients[..1],
-							BenchmarkOperation::BuildVectorIndex(
-								idx_spec.clone(),
-								vq.clone(),
-								dim,
-								id.clone(),
-							),
-							kp,
-							vp.clone(),
-							1,
-						)
-						.await?;
-					if built.is_some() {
-						self.maybe_compact_datastore::<C, E>(&engine).await?;
+				let query_set = self
+					.build_vector_query_set::<C, E>(&engine, &scan, &vq, kp, self.samples)
+					.await?;
+				let mut runs = Vec::with_capacity(1);
+				match query_set {
+					None => {
+						// Engine doesn't surface vector reads — skip the whole scan.
+						runs.push(ScanRun {
+							workload: ScanWorkload::Read,
+							indexed: needs_index,
+							result: None,
+						});
+						ScanResult {
+							id: id.clone(),
+							name,
+							samples,
+							index_build: None,
+							index_remove: None,
+							runs,
+						}
 					}
-					let removed = if built.is_some() {
-						self.run_operation::<C, D>(
-							&clients[..1],
-							BenchmarkOperation::RemoveIndex(id.clone()),
-							kp,
-							vp.clone(),
-							1,
-						)
-						.await?
-					} else {
-						None
-					};
-					(built, removed)
-				} else {
-					(None, None)
-				};
-				let ctx = if needs_index {
-					ScanContext::WithIndex
-				} else {
-					ScanContext::WithoutIndex
-				};
-				let scan_result = if !needs_index || vec_index_build.is_some() {
-					self.run_operation::<C, D>(
-						&clients,
-						BenchmarkOperation::VectorScan(scan.clone(), ctx, query_set.clone()),
-						kp,
-						vp.clone(),
-						samples,
-					)
-					.await?
-				} else {
-					None
-				};
-				runs.push(ScanRun {
-					workload: ScanWorkload::Read,
-					indexed: needs_index,
-					result: scan_result,
-				});
-				ScanResult {
-					id: id.clone(),
-					name,
-					samples,
-					index_build: vec_index_build,
-					index_remove: vec_index_remove,
-					runs,
+					Some(query_set) => {
+						// Build index first (HNSW/DiskANN), then scan, then remove.
+						let vec_index_build = if needs_index {
+							let idx_spec = scan.with_index.clone().ok_or_else(|| {
+								anyhow::anyhow!(
+									"scan `{}`: hnsw/diskann needs `with_index` (validated upstream)",
+									name
+								)
+							})?;
+							let built = self
+								.run_operation::<C, D>(
+									&clients[..1],
+									BenchmarkOperation::BuildVectorIndex(
+										idx_spec.clone(),
+										vq.clone(),
+										dim,
+										id.clone(),
+									),
+									kp,
+									vp.clone(),
+									1,
+								)
+								.await?;
+							if built.is_some() {
+								self.maybe_compact_datastore::<C, E>(&engine).await?;
+							}
+							built
+						} else {
+							None
+						};
+						let ctx = if needs_index {
+							ScanContext::WithIndex
+						} else {
+							ScanContext::WithoutIndex
+						};
+						let scan_result = if !needs_index || vec_index_build.is_some() {
+							self.run_operation::<C, D>(
+								&clients,
+								BenchmarkOperation::VectorScan(
+									scan.clone(),
+									ctx,
+									query_set.clone(),
+								),
+								kp,
+								vp.clone(),
+								samples,
+							)
+							.await?
+						} else {
+							None
+						};
+						// Drop the index *after* the scan finishes — strictly
+						// in this order so the timed scan sees the index.
+						let vec_index_remove = if needs_index && vec_index_build.is_some() {
+							self.run_operation::<C, D>(
+								&clients[..1],
+								BenchmarkOperation::RemoveIndex(id.clone()),
+								kp,
+								vp.clone(),
+								1,
+							)
+							.await?
+						} else {
+							None
+						};
+						runs.push(ScanRun {
+							workload: ScanWorkload::Read,
+							indexed: needs_index,
+							result: scan_result,
+						});
+						ScanResult {
+							id: id.clone(),
+							name,
+							samples,
+							index_build: vec_index_build,
+							index_remove: vec_index_remove,
+							runs,
+						}
+					}
 				}
 			} else if let Some(index_spec) = index_spec {
 				// Indexed scan: heap legs → build index → indexed legs → drop index
@@ -605,14 +642,18 @@ impl Benchmark {
 	/// Reads N rows (id picked deterministically from `seed`) and extracts the
 	/// `field` column. The read cost is paid once here, off the timed window;
 	/// the resulting `Vec<f32>` queries are reused across all scan samples.
+	///
+	/// Returns `Ok(None)` when the engine cannot surface vector reads (the
+	/// holdout extraction hits [`NOT_SUPPORTED_ERROR`]) so the caller can skip
+	/// the entire vector scan instead of aborting the benchmark.
 	async fn build_vector_query_set<C, E>(
 		&self,
 		engine: &E,
-		scan: &Scan,
+		_scan: &Scan,
 		vq: &VectorQuerySpec,
 		mut kp: KeyProvider,
 		samples: u32,
-	) -> Result<VectorQuerySet>
+	) -> Result<Option<VectorQuerySet>>
 	where
 		C: BenchmarkClient + Send + Sync,
 		E: BenchmarkEngine<C> + Send + Sync,
@@ -627,13 +668,15 @@ impl Benchmark {
 		for n in ids {
 			let row = client.read(n, &mut kp).await?;
 			let bv: BenchValue = row.into();
-			let v = extract_vector_field(&bv, &vq.field)
-				.with_context(|| format!("scan `{}`: building holdout query set", scan.name))?;
-			queries.push(v);
+			match extract_vector_field(&bv, &vq.field) {
+				Ok(v) => queries.push(v),
+				Err(e) if e.to_string().contains(NOT_SUPPORTED_ERROR) => return Ok(None),
+				Err(e) => return Err(e),
+			}
 		}
-		Ok(VectorQuerySet {
+		Ok(Some(VectorQuerySet {
 			queries: Arc::new(queries),
-		})
+		}))
 	}
 
 	/// Polls until [`BenchmarkEngine::create_client`] succeeds or [`TIMEOUT`] elapses.
