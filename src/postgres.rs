@@ -90,7 +90,12 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	};
 	// Return Docker parameters
 	DockerParams {
-		image: "postgres",
+		// `pgvector/pgvector` is the upstream pgvector image — same upstream
+		// Postgres binaries as `postgres:*` with the `vector` extension
+		// pre-installed. Required by the vector-search benchmark; harmless
+		// for non-vector workloads (the extension is only created when the
+		// schema declares a `FloatVector` column, see `startup`).
+		image: "pgvector/pgvector:pg17",
 		pre_args:
 			"--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
 				.to_string(),

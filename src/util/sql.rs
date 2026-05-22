@@ -43,6 +43,13 @@ pub(crate) fn bench_to_postgres_param(
 			}
 			Ok(Box::new(pgvector::Vector::from(vec.clone())))
 		}
+		(ColumnType::FloatVector(dim), BenchValue::Bytes(b)) if b.len() == dim * 4 => {
+			// Read-back round-trip: SQL fallbacks store the vector as
+			// `cast_slice::<f32, u8>` bytes; the read path returns it as
+			// `BenchValue::Bytes`. Reconstruct the `pgvector::Vector` so a
+			// mixed read/write workload doesn't fail at the bind step.
+			Ok(Box::new(pgvector::Vector::from(bytemuck::cast_slice::<u8, f32>(b).to_vec())))
+		}
 		(t, _) => Err(anyhow!("column {column_name}: BenchValue does not match column type {t:?}")),
 	}
 }
@@ -90,6 +97,10 @@ pub(crate) fn bench_to_sqlite_param(
 		(ColumnType::FloatVector(_), BenchValue::FloatVector(v)) => {
 			Ok(Box::new(bytemuck::cast_slice::<f32, u8>(v).to_vec()))
 		}
+		// Read-back round-trip on SQL fallbacks: the vector lives as a BLOB
+		// internally; mixed read/write workloads re-bind the read-back bytes
+		// directly without an extra conversion step.
+		(ColumnType::FloatVector(_), BenchValue::Bytes(b)) => Ok(Box::new(b.clone())),
 		(t, _) => Err(anyhow!("BenchValue does not match column type {t:?}")),
 	}
 }
@@ -122,6 +133,9 @@ pub(crate) fn bench_to_mysql_value(
 		(ColumnType::FloatVector(_), BenchValue::FloatVector(v)) => {
 			Ok(MyValue::Bytes(bytemuck::cast_slice::<f32, u8>(v).to_vec()))
 		}
+		// Read-back round-trip for mixed read/write workloads (see comment in
+		// `bench_to_sqlite_param`).
+		(ColumnType::FloatVector(_), BenchValue::Bytes(b)) => Ok(MyValue::Bytes(b.clone())),
 		(t, _) => bail!("BenchValue does not match column type {t:?}"),
 	}
 }

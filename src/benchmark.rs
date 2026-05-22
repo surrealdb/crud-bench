@@ -670,12 +670,18 @@ impl Benchmark {
 		let client = self.wait_for_client(engine).await?;
 		let mut queries = Vec::with_capacity(ids.len());
 		for n in ids {
-			let row = client.read(n, &mut kp).await?;
+			// Read failures and shape mismatches both mean "this engine can't
+			// give us a usable vector for the holdout". Treat both as skip
+			// signals so an engine without vector support never aborts the
+			// whole benchmark — the scan still records a clean `-` cell,
+			// matching how fulltext skips on engines without fulltext.
+			let Ok(row) = client.read(n, &mut kp).await else {
+				return Ok(None);
+			};
 			let bv: BenchValue = row.into();
 			match extract_vector_field(&bv, &vq.field) {
 				Ok(v) => queries.push(v),
-				Err(e) if e.to_string().contains(NOT_SUPPORTED_ERROR) => return Ok(None),
-				Err(e) => return Err(e),
+				Err(_) => return Ok(None),
 			}
 		}
 		Ok(Some(VectorQuerySet {

@@ -184,6 +184,8 @@ fn bench_to_cql_value(column_type: &ColumnType, v: &BenchValue) -> Result<CqlVal
 		(ColumnType::FloatVector(_), BenchValue::FloatVector(v)) => {
 			Ok(CqlValue::Blob(bytemuck::cast_slice::<f32, u8>(v).to_vec()))
 		}
+		// Read-back round-trip on the BLOB fallback (mixed read/write workloads).
+		(ColumnType::FloatVector(_), BenchValue::Bytes(b)) => Ok(CqlValue::Blob(b.clone())),
 		(t, _) => bail!("BenchValue does not match column type {t:?}"),
 	}
 }
