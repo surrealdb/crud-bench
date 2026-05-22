@@ -334,11 +334,29 @@ impl MysqlClient {
 				consts::ColumnType::MYSQL_TYPE_VARCHAR
 				| consts::ColumnType::MYSQL_TYPE_VAR_STRING
 				| consts::ColumnType::MYSQL_TYPE_STRING => {
-					let v: Option<String> = row.take(i);
-					match (v, column_type) {
-						(Some(s), Some(ColumnType::Uuid)) => BenchValue::Uuid(parse_uuid(&s)?),
-						(Some(s), _) => BenchValue::String(s),
-						(None, _) => BenchValue::Null,
+					// `VARBINARY(N)` shows up on the wire as `MYSQL_TYPE_VAR_STRING`
+					// (same protocol type as `VARCHAR(N)`); decoding the raw f32
+					// bytes through `Option<String>` would panic on the first
+					// non-UTF8 byte. When the schema column is binary-typed
+					// (`Bytes` or `FloatVector`), read it as `Vec<u8>` instead.
+					match column_type {
+						Some(ColumnType::Bytes) | Some(ColumnType::FloatVector(_)) => {
+							let v: Option<Vec<u8>> = row.take(i);
+							match v {
+								Some(b) => BenchValue::Bytes(b),
+								None => BenchValue::Null,
+							}
+						}
+						_ => {
+							let v: Option<String> = row.take(i);
+							match (v, column_type) {
+								(Some(s), Some(ColumnType::Uuid)) => {
+									BenchValue::Uuid(parse_uuid(&s)?)
+								}
+								(Some(s), _) => BenchValue::String(s),
+								(None, _) => BenchValue::Null,
+							}
+						}
 					}
 				}
 				consts::ColumnType::MYSQL_TYPE_LONG => {

@@ -177,10 +177,25 @@ impl BenchmarkClient for RedisClient {
 			// incorrect KNN results) and let the framework skip the run.
 			bail!(NOT_SUPPORTED_ERROR);
 		};
-		let (algo, params): (&'static str, String) = match vq.index_strategy {
-			VectorIndexStrategy::Bruteforce => {
-				("FLAT", format!("6 TYPE FLOAT32 DIM {dim} DISTANCE_METRIC {metric}"))
-			}
+		// Build the parameter list for the `VECTOR <algo> <count> …`
+		// portion of `FT.CREATE`. Each token must be a separate Redis
+		// command argument — passing the whole string as one arg sends
+		// it as a single token and the server rejects it with
+		// "Bad: arguments for vector similarity number of parameters".
+		let dim_s = dim.to_string();
+		let (algo, vector_params): (&'static str, Vec<String>) = match vq.index_strategy {
+			VectorIndexStrategy::Bruteforce => (
+				"FLAT",
+				vec![
+					"6".into(),
+					"TYPE".into(),
+					"FLOAT32".into(),
+					"DIM".into(),
+					dim_s,
+					"DISTANCE_METRIC".into(),
+					metric.into(),
+				],
+			),
 			VectorIndexStrategy::Hnsw {
 				m,
 				ef_construction,
@@ -188,9 +203,21 @@ impl BenchmarkClient for RedisClient {
 				..
 			} => (
 				"HNSW",
-				format!(
-					"12 TYPE FLOAT32 DIM {dim} DISTANCE_METRIC {metric} M {m} EF_CONSTRUCTION {ef_construction} EF_RUNTIME {ef_search}"
-				),
+				vec![
+					"12".into(),
+					"TYPE".into(),
+					"FLOAT32".into(),
+					"DIM".into(),
+					dim_s,
+					"DISTANCE_METRIC".into(),
+					metric.into(),
+					"M".into(),
+					m.to_string(),
+					"EF_CONSTRUCTION".into(),
+					ef_construction.to_string(),
+					"EF_RUNTIME".into(),
+					ef_search.to_string(),
+				],
 			),
 			VectorIndexStrategy::DiskAnn {
 				..
@@ -200,7 +227,8 @@ impl BenchmarkClient for RedisClient {
 		let mut conn = self.conn_record.lock().await;
 		let _: () =
 			redis::cmd("FT.DROPINDEX").arg(name).query_async(&mut *conn).await.unwrap_or(());
-		let _: () = redis::cmd("FT.CREATE")
+		let mut create = redis::cmd("FT.CREATE");
+		create
 			.arg(name)
 			.arg("ON")
 			.arg("HASH")
@@ -210,10 +238,11 @@ impl BenchmarkClient for RedisClient {
 			.arg("SCHEMA")
 			.arg("v")
 			.arg("VECTOR")
-			.arg(algo)
-			.arg(params)
-			.query_async(&mut *conn)
-			.await?;
+			.arg(algo);
+		for p in &vector_params {
+			create.arg(p.as_str());
+		}
+		let _: () = create.query_async(&mut *conn).await?;
 		Ok(())
 	}
 
