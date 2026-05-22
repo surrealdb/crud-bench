@@ -816,59 +816,41 @@ impl SurrealDBClient {
 		Ok(())
 	}
 
-	/// Build a SurrealQL array literal from a slice of f32.
-	fn vector_literal(query: &[f32]) -> String {
-		let mut s = String::with_capacity(query.len() * 6 + 2);
-		s.push('[');
-		for (i, v) in query.iter().enumerate() {
-			if i > 0 {
-				s.push(',');
-			}
-			s.push_str(&format!("{v}"));
-		}
-		s.push(']');
-		s
-	}
-
 	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
 		let vq = scan.vector_query.as_ref().ok_or_else(|| {
 			anyhow::anyhow!("knn_scan called without a vector_query on scan `{}`", scan.name)
 		})?;
 		let field = &vq.field;
 		let k = vq.top_k;
-		let q_lit = Self::vector_literal(query);
 		let sql = match vq.index_strategy {
 			VectorIndexStrategy::Bruteforce => {
 				let func = surreal_distance_function(vq.distance);
 				format!(
-					"SELECT id FROM record ORDER BY vector::distance::{func}({field}, {q_lit}) LIMIT {k}"
+					"SELECT id FROM record ORDER BY vector::distance::{func}({field}, $q) LIMIT {k}"
 				)
 			}
 			VectorIndexStrategy::Hnsw {
 				ef_search,
 				..
 			} => {
-				let dist = surreal_distance_keyword(vq.distance);
-				// SurrealQL HNSW KNN operator form: `<|K,EF|>` does not take a distance arg;
-				// the index's DIST clause is authoritative. Use `<|K,DIST|>` for engines that
-				// allow per-query distance override.
-				format!(
-					"SELECT id FROM record WHERE {field} <|{k},{ef_search}|> {q_lit} -- dist {dist}"
-				)
+				format!("SELECT id FROM record WHERE {field} <|{k},{ef_search}|> $q")
 			}
 			VectorIndexStrategy::DiskAnn {
 				l_search,
 				..
 			} => {
-				let dist = surreal_distance_keyword(vq.distance);
-				format!(
-					"SELECT id FROM record WHERE {field} <|{k},{l_search}|> {q_lit} -- dist {dist}"
-				)
+				format!("SELECT id FROM record WHERE {field} <|{k},{l_search}|> $q")
 			}
 		};
+		// Bind the query vector as a SurrealQL array so the server doesn't
+		// re-parse a multi-KB array literal on every iteration.
+		let q_value = Value::Array(Array::from(
+			query.iter().map(|f| Value::Number(Number::Float(*f as f64))).collect::<Vec<_>>(),
+		));
 		let res: surrealdb::types::Value = self
 			.db
 			.query(&sql)
+			.bind(("q", q_value))
 			.await
 			.map_err(log_sql_err(&sql))?
 			.take(0)

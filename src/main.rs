@@ -8,7 +8,7 @@ use crate::database::Database;
 use crate::keyprovider::KeyProvider;
 use crate::terminal::ColorChoice;
 use crate::valueprovider::ValueProvider;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use clap::{Parser, ValueEnum};
 use docker::Container;
 use serde::{Deserialize, Serialize};
@@ -202,9 +202,6 @@ pub(crate) struct ScanRun {
 	name: String,
 	/// `ID`, `FULL`, or `COUNT`; overrides the parent [`ScanSpec`] `projection` when set.
 	projection: Option<String>,
-	/// Per-run index override (e.g. each algorithm leg of a vector benchmark).
-	#[serde(default)]
-	with_index: Option<Index>,
 	/// Per-run vector-query override (e.g. each algorithm leg with its own strategy).
 	#[serde(default)]
 	vector_query: Option<VectorQuerySpec>,
@@ -307,7 +304,6 @@ impl ScanSpec {
 						bail!("each entry in `runs` must have a non-empty `name`");
 					}
 					let run_projection = run.projection.or_else(|| default_projection.clone());
-					let run_index = run.with_index.or_else(|| with_index.clone());
 					let run_vq = run.vector_query.or_else(|| vector_query.clone());
 					out.push(Scan {
 						id: id.clone(),
@@ -321,7 +317,7 @@ impl ScanSpec {
 						limit,
 						expect,
 						projection: run_projection,
-						with_index: run_index,
+						with_index: with_index.clone(),
 						with_writes: with_writes.clone(),
 						vector_query: run_vq,
 					});
@@ -342,7 +338,8 @@ fn expand_scan_specs(specs: Vec<ScanSpec>) -> Result<Scans> {
 }
 
 /// Every scan with a non-skipped `with_index` must supply a non-empty `id` for datastore index names.
-/// Vector-search scans must also align their algorithm choice with `with_index` presence and use a positive `top_k`.
+/// Vector-search scans use `vector_query.field` to drive both index creation and the KNN query;
+/// `with_index` is reserved for non-vector indexed scans and rejected on vector entries.
 fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 	for scan in scans {
 		if let Some(ref idx) = scan.with_index
@@ -357,35 +354,11 @@ fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 			if vq.field.trim().is_empty() {
 				bail!("scan `{}`: vector_query.field must be non-empty", scan.name);
 			}
-			match vq.index_strategy {
-				VectorIndexStrategy::Bruteforce => {
-					if scan.with_index.as_ref().is_some_and(|i| !i.skip) {
-						bail!(
-							"scan `{}`: bruteforce vector_query must omit `with_index` (it is an indexless scan)",
-							scan.name
-						);
-					}
-				}
-				VectorIndexStrategy::Hnsw {
-					..
-				}
-				| VectorIndexStrategy::DiskAnn {
-					..
-				} => {
-					let idx = scan.with_index.as_ref().ok_or_else(|| {
-						anyhow!(
-							"scan `{}`: hnsw/diskann vector_query requires a `with_index` block naming the vector field",
-							scan.name
-						)
-					})?;
-					if !idx.fields.iter().any(|f| f == &vq.field) {
-						bail!(
-							"scan `{}`: vector_query.field `{}` must appear in with_index.fields",
-							scan.name,
-							vq.field
-						);
-					}
-				}
+			if scan.with_index.is_some() {
+				bail!(
+					"scan `{}`: vector scans must not declare `with_index` — the index (when needed) is derived from `vector_query.field`",
+					scan.name
+				);
 			}
 		}
 	}
@@ -420,6 +393,8 @@ pub(crate) enum VectorDistance {
 
 /// Algorithm choice for a vector-search scan. Carries the algorithm-specific
 /// build/search knobs inline so the config has one place to look for tuning.
+/// All knobs are required — benchmark results without explicit parameters
+/// are unreproducible and impossible to interpret.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub(crate) enum VectorIndexStrategy {
@@ -427,62 +402,29 @@ pub(crate) enum VectorIndexStrategy {
 	Bruteforce,
 	/// Hierarchical Navigable Small World graph.
 	Hnsw {
-		#[serde(default = "default_hnsw_m")]
 		m: u32,
-		#[serde(default = "default_hnsw_efc")]
 		ef_construction: u32,
-		#[serde(default = "default_hnsw_efs")]
 		ef_search: u32,
 	},
 	/// DiskANN (Vamana) graph; engines that have not yet wired it return NotSupported.
 	#[serde(rename = "diskann")]
 	DiskAnn {
-		#[serde(default = "default_diskann_degree")]
 		degree: u32,
-		#[serde(default = "default_diskann_l_build")]
 		l_build: u32,
-		#[serde(default = "default_diskann_alpha")]
 		alpha: f32,
-		#[serde(default = "default_diskann_l_search")]
 		l_search: u32,
 	},
 }
 
-fn default_hnsw_m() -> u32 {
-	16
-}
-fn default_hnsw_efc() -> u32 {
-	200
-}
-fn default_hnsw_efs() -> u32 {
-	64
-}
-fn default_diskann_degree() -> u32 {
-	64
-}
-fn default_diskann_l_build() -> u32 {
-	100
-}
-fn default_diskann_alpha() -> f32 {
-	1.2
-}
-fn default_diskann_l_search() -> u32 {
-	100
-}
-
-/// Where query vectors come from. Only `holdout` (deterministic id sample from
-/// the inserted records) is implemented in v1; the enum keeps the door open for
-/// a synthetic-random variant later.
+/// Query-vector source: a deterministic id sample drawn from the inserted
+/// records. The id range and seed make the same query set reproducible
+/// across runs and engines.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub(crate) enum VectorQuerySource {
-	#[serde(rename = "holdout")]
-	HoldOut {
-		#[serde(default = "default_holdout_count")]
-		count: usize,
-		#[serde(default = "default_holdout_seed")]
-		seed: u64,
-	},
+pub(crate) struct VectorHoldout {
+	#[serde(default = "default_holdout_count")]
+	pub(crate) count: usize,
+	#[serde(default = "default_holdout_seed")]
+	pub(crate) seed: u64,
 }
 
 fn default_holdout_count() -> usize {
@@ -492,9 +434,9 @@ fn default_holdout_seed() -> u64 {
 	0xC0FFEE_u64
 }
 
-impl Default for VectorQuerySource {
+impl Default for VectorHoldout {
 	fn default() -> Self {
-		Self::HoldOut {
+		Self {
 			count: default_holdout_count(),
 			seed: default_holdout_seed(),
 		}
@@ -513,9 +455,9 @@ pub(crate) struct VectorQuerySpec {
 	pub(crate) distance: VectorDistance,
 	/// Algorithm + params for this scan row.
 	pub(crate) index_strategy: VectorIndexStrategy,
-	/// Source of the query vectors at scan time. Defaults to a 1000-id deterministic holdout.
+	/// Holdout sampling for the query set. Defaults to a 1000-id deterministic holdout.
 	#[serde(default)]
-	pub(crate) query_source: VectorQuerySource,
+	pub(crate) holdout: VectorHoldout,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

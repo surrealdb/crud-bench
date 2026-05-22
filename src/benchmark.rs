@@ -18,8 +18,8 @@ use crate::valueprovider::ColumnType;
 use crate::valueprovider::ValueProvider;
 use crate::workloads;
 use crate::{
-	Args, BatchOperation, Batches, Index, Scan, ScanWithWrites, Scans, VectorIndexStrategy,
-	VectorQuerySource, VectorQuerySpec,
+	Args, BatchOperation, Batches, Index, Scan, ScanWithWrites, Scans, VectorHoldout,
+	VectorIndexStrategy, VectorQuerySpec,
 };
 
 use anyhow::{Context, Result, bail};
@@ -269,10 +269,12 @@ impl Benchmark {
 			// Vector-search scans take a dedicated path. Order matters:
 			//   1. Build the holdout query set (skipped if the engine can't
 			//      surface a readable vector — same skip semantics as fulltext).
-			//   2. Build the vector index when the strategy needs one
-			//      (HNSW/DiskANN). Bruteforce skips this step.
+			//   2. Always invoke BuildVectorIndex. Engines decide whether the
+			//      chosen strategy needs an actual index (Redis Bruteforce
+			//      builds a FLAT FT index; Surreal/Postgres Bruteforce return
+			//      NotSupported and the scan still runs without one).
 			//   3. Run the timed VectorScan.
-			//   4. Remove the index — strictly after the scan, never before.
+			//   4. RemoveIndex iff Build succeeded — strictly after the scan.
 			let result = if let Some(vq) = scan.vector_query.clone() {
 				let dim = vp
 					.columns()
@@ -289,7 +291,7 @@ impl Benchmark {
 							vq.field
 						)
 					})?;
-				let needs_index = matches!(
+				let strategy_needs_index = matches!(
 					vq.index_strategy,
 					VectorIndexStrategy::Hnsw { .. } | VectorIndexStrategy::DiskAnn { .. }
 				);
@@ -302,7 +304,7 @@ impl Benchmark {
 						// Engine doesn't surface vector reads — skip the whole scan.
 						runs.push(ScanRun {
 							workload: ScanWorkload::Read,
-							indexed: needs_index,
+							indexed: strategy_needs_index,
 							result: None,
 						});
 						ScanResult {
@@ -315,41 +317,43 @@ impl Benchmark {
 						}
 					}
 					Some(query_set) => {
-						// Build index first (HNSW/DiskANN), then scan, then remove.
-						let vec_index_build = if needs_index {
-							let idx_spec = scan.with_index.clone().ok_or_else(|| {
-								anyhow::anyhow!(
-									"scan `{}`: hnsw/diskann needs `with_index` (validated upstream)",
-									name
-								)
-							})?;
-							let built = self
-								.run_operation::<C, D>(
-									&clients[..1],
-									BenchmarkOperation::BuildVectorIndex(
-										idx_spec.clone(),
-										vq.clone(),
-										dim,
-										id.clone(),
-									),
-									kp,
-									vp.clone(),
-									1,
-								)
-								.await?;
-							if built.is_some() {
-								self.maybe_compact_datastore::<C, E>(&engine).await?;
-							}
-							built
-						} else {
-							None
+						// Derive the index spec from `vector_query.field` so
+						// the user only declares the field once. Engines that
+						// don't need an index for the chosen strategy ignore
+						// `idx_spec` and return NotSupported from build.
+						let idx_spec = Index {
+							skip: false,
+							fields: vec![vq.field.clone()],
+							unique: None,
+							index_type: None,
 						};
-						let ctx = if needs_index {
+						let vec_index_build = self
+							.run_operation::<C, D>(
+								&clients[..1],
+								BenchmarkOperation::BuildVectorIndex(
+									idx_spec,
+									vq.clone(),
+									dim,
+									id.clone(),
+								),
+								kp,
+								vp.clone(),
+								1,
+							)
+							.await?;
+						if vec_index_build.is_some() {
+							self.maybe_compact_datastore::<C, E>(&engine).await?;
+						}
+						// Run the scan if either the strategy doesn't require
+						// an index (so a missing build is fine) or build
+						// actually produced an index. HNSW/DiskANN with no
+						// index = skip.
+						let ctx = if strategy_needs_index {
 							ScanContext::WithIndex
 						} else {
 							ScanContext::WithoutIndex
 						};
-						let scan_result = if !needs_index || vec_index_build.is_some() {
+						let scan_result = if !strategy_needs_index || vec_index_build.is_some() {
 							self.run_operation::<C, D>(
 								&clients,
 								BenchmarkOperation::VectorScan(
@@ -367,7 +371,7 @@ impl Benchmark {
 						};
 						// Drop the index *after* the scan finishes — strictly
 						// in this order so the timed scan sees the index.
-						let vec_index_remove = if needs_index && vec_index_build.is_some() {
+						let vec_index_remove = if vec_index_build.is_some() {
 							self.run_operation::<C, D>(
 								&clients[..1],
 								BenchmarkOperation::RemoveIndex(id.clone()),
@@ -381,7 +385,7 @@ impl Benchmark {
 						};
 						runs.push(ScanRun {
 							workload: ScanWorkload::Read,
-							indexed: needs_index,
+							indexed: strategy_needs_index,
 							result: scan_result,
 						});
 						ScanResult {
@@ -658,10 +662,10 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		E: BenchmarkEngine<C> + Send + Sync,
 	{
-		let VectorQuerySource::HoldOut {
+		let VectorHoldout {
 			count,
 			seed,
-		} = vq.query_source.clone();
+		} = vq.holdout.clone();
 		let ids = holdout_indices(samples, count, seed);
 		let client = self.wait_for_client(engine).await?;
 		let mut queries = Vec::with_capacity(ids.len());

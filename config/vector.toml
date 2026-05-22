@@ -24,26 +24,22 @@ field = "embedding"
 top_k = 10
 distance = "cosine"
 index_strategy = { kind = "bruteforce" }
-query_source = { kind = "holdout", count = 200, seed = 42 }
+holdout = { count = 200, seed = 42 }
 
 [[scans.runs]]
 name = "hnsw knn(10) m=16 efc=200 efs=64"
-[scans.runs.with_index]
-fields = ["embedding"]
 [scans.runs.vector_query]
 field = "embedding"
 top_k = 10
 distance = "cosine"
 index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = 64 }
-query_source = { kind = "holdout", count = 200, seed = 42 }
+holdout = { count = 200, seed = 42 }
 
 [[scans.runs]]
 name = "diskann knn(10) deg=64 L=100 alpha=1.2"
-[scans.runs.with_index]
-fields = ["embedding"]
 [scans.runs.vector_query]
 field = "embedding"
 top_k = 10
 distance = "cosine"
 index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = 100 }
-query_source = { kind = "holdout", count = 200, seed = 42 }
+holdout = { count = 200, seed = 42 }
