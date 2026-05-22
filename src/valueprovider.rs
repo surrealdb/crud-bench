@@ -233,7 +233,7 @@ impl ValueGenerator {
 				}
 				let lo: f32 = parts[0].parse().map_err(|e| anyhow!("vector lo: {e}"))?;
 				let hi: f32 = parts[1].parse().map_err(|e| anyhow!("vector hi: {e}"))?;
-				if !(hi > lo) {
+				if hi <= lo {
 					bail!("vector range hi must be greater than lo");
 				}
 				(lo, hi)
