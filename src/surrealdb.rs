@@ -664,8 +664,13 @@ impl BenchmarkClient for SurrealDBClient {
 		// Wait until the index is ready (same poll loop as `build_index`).
 		loop {
 			let q = format!("INFO FOR INDEX {name} ON record");
-			let r: surrealdb::types::Value =
-				self.db.query(&q).await.map_err(log_sql_err(&q))?.take(0).map_err(log_sql_err(&q))?;
+			let r: surrealdb::types::Value = self
+				.db
+				.query(&q)
+				.await
+				.map_err(log_sql_err(&q))?
+				.take(0)
+				.map_err(log_sql_err(&q))?;
 			let j = r.to_sql();
 			let building = r.get("building");
 			let status = building.get("status").as_string().expect(&j);
@@ -861,8 +866,13 @@ impl SurrealDBClient {
 				)
 			}
 		};
-		let res: surrealdb::types::Value =
-			self.db.query(&sql).await.map_err(log_sql_err(&sql))?.take(0).map_err(log_sql_err(&sql))?;
+		let res: surrealdb::types::Value = self
+			.db
+			.query(&sql)
+			.await
+			.map_err(log_sql_err(&sql))?
+			.take(0)
+			.map_err(log_sql_err(&sql))?;
 		let Some(arr) = res.as_array() else {
 			bail!("knn scan: unexpected response shape: {}", res.to_sql());
 		};

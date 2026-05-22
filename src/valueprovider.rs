@@ -541,7 +541,8 @@ impl ColumnType {
 			ValueGenerator::Uuid => ColumnType::Uuid,
 			ValueGenerator::Bytes(_) => ColumnType::Bytes,
 			ValueGenerator::Vector {
-				dim, ..
+				dim,
+				..
 			} => ColumnType::FloatVector(*dim),
 		};
 		Ok(r)

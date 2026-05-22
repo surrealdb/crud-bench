@@ -13,14 +13,14 @@ use crate::result::{
 use crate::system::SystemInfo;
 use crate::terminal::BenchUi;
 use crate::util::format_duration;
+use crate::value::BenchValue;
+use crate::valueprovider::ColumnType;
 use crate::valueprovider::ValueProvider;
 use crate::workloads;
-use crate::value::BenchValue;
 use crate::{
 	Args, BatchOperation, Batches, Index, Scan, ScanWithWrites, Scans, VectorIndexStrategy,
 	VectorQuerySource, VectorQuerySpec,
 };
-use crate::valueprovider::ColumnType;
 
 use anyhow::{Context, Result, bail};
 use futures::future::try_join_all;
@@ -87,9 +87,9 @@ fn extract_vector_field(row: &BenchValue, field: &str) -> Result<Vec<f32>> {
 
 /// Deterministically pick `count` sample indices from `[0, samples)` using `seed`.
 fn holdout_indices(samples: u32, count: usize, seed: u64) -> Vec<u32> {
+	use rand::RngExt as _;
 	use rand::SeedableRng;
 	use rand::prelude::SmallRng;
-	use rand::RngExt as _;
 	let total = samples as usize;
 	let count = count.min(total);
 	let mut rng = SmallRng::seed_from_u64(seed);
@@ -627,9 +627,8 @@ impl Benchmark {
 		for n in ids {
 			let row = client.read(n, &mut kp).await?;
 			let bv: BenchValue = row.into();
-			let v = extract_vector_field(&bv, &vq.field).with_context(|| {
-				format!("scan `{}`: building holdout query set", scan.name)
-			})?;
+			let v = extract_vector_field(&bv, &vq.field)
+				.with_context(|| format!("scan `{}`: building holdout query set", scan.name))?;
 			queries.push(v);
 		}
 		Ok(VectorQuerySet {

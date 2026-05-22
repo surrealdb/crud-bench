@@ -193,7 +193,8 @@ impl BenchmarkClient for RedisClient {
 		};
 		// Drop any leftover index with the same name and (re)create.
 		let mut conn = self.conn_record.lock().await;
-		let _: () = redis::cmd("FT.DROPINDEX").arg(name).query_async(&mut *conn).await.unwrap_or(());
+		let _: () =
+			redis::cmd("FT.DROPINDEX").arg(name).query_async(&mut *conn).await.unwrap_or(());
 		let _: () = redis::cmd("FT.CREATE")
 			.arg(name)
 			.arg("ON")
@@ -359,9 +360,8 @@ impl RedisClient {
 		let Some((field, dim)) = self.vector_field.as_ref() else {
 			return Ok(());
 		};
-		let inner = val
-			.get_field(field)
-			.ok_or_else(|| anyhow!("redis: missing vector field `{field}`"))?;
+		let inner =
+			val.get_field(field).ok_or_else(|| anyhow!("redis: missing vector field `{field}`"))?;
 		let v = inner
 			.as_float_vector()
 			.ok_or_else(|| anyhow!("redis: field `{field}` is not a FloatVector"))?;
@@ -371,7 +371,8 @@ impl RedisClient {
 		let bytes: &[u8] = bytemuck::cast_slice(v);
 		let hkey = format!("vec:{key}");
 		let mut conn = self.conn_record.lock().await;
-		let _: () = redis::cmd("HSET").arg(hkey).arg("v").arg(bytes).query_async(&mut *conn).await?;
+		let _: () =
+			redis::cmd("HSET").arg(hkey).arg("v").arg(bytes).query_async(&mut *conn).await?;
 		Ok(())
 	}
 
