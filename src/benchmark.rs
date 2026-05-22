@@ -500,8 +500,7 @@ impl Benchmark {
 		// `phase_marker_label` includes the scan id / run name / ctx so per-scan and
 		// per-index DDL windows are uniquely greppable.
 		if self.emit_phase_markers {
-			self.bench_ui
-				.println_plain(&format!("{} starting", phase_marker_label(&operation)));
+			self.bench_ui.println_plain(&format!("{} starting", phase_marker_label(&operation)));
 		}
 		let progress =
 			self.bench_ui.progress_bar(samples as u64, &progress_short_label(&operation));
@@ -625,8 +624,11 @@ impl Benchmark {
 					| BenchmarkOperation::BuildIndex(..)
 					| BenchmarkOperation::RemoveIndex(..)
 			) {
-			self.bench_ui
-				.println_plain(&format!("{} took {}", phase_marker_label(&operation), took));
+			self.bench_ui.println_plain(&format!(
+				"{} took {}",
+				phase_marker_label(&operation),
+				took
+			));
 		}
 		// Shall we skip the operation? (operation not supported)
 		if skip.load(Ordering::Relaxed) {
