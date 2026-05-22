@@ -242,12 +242,12 @@ jobs:
             database: map
             enabled: true
             description: Map
-          # MariaDB — disabled: flaky "Connection reset by peer" mid-scan in CI (also
-          # red on main). Re-enable once the MariaDB worker-disconnect issue is fixed.
+          # MariaDB
           - name: mariadb
             database: mariadb
             enabled: false
             description: MariaDB
+            skipped: MariaDB benchmark fails with connection errors when running mixed workloads
           # MDBX
           - name: mdbx
             database: mdbx
