@@ -46,7 +46,7 @@ mariadb = ["dep:mysql_async"]
 mongodb = ["dep:mongodb"]
 mysql = ["dep:mysql_async"]
 neo4j = ["dep:neo4rs"]
-postgres = ["dep:tokio-postgres"]
+postgres = ["dep:tokio-postgres", "dep:pgvector"]
 redb = ["dep:redb"]
 redis = ["dep:redis"]
 rocksdb = ["dep:rocksdb"]
@@ -119,7 +119,10 @@ serde_json = "1.0.149"
 serial_test = "3.4.0"
 # Temporary: use SurrealDB main; revert to crates.io for releases.
 # surrealdb = { version = "3.0.5", default-features = false, optional = true }
-surrealdb = { git = "https://github.com/surrealdb/surrealdb", branch = "main", default-features = false, optional = true }
+# Locally pointed at surrealdb-private branch `ek/7318-diskann-knn-repro` while
+# the DiskANN syntax is unmerged in OSS. Revert to the git branch above once
+# private syncs back to public.
+surrealdb = { path = "../surrealdb-private/surrealdb", default-features = false, optional = true }
 surrealkv = { version = "0.21.2", optional = true }
 surrealmx = { version = "0.18.0", optional = true }
 sysinfo = { version = "0.37.2", features = ["serde"] }
@@ -130,6 +133,8 @@ tokio-postgres = { version = "0.7.17", optional = true, features = [
     "with-serde_json-1",
     "with-uuid-1",
 ] }
+pgvector = { version = "0.4", optional = true, features = ["postgres"] }
+bytemuck = { version = "1", features = ["derive"] }
 tokio-rusqlite = { version = "0.7.0", optional = true, features = ["bundled"] }
 twox-hash = "2.1.2"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }

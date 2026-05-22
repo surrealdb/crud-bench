@@ -4,8 +4,11 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::value::BenchValue;
-use crate::valueprovider::Columns;
-use crate::{Benchmark, KeyType, Projection, Scan};
+use crate::valueprovider::{ColumnType, Columns};
+use crate::{
+	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
+	VectorQuerySpec,
+};
 use anyhow::{Result, anyhow, bail};
 use futures::StreamExt;
 use redis::aio::MultiplexedConnection;
@@ -55,13 +58,19 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 
 pub(crate) struct RedisClientProvider {
 	url: String,
+	vector_field: Option<(String, usize)>,
 }
 
 impl BenchmarkEngine<RedisClient> for RedisClientProvider {
 	/// Initiates a new datastore benchmarking engine
-	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
+	async fn setup(_kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
+		let vector_field = columns.0.iter().find_map(|(n, t)| match t {
+			ColumnType::FloatVector(dim) => Some((n.clone(), *dim)),
+			_ => None,
+		});
 		Ok(Self {
 			url: options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned(),
+			vector_field,
 		})
 	}
 	/// Creates a new client for this benchmarking engine
@@ -70,6 +79,7 @@ impl BenchmarkEngine<RedisClient> for RedisClientProvider {
 		Ok(RedisClient {
 			conn_iter: Mutex::new(client.get_multiplexed_async_connection().await?),
 			conn_record: Mutex::new(client.get_multiplexed_async_connection().await?),
+			vector_field: self.vector_field.clone(),
 		})
 	}
 }
@@ -77,6 +87,10 @@ impl BenchmarkEngine<RedisClient> for RedisClientProvider {
 pub(crate) struct RedisClient {
 	conn_iter: Mutex<MultiplexedConnection>,
 	conn_record: Mutex<MultiplexedConnection>,
+	/// `(field_name, dim)` when the schema declares a vector column. When set,
+	/// CRUD operations dual-write the vector bytes to a `vec:{key}` HASH so the
+	/// Redis Stack `FT.CREATE` index can target a per-key indexed payload.
+	vector_field: Option<(String, usize)>,
 }
 
 impl BenchmarkClient for RedisClient {
@@ -85,6 +99,7 @@ impl BenchmarkClient for RedisClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
+		self.maybe_write_vector(&key.to_string(), &val).await?;
 		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
@@ -92,6 +107,7 @@ impl BenchmarkClient for RedisClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
+		self.maybe_write_vector(&key, &val).await?;
 		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
@@ -114,6 +130,7 @@ impl BenchmarkClient for RedisClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
+		self.maybe_write_vector(&key.to_string(), &val).await?;
 		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
@@ -121,6 +138,7 @@ impl BenchmarkClient for RedisClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
+		self.maybe_write_vector(&key, &val).await?;
 		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
@@ -144,6 +162,71 @@ impl BenchmarkClient for RedisClient {
 
 	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan_bytes(scan).await
+	}
+
+	async fn build_vector_index(
+		&self,
+		_spec: &Index,
+		vq: &VectorQuerySpec,
+		dim: usize,
+		name: &str,
+	) -> Result<()> {
+		let metric = redis_distance_metric(vq.distance);
+		let (algo, params): (&'static str, String) = match vq.index_strategy {
+			VectorIndexStrategy::Bruteforce => {
+				("FLAT", format!("6 TYPE FLOAT32 DIM {dim} DISTANCE_METRIC {metric}"))
+			}
+			VectorIndexStrategy::Hnsw {
+				m,
+				ef_construction,
+				ef_search,
+				..
+			} => (
+				"HNSW",
+				format!(
+					"12 TYPE FLOAT32 DIM {dim} DISTANCE_METRIC {metric} M {m} EF_CONSTRUCTION {ef_construction} EF_RUNTIME {ef_search}"
+				),
+			),
+			VectorIndexStrategy::DiskAnn {
+				..
+			} => bail!(NOT_SUPPORTED_ERROR),
+		};
+		// Drop any leftover index with the same name and (re)create.
+		let mut conn = self.conn_record.lock().await;
+		let _: () = redis::cmd("FT.DROPINDEX").arg(name).query_async(&mut *conn).await.unwrap_or(());
+		let _: () = redis::cmd("FT.CREATE")
+			.arg(name)
+			.arg("ON")
+			.arg("HASH")
+			.arg("PREFIX")
+			.arg(1)
+			.arg("vec:")
+			.arg("SCHEMA")
+			.arg("v")
+			.arg("VECTOR")
+			.arg(algo)
+			.arg(params)
+			.query_async(&mut *conn)
+			.await?;
+		Ok(())
+	}
+
+	async fn scan_vector_u32(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		_ctx: ScanContext,
+	) -> Result<usize> {
+		self.knn_scan(scan, query).await
+	}
+
+	async fn scan_vector_string(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		_ctx: ScanContext,
+	) -> Result<usize> {
+		self.knn_scan(scan, query).await
 	}
 
 	async fn batch_create_u32(
@@ -257,7 +340,75 @@ impl BenchmarkClient for RedisClient {
 	}
 }
 
+/// Map the benchmark's distance enum to Redis Stack's distance metric keyword.
+fn redis_distance_metric(d: VectorDistance) -> &'static str {
+	match d {
+		VectorDistance::Cosine => "COSINE",
+		VectorDistance::Euclidean => "L2",
+		VectorDistance::InnerProduct => "IP",
+		// Redis Stack has no native L1; mark as NotSupported by the caller.
+		VectorDistance::Manhattan => "IP",
+	}
+}
+
 impl RedisClient {
+	/// Dual-write the embedding bytes to `vec:{key}` HASH so the FT vector
+	/// index can target a dedicated key prefix. No-op when the schema does
+	/// not declare a vector column.
+	async fn maybe_write_vector(&self, key: &str, val: &BenchValue) -> Result<()> {
+		let Some((field, dim)) = self.vector_field.as_ref() else {
+			return Ok(());
+		};
+		let inner = val
+			.get_field(field)
+			.ok_or_else(|| anyhow!("redis: missing vector field `{field}`"))?;
+		let v = inner
+			.as_float_vector()
+			.ok_or_else(|| anyhow!("redis: field `{field}` is not a FloatVector"))?;
+		if v.len() != *dim {
+			bail!("redis: vector dim mismatch ({}, expected {dim})", v.len());
+		}
+		let bytes: &[u8] = bytemuck::cast_slice(v);
+		let hkey = format!("vec:{key}");
+		let mut conn = self.conn_record.lock().await;
+		let _: () = redis::cmd("HSET").arg(hkey).arg("v").arg(bytes).query_async(&mut *conn).await?;
+		Ok(())
+	}
+
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+		let vq = scan
+			.vector_query
+			.as_ref()
+			.ok_or_else(|| anyhow!("knn_scan: scan `{}` missing vector_query", scan.name))?;
+		let k = vq.top_k;
+		let bytes: &[u8] = bytemuck::cast_slice(query);
+		let mut conn = self.conn_record.lock().await;
+		let res: redis::Value = redis::cmd("FT.SEARCH")
+			.arg(&scan.id)
+			.arg(format!("*=>[KNN {k} @v $q AS score]"))
+			.arg("PARAMS")
+			.arg(2)
+			.arg("q")
+			.arg(bytes)
+			.arg("DIALECT")
+			.arg(2)
+			.arg("LIMIT")
+			.arg(0)
+			.arg(k)
+			.arg("RETURN")
+			.arg(0)
+			.query_async(&mut *conn)
+			.await?;
+		// FT.SEARCH returns `[total, key1, key2, ...]` (with RETURN 0). Use the
+		// reported `total` capped at `k` for the row-count return.
+		if let redis::Value::Array(items) = &res
+			&& let Some(redis::Value::Int(total)) = items.first()
+		{
+			return Ok((*total as usize).min(k));
+		}
+		Ok(k)
+	}
+
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
 		// Conditional scans are not supported
 		if scan.condition.is_some() {

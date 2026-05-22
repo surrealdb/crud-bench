@@ -37,6 +37,12 @@ pub(crate) fn bench_to_postgres_param(
 		| (ColumnType::Object, BenchValue::Array(_))
 		| (ColumnType::Array, BenchValue::Object(_))
 		| (ColumnType::Array, BenchValue::Array(_)) => Ok(Box::new(Json(v.to_json()))),
+		(ColumnType::FloatVector(dim), BenchValue::FloatVector(vec)) => {
+			if vec.len() != *dim {
+				bail!("column {column_name}: vector dim mismatch ({} != {dim})", vec.len());
+			}
+			Ok(Box::new(pgvector::Vector::from(vec.clone())))
+		}
 		(t, _) => Err(anyhow!("column {column_name}: BenchValue does not match column type {t:?}")),
 	}
 }
@@ -81,6 +87,9 @@ pub(crate) fn bench_to_sqlite_param(
 			Ok(Box::new(d.to_string()))
 		}
 		(ColumnType::Bytes, BenchValue::Bytes(b)) => Ok(Box::new(b.clone())),
+		(ColumnType::FloatVector(_), BenchValue::FloatVector(v)) => {
+			Ok(Box::new(bytemuck::cast_slice::<f32, u8>(v).to_vec()))
+		}
 		(t, _) => Err(anyhow!("BenchValue does not match column type {t:?}")),
 	}
 }
@@ -109,6 +118,9 @@ pub(crate) fn bench_to_mysql_value(
 		(ColumnType::Bytes, BenchValue::Bytes(b)) => Ok(MyValue::Bytes(b.clone())),
 		(ColumnType::Object, _) | (ColumnType::Array, _) => {
 			Ok(MyValue::Bytes(serde_json::to_string(&v.to_json())?.into_bytes()))
+		}
+		(ColumnType::FloatVector(_), BenchValue::FloatVector(v)) => {
+			Ok(MyValue::Bytes(bytemuck::cast_slice::<f32, u8>(v).to_vec()))
 		}
 		(t, _) => bail!("BenchValue does not match column type {t:?}"),
 	}

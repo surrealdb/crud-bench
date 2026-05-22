@@ -7,7 +7,10 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
-use crate::{Benchmark, Index, KeyType, Projection, Scan};
+use crate::{
+	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
+	VectorQuerySpec,
+};
 use anyhow::{Result, bail};
 use log::{error, warn};
 use std::env;
@@ -50,6 +53,9 @@ fn bench_to_surreal_value(v: BenchValue) -> Value {
 			}
 			Value::Object(obj)
 		}
+		BenchValue::FloatVector(v) => Value::Array(Array::from(
+			v.into_iter().map(|f| Value::Number(Number::Float(f as f64))).collect::<Vec<_>>(),
+		)),
 	}
 }
 
@@ -85,6 +91,27 @@ fn surreal_to_bench_value(v: Value) -> BenchValue {
 
 const DEFAULT: &str = "ws://127.0.0.1:8000";
 const TABLE: &str = "record";
+
+/// Map a [`VectorDistance`] to the SurrealQL `DIST <kw>` clause used in
+/// `DEFINE INDEX ... HNSW/DISKANN`.
+fn surreal_distance_keyword(d: VectorDistance) -> &'static str {
+	match d {
+		VectorDistance::Cosine => "COSINE",
+		VectorDistance::Euclidean => "EUCLIDEAN",
+		VectorDistance::InnerProduct => "INNER_PRODUCT",
+		VectorDistance::Manhattan => "MANHATTAN",
+	}
+}
+
+/// Map a [`VectorDistance`] to the SurrealQL `vector::distance::<name>` function used by bruteforce scans.
+fn surreal_distance_function(d: VectorDistance) -> &'static str {
+	match d {
+		VectorDistance::Cosine => "cosine",
+		VectorDistance::Euclidean => "euclidean",
+		VectorDistance::InnerProduct => "inner_product",
+		VectorDistance::Manhattan => "manhattan",
+	}
+}
 
 /// Wraps a SurrealDB [`types::Value`](surrealdb::types::Value);
 /// [`BenchValue`] is produced only via [`From`]/[`Into`].
@@ -598,6 +625,78 @@ impl BenchmarkClient for SurrealDBClient {
 		self.scan(scan, ctx).await
 	}
 
+	async fn build_vector_index(
+		&self,
+		spec: &Index,
+		vq: &VectorQuerySpec,
+		dim: usize,
+		name: &str,
+	) -> Result<()> {
+		let fields = spec.fields.join(", ");
+		let dist = surreal_distance_keyword(vq.distance);
+		let sql = match vq.index_strategy {
+			VectorIndexStrategy::Bruteforce => {
+				// Bruteforce on SurrealDB means no auxiliary index; the scan
+				// path uses raw vector::distance::* with ORDER BY LIMIT.
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			VectorIndexStrategy::Hnsw {
+				m,
+				ef_construction,
+				..
+			} => {
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} HNSW DIMENSION {dim} DIST {dist} EFC {ef_construction} M {m} CONCURRENTLY"
+				)
+			}
+			VectorIndexStrategy::DiskAnn {
+				degree,
+				l_build,
+				alpha,
+				..
+			} => {
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} DISKANN DIMENSION {dim} DISTANCE {dist} DEGREE {degree} L_BUILD {l_build} ALPHA {alpha} CONCURRENTLY"
+				)
+			}
+		};
+		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
+		// Wait until the index is ready (same poll loop as `build_index`).
+		loop {
+			let q = format!("INFO FOR INDEX {name} ON record");
+			let r: surrealdb::types::Value =
+				self.db.query(&q).await.map_err(log_sql_err(&q))?.take(0).map_err(log_sql_err(&q))?;
+			let j = r.to_sql();
+			let building = r.get("building");
+			let status = building.get("status").as_string().expect(&j);
+			match status.as_str() {
+				"ready" => break,
+				"indexing" | "cleaning" | "started" => {}
+				_ => bail!("Unexpected status: {}", r.into_json_value()),
+			}
+			sleep(Duration::from_millis(500)).await;
+		}
+		Ok(())
+	}
+
+	async fn scan_vector_u32(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		_ctx: ScanContext,
+	) -> Result<usize> {
+		self.knn_scan(scan, query).await
+	}
+
+	async fn scan_vector_string(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		_ctx: ScanContext,
+	) -> Result<usize> {
+		self.knn_scan(scan, query).await
+	}
+
 	async fn batch_create_u32(
 		&self,
 		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
@@ -710,6 +809,64 @@ impl SurrealDBClient {
 			.map_err(log_sql_err(sql))?;
 		assert!(!res.is_none());
 		Ok(())
+	}
+
+	/// Build a SurrealQL array literal from a slice of f32.
+	fn vector_literal(query: &[f32]) -> String {
+		let mut s = String::with_capacity(query.len() * 6 + 2);
+		s.push('[');
+		for (i, v) in query.iter().enumerate() {
+			if i > 0 {
+				s.push(',');
+			}
+			s.push_str(&format!("{v}"));
+		}
+		s.push(']');
+		s
+	}
+
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+		let vq = scan.vector_query.as_ref().ok_or_else(|| {
+			anyhow::anyhow!("knn_scan called without a vector_query on scan `{}`", scan.name)
+		})?;
+		let field = &vq.field;
+		let k = vq.top_k;
+		let q_lit = Self::vector_literal(query);
+		let sql = match vq.index_strategy {
+			VectorIndexStrategy::Bruteforce => {
+				let func = surreal_distance_function(vq.distance);
+				format!(
+					"SELECT id FROM record ORDER BY vector::distance::{func}({field}, {q_lit}) LIMIT {k}"
+				)
+			}
+			VectorIndexStrategy::Hnsw {
+				ef_search,
+				..
+			} => {
+				let dist = surreal_distance_keyword(vq.distance);
+				// SurrealQL HNSW KNN operator form: `<|K,EF|>` does not take a distance arg;
+				// the index's DIST clause is authoritative. Use `<|K,DIST|>` for engines that
+				// allow per-query distance override.
+				format!(
+					"SELECT id FROM record WHERE {field} <|{k},{ef_search}|> {q_lit} -- dist {dist}"
+				)
+			}
+			VectorIndexStrategy::DiskAnn {
+				l_search,
+				..
+			} => {
+				let dist = surreal_distance_keyword(vq.distance);
+				format!(
+					"SELECT id FROM record WHERE {field} <|{k},{l_search}|> {q_lit} -- dist {dist}"
+				)
+			}
+		};
+		let res: surrealdb::types::Value =
+			self.db.query(&sql).await.map_err(log_sql_err(&sql))?.take(0).map_err(log_sql_err(&sql))?;
+		let Some(arr) = res.as_array() else {
+			bail!("knn scan: unexpected response shape: {}", res.to_sql());
+		};
+		Ok(arr.len())
 	}
 
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {

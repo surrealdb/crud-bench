@@ -113,6 +113,9 @@ fn bench_to_bson(v: &BenchValue) -> Bson {
 			}
 			Bson::Document(doc)
 		}
+		BenchValue::FloatVector(v) => {
+			Bson::Array(v.iter().map(|f| Bson::Double(*f as f64)).collect())
+		}
 	}
 }
 

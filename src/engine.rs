@@ -3,7 +3,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
-use crate::{BatchOperation, Index, KeyType, Scan};
+use crate::{BatchOperation, Index, KeyType, Scan, VectorQuerySpec};
 use anyhow::{Result, bail};
 use std::future::Future;
 use std::time::Duration;
@@ -146,6 +146,36 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		}
 	}
 
+	/// Vector KNN scan: caller supplies the pre-fetched query vector. The
+	/// timing harness wraps this call only — the read used to materialise
+	/// the query lives in the holdout setup, not the timed window.
+	fn scan_vector(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		kp: &KeyProvider,
+		ctx: ScanContext,
+	) -> impl Future<Output = Result<()>> + Send {
+		async move {
+			let result = match kp {
+				KeyProvider::OrderedInteger(_) | KeyProvider::UnorderedInteger(_) => {
+					self.scan_vector_u32(scan, query, ctx).await?
+				}
+				KeyProvider::OrderedString(_) | KeyProvider::UnorderedString(_) => {
+					self.scan_vector_string(scan, query, ctx).await?
+				}
+			};
+			if let Some(expect) = scan.expect {
+				assert_eq!(
+					expect, result,
+					"Expected a length of {expect} but found {result} for {}",
+					scan.name
+				);
+			}
+			Ok(())
+		}
+	}
+
 	/// Create a single entry with a numeric id
 	fn create_u32(&self, key: u32, val: BenchValue) -> impl Future<Output = Result<()>> + Send;
 
@@ -196,8 +226,40 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
+	/// Vector KNN scan with a numeric key — engines override this for vector backends.
+	fn scan_vector_u32(
+		&self,
+		_scan: &Scan,
+		_query: &[f32],
+		_ctx: ScanContext,
+	) -> impl Future<Output = Result<usize>> + Send {
+		async move { bail!(NOT_SUPPORTED_ERROR) }
+	}
+
+	/// Vector KNN scan with a string key — engines override this for vector backends.
+	fn scan_vector_string(
+		&self,
+		_scan: &Scan,
+		_query: &[f32],
+		_ctx: ScanContext,
+	) -> impl Future<Output = Result<usize>> + Send {
+		async move { bail!(NOT_SUPPORTED_ERROR) }
+	}
+
 	/// Build an index on specified fields
 	fn build_index(&self, _spec: &Index, _name: &str) -> impl Future<Output = Result<()>> + Send {
+		async { bail!(NOT_SUPPORTED_ERROR) }
+	}
+
+	/// Build a vector index (HNSW / DiskANN) using the algorithm parameters carried
+	/// by `vq`. Engines without vector index support return `NOT_SUPPORTED_ERROR`.
+	fn build_vector_index(
+		&self,
+		_spec: &Index,
+		_vq: &VectorQuerySpec,
+		_dim: usize,
+		_name: &str,
+	) -> impl Future<Output = Result<()>> + Send {
 		async { bail!(NOT_SUPPORTED_ERROR) }
 	}
 

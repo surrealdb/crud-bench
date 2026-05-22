@@ -281,6 +281,10 @@ fn bench_leaf_to_bolt(v: &BenchValue) -> Result<BoltType> {
 		BenchValue::Array(_) | BenchValue::Object(_) => {
 			bail!("internal: expected scalar leaf BenchValue")
 		}
+		BenchValue::FloatVector(v) => {
+			let arr: Vec<BoltType> = v.iter().map(|f| BoltType::from(*f as f64)).collect();
+			BoltType::from(arr)
+		}
 	})
 }
 
