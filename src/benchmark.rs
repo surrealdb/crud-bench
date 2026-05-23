@@ -296,7 +296,7 @@ impl Benchmark {
 					VectorIndexStrategy::Hnsw { .. } | VectorIndexStrategy::DiskAnn { .. }
 				);
 				let query_set = self
-					.build_vector_query_set::<C, E>(&engine, &scan, &vq, kp, self.samples)
+					.build_vector_query_set::<C>(&clients[0], &scan, &vq, kp, self.samples)
 					.await?;
 				let mut runs = Vec::with_capacity(1);
 				match query_set {
@@ -650,9 +650,14 @@ impl Benchmark {
 	/// Returns `Ok(None)` when the engine cannot surface vector reads (the
 	/// holdout extraction hits [`NOT_SUPPORTED_ERROR`]) so the caller can skip
 	/// the entire vector scan instead of aborting the benchmark.
-	async fn build_vector_query_set<C, E>(
+	///
+	/// Reuses one of the already-connected clients from the benchmark pool
+	/// rather than spawning a fresh one — `wait_for_client` carries a
+	/// per-engine pre-connect sleep (5s on SurrealDB) that compounds across
+	/// the three vector legs.
+	async fn build_vector_query_set<C>(
 		&self,
-		engine: &E,
+		client: &Arc<C>,
 		scan: &Scan,
 		vq: &VectorQuerySpec,
 		mut kp: KeyProvider,
@@ -660,14 +665,12 @@ impl Benchmark {
 	) -> Result<Option<VectorQuerySet>>
 	where
 		C: BenchmarkClient + Send + Sync,
-		E: BenchmarkEngine<C> + Send + Sync,
 	{
 		let VectorHoldout {
 			count,
 			seed,
 		} = vq.holdout.clone();
 		let ids = holdout_indices(samples, count, seed);
-		let client = self.wait_for_client(engine).await?;
 		let mut queries = Vec::with_capacity(ids.len());
 		for n in ids {
 			// Read failures and shape mismatches both mean "this engine can't
