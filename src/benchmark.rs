@@ -696,6 +696,15 @@ impl Benchmark {
 				}
 			}
 		}
+		// Belt-and-suspenders for `VectorQuerySet::pick`'s
+		// `sample % queries.len()` — the validator already rejects
+		// `holdout.count == 0`, but anything else that ends up returning
+		// zero queries (e.g. `samples = 0`) skips the scan cleanly here
+		// rather than panicking inside the timed window.
+		if queries.is_empty() {
+			eprintln!("vector holdout: skipping scan `{}` (empty query set)", scan.name);
+			return Ok(None);
+		}
 		Ok(Some(VectorQuerySet {
 			queries: Arc::new(queries),
 		}))

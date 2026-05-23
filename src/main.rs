@@ -360,6 +360,27 @@ fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 					scan.name
 				);
 			}
+			// Without at least one query vector, `VectorQuerySet::pick` panics
+			// on the first scan iteration (sample % 0). Catch the
+			// configuration error at parse time.
+			let VectorHoldout {
+				count,
+				..
+			} = vq.holdout;
+			if count == 0 {
+				bail!("scan `{}`: vector_query.holdout.count must be > 0", scan.name);
+			}
+			// Mixed read/write workloads on a vector index need separate
+			// plumbing (the write path would invalidate the index between
+			// scan samples). Reject the combination at parse time so the
+			// benchmark doesn't silently drop the write legs and report
+			// read-only KNN as if it were a mixed workload.
+			if !scan.with_writes.is_empty() {
+				bail!(
+					"scan `{}`: vector_query with `with_writes` is not supported — mixed read/write workloads on a vector index need separate plumbing",
+					scan.name
+				);
+			}
 		}
 	}
 	Ok(())

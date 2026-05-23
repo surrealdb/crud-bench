@@ -146,12 +146,14 @@ impl BenchmarkClient for RedisClient {
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
+		self.maybe_delete_vector(&key.to_string()).await?;
 		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
 
 	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_string(&self, key: String) -> Result<()> {
+		self.maybe_delete_vector(&key).await?;
 		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
@@ -351,10 +353,18 @@ impl BenchmarkClient for RedisClient {
 	}
 
 	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
-		// Build the DEL pipeline
+		// Build the DEL pipeline. When a vector column is declared, pair each
+		// primary `DEL k` with a `DEL vec:{k}` so the `vec:{key}` HASH mirror
+		// (written by `maybe_write_vector`) is cleaned up in the same
+		// round-trip — otherwise the delete phase leaves stale embeddings
+		// behind in the `vec:` namespace.
+		let has_vec = self.vector_field.is_some();
 		let mut conn = self.conn_record.lock().await;
 		let mut pipe = redis::pipe();
 		for k in keys {
+			if has_vec {
+				pipe.cmd("DEL").arg(format!("vec:{k}")).ignore();
+			}
 			pipe.cmd("DEL").arg(k).ignore();
 		}
 		// Execute the pipeline
@@ -363,10 +373,14 @@ impl BenchmarkClient for RedisClient {
 	}
 
 	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
-		// Build the DEL pipeline
+		// See `batch_delete_u32` — same dual-DEL pattern.
+		let has_vec = self.vector_field.is_some();
 		let mut conn = self.conn_record.lock().await;
 		let mut pipe = redis::pipe();
 		for k in keys {
+			if has_vec {
+				pipe.cmd("DEL").arg(format!("vec:{k}")).ignore();
+			}
 			pipe.cmd("DEL").arg(k).ignore();
 		}
 		// Execute the pipeline
@@ -412,6 +426,19 @@ impl RedisClient {
 		let mut conn = self.conn_record.lock().await;
 		let _: () =
 			redis::cmd("HSET").arg(hkey).arg("v").arg(bytes).query_async(&mut *conn).await?;
+		Ok(())
+	}
+
+	/// Mirror of `maybe_write_vector` for the delete path: drops the
+	/// `vec:{key}` HASH so the embedding doesn't outlive the primary record.
+	/// No-op when the schema does not declare a vector column.
+	async fn maybe_delete_vector(&self, key: &str) -> Result<()> {
+		if self.vector_field.is_none() {
+			return Ok(());
+		}
+		let hkey = format!("vec:{key}");
+		let mut conn = self.conn_record.lock().await;
+		let _: () = redis::cmd("DEL").arg(hkey).query_async(&mut *conn).await?;
 		Ok(())
 	}
 
