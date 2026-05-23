@@ -103,13 +103,32 @@ fn surreal_distance_keyword(d: VectorDistance) -> &'static str {
 	}
 }
 
-/// Map a [`VectorDistance`] to the SurrealQL `vector::distance::<name>` function used by bruteforce scans.
+/// Map a [`VectorDistance`] to the SurrealQL function path used by bruteforce scans.
+///
+/// SurrealDB partitions vector ops between `vector::distance::*` (lower = closer)
+/// and `vector::similarity::*` (higher = closer). `cosine` lives under similarity,
+/// so the caller must reverse the ORDER BY direction — see [`surreal_distance_order`].
+///
+/// `InnerProduct` maps to `vector::dot` (raw `Σ aᵢ·bᵢ`) so it matches what
+/// pgvector's `<#>` and Redis's `IP` measure. `vector::similarity::pearson`
+/// would mean-center the inputs first and produce a bounded [-1, 1]
+/// correlation — that's a different metric.
 fn surreal_distance_function(d: VectorDistance) -> &'static str {
 	match d {
-		VectorDistance::Cosine => "cosine",
-		VectorDistance::Euclidean => "euclidean",
-		VectorDistance::InnerProduct => "inner_product",
-		VectorDistance::Manhattan => "manhattan",
+		VectorDistance::Cosine => "vector::similarity::cosine",
+		VectorDistance::Euclidean => "vector::distance::euclidean",
+		VectorDistance::InnerProduct => "vector::dot",
+		VectorDistance::Manhattan => "vector::distance::manhattan",
+	}
+}
+
+/// ORDER BY direction so the nearest neighbours sort to the top of the result set.
+fn surreal_distance_order(d: VectorDistance) -> &'static str {
+	match d {
+		// Similarity scores: higher is closer.
+		VectorDistance::Cosine | VectorDistance::InnerProduct => "DESC",
+		// Distance metrics: lower is closer.
+		VectorDistance::Euclidean | VectorDistance::Manhattan => "ASC",
 	}
 }
 
@@ -846,9 +865,12 @@ impl SurrealDBClient {
 		let k = vq.top_k;
 		let sql = match vq.index_strategy {
 			VectorIndexStrategy::Bruteforce => {
-				let func = surreal_distance_function(vq.distance);
+				let func_path = surreal_distance_function(vq.distance);
+				let dir = surreal_distance_order(vq.distance);
+				// Aliased distance so the parser's "ORDER BY idiom must appear
+				// in SELECT" rule is satisfied (surrealdb-private 0df9e38c era).
 				format!(
-					"SELECT id FROM record ORDER BY vector::distance::{func}({field}, $q) LIMIT {k}"
+					"SELECT id, {func_path}({field}, $q) AS _d FROM record ORDER BY _d {dir} LIMIT {k}"
 				)
 			}
 			VectorIndexStrategy::Hnsw {
