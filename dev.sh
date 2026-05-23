@@ -479,24 +479,61 @@ start_perf() {
 	PERF_PID=$!
 }
 
+# Stop the currently-attached perf process (if any) and wait for it to
+# fully finalise its `.data` file.
+#
+# Subtlety: bash sets SIGINT and SIGQUIT to SIG_IGN before exec'ing async
+# commands (`cmd &`) in non-interactive shells without job control — see
+# bash(1) under SIGNALS. perf record inherits that SIG_IGN until it
+# reaches the point in its own startup where it installs its own SIGINT
+# handler. For very short phases (scans completing in a few hundred ms)
+# we can call `stop_perf` *during* that window: the SIGINT is silently
+# dropped, perf never exits, and `wait $PERF_PID` blocks indefinitely
+# while crud-bench races ahead through subsequent phases (this is what
+# made consecutive scans get lumped into one giant perf-data file).
+#
+# We work around it by sending SIGINT in a polling loop until perf
+# actually exits, escalating to SIGKILL after a bounded grace period.
+# Once perf has installed its own handler the next retried SIGINT is
+# caught and perf shuts down normally (writing out its .data file);
+# SIGKILL is only used as a last-resort safety net.
 stop_perf() {
-	if [[ -n "$PERF_PID" ]] && kill -0 "$PERF_PID" 2>/dev/null; then
-		kill -INT "$PERF_PID" 2>/dev/null || true
-		wait "$PERF_PID" 2>/dev/null || true
-	fi
+	[[ -z "$PERF_PID" ]] && return 0
+	local pid=$PERF_PID
 	PERF_PID=""
+	if ! kill -0 "$pid" 2>/dev/null; then
+		wait "$pid" 2>/dev/null || true
+		return 0
+	fi
+	# Up to ~30s of repeated SIGINTs (60 outer × 10 × 50ms = 30s); in
+	# practice perf installs its SIGINT handler within a second or two
+	# of startup so this loop almost always exits on the first SIGINT.
+	local i j
+	for i in {1..60}; do
+		kill -INT "$pid" 2>/dev/null || true
+		for j in {1..10}; do
+			if ! kill -0 "$pid" 2>/dev/null; then
+				wait "$pid" 2>/dev/null || true
+				return 0
+			fi
+			sleep 0.05
+		done
+	done
+	# Last-resort: perf is wedged. SIGKILL it; the .data file will be
+	# truncated but at least we don't block the rest of the run.
+	warn "perf $pid did not exit after 30s of SIGINT — sending SIGKILL"
+	kill -KILL "$pid" 2>/dev/null || true
+	wait "$pid" 2>/dev/null || true
 }
 
 # -----------------------------------------------------------------------------
-# Per-line observer state.
+# Per-line observer helpers.
 #
-# The profiling loop walks the crud-bench log line-by-line so each phase
+# The profiling loop streams the crud-bench log line-by-line so each phase
 # can open its own perf window — every Scan, BuildIndex, and Batch run
 # gets a distinct marker (rich `--emit-phase-markers` labels carry the
 # scan id / batch name).
 # -----------------------------------------------------------------------------
-LINE_CURSOR=1
-MATCH_LINE=""
 
 # Lowercase, non-alnum → '-', collapse runs, trim. Used for filenames.
 slugify() {
@@ -511,140 +548,133 @@ escape_re() {
 	printf '%s' "$1" | sed -E 's/[][\\.^$*+?(){}|]/\\&/g'
 }
 
-# Read forward from LINE_CURSOR until a line matches $1 (regex). Sets
-# MATCH_LINE and advances LINE_CURSOR past the matching line.
-#
-#   $2 (optional): terminator regex — if any line matches it before $1,
-#                  set MATCH_LINE and return 2.
-#   $3 (optional, "1"): also abort when PERF_PID dies (return 3) —
-#                       used while a window is open so a perf-self-exit
-#                       (PERF_MAX_SECS hit) doesn't leave us waiting.
-#
-# Return 1 if crud-bench exits before any of the above.
-wait_for_line() {
-	local pat=$1 terminator=${2:-} watch_perf=${3:-0}
-	while true; do
-		if [[ -f "$CRUD_LOG" ]]; then
-			local lineno=$LINE_CURSOR
-			local line
-			while IFS= read -r line; do
-				if [[ -n "$terminator" ]] && [[ "$line" =~ $terminator ]]; then
-					MATCH_LINE=$line
-					LINE_CURSOR=$((lineno + 1))
-					return 2
-				fi
-				if [[ "$line" =~ $pat ]]; then
-					MATCH_LINE=$line
-					LINE_CURSOR=$((lineno + 1))
-					return 0
-				fi
-				lineno=$((lineno + 1))
-			done < <(tail -n +"$LINE_CURSOR" "$CRUD_LOG" 2>/dev/null)
-			LINE_CURSOR=$lineno
-		fi
-		if (( watch_perf )) && [[ -n "${PERF_PID:-}" ]] && ! kill -0 "$PERF_PID" 2>/dev/null; then
-			return 3
-		fi
-		if ! kill -0 "$CRUD_PID" 2>/dev/null; then
-			return 1
-		fi
-		sleep 0.5
-	done
+# Maps a "starting" log line to (name, took_pat) via NAME / TOOK_PAT
+# globals. Returns 0 on a recognised marker, 1 otherwise.
+NAME=""
+TOOK_PAT=""
+parse_start_marker() {
+	local line=$1
+	NAME=""; TOOK_PAT=""
+	if [[ "$line" =~ ^(Create|Read|Update|Delete)\ starting$ ]]; then
+		(( HAS_CRUD )) || return 1
+		local op=${BASH_REMATCH[1]}
+		NAME="crud-${op,,}"
+		TOOK_PAT="^${op} took"
+	elif [[ "$line" =~ ^Scan\ ::\ (.+)\ starting$ ]]; then
+		(( HAS_SCANS )) || return 1
+		local body=${BASH_REMATCH[1]}
+		NAME="scan-$(slugify "$body")"
+		TOOK_PAT="^Scan :: $(escape_re "$body") took"
+	elif [[ "$line" =~ ^BuildIndex\ ::\ (.+)\ starting$ ]]; then
+		(( HAS_SCANS )) || return 1
+		local id=${BASH_REMATCH[1]}
+		NAME="scan-build-index-$(slugify "$id")"
+		TOOK_PAT="^BuildIndex :: $(escape_re "$id") took"
+	elif [[ "$line" =~ ^RemoveIndex\ ::\ (.+)\ starting$ ]]; then
+		(( HAS_SCANS )) || return 1
+		local id=${BASH_REMATCH[1]}
+		NAME="scan-remove-index-$(slugify "$id")"
+		TOOK_PAT="^RemoveIndex :: $(escape_re "$id") took"
+	elif [[ "$line" =~ ^Batch(Create|Read|Update|Delete)::(.+)\ starting$ ]]; then
+		(( HAS_BATCHES )) || return 1
+		local op=${BASH_REMATCH[1]} bname=${BASH_REMATCH[2]}
+		NAME="batch-${op,,}-$(slugify "$bname")"
+		TOOK_PAT="^Batch${op}::$(escape_re "$bname") took"
+	else
+		return 1
+	fi
+	return 0
 }
 
 PERF_DATA_FILES=()
-SHOULD_STOP_LOOP=0
 
-# Open a perf window named $1, wait for the took regex $2, then close it.
-# Records the .data file into PERF_DATA_FILES on success; warns on short
-# windows (< 2s) since sparse sampling makes the flamegraph noisy.
-capture_window() {
-	local name=$1 took_pat=$2
-	local data_file="$OUTPUT_DIR/perf-${name}.data"
-	local log_file="$OUTPUT_DIR/perf-${name}.log"
-	local ts_start ts_end elapsed note=""
-	ts_start=$(date +%s)
-	log "      [$name] attaching perf (pid=$SURREAL_PID)"
-	start_perf "$data_file" "$log_file"
-
-	wait_for_line "$took_pat" '^Benchmark complete$' 1
-	local rc=$?
-
-	ts_end=$(date +%s)
+# Close the currently-open perf window (if any), append its data file to
+# PERF_DATA_FILES, and reset window state. $1 is a short suffix appended
+# to the detach log line explaining how the window ended (e.g. "" for a
+# clean took match, " (forced close before next phase)" for the safety
+# net, " (Benchmark complete before took marker)" at the end).
+ACTIVE_WINDOW=""
+ACTIVE_TOOK_PAT=""
+ACTIVE_DATA_FILE=""
+ACTIVE_LOG_FILE=""
+ACTIVE_START_TS=0
+close_window() {
+	[[ -z "$ACTIVE_WINDOW" ]] && return 0
+	local note=${1:-}
+	local elapsed=$(( $(date +%s) - ACTIVE_START_TS ))
 	stop_perf
-	elapsed=$((ts_end - ts_start))
-	case $rc in
-		0) ;;
-		1) note=", crud-bench exited before took marker"; SHOULD_STOP_LOOP=1 ;;
-		2) note=", Benchmark complete before took marker"; SHOULD_STOP_LOOP=1 ;;
-		3) note=", perf hit PERF_MAX_SECS=$PERF_MAX_SECS" ;;
-	esac
-	log "      [$name] detaching perf (captured ~${elapsed}s${note})"
-
-	if [[ -s "$data_file" ]]; then
-		PERF_DATA_FILES+=("$data_file")
-		if (( elapsed < 2 )) && (( rc == 0 )); then
-			warn "[$name] window was only ${elapsed}s — flamegraph will be sparse at ${PERF_FREQ}Hz"
+	log "      [$ACTIVE_WINDOW] detaching perf (captured ~${elapsed}s${note})"
+	if [[ -s "$ACTIVE_DATA_FILE" ]]; then
+		PERF_DATA_FILES+=("$ACTIVE_DATA_FILE")
+		if (( elapsed < 2 )) && [[ -z "$note" ]]; then
+			warn "[$ACTIVE_WINDOW] window was only ${elapsed}s — flamegraph will be sparse at ${PERF_FREQ}Hz"
 		fi
 	else
-		warn "[$name] no perf data recorded (see $log_file)"
+		warn "[$ACTIVE_WINDOW] no perf data recorded (see $ACTIVE_LOG_FILE)"
 	fi
+	ACTIVE_WINDOW=""
+	ACTIVE_TOOK_PAT=""
+	ACTIVE_DATA_FILE=""
+	ACTIVE_LOG_FILE=""
+	ACTIVE_START_TS=0
+}
+
+# Open a perf window for the given name + took pattern. Caller must have
+# already verified that no window is currently active.
+open_window() {
+	local name=$1 took_pat=$2
+	ACTIVE_WINDOW=$name
+	ACTIVE_TOOK_PAT=$took_pat
+	ACTIVE_DATA_FILE="$OUTPUT_DIR/perf-${name}.data"
+	ACTIVE_LOG_FILE="$OUTPUT_DIR/perf-${name}.log"
+	ACTIVE_START_TS=$(date +%s)
+	log "      [$name] attaching perf (pid=$SURREAL_PID)"
+	start_perf "$ACTIVE_DATA_FILE" "$ACTIVE_LOG_FILE"
 }
 
 if [[ "$MODE" == "profiling" ]]; then
-	log "[5/6] Profiling categories: ${CATEGORIES[*]}"
+	log "[5/6] Streaming crud-bench log; profiling categories: ${CATEGORIES[*]}"
 
-	# Combined "any starting marker we care about" regex, built from the
-	# selected categories. Each branch is anchored so we can dispatch
-	# unambiguously on the matched line.
-	any_start_parts=()
-	(( HAS_CRUD ))    && any_start_parts+=('^(Create|Read|Update|Delete) starting$')
-	(( HAS_SCANS ))   && any_start_parts+=('^Scan :: .+ starting$' \
-	                                       '^BuildIndex :: .+ starting$' \
-	                                       '^RemoveIndex :: .+ starting$')
-	(( HAS_BATCHES )) && any_start_parts+=('^Batch(Create|Read|Update|Delete)::.+ starting$')
-	any_start_re=""
-	for i in "${!any_start_parts[@]}"; do
-		(( i > 0 )) && any_start_re+="|"
-		any_start_re+="${any_start_parts[$i]}"
-	done
-	any_start_re="(${any_start_re})"
-
-	while (( ! SHOULD_STOP_LOOP )); do
-		if ! kill -0 "$CRUD_PID" 2>/dev/null; then break; fi
-		wait_for_line "$any_start_re" '^Benchmark complete$'
-		case $? in
-			0) ;;
-			*) break ;;
-		esac
-
-		name=""; took_pat=""
-		if [[ "$MATCH_LINE" =~ ^(Create|Read|Update|Delete)\ starting$ ]]; then
-			op=${BASH_REMATCH[1]}
-			name="crud-${op,,}"
-			took_pat="^${op} took"
-		elif [[ "$MATCH_LINE" =~ ^Scan\ ::\ (.+)\ starting$ ]]; then
-			body=${BASH_REMATCH[1]}
-			name="scan-$(slugify "$body")"
-			took_pat="^Scan :: $(escape_re "$body") took"
-		elif [[ "$MATCH_LINE" =~ ^BuildIndex\ ::\ (.+)\ starting$ ]]; then
-			id=${BASH_REMATCH[1]}
-			name="scan-build-index-$(slugify "$id")"
-			took_pat="^BuildIndex :: $(escape_re "$id") took"
-		elif [[ "$MATCH_LINE" =~ ^RemoveIndex\ ::\ (.+)\ starting$ ]]; then
-			id=${BASH_REMATCH[1]}
-			name="scan-remove-index-$(slugify "$id")"
-			took_pat="^RemoveIndex :: $(escape_re "$id") took"
-		elif [[ "$MATCH_LINE" =~ ^Batch(Create|Read|Update|Delete)::(.+)\ starting$ ]]; then
-			op=${BASH_REMATCH[1]}; bname=${BASH_REMATCH[2]}
-			name="batch-${op,,}-$(slugify "$bname")"
-			took_pat="^Batch${op}::$(escape_re "$bname") took"
-		else
-			warn "Unrecognised starting marker: $MATCH_LINE"
+	# Tail the crud-bench log line-by-line as it's being written. The
+	# `--pid=$CRUD_PID` flag makes `tail -F` exit as soon as crud-bench
+	# does, so the `while read` loop never wedges on a process that's
+	# already gone. Using a single long-running tail (vs the previous
+	# poll-every-0.5s approach) means every line is observed exactly
+	# once in the order it was emitted — no missed `… took …` markers
+	# even when consecutive scan runs complete in well under the poll
+	# interval.
+	while IFS= read -r line; do
+		# Benchmark complete is the terminal marker — close any open
+		# window cleanly and stop processing further log lines.
+		if [[ "$line" == "Benchmark complete" ]]; then
+			close_window " (Benchmark complete before took marker)"
+			break
+		fi
+		# Took marker for the currently open window → close it.
+		if [[ -n "$ACTIVE_WINDOW" ]] && [[ "$line" =~ $ACTIVE_TOOK_PAT ]]; then
+			close_window ""
 			continue
 		fi
-		capture_window "$name" "$took_pat"
-	done
+		# Starting marker → open a new window (or force-close a stale
+		# one first). Force-closing here is a safety net: it should
+		# never trigger in practice (every starting marker has a
+		# matching took marker further down the log), but if a took
+		# marker is ever missed we'd rather record many short windows
+		# than one giant one spanning unrelated phases.
+		if ! parse_start_marker "$line"; then
+			continue
+		fi
+		if [[ -n "$ACTIVE_WINDOW" ]]; then
+			warn "[$ACTIVE_WINDOW] no took marker before next starting line — force-closing"
+			close_window " (forced close before next phase: $NAME)"
+		fi
+		open_window "$NAME" "$TOOK_PAT"
+	done < <(tail -n +1 -F --pid="$CRUD_PID" "$CRUD_LOG" 2>/dev/null)
+
+	# crud-bench can exit before emitting "Benchmark complete" (e.g.
+	# an unsupported op or a worker error) — make sure any still-open
+	# perf window is finalised so we don't leave perf-record around.
+	close_window " (crud-bench exited before took marker)"
 
 	log "      Waiting for crud-bench to finish remaining phases..."
 else
