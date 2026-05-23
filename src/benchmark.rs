@@ -38,7 +38,7 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 /// profiling window. Conservative — short enough to be invisible to a
 /// human, long enough to mop up the kind of MVCC drain visible in
 /// SurrealDB/RocksDB after heavy concurrent scans.
-const QUIESCE_DELAY: Duration = Duration::from_millis(500);
+const QUIESCE_DELAY: Duration = Duration::from_secs(1);
 
 /// Error string returned by adapters to mark an operation as unsupported (skipped, not fatal).
 pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
