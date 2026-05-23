@@ -86,7 +86,6 @@
 #   OUTPUT_DIR        Where logs/perf/flamegraph go      (default: ./dev-results-<mode>-<ts>)
 #   SURREAL_PORT      TCP port for SurrealDB             (default: 8000)
 #   PERF_FREQ         perf sampling frequency (Hz)       (default: 997)
-#   PERF_MAX_SECS     Hard cap on each perf window       (default: 600)
 #   CRUD_BENCH_CONFIG  Path to benchmark TOML (default: config/bench.toml)
 #   CRUD_BENCH_EMIT_PHASE_MARKERS  Set to 1/true/yes/on so crud-bench prints grep-friendly
 #                     `… starting` lines without passing `--emit-phase-markers` (profiling
@@ -118,8 +117,6 @@ KEY_TYPE="${KEY_TYPE:-integer}"
 DB_PATH="${DB_PATH:-$SCRIPT_DIR/data}"
 SURREAL_PORT="${SURREAL_PORT:-8000}"
 PERF_FREQ="${PERF_FREQ:-997}"
-# Back-compat: honour SCAN_MAX_SECS if someone has it in their env
-PERF_MAX_SECS="${PERF_MAX_SECS:-${SCAN_MAX_SECS:-600}}"
 FLAMEGRAPH_BIN="${FLAMEGRAPH_BIN:-$HOME/.cargo/bin/flamegraph}"
 CRUD_BENCH_DIR="${CRUD_BENCH_DIR:-$SCRIPT_DIR}"
 
@@ -316,8 +313,8 @@ printf "  %-14s samples=%s  clients=%s  threads=%s  key=%s\n" \
 printf "  %-14s %s\n" "Compaction:" "$COMPACTION_CHOICE"
 if [[ "$MODE" == "profiling" ]]; then
 	printf "  %-14s %s\n" "Categories:"  "${CATEGORIES[*]}"
-	printf "  %-14s %s Hz  max=%ss  (--call-graph fp)\n" \
-	       "perf:" "$PERF_FREQ" "$PERF_MAX_SECS"
+	printf "  %-14s %s Hz  (--call-graph fp, --control fifo, --switch-output)\n" \
+	       "perf:" "$PERF_FREQ"
 	if (( ${#CRUD_SKIP_ARGS[@]} > 0 )); then
 		printf "  %-14s %s\n" "crud-bench:" "${CRUD_SKIP_ARGS[*]}"
 	fi
@@ -330,14 +327,34 @@ echo
 SURREAL_PID=""
 CRUD_PID=""
 PERF_PID=""
+PERF_CTL_FIFO=""
+PERF_CTL_FD=""
+PERF_DATA_BASE=""
+PERF_LOG=""
 
 cleanup() {
 	local rc=$?
 	set +e
 	if [[ -n "$PERF_PID" ]] && kill -0 "$PERF_PID" 2>/dev/null; then
 		log "Stopping perf ($PERF_PID)..."
-		kill -INT "$PERF_PID" 2>/dev/null
+		# Prefer a clean 'quit' via the control fifo so perf flushes its
+		# .data file; fall back to SIGINT if the fifo write fails or perf
+		# doesn't exit promptly.
+		if [[ -n "$PERF_CTL_FD" ]]; then
+			printf 'quit\n' >&"$PERF_CTL_FD" 2>/dev/null
+			local _i
+			for _i in {1..40}; do
+				kill -0 "$PERF_PID" 2>/dev/null || break
+				sleep 0.05
+			done
+		fi
+		if kill -0 "$PERF_PID" 2>/dev/null; then
+			kill -INT "$PERF_PID" 2>/dev/null
+		fi
 		wait "$PERF_PID" 2>/dev/null
+	fi
+	if [[ -n "$PERF_CTL_FIFO" && -p "$PERF_CTL_FIFO" ]]; then
+		rm -f "$PERF_CTL_FIFO"
 	fi
 	if [[ -n "$CRUD_PID" ]] && kill -0 "$CRUD_PID" 2>/dev/null; then
 		log "Stopping crud-bench ($CRUD_PID)..."
@@ -450,11 +467,15 @@ log "      PID=$CRUD_PID  log=$CRUD_LOG"
 # -----------------------------------------------------------------------------
 # 5) Wait for crud-bench to finish.
 #
-#    In profiling mode we walk PHASE_LIST and open a separate perf window
-#    for each requested phase, using regex markers over the crud-bench
-#    log. Each phase gets its own perf-<phase>.data file.
+#    In profiling mode we attach a single long-running perf to SurrealDB
+#    and enable/disable sampling around each phase via perf's control
+#    fifo, rotating the perf.data file on each `Server idle` marker so
+#    every phase gets its own perf-<phase>.data file. See
+#    start_perf_session for the SIG_IGN race that motivates the
+#    single-perf design.
 #
-#    Phase order printed by crud-bench (AFTER each phase completes):
+#    Phase order printed by crud-bench (each followed by `Server idle`
+#    once quiesce confirms the server has drained):
 #      "Create took …"  →  "Read took …"  →  "Update took …"
 #      → ["Scan ::<ctx> took …", …]
 #      → ["BuildIndex took …", "Scan :: … took …", "RemoveIndex took …"]
@@ -464,66 +485,100 @@ log "      PID=$CRUD_PID  log=$CRUD_LOG"
 #    In release mode we just wait for crud-bench to exit.
 # -----------------------------------------------------------------------------
 
-# Attach perf to SURREAL_PID for up to PERF_MAX_SECS, writing to $1.
-# Stores pid in PERF_PID so the cleanup trap can kill it if we abort.
-start_perf() {
-	local out=$1 log_path=$2
+# One long-running `perf record` attached to SurrealDB for the entire
+# benchmark — orchestrated via `perf record --control fifo:$CTL`
+# (enable/disable to gate sampling) and `--switch-output` (SIGUSR2 to
+# rotate the active perf.data into a per-phase file).
+#
+# Why one perf, not one-per-phase: starting perf each phase races against
+# bash's SIG_IGN setup window (perf inherits SIG_IGN on SIGINT until it
+# installs its own handler ~1s in, which is longer than several batch
+# phases). The old per-phase design's `stop_perf` retry loop bridged that
+# race but meant short phases blocked the streaming reader for ~1s every
+# time, which let crud-bench race ahead and shifted later phases' perf
+# windows forward — by the last 1-2 phases the window opened so late it
+# captured no samples at all (the empty `perf-batch-update-1000.data` /
+# `perf-batch-delete-1000.data` symptoms we were debugging).
+#
+# `--delay=-1` starts perf in disabled state — sampling only enables when
+# we write `enable` to the control fifo. No SIG_IGN race anywhere; perf
+# stops exactly once, at benchmark end, via `quit` on the control fifo.
+start_perf_session() {
+	PERF_CTL_FIFO="$OUTPUT_DIR/perf.ctl"
+	PERF_DATA_BASE="$OUTPUT_DIR/perf.data"
+	PERF_LOG="$OUTPUT_DIR/perf.log"
+	mkfifo "$PERF_CTL_FIFO"
+	# Open the control fifo read-write from the script so per_ctl writes
+	# don't block / EOF on perf between commands.
+	exec {PERF_CTL_FD}<>"$PERF_CTL_FIFO"
+	log "      Starting perf (pid=$SURREAL_PID, freq=${PERF_FREQ}Hz)"
 	perf record \
 		-F "$PERF_FREQ" \
 		--call-graph fp \
 		-g \
 		-p "$SURREAL_PID" \
-		-o "$out" \
-		-- sleep "$PERF_MAX_SECS" \
-		> "$log_path" 2>&1 &
+		--control "fifo:$PERF_CTL_FIFO" \
+		--switch-output \
+		--delay=-1 \
+		-o "$PERF_DATA_BASE" \
+		> "$PERF_LOG" 2>&1 &
 	PERF_PID=$!
+	# Give perf a beat to open the fifo + arm itself before we start
+	# writing commands. (perf opens the control fifo lazily during its
+	# event loop init; missing this can drop the first `enable`.)
+	local i
+	for i in {1..40}; do
+		[[ -f "$PERF_DATA_BASE" ]] && return 0
+		if ! kill -0 "$PERF_PID" 2>/dev/null; then
+			warn "perf exited during startup; tail of $PERF_LOG:"
+			tail -20 "$PERF_LOG" >&2 || true
+			die "perf failed to start"
+		fi
+		sleep 0.05
+	done
+	warn "perf did not create $PERF_DATA_BASE within 2s — continuing anyway"
 }
 
-# Stop the currently-attached perf process (if any) and wait for it to
-# fully finalise its `.data` file.
-#
-# Subtlety: bash sets SIGINT and SIGQUIT to SIG_IGN before exec'ing async
-# commands (`cmd &`) in non-interactive shells without job control — see
-# bash(1) under SIGNALS. perf record inherits that SIG_IGN until it
-# reaches the point in its own startup where it installs its own SIGINT
-# handler. For very short phases (scans completing in a few hundred ms)
-# we can call `stop_perf` *during* that window: the SIGINT is silently
-# dropped, perf never exits, and `wait $PERF_PID` blocks indefinitely
-# while crud-bench races ahead through subsequent phases (this is what
-# made consecutive scans get lumped into one giant perf-data file).
-#
-# We work around it by sending SIGINT in a polling loop until perf
-# actually exits, escalating to SIGKILL after a bounded grace period.
-# Once perf has installed its own handler the next retried SIGINT is
-# caught and perf shuts down normally (writing out its .data file);
-# SIGKILL is only used as a last-resort safety net.
-stop_perf() {
-	[[ -z "$PERF_PID" ]] && return 0
+# Write one newline-terminated command into perf's control fifo. perf
+# accepts: enable | disable | snapshot | evlist | quit.
+perf_ctl() {
+	[[ -z "$PERF_CTL_FD" ]] && return 0
+	printf '%s\n' "$1" >&"$PERF_CTL_FD"
+}
+
+# List rotated perf.data files (`perf.data.<ts>`) in mtime order. Used to
+# pick the newly-rotated file after each SIGUSR2.
+list_rotated_perf_files() {
+	# `find -printf` so we can sort by mtime with second resolution; for
+	# the rare same-second case the filename's timestamp suffix breaks
+	# the tie (perf names them `perf.data.YYYYMMDDhhmmss[NN]`).
+	find "$OUTPUT_DIR" -maxdepth 1 -name 'perf.data.*' -printf '%T@ %p\n' 2>/dev/null \
+		| sort -k1,1n -k2,2 \
+		| awk '{ $1=""; sub(/^ /, ""); print }'
+}
+
+stop_perf_session() {
+	if [[ -z "$PERF_PID" ]]; then return 0; fi
 	local pid=$PERF_PID
 	PERF_PID=""
-	if ! kill -0 "$pid" 2>/dev/null; then
-		wait "$pid" 2>/dev/null || true
-		return 0
-	fi
-	# Up to ~30s of repeated SIGINTs (60 outer × 10 × 50ms = 30s); in
-	# practice perf installs its SIGINT handler within a second or two
-	# of startup so this loop almost always exits on the first SIGINT.
-	local i j
-	for i in {1..60}; do
-		kill -INT "$pid" 2>/dev/null || true
-		for j in {1..10}; do
-			if ! kill -0 "$pid" 2>/dev/null; then
-				wait "$pid" 2>/dev/null || true
-				return 0
-			fi
+	if kill -0 "$pid" 2>/dev/null; then
+		perf_ctl quit 2>/dev/null || true
+		local i
+		for i in {1..200}; do  # ~10s
+			kill -0 "$pid" 2>/dev/null || break
 			sleep 0.05
 		done
-	done
-	# Last-resort: perf is wedged. SIGKILL it; the .data file will be
-	# truncated but at least we don't block the rest of the run.
-	warn "perf $pid did not exit after 30s of SIGINT — sending SIGKILL"
-	kill -KILL "$pid" 2>/dev/null || true
+		if kill -0 "$pid" 2>/dev/null; then
+			warn "perf didn't exit on 'quit' — sending SIGINT"
+			kill -INT "$pid" 2>/dev/null || true
+		fi
+	fi
 	wait "$pid" 2>/dev/null || true
+	if [[ -n "$PERF_CTL_FD" ]]; then
+		eval "exec ${PERF_CTL_FD}>&-"
+		PERF_CTL_FD=""
+	fi
+	[[ -n "$PERF_CTL_FIFO" && -p "$PERF_CTL_FIFO" ]] && rm -f "$PERF_CTL_FIFO"
 }
 
 # -----------------------------------------------------------------------------
@@ -586,86 +641,125 @@ parse_start_marker() {
 	return 0
 }
 
+# Phases captured in execution order. Each entry is the slug we use for
+# the matching `perf-<slug>.data` / `flamegraph-<slug>.svg`. Combined
+# flamegraph rendering also walks this list to preserve order.
 PERF_DATA_FILES=()
+PERF_PHASE_NAMES=()
 
-# Close the currently-open perf window (if any), append its data file to
-# PERF_DATA_FILES, and reset window state. $1 is a short suffix appended
-# to the detach log line explaining how the window ended (e.g. "" for a
-# clean took match, " (forced close before next phase)" for the safety
-# net, " (Benchmark complete before took marker)" at the end).
+# Currently-open perf window. We track `took_pat` only so the streaming
+# loop can warn if a `<phase> took` line ever arrives without the
+# matching `Server idle` (which would indicate the Rust-side
+# quiesce_and_mark wiring is broken on some code path).
 ACTIVE_WINDOW=""
 ACTIVE_TOOK_PAT=""
-ACTIVE_DATA_FILE=""
-ACTIVE_LOG_FILE=""
 ACTIVE_START_TS=0
-close_window() {
-	[[ -z "$ACTIVE_WINDOW" ]] && return 0
-	local note=${1:-}
-	local elapsed=$(( $(date +%s) - ACTIVE_START_TS ))
-	stop_perf
-	log "      [$ACTIVE_WINDOW] detaching perf (captured ~${elapsed}s${note})"
-	if [[ -s "$ACTIVE_DATA_FILE" ]]; then
-		PERF_DATA_FILES+=("$ACTIVE_DATA_FILE")
-		if (( elapsed < 2 )) && [[ -z "$note" ]]; then
-			warn "[$ACTIVE_WINDOW] window was only ${elapsed}s — flamegraph will be sparse at ${PERF_FREQ}Hz"
-		fi
-	else
-		warn "[$ACTIVE_WINDOW] no perf data recorded (see $ACTIVE_LOG_FILE)"
-	fi
-	ACTIVE_WINDOW=""
-	ACTIVE_TOOK_PAT=""
-	ACTIVE_DATA_FILE=""
-	ACTIVE_LOG_FILE=""
-	ACTIVE_START_TS=0
-}
 
-# Open a perf window for the given name + took pattern. Caller must have
-# already verified that no window is currently active.
+# Open a new perf window for $1 (slug) with $2 as the took regex.
+# Enables perf sampling via the control fifo.
 open_window() {
 	local name=$1 took_pat=$2
 	ACTIVE_WINDOW=$name
 	ACTIVE_TOOK_PAT=$took_pat
-	ACTIVE_DATA_FILE="$OUTPUT_DIR/perf-${name}.data"
-	ACTIVE_LOG_FILE="$OUTPUT_DIR/perf-${name}.log"
 	ACTIVE_START_TS=$(date +%s)
-	log "      [$name] attaching perf (pid=$SURREAL_PID)"
-	start_perf "$ACTIVE_DATA_FILE" "$ACTIVE_LOG_FILE"
+	log "      [$name] enabling perf"
+	perf_ctl enable
+}
+
+# Close the active window: disable sampling, rotate perf.data via
+# SIGUSR2, and rename the newly-rotated file to `perf-<phase>.data`.
+# $1 is an optional note explaining how the window closed (e.g.
+# "" for a clean Server idle, " (Benchmark complete before Server idle)"
+# at end-of-run, " (forced close before next phase: …)" for the safety
+# net).
+close_window() {
+	[[ -z "$ACTIVE_WINDOW" ]] && return 0
+	local note=${1:-}
+	local elapsed=$(( $(date +%s) - ACTIVE_START_TS ))
+	local name=$ACTIVE_WINDOW
+	ACTIVE_WINDOW=""
+	ACTIVE_TOOK_PAT=""
+	ACTIVE_START_TS=0
+
+	perf_ctl disable
+	# Snapshot the rotated-file set, fire SIGUSR2, then wait for a new
+	# rotated file to appear (bounded). With --switch-output, USR2
+	# closes the active perf.data, renames it to perf.data.<ts>, and
+	# opens a fresh perf.data for subsequent samples.
+	local before_count
+	before_count=$(list_rotated_perf_files | wc -l | tr -d ' ')
+	kill -USR2 "$PERF_PID" 2>/dev/null || true
+	local i now_count
+	for i in {1..40}; do  # ~2s
+		now_count=$(list_rotated_perf_files | wc -l | tr -d ' ')
+		(( now_count > before_count )) && break
+		sleep 0.05
+	done
+
+	local newest
+	newest=$(list_rotated_perf_files | tail -1)
+	if [[ -n "$newest" && -s "$newest" ]]; then
+		local dest="$OUTPUT_DIR/perf-${name}.data"
+		mv "$newest" "$dest"
+		PERF_DATA_FILES+=("$dest")
+		PERF_PHASE_NAMES+=("$name")
+		log "      [$name] disabled perf, rotated → $(basename "$dest") (captured ~${elapsed}s${note})"
+		if (( elapsed < 2 )) && [[ -z "$note" ]]; then
+			warn "[$name] window was only ${elapsed}s — flamegraph will be sparse at ${PERF_FREQ}Hz"
+		fi
+	else
+		warn "[$name] perf rotation produced no new file (see $PERF_LOG)"
+	fi
 }
 
 if [[ "$MODE" == "profiling" ]]; then
 	log "[5/6] Streaming crud-bench log; profiling categories: ${CATEGORIES[*]}"
 
+	# Attach perf once for the whole benchmark — see start_perf_session
+	# for why we no longer launch perf per phase.
+	start_perf_session
+
 	# Tail the crud-bench log line-by-line as it's being written. The
 	# `--pid=$CRUD_PID` flag makes `tail -F` exit as soon as crud-bench
 	# does, so the `while read` loop never wedges on a process that's
-	# already gone. Using a single long-running tail (vs the previous
-	# poll-every-0.5s approach) means every line is observed exactly
-	# once in the order it was emitted — no missed `… took …` markers
-	# even when consecutive scan runs complete in well under the poll
-	# interval.
+	# already gone.
+	#
+	# Phase boundaries (all emitted only under --emit-phase-markers):
+	#   `<name> starting`  → enable perf sampling for this phase
+	#   `<name> took …`    → client-side phase complete; server may still
+	#                        be draining (open snapshots, deferred tasks).
+	#                        We KEEP sampling so that tail is attributed
+	#                        to this phase, not the next one.
+	#   `Server idle`      → server-side drain confirmed by quiesce(); now
+	#                        disable + rotate so the just-closed
+	#                        perf.data is finalised as this phase's file.
 	while IFS= read -r line; do
 		# Benchmark complete is the terminal marker — close any open
 		# window cleanly and stop processing further log lines.
 		if [[ "$line" == "Benchmark complete" ]]; then
-			close_window " (Benchmark complete before took marker)"
+			close_window " (Benchmark complete before Server idle)"
 			break
 		fi
-		# Took marker for the currently open window → close it.
-		if [[ -n "$ACTIVE_WINDOW" ]] && [[ "$line" =~ $ACTIVE_TOOK_PAT ]]; then
-			close_window ""
+		# Server-quiesced marker for the currently open window → close it.
+		if [[ "$line" == "Server idle" ]]; then
+			if [[ -n "$ACTIVE_WINDOW" ]]; then
+				close_window ""
+			else
+				warn "Server idle with no active perf window — ignoring"
+			fi
 			continue
 		fi
 		# Starting marker → open a new window (or force-close a stale
-		# one first). Force-closing here is a safety net: it should
-		# never trigger in practice (every starting marker has a
-		# matching took marker further down the log), but if a took
-		# marker is ever missed we'd rather record many short windows
-		# than one giant one spanning unrelated phases.
+		# one first). The force-close path should never trigger: every
+		# crud-bench phase pairs `<name> starting` with a `Server idle`
+		# emitted from quiesce_and_mark. If we ever see it, the Rust
+		# side dropped a `Server idle` somewhere — rotate now so two
+		# phases' samples don't fold into one file.
 		if ! parse_start_marker "$line"; then
 			continue
 		fi
 		if [[ -n "$ACTIVE_WINDOW" ]]; then
-			warn "[$ACTIVE_WINDOW] no took marker before next starting line — force-closing"
+			warn "[$ACTIVE_WINDOW] no Server idle before next starting line — force-closing"
 			close_window " (forced close before next phase: $NAME)"
 		fi
 		open_window "$NAME" "$TOOK_PAT"
@@ -673,8 +767,9 @@ if [[ "$MODE" == "profiling" ]]; then
 
 	# crud-bench can exit before emitting "Benchmark complete" (e.g.
 	# an unsupported op or a worker error) — make sure any still-open
-	# perf window is finalised so we don't leave perf-record around.
-	close_window " (crud-bench exited before took marker)"
+	# perf window is finalised and perf itself is stopped cleanly.
+	close_window " (crud-bench exited before Server idle)"
+	stop_perf_session
 
 	log "      Waiting for crud-bench to finish remaining phases..."
 else
@@ -684,9 +779,12 @@ fi
 wait "$CRUD_PID" || warn "crud-bench exited non-zero — see $CRUD_LOG"
 
 # -----------------------------------------------------------------------------
-# 6) Render flamegraphs (profiling mode only) — one per captured phase.
+# 6) Render flamegraphs (profiling mode only) — one per captured phase,
+#    plus a combined per-phase-bands SVG if inferno's standalone CLI
+#    tools are available.
 # -----------------------------------------------------------------------------
 FLAME_SVGS=()
+COMBINED_SVG=""
 if [[ "$MODE" == "profiling" ]]; then
 	if (( ${#PERF_DATA_FILES[@]} == 0 )); then
 		warn "[6/6] No perf data captured — skipping flamegraph rendering"
@@ -704,6 +802,55 @@ if [[ "$MODE" == "profiling" ]]; then
 				warn "[$phase] flamegraph rendering failed — $data_file left in place"
 			fi
 		done
+
+		# Combined per-phase-bands flamegraph: each phase becomes its
+		# own top-level frame at the bottom of the SVG, with the phase's
+		# stacks above it. Useful for spotting where wall time goes
+		# across the whole benchmark in one view.
+		#
+		# Needs inferno's standalone CLI (`cargo install inferno`) —
+		# cargo-flamegraph's wrapper doesn't expose the folded-stacks
+		# intermediate format. Skip with a hint if not installed.
+		if command -v inferno-collapse-perf >/dev/null \
+			&& command -v inferno-flamegraph >/dev/null
+		then
+			log "      Rendering combined per-phase-bands flamegraph"
+			combined_folded="$OUTPUT_DIR/perf-all-phases.folded"
+			: > "$combined_folded"
+			combine_ok=1
+			for i in "${!PERF_DATA_FILES[@]}"; do
+				data_file=${PERF_DATA_FILES[$i]}
+				phase=${PERF_PHASE_NAMES[$i]}
+				# `perf script` decodes per-sample stacks; pipe through
+				# inferno's collapse, then prepend the phase slug as a
+				# synthetic root frame so the combined SVG segments by
+				# phase. `2>/dev/null` swallows perf's noisy per-sample
+				# warnings — they don't affect collapse output.
+				if ! perf script -i "$data_file" 2>/dev/null \
+					| inferno-collapse-perf \
+					| awk -v p="$phase" '{ print p ";" $0 }' \
+					>> "$combined_folded"
+				then
+					warn "[$phase] failed to collapse stacks — combined SVG skipped"
+					combine_ok=0
+					break
+				fi
+			done
+			if (( combine_ok )) && [[ -s "$combined_folded" ]]; then
+				COMBINED_SVG="$OUTPUT_DIR/flamegraph-all-phases.svg"
+				if ! inferno-flamegraph \
+					--title "crud-bench — all phases (dev-$MODE-$TS)" \
+					< "$combined_folded" > "$COMBINED_SVG"
+				then
+					warn "Combined flamegraph rendering failed — folded stacks left at $combined_folded"
+					COMBINED_SVG=""
+				fi
+			else
+				COMBINED_SVG=""
+			fi
+		else
+			log "      (skipping combined flamegraph — install inferno CLI to enable: cargo install inferno)"
+		fi
 	fi
 else
 	log "[6/6] Skipping flamegraph (release mode)"
@@ -727,9 +874,12 @@ if [[ "$MODE" == "profiling" ]]; then
 		[[ -s "$data_file" ]] && size=$(du -h "$data_file" | cut -f1)
 		printf "  %-14s %s  (perf.data %s)\n" "[$phase]" "$svg" "$size"
 	done
+	if [[ -n "$COMBINED_SVG" ]]; then
+		printf "  %-14s %s\n" "[all-phases]" "$COMBINED_SVG"
+	fi
 fi
 echo
-grep -E '(Benchmark (starting|complete)|(Create|Read|Update|Delete|Compaction|BuildIndex|RemoveIndex).*(starting|took)|(Scan ::).*(starting|took)|(Batch[A-Za-z]*::[^[:space:]]+) (starting|took)|ScanWithWrites::.*(starting|took))' \
+grep -E '(Benchmark (starting|complete)|Server idle|(Create|Read|Update|Delete|Compaction|BuildIndex|RemoveIndex).*(starting|took)|(Scan ::).*(starting|took)|(Batch[A-Za-z]*::[^[:space:]]+) (starting|took)|ScanWithWrites::.*(starting|took))' \
 	"$CRUD_LOG" | sed 's/^/  /' || true
 echo
 if (( ${#FLAME_SVGS[@]} > 0 )); then
@@ -737,5 +887,8 @@ if (( ${#FLAME_SVGS[@]} > 0 )); then
 	for svg in "${FLAME_SVGS[@]}"; do
 		echo "  xdg-open '$svg'"
 	done
+	if [[ -n "$COMBINED_SVG" ]]; then
+		echo "  xdg-open '$COMBINED_SVG'"
+	fi
 	echo
 fi

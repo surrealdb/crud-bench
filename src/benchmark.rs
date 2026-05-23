@@ -103,8 +103,26 @@ impl Benchmark {
 				self.bench_ui.println_plain("Compaction starting");
 			}
 			let t = Instant::now();
-			self.wait_for_client(engine).await?.compact().await?;
+			let client = self.wait_for_client(engine).await?;
+			client.compact().await?;
 			self.bench_ui.println_took_head("Compaction", &format_duration(t.elapsed()));
+			self.quiesce_and_mark(&client).await?;
+		}
+		Ok(())
+	}
+
+	/// Wait for server-side phase tail (open snapshots, draining tasks) to
+	/// drain via [`BenchmarkClient::quiesce`], then emit the grep-friendly
+	/// `Server idle` marker. dev.sh uses that line to disable + rotate the
+	/// active perf window so each phase's flamegraph excludes the next
+	/// phase's startup work *and* includes its own server-side tail.
+	async fn quiesce_and_mark<C>(&self, client: &C) -> Result<()>
+	where
+		C: BenchmarkClient + Send + Sync,
+	{
+		client.quiesce().await?;
+		if self.emit_phase_markers {
+			self.bench_ui.println_plain("Server idle");
 		}
 		Ok(())
 	}
@@ -633,6 +651,12 @@ impl Benchmark {
 		// Shall we skip the operation? (operation not supported)
 		if skip.load(Ordering::Relaxed) {
 			return Ok(None);
+		}
+		// Wait for server-side phase tail to drain and emit the
+		// `Server idle` marker. Must happen *after* the took line so
+		// dev.sh sees took → Server idle → (next phase) starting.
+		if let Some(client) = clients.first() {
+			self.quiesce_and_mark(client.as_ref()).await?;
 		}
 		// Everything ok
 		Ok(Some(result))
