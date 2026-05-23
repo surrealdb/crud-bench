@@ -33,6 +33,13 @@ use std::time::{Duration, SystemTime};
 /// Maximum wait when polling until the first datastore client connects.
 const TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Fixed sleep between phases to let any server-side phase tail settle
+/// (open snapshots, draining tasks) before the next phase opens its
+/// profiling window. Conservative — short enough to be invisible to a
+/// human, long enough to mop up the kind of MVCC drain visible in
+/// SurrealDB/RocksDB after heavy concurrent scans.
+const QUIESCE_DELAY: Duration = Duration::from_millis(500);
+
 /// Error string returned by adapters to mark an operation as unsupported (skipped, not fatal).
 pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
 
@@ -103,28 +110,27 @@ impl Benchmark {
 				self.bench_ui.println_plain("Compaction starting");
 			}
 			let t = Instant::now();
-			let client = self.wait_for_client(engine).await?;
-			client.compact().await?;
+			self.wait_for_client(engine).await?.compact().await?;
 			self.bench_ui.println_took_head("Compaction", &format_duration(t.elapsed()));
-			self.quiesce_and_mark(&client).await?;
+			self.quiesce_and_mark().await;
 		}
 		Ok(())
 	}
 
-	/// Wait for server-side phase tail (open snapshots, draining tasks) to
-	/// drain via [`BenchmarkClient::quiesce`], then emit the grep-friendly
-	/// `Server idle` marker. dev.sh uses that line to disable + rotate the
-	/// active perf window so each phase's flamegraph excludes the next
-	/// phase's startup work *and* includes its own server-side tail.
-	async fn quiesce_and_mark<C>(&self, client: &C) -> Result<()>
-	where
-		C: BenchmarkClient + Send + Sync,
-	{
-		client.quiesce().await?;
+	/// Sleep a fixed beat to let any server-side phase tail settle (open
+	/// snapshots, draining tasks, deferred cleanup that outlives the
+	/// client's `try_join_all`), then emit the grep-friendly `Server idle`
+	/// marker. dev.sh uses that line to disable + rotate the active perf
+	/// window so each phase's flamegraph excludes the next phase's startup
+	/// work *and* includes its own server-side tail.
+	///
+	/// Plain sleep — no client probe — so the marker can't silently wedge
+	/// the benchmark if a probe query gets stuck.
+	async fn quiesce_and_mark(&self) {
+		tokio::time::sleep(QUIESCE_DELAY).await;
 		if self.emit_phase_markers {
 			self.bench_ui.println_plain("Server idle");
 		}
-		Ok(())
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -659,9 +665,7 @@ impl Benchmark {
 		// Wait for server-side phase tail to drain and emit the
 		// `Server idle` marker. Must happen *after* the took line so
 		// dev.sh sees took → Server idle → (next phase) starting.
-		if let Some(client) = clients.first() {
-			self.quiesce_and_mark(client.as_ref()).await?;
-		}
+		self.quiesce_and_mark().await;
 		// Everything ok
 		Ok(Some(result))
 	}

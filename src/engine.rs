@@ -57,17 +57,6 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		Ok(())
 	}
 
-	/// Block until the server has finished any background work spun off by the
-	/// previous phase (open snapshots, draining tasks, deferred cleanup).
-	///
-	/// The default no-op is correct for engines whose phase boundaries are
-	/// fully synchronous client-side. Engines with an MVCC / snapshot tail
-	/// that outlives `try_join_all` (notably SurrealDB on RocksDB) override
-	/// this so per-phase profiling windows don't bleed into the next phase.
-	async fn quiesce(&self) -> Result<()> {
-		Ok(())
-	}
-
 	/// Create a single entry with the current client
 	fn create(
 		&self,

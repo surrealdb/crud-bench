@@ -404,51 +404,6 @@ impl BenchmarkClient for SurrealDBClient {
 		Ok(())
 	}
 
-	async fn quiesce(&self) -> Result<()> {
-		// Active probe: drive a small write through the optimistic-commit
-		// path in a retry loop, then add a small floor sleep. This is the
-		// same retryable-error shape that `drop_index` already handles for
-		// REMOVE INDEX — see the long comment there for why the prior
-		// phase's RocksDB snapshots can outlive client-side `try_join_all`
-		// and why retrying is the right wait. When the probe finally
-		// commits without a "Resource busy" / "failed transaction" error
-		// the server's snapshots have drained.
-		const RETRYABLE: &[&str] = &[
-			"This transaction can be retried",
-			"The query was not executed due to a failed transaction",
-		];
-		let probe_sql = "UPSERT crud_bench_quiesce_probe:sentinel \
-		                 SET ts = time::now() RETURN NONE";
-		// Use anyhow::Result inside the closure so both `surrealdb::Error`
-		// (from the `?` on `query`) and `DbResultError` (from `.check()`)
-		// convert into a single error type.
-		let fut = async {
-			loop {
-				match self.db.query(probe_sql).await?.check() {
-					Ok(_) => return anyhow::Ok(()),
-					Err(e) => {
-						let msg = e.to_string();
-						if RETRYABLE.iter().any(|p| msg.contains(p)) {
-							warn!("quiesce probe retrying: {msg}");
-							sleep(Duration::from_millis(50)).await;
-							continue;
-						}
-						return Err(e.into());
-					}
-				}
-			}
-		};
-		match timeout(Duration::from_secs(30), fut).await {
-			Ok(res) => res?,
-			Err(_) => bail!("quiesce probe timed out after 30s"),
-		}
-		// Floor sleep — protects against tasks that finished just before
-		// the probe commit but are still draining state. 500ms matches
-		// the inter-retry delay used in `drop_index`.
-		sleep(Duration::from_millis(500)).await;
-		Ok(())
-	}
-
 	async fn compact(&self) -> Result<()> {
 		// Issue a system compaction request
 		let sql = "ALTER SYSTEM COMPACT";
