@@ -16,36 +16,47 @@
 #              a benchmark run against your local build. Use this to check
 #              the effect of a code change on end-to-end numbers.
 #
-# In profiling mode the script watches crud-bench's log for lifecycle and
-# phase markers and brackets a separate perf window per requested phase.
+# In profiling mode the script watches crud-bench's log for per-phase
+# `starting` / `took` markers (emitted under `--emit-phase-markers`) and
+# brackets a separate perf window per individual phase. Each window writes
+# its own `perf-<phase>.data` and renders to `flamegraph-<phase>.svg`.
 #
 # crud-bench emits (with `--emit-phase-markers` in profiling mode; phase lines stay
 # ASCII at column 0 for tooling; optional leading ANSI SGR may be added later):
 #   "Connecting to datastore" / "Datastore ready"
 #   "Setting up N client(s)"  / "Benchmark starting"
-#   "<Operation> starting"    / "<Operation> took …"     (once per phase)
+#   "<rich phase label> starting" / "<rich phase label> took …"
 #   "Benchmark complete"      / "Disconnecting from datastore"
 #
-# Phases always run in a fixed order:
+# The rich phase label embeds the scan id / batch name so per-run markers
+# are unique:
+#   Create / Read / Update / Delete                                  (CRUD)
+#   Scan :: <id> :: <name> :: no-index|indexed[, writes N%]           (scans)
+#   BuildIndex :: <id> / RemoveIndex :: <id>                          (index DDL)
+#   BatchCreate::<name> / BatchRead::<name> / …                       (batches)
 #
-#     Create → Read → Update → Scan(s) [→ BuildIndex → ScanWithIndex →
-#                                          RemoveIndex] → Delete → Batches
+# Phases always run in crud-bench's fixed order:
 #
-# Supported phase names for PHASES:
+#     Create → Read → Update → Scans (incl. BuildIndex / ScanWithIndex /
+#                                       RemoveIndex) → Delete → Batches
 #
-#     create        "Create starting"         → "Create took …"
-#     read          "Read starting"           → "Read took …"
-#     update        "Update starting"         → "Update took …"
-#     scan          "Scan ::… starting"       → "Scan ::… took …"         (first match)
-#     delete        "Delete starting"         → "Delete took …"
-#     batch         first "Batch…:: starting" → "Benchmark complete"     (all batches)
-#     all           "Benchmark starting"      → crud-bench exit           (end-to-end)
+# Supported PHASES categories (comma-separated; default "all"):
 #
-# You can pass a comma-separated list, e.g. PHASES="create,update". If
-# "delete" or "update" is requested without "scan", the script
-# automatically passes --skip-scans / --skip-indexes to crud-bench so the
-# window stays tight. --skip-batches is passed unless PHASES contains
-# "all" or any "batch*" phase.
+#     crud        One perf window per CRUD op: Create, Read, Update, Delete.
+#                 Passes --skip-scans --skip-indexes --skip-batches so the
+#                 windows stay tight.
+#     scans       One perf window per scan run (each Scan, ScanWithWrites,
+#                 BuildIndex, RemoveIndex captured separately).
+#                 Passes --skip-batches.
+#     batches     One perf window per [[batches]] entry — c/r/u/d × size
+#                 combinations are split apart (e.g. batch_create_100,
+#                 batch_read_1000). Passes --skip-scans --skip-indexes.
+#     all         crud + scans + batches with no --skip-* flags. Captures
+#                 every phase as its own perf window in crud-bench's
+#                 natural execution order.
+#
+# Short windows (< ~2s) get a warning since `-F PERF_FREQ` (default 997 Hz)
+# leaves the flamegraph sparse.
 #
 # Usage:
 #   ./dev.sh
@@ -68,9 +79,8 @@
 #   SAMPLES           Number of samples                  (prompted)
 #   CLIENTS           Concurrent clients                 (prompted)
 #   THREADS           Worker threads                     (prompted)
-#   PHASES            Comma-sep phases to profile        (prompted, profiling mode)
-#                     Any of: create, read, update, scan, delete,
-#                             batch, all
+#   PHASES            Comma-sep categories to profile    (prompted, profiling mode)
+#                     Any of: crud, scans, batches, all
 #   KEY_TYPE          Primary key type                   (default: integer)
 #   DB_PATH           RocksDB data dir for the server    (default: ./data next to dev.sh)
 #   OUTPUT_DIR        Where logs/perf/flamegraph go      (default: ./dev-results-<mode>-<ts>)
@@ -192,54 +202,53 @@ done
 # Phase selection (profiling mode only)
 # -----------------------------------------------------------------------------
 #
-# One perf window + one flamegraph is produced for each phase in PHASES.
-# Keys mapped to (start, stop) regexes over the crud-bench log; an empty
-# start means "attach as soon as crud-bench starts".
-VALID_PHASES="create read update scan delete batch all"
+# PHASES is a comma-separated list of categories:
+#
+#   crud     → Create, Read, Update, Delete  (one perf window each)
+#   scans    → every Scan / ScanWithWrites / BuildIndex / RemoveIndex run
+#              (one perf window per run, named after the scan id)
+#   batches  → every [[batches]] entry (one perf window per c/r/u/d × size)
+#   all      → crud + scans + batches
+#
+# `all` expands to {crud, scans, batches}; duplicates after expansion are
+# de-deduplicated.
+VALID_CATEGORIES="all crud scans batches"
+declare -A VALID_CATEGORY_SET=([all]=1 [crud]=1 [scans]=1 [batches]=1)
 
-# Match optional leading ANSI (SGR) so profiling still works if crud-bench colours phase lines.
-LINE_START=$'^(\x1b\\[[0-9;]*m)*'
+# Selected categories (lowercase, deduped). `all` expanded to the three
+# concrete categories so downstream logic only needs to check those.
+CATEGORIES=()
+HAS_CRUD=0
+HAS_SCANS=0
+HAS_BATCHES=0
 
-declare -A PHASE_START=(
-	[create]="${LINE_START}Create starting"
-	[read]="${LINE_START}Read starting"
-	[update]="${LINE_START}Update starting"
-	[scan]="${LINE_START}Scan ::.+ starting"
-	[delete]="${LINE_START}Delete starting"
-	[batch]="${LINE_START}Batch[A-Za-z]+::[A-Za-z0-9_]+ starting"
-	[all]="${LINE_START}Benchmark starting"
-)
-# An empty PHASE_STOP value means "stop when crud-bench exits" (used by
-# the `all` phase so batches/compaction-after-delete are included).
-declare -A PHASE_STOP=(
-	[create]="${LINE_START}Create.*took"
-	[read]="${LINE_START}Read.*took"
-	[update]="${LINE_START}Update.*took"
-	[scan]="${LINE_START}Scan ::.+took"
-	[delete]="${LINE_START}Delete.*took"
-	[batch]='^Benchmark complete'
-	[all]=''
-)
-
-PHASE_LIST=()
 if [[ "$MODE" == "profiling" ]]; then
 	while true; do
-		ask PHASES "Phases to profile (comma-sep: $VALID_PHASES)" "scan"
+		ask PHASES "Categories to profile (comma-sep: $VALID_CATEGORIES)" "all"
 		IFS=',' read -ra __req <<<"$PHASES"
-		PHASE_LIST=()
+		CATEGORIES=()
+		HAS_CRUD=0; HAS_SCANS=0; HAS_BATCHES=0
 		__ok=1
-		for __p in "${__req[@]}"; do
-			__p="${__p// /}"
-			[[ -z "$__p" ]] && continue
-			if [[ -z "${PHASE_STOP[$__p]+x}" ]]; then
-				warn "Unknown phase: '$__p' (valid: $VALID_PHASES)"
+		for __c in "${__req[@]}"; do
+			__c="${__c// /}"; __c="${__c,,}"
+			[[ -z "$__c" ]] && continue
+			if [[ -z "${VALID_CATEGORY_SET[$__c]+x}" ]]; then
+				warn "Unknown category: '$__c' (valid: $VALID_CATEGORIES)"
 				__ok=0
 				break
 			fi
-			PHASE_LIST+=("$__p")
+			case "$__c" in
+				all)     HAS_CRUD=1; HAS_SCANS=1; HAS_BATCHES=1 ;;
+				crud)    HAS_CRUD=1 ;;
+				scans)   HAS_SCANS=1 ;;
+				batches) HAS_BATCHES=1 ;;
+			esac
 		done
-		if (( __ok )) && (( ${#PHASE_LIST[@]} > 0 )); then
-			break
+		if (( __ok )); then
+			(( HAS_CRUD ))    && CATEGORIES+=(crud)
+			(( HAS_SCANS ))   && CATEGORIES+=(scans)
+			(( HAS_BATCHES )) && CATEGORIES+=(batches)
+			(( ${#CATEGORIES[@]} > 0 )) && break
 		fi
 		unset PHASES
 	done
@@ -281,35 +290,18 @@ CRUD_LOG="$OUTPUT_DIR/crud-bench.log"
 SURREAL_LOG="$OUTPUT_DIR/surreal.log"
 
 # -----------------------------------------------------------------------------
-# Derive crud-bench --skip-* flags from PHASE_LIST.
+# Derive crud-bench --skip-* flags from selected categories.
 #
-# Rationale:
-#   - Scans / indexes / batches run between Update and Delete. If they're
-#     included while we're trying to profile, say, "update" or "delete",
-#     the perf window either has to wait through them or stops at the
-#     wrong marker. So we skip them unless they've been explicitly asked
-#     for (scan) or the user wants everything (all).
-#   - There's no CLI flag to skip Read; it always runs. The "read" phase
-#     just profiles it in place.
+# Rationale: if a category isn't selected, skip its phases to keep the run
+# tight. Scans and indexes run together (with-index scans live between
+# BuildIndex and RemoveIndex), so they share a skip flag pair. CRUD ops
+# (Create/Read/Update/Delete) always run — there are no skip flags for
+# them — when 'crud' isn't selected they just run unprofiled.
 # -----------------------------------------------------------------------------
 CRUD_SKIP_ARGS=()
 if [[ "$MODE" == "profiling" ]]; then
-	phases_has() {
-		local needle=$1 p
-		for p in "${PHASE_LIST[@]}"; do [[ "$p" == "$needle" ]] && return 0; done
-		return 1
-	}
-	phases_has_prefix() {
-		local prefix=$1 p
-		for p in "${PHASE_LIST[@]}"; do [[ "$p" == "$prefix"* ]] && return 0; done
-		return 1
-	}
-	if ! phases_has scan && ! phases_has all; then
-		CRUD_SKIP_ARGS+=(--skip-scans --skip-indexes)
-	fi
-	if ! phases_has all && ! phases_has_prefix batch; then
-		CRUD_SKIP_ARGS+=(--skip-batches)
-	fi
+	(( HAS_SCANS ))   || CRUD_SKIP_ARGS+=(--skip-scans --skip-indexes)
+	(( HAS_BATCHES )) || CRUD_SKIP_ARGS+=(--skip-batches)
 fi
 
 echo "================================================================"
@@ -323,7 +315,7 @@ printf "  %-14s samples=%s  clients=%s  threads=%s  key=%s\n" \
        "Params:" "$SAMPLES" "$CLIENTS" "$THREADS" "$KEY_TYPE"
 printf "  %-14s %s\n" "Compaction:" "$COMPACTION_CHOICE"
 if [[ "$MODE" == "profiling" ]]; then
-	printf "  %-14s %s\n" "Phases:"  "${PHASE_LIST[*]}"
+	printf "  %-14s %s\n" "Categories:"  "${CATEGORIES[*]}"
 	printf "  %-14s %s Hz  max=%ss  (--call-graph fp)\n" \
 	       "perf:" "$PERF_FREQ" "$PERF_MAX_SECS"
 	if (( ${#CRUD_SKIP_ARGS[@]} > 0 )); then
@@ -472,25 +464,6 @@ log "      PID=$CRUD_PID  log=$CRUD_LOG"
 #    In release mode we just wait for crud-bench to exit.
 # -----------------------------------------------------------------------------
 
-# Block until $1 (an extended regex) matches somewhere in $CRUD_LOG, or
-# until crud-bench exits. Empty pattern returns immediately. Returns 0
-# on match, 1 if crud-bench died first.
-wait_for_pattern() {
-	local pat=$1
-	[[ -z "$pat" ]] && return 0
-	while true; do
-		if grep -Eq "$pat" "$CRUD_LOG" 2>/dev/null; then
-			return 0
-		fi
-		if ! kill -0 "$CRUD_PID" 2>/dev/null; then
-			# One last look in case the match landed right before exit.
-			grep -Eq "$pat" "$CRUD_LOG" 2>/dev/null && return 0
-			return 1
-		fi
-		sleep 0.5
-	done
-}
-
 # Attach perf to SURREAL_PID for up to PERF_MAX_SECS, writing to $1.
 # Stores pid in PERF_PID so the cleanup trap can kill it if we abort.
 start_perf() {
@@ -514,68 +487,163 @@ stop_perf() {
 	PERF_PID=""
 }
 
+# -----------------------------------------------------------------------------
+# Per-line observer state.
+#
+# The profiling loop walks the crud-bench log line-by-line so each phase
+# can open its own perf window — every Scan, BuildIndex, and Batch run
+# gets a distinct marker (rich `--emit-phase-markers` labels carry the
+# scan id / batch name).
+# -----------------------------------------------------------------------------
+LINE_CURSOR=1
+MATCH_LINE=""
+
+# Lowercase, non-alnum → '-', collapse runs, trim. Used for filenames.
+slugify() {
+	local s=${1,,}
+	s=$(printf '%s' "$s" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+	[[ -z "$s" ]] && s="unnamed"
+	printf '%s' "$s"
+}
+
+# Escape ERE metacharacters so $1 can be spliced into a regex literally.
+escape_re() {
+	printf '%s' "$1" | sed -E 's/[][\\.^$*+?(){}|]/\\&/g'
+}
+
+# Read forward from LINE_CURSOR until a line matches $1 (regex). Sets
+# MATCH_LINE and advances LINE_CURSOR past the matching line.
+#
+#   $2 (optional): terminator regex — if any line matches it before $1,
+#                  set MATCH_LINE and return 2.
+#   $3 (optional, "1"): also abort when PERF_PID dies (return 3) —
+#                       used while a window is open so a perf-self-exit
+#                       (PERF_MAX_SECS hit) doesn't leave us waiting.
+#
+# Return 1 if crud-bench exits before any of the above.
+wait_for_line() {
+	local pat=$1 terminator=${2:-} watch_perf=${3:-0}
+	while true; do
+		if [[ -f "$CRUD_LOG" ]]; then
+			local lineno=$LINE_CURSOR
+			local line
+			while IFS= read -r line; do
+				if [[ -n "$terminator" ]] && [[ "$line" =~ $terminator ]]; then
+					MATCH_LINE=$line
+					LINE_CURSOR=$((lineno + 1))
+					return 2
+				fi
+				if [[ "$line" =~ $pat ]]; then
+					MATCH_LINE=$line
+					LINE_CURSOR=$((lineno + 1))
+					return 0
+				fi
+				lineno=$((lineno + 1))
+			done < <(tail -n +"$LINE_CURSOR" "$CRUD_LOG" 2>/dev/null)
+			LINE_CURSOR=$lineno
+		fi
+		if (( watch_perf )) && [[ -n "${PERF_PID:-}" ]] && ! kill -0 "$PERF_PID" 2>/dev/null; then
+			return 3
+		fi
+		if ! kill -0 "$CRUD_PID" 2>/dev/null; then
+			return 1
+		fi
+		sleep 0.5
+	done
+}
+
 PERF_DATA_FILES=()
+SHOULD_STOP_LOOP=0
+
+# Open a perf window named $1, wait for the took regex $2, then close it.
+# Records the .data file into PERF_DATA_FILES on success; warns on short
+# windows (< 2s) since sparse sampling makes the flamegraph noisy.
+capture_window() {
+	local name=$1 took_pat=$2
+	local data_file="$OUTPUT_DIR/perf-${name}.data"
+	local log_file="$OUTPUT_DIR/perf-${name}.log"
+	local ts_start ts_end elapsed note=""
+	ts_start=$(date +%s)
+	log "      [$name] attaching perf (pid=$SURREAL_PID)"
+	start_perf "$data_file" "$log_file"
+
+	wait_for_line "$took_pat" '^Benchmark complete$' 1
+	local rc=$?
+
+	ts_end=$(date +%s)
+	stop_perf
+	elapsed=$((ts_end - ts_start))
+	case $rc in
+		0) ;;
+		1) note=", crud-bench exited before took marker"; SHOULD_STOP_LOOP=1 ;;
+		2) note=", Benchmark complete before took marker"; SHOULD_STOP_LOOP=1 ;;
+		3) note=", perf hit PERF_MAX_SECS=$PERF_MAX_SECS" ;;
+	esac
+	log "      [$name] detaching perf (captured ~${elapsed}s${note})"
+
+	if [[ -s "$data_file" ]]; then
+		PERF_DATA_FILES+=("$data_file")
+		if (( elapsed < 2 )) && (( rc == 0 )); then
+			warn "[$name] window was only ${elapsed}s — flamegraph will be sparse at ${PERF_FREQ}Hz"
+		fi
+	else
+		warn "[$name] no perf data recorded (see $log_file)"
+	fi
+}
 
 if [[ "$MODE" == "profiling" ]]; then
-	log "[5/6] Profiling phases: ${PHASE_LIST[*]}"
+	log "[5/6] Profiling categories: ${CATEGORIES[*]}"
 
-	for phase in "${PHASE_LIST[@]}"; do
-		start_pat=${PHASE_START[$phase]}
-		stop_pat=${PHASE_STOP[$phase]}
-		data_file="$OUTPUT_DIR/perf-${phase}.data"
-		log_file="$OUTPUT_DIR/perf-${phase}.log"
+	# Combined "any starting marker we care about" regex, built from the
+	# selected categories. Each branch is anchored so we can dispatch
+	# unambiguously on the matched line.
+	any_start_parts=()
+	(( HAS_CRUD ))    && any_start_parts+=('^(Create|Read|Update|Delete) starting$')
+	(( HAS_SCANS ))   && any_start_parts+=('^Scan :: .+ starting$' \
+	                                       '^BuildIndex :: .+ starting$' \
+	                                       '^RemoveIndex :: .+ starting$')
+	(( HAS_BATCHES )) && any_start_parts+=('^Batch(Create|Read|Update|Delete)::.+ starting$')
+	any_start_re=""
+	for i in "${!any_start_parts[@]}"; do
+		(( i > 0 )) && any_start_re+="|"
+		any_start_re+="${any_start_parts[$i]}"
+	done
+	any_start_re="(${any_start_re})"
 
-		# Wait for the phase's start marker (or start immediately if empty).
-		if [[ -n "$start_pat" ]]; then
-			log "      [$phase] waiting for /$start_pat/"
-			if ! wait_for_pattern "$start_pat"; then
-				warn "[$phase] crud-bench exited before start marker appeared — skipping"
-				continue
-			fi
-		fi
+	while (( ! SHOULD_STOP_LOOP )); do
+		if ! kill -0 "$CRUD_PID" 2>/dev/null; then break; fi
+		wait_for_line "$any_start_re" '^Benchmark complete$'
+		case $? in
+			0) ;;
+			*) break ;;
+		esac
 
-		ts_start=$(date +%s)
-		log "      [$phase] attaching perf (pid=$SURREAL_PID, -F $PERF_FREQ, out=$(basename "$data_file"))"
-		start_perf "$data_file" "$log_file"
-
-		# Wait for the phase's stop marker, or for perf / crud-bench to die.
-		# An empty stop_pat means "run until crud-bench exits" (used by `all`).
-		matched=0
-		while true; do
-			if [[ -n "$stop_pat" ]] && grep -Eq "$stop_pat" "$CRUD_LOG" 2>/dev/null; then
-				matched=1
-				break
-			fi
-			if [[ -n "$PERF_PID" ]] && ! kill -0 "$PERF_PID" 2>/dev/null; then
-				warn "[$phase] perf stopped on its own (hit PERF_MAX_SECS=$PERF_MAX_SECS?)"
-				break
-			fi
-			if ! kill -0 "$CRUD_PID" 2>/dev/null; then
-				if [[ -z "$stop_pat" ]]; then
-					matched=1
-				else
-					grep -Eq "$stop_pat" "$CRUD_LOG" 2>/dev/null && matched=1
-				fi
-				break
-			fi
-			sleep 0.5
-		done
-
-		ts_end=$(date +%s)
-		note=""
-		(( matched )) || note=', stop marker not seen'
-		log "      [$phase] detaching perf (captured ~$((ts_end - ts_start))s${note})"
-		stop_perf
-
-		if [[ -s "$data_file" ]]; then
-			PERF_DATA_FILES+=("$data_file")
+		name=""; took_pat=""
+		if [[ "$MATCH_LINE" =~ ^(Create|Read|Update|Delete)\ starting$ ]]; then
+			op=${BASH_REMATCH[1]}
+			name="crud-${op,,}"
+			took_pat="^${op} took"
+		elif [[ "$MATCH_LINE" =~ ^Scan\ ::\ (.+)\ starting$ ]]; then
+			body=${BASH_REMATCH[1]}
+			name="scan-$(slugify "$body")"
+			took_pat="^Scan :: $(escape_re "$body") took"
+		elif [[ "$MATCH_LINE" =~ ^BuildIndex\ ::\ (.+)\ starting$ ]]; then
+			id=${BASH_REMATCH[1]}
+			name="scan-build-index-$(slugify "$id")"
+			took_pat="^BuildIndex :: $(escape_re "$id") took"
+		elif [[ "$MATCH_LINE" =~ ^RemoveIndex\ ::\ (.+)\ starting$ ]]; then
+			id=${BASH_REMATCH[1]}
+			name="scan-remove-index-$(slugify "$id")"
+			took_pat="^RemoveIndex :: $(escape_re "$id") took"
+		elif [[ "$MATCH_LINE" =~ ^Batch(Create|Read|Update|Delete)::(.+)\ starting$ ]]; then
+			op=${BASH_REMATCH[1]}; bname=${BASH_REMATCH[2]}
+			name="batch-${op,,}-$(slugify "$bname")"
+			took_pat="^Batch${op}::$(escape_re "$bname") took"
 		else
-			warn "[$phase] no perf data recorded (see $log_file)"
+			warn "Unrecognised starting marker: $MATCH_LINE"
+			continue
 		fi
-
-		if ! kill -0 "$CRUD_PID" 2>/dev/null; then
-			break
-		fi
+		capture_window "$name" "$took_pat"
 	done
 
 	log "      Waiting for crud-bench to finish remaining phases..."

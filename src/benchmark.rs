@@ -759,8 +759,10 @@ impl Benchmark {
 		D: Dialect,
 	{
 		// Optional line for log-based profiling (`dev.sh`, grep over captured logs).
+		// `phase_marker_label` includes the scan id / run name / ctx so per-scan and
+		// per-index DDL windows are uniquely greppable.
 		if self.emit_phase_markers {
-			self.bench_ui.println_plain(&format!("{operation} starting"));
+			self.bench_ui.println_plain(&format!("{} starting", phase_marker_label(&operation)));
 		}
 		let progress =
 			self.bench_ui.progress_bar(samples as u64, &progress_short_label(&operation));
@@ -873,6 +875,25 @@ impl Benchmark {
 				// Create/Read/Update/Delete, index DDL, and batch ops share the default line format
 				self.bench_ui.println_took_head(&operation.to_string(), &took);
 			}
+		}
+		// Grep-friendly took marker for ops whose UI line collapses multiple
+		// runs onto the same label (scans always reuse `Scan :: no-index`/
+		// `Scan :: indexed`; BuildIndex/RemoveIndex reuse their bare name).
+		// The rich marker disambiguates by scan id so dev.sh can attach one
+		// perf window per run.
+		if self.emit_phase_markers
+			&& matches!(
+				&operation,
+				BenchmarkOperation::Scan(..)
+					| BenchmarkOperation::ScanWithWrites(..)
+					| BenchmarkOperation::BuildIndex(..)
+					| BenchmarkOperation::RemoveIndex(..)
+			) {
+			self.bench_ui.println_plain(&format!(
+				"{} took {}",
+				phase_marker_label(&operation),
+				took
+			));
 		}
 		// Shall we skip the operation? (operation not supported)
 		if skip.load(Ordering::Relaxed) {
@@ -1051,6 +1072,33 @@ impl Display for BenchmarkOperation {
 			Self::BatchUpdate(b) => write!(f, "BatchUpdate::{}", b.name),
 			Self::BatchDelete(b) => write!(f, "BatchDelete::{}", b.name),
 		}
+	}
+}
+
+/// Grep-friendly marker label used in `--emit-phase-markers` lines.
+///
+/// `Display` collapses every scan onto `Scan :: <ctx>` and every BuildIndex /
+/// RemoveIndex onto the bare op name, which is fine for the human-readable UI
+/// but means dev.sh's profiling loop can't tell adjacent runs apart. This
+/// helper expands the label with the scan id (and run name for plain scans)
+/// so each marker line is unique within a benchmark run.
+fn phase_marker_label(op: &BenchmarkOperation) -> String {
+	match op {
+		BenchmarkOperation::Scan(scan, ctx) => {
+			format!("Scan :: {} :: {} :: {}", scan.id, scan.name, scan_context_slug(*ctx))
+		}
+		BenchmarkOperation::ScanWithWrites(scan, ctx, spec) => {
+			format!(
+				"Scan :: {} :: {} :: {}, writes {}%",
+				scan.id,
+				scan.name,
+				scan_context_slug(*ctx),
+				writes_ratio_percent(spec)
+			)
+		}
+		BenchmarkOperation::BuildIndex(_, scan_id) => format!("BuildIndex :: {scan_id}"),
+		BenchmarkOperation::RemoveIndex(scan_id) => format!("RemoveIndex :: {scan_id}"),
+		_ => op.to_string(),
 	}
 }
 

@@ -245,8 +245,9 @@ jobs:
           # MariaDB
           - name: mariadb
             database: mariadb
-            enabled: true
+            enabled: false
             description: MariaDB
+            skipped: MariaDB benchmark fails with connection errors when running mixed workloads
           # MDBX
           - name: mdbx
             database: mdbx

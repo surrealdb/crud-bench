@@ -10,15 +10,17 @@ use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use arangors::aql::AqlQuery;
-use arangors::client::reqwest::ReqwestClient;
+use arangors::client::ClientExt;
 use arangors::document::Document;
 use arangors::document::options::InsertOptions;
 use arangors::document::options::RemoveOptions;
-use arangors::{Collection, Connection, Database, GenericConnection};
+use arangors::{ClientError, Collection, Database, GenericConnection};
+use async_trait::async_trait;
+use http::HeaderMap;
 use serde_json::{Value, json};
+use std::convert::TryInto;
 use std::hint::black_box;
 use std::time::Duration;
-use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "http://127.0.0.1:8529";
 
@@ -32,16 +34,15 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				let cache_gb = Config::new().cache_gb.max(1);
 				let block_cache_bytes = cache_gb * 1024 * 1024 * 1024 / 2;
 				let total_write_buffer_bytes = cache_gb * 1024 * 1024 * 1024 / 4;
-				// I/O threads handle network reads/writes; the default of 1
-				// causes the kernel SYN queue to fill under heavy parallel
-				// HTTP load, producing ETIMEDOUT errors on the client side.
-				let io_threads = num_cpus::get().clamp(2, 8);
+				// With the HTTP/2 client we only open one TCP connection per
+				// `-c` client and multiplex all `-t` worker tasks onto it as
+				// independent streams, so the accept-queue burst that
+				// previously required a much larger I/O thread pool is gone.
+				// We still bump it modestly above the default of 1 to keep
+				// the read/write loops from becoming a serialisation point.
+				let io_threads = num_cpus::get().clamp(2, 4);
 				format!(
 					"--server.io-threads {io_threads} \
-					 --server.scheduler-queue-size 8192 \
-					 --server.prio1-size 8192 \
-					 --server.prio2-size 8192 \
-					 --server.maximal-queue-size 8192 \
 					 --rocksdb.block-cache-size {block_cache_bytes} \
 					 --rocksdb.total-write-buffer-size {total_write_buffer_bytes} \
 					 --rocksdb.enable-pipelined-write true \
@@ -52,6 +53,84 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			}
 			false => "".to_string(),
 		},
+	}
+}
+
+/// A drop-in replacement for `arangors::client::reqwest::ReqwestClient`
+/// that builds the underlying `reqwest::Client` with HTTP/2 prior knowledge
+/// enabled. ArangoDB 3.x detects the HTTP/2 connection preface on plain
+/// TCP, so all `-t` worker tasks per benchmark client share a single TCP
+/// connection and travel as independent HTTP/2 streams. This removes the
+/// HTTP/1.1 "one TCP socket per in-flight request" amplification that
+/// previously forced us to serialise calls behind a per-client mutex.
+#[derive(Debug, Clone)]
+pub(crate) struct Http2ReqwestClient {
+	/// Underlying `reqwest` HTTP client, configured for HTTP/2 multiplexing.
+	client: reqwest::Client,
+	/// Default headers (e.g. authorization) merged into every request.
+	headers: HeaderMap,
+}
+
+#[async_trait]
+impl ClientExt for Http2ReqwestClient {
+	/// Build a client that forces HTTP/2 prior knowledge on every request.
+	fn new<U: Into<Option<HeaderMap>>>(headers: U) -> Result<Self, ClientError> {
+		// Configure reqwest for HTTP/2 multiplexing
+		let client = reqwest::Client::builder()
+			.gzip(true)
+			.http2_prior_knowledge()
+			.http2_adaptive_window(true)
+			.http2_keep_alive_interval(Duration::from_secs(15))
+			.http2_keep_alive_while_idle(true)
+			.pool_idle_timeout(None)
+			.build()
+			.map_err(|e| ClientError::HttpClient(format!("{:?}", e)))?;
+		// Default headers applied to every outgoing request
+		let headers = headers.into().unwrap_or_default();
+		Ok(Self {
+			client,
+			headers,
+		})
+	}
+	fn headers(&mut self) -> &mut HeaderMap {
+		&mut self.headers
+	}
+	/// Forward a request through the underlying HTTP/2 client and rebuild
+	/// the response in the form arangors expects.
+	async fn request(
+		&self,
+		mut request: http::Request<String>,
+	) -> Result<http::Response<String>, ClientError> {
+		// Merge the connection-level default headers with the per-request
+		// headers, giving precedence to whatever arangors set explicitly
+		let req_headers = request.headers_mut();
+		for (header, value) in self.headers.iter() {
+			if !req_headers.contains_key(header) {
+				req_headers.insert(header, value.clone());
+			}
+		}
+		// Convert into a reqwest::Request and execute it
+		let req = request.try_into().unwrap();
+		let resp = self
+			.client
+			.execute(req)
+			.await
+			.map_err(|e| ClientError::HttpClient(format!("{:?}", e)))?;
+		// Capture metadata before consuming the response body
+		let status_code = resp.status();
+		let headers = resp.headers().clone();
+		let version = resp.version();
+		let content = resp.text().await.map_err(|e| ClientError::HttpClient(format!("{:?}", e)))?;
+		// Reassemble an http::Response with the original status/headers
+		let mut build = http::Response::builder();
+		for header in headers.iter() {
+			build = build.header(header.0, header.1);
+		}
+		build
+			.status(status_code)
+			.version(version)
+			.body(content)
+			.map_err(|e| ClientError::HttpClient(format!("{:?}", e)))
 	}
 }
 
@@ -73,19 +152,18 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<ArangoDBClient> {
 		let (conn, db, co) = create_arango_client(&self.url).await?;
-		// Wrap the database/collection handles in `Mutex` per client. The
-		// lock isn't there to protect state — both handles are `Clone` and
-		// thread-safe — but to serialise the `-t` worker tasks per client
-		// down to one in-flight HTTP request, capping process-wide
-		// concurrency at `-c`. Without this throttle, all `clients *
-		// threads` workers fire fresh TCP opens in a burst and overflow
-		// arangod's accept queue (ETIMEDOUT).
+		// No per-client mutex is needed: the `Http2ReqwestClient` opens a
+		// single HTTP/2 connection per benchmark client and multiplexes
+		// all `-t` worker tasks as independent streams. `Database` and
+		// `Collection` are `Clone + Send + Sync` and share the same
+		// underlying client, so concurrent calls fan out into concurrent
+		// HTTP/2 streams without a TCP-open burst.
 		Ok(ArangoDBClient {
 			sync: self.sync,
 			keytype: self.key,
 			connection: conn,
-			database: Mutex::new(db),
-			collection: Mutex::new(co),
+			database: db,
+			collection: co,
 		})
 	}
 	/// The number of seconds to wait before connecting
@@ -97,17 +175,20 @@ impl BenchmarkEngine<ArangoDBClient> for ArangoDBClientProvider {
 pub(crate) struct ArangoDBClient {
 	sync: bool,
 	keytype: KeyType,
-	connection: GenericConnection<ReqwestClient>,
-	database: Mutex<Database<ReqwestClient>>,
-	collection: Mutex<Collection<ReqwestClient>>,
+	connection: GenericConnection<Http2ReqwestClient>,
+	database: Database<Http2ReqwestClient>,
+	collection: Collection<Http2ReqwestClient>,
 }
 
 async fn create_arango_client(
 	url: &str,
-) -> Result<(GenericConnection<ReqwestClient>, Database<ReqwestClient>, Collection<ReqwestClient>)>
-{
-	// Create the connection to the database
-	let conn = Connection::establish_without_auth(url).await.unwrap();
+) -> Result<(
+	GenericConnection<Http2ReqwestClient>,
+	Database<Http2ReqwestClient>,
+	Collection<Http2ReqwestClient>,
+)> {
+	// Create the connection to the database (HTTP/2 prior knowledge)
+	let conn = GenericConnection::<Http2ReqwestClient>::establish_without_auth(url).await.unwrap();
 	// Create the benchmarking database
 	let db = match conn.create_database("crud-bench").await {
 		Err(_) => conn.db("crud-bench").await.unwrap(),
@@ -301,7 +382,7 @@ impl ArangoDBClient {
 			.bind_var("docs", Value::Array(docs))
 			.bind_var("sync", json!(self.sync))
 			.build();
-		let _: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		let _: Vec<Value> = self.database.aql_query(aql).await?;
 		Ok(())
 	}
 
@@ -313,7 +394,7 @@ impl ArangoDBClient {
 			.query("FOR k IN @keys LET d = DOCUMENT('record', k) FILTER d != null RETURN d")
 			.bind_var("keys", Value::Array(keys.into_iter().map(Value::String).collect()))
 			.build();
-		let res: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		let res: Vec<Value> = self.database.aql_query(aql).await?;
 		assert!(!res.is_empty());
 		Ok(())
 	}
@@ -331,7 +412,7 @@ impl ArangoDBClient {
 			.bind_var("docs", Value::Array(docs))
 			.bind_var("sync", json!(self.sync))
 			.build();
-		let _: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		let _: Vec<Value> = self.database.aql_query(aql).await?;
 		Ok(())
 	}
 
@@ -346,7 +427,7 @@ impl ArangoDBClient {
 			.bind_var("keys", Value::Array(keys.into_iter().map(Value::String).collect()))
 			.bind_var("sync", json!(self.sync))
 			.build();
-		let _: Vec<Value> = self.database.lock().await.aql_query(aql).await?;
+		let _: Vec<Value> = self.database.aql_query(aql).await?;
 		Ok(())
 	}
 
@@ -366,12 +447,12 @@ impl ArangoDBClient {
 			.return_new(false)
 			.overwrite(false)
 			.build();
-		self.collection.lock().await.create_document(json, opt).await?;
+		self.collection.create_document(json, opt).await?;
 		Ok(())
 	}
 
 	async fn read(&self, key: String) -> Result<BenchValue> {
-		let doc: Document<Value> = self.collection.lock().await.document(&key).await?;
+		let doc: Document<Value> = self.collection.document(&key).await?;
 		assert!(doc.document.is_object());
 		assert_eq!(doc.document.get("_key").unwrap().as_str().unwrap(), key);
 		Ok(black_box(BenchValue::from(&doc.document)))
@@ -384,13 +465,13 @@ impl ArangoDBClient {
 			.return_new(false)
 			.overwrite(true)
 			.build();
-		self.collection.lock().await.create_document(json, opt).await?;
+		self.collection.create_document(json, opt).await?;
 		Ok(())
 	}
 
 	async fn delete(&self, key: String) -> Result<()> {
 		let opt = RemoveOptions::builder().wait_for_sync(self.sync).build();
-		self.collection.lock().await.remove_document::<Value>(&key, opt, None).await?;
+		self.collection.remove_document::<Value>(&key, opt, None).await?;
 		Ok(())
 	}
 
@@ -409,7 +490,7 @@ impl ArangoDBClient {
 		match p {
 			Projection::Id => {
 				let stm = format!("FOR r IN record {c} {o} {l} RETURN {{ _id: r._id }}");
-				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
+				let res: Vec<Value> = self.database.aql_str(&stm).await.unwrap();
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -423,7 +504,7 @@ impl ArangoDBClient {
 			}
 			Projection::Full => {
 				let stm = format!("FOR r IN record {c} {o} {l} RETURN r");
-				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
+				let res: Vec<Value> = self.database.aql_str(&stm).await.unwrap();
 				// We use a for loop to iterate over the results, while
 				// calling black_box internally. This is necessary as
 				// an iterator with `filter_map` or `map` is optimised
@@ -438,7 +519,7 @@ impl ArangoDBClient {
 			Projection::Count => {
 				let stm =
 					format!("FOR r IN record {c} {l} COLLECT WITH COUNT INTO count RETURN count");
-				let res: Vec<Value> = { self.database.lock().await.aql_str(&stm).await.unwrap() };
+				let res: Vec<Value> = self.database.aql_str(&stm).await.unwrap();
 				let count = res.first().unwrap().as_i64().unwrap();
 				Ok(count as usize)
 			}
