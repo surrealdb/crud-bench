@@ -22,10 +22,6 @@ use surrealdb::types::{
 	ToSql, Uuid as SurrealUuid, Value,
 };
 use tokio::time::{sleep, timeout};
-// Bring `surrealdb_types` into scope under that name so the `SurrealValue`
-// derive macro's hardcoded `surrealdb_types::…` paths resolve here.
-// surrealdb 3.x re-exports the types crate as `surrealdb::types`.
-use surrealdb::types as surrealdb_types;
 
 /// Convert a [`BenchValue`] to a native [`surrealdb::types::Value`]. UUID,
 /// datetime, decimal, and bytes go through directly without a JSON detour.
