@@ -796,7 +796,16 @@ impl SurrealDBClient {
 		T: Into<RecordIdKey>,
 	{
 		let sql = "UPDATE $id CONTENT $content RETURN NULL";
-		let content = bench_to_surreal_value(val);
+		// Strip any `id` field from the content — `UPDATE $id CONTENT $content`
+		// rejects content that carries an explicit id ("Found 'record:…' for
+		// the `id` field, but a specific record has been specified"). The
+		// read-back side now hands back a proper Object (post-singleton-Array
+		// unwrap), so mixed read/write workloads round-trip the id field
+		// unless we drop it here.
+		let mut content = bench_to_surreal_value(val);
+		if let Value::Object(ref mut obj) = content {
+			obj.remove("id");
+		}
 		let res = self
 			.db
 			.query(sql)
