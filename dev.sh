@@ -32,7 +32,7 @@
 # are unique:
 #   Create / Read / Update / Delete                                  (CRUD)
 #   Scan :: <id> :: <name> :: no-index|indexed[, writes N%]           (scans)
-#   BuildIndex :: <id> / RemoveIndex :: <id>                          (index DDL)
+#   BuildIndex :: <id> :: <name> / RemoveIndex :: <id> :: <name>      (index DDL)
 #   BatchCreate::<name> / BatchRead::<name> / …                       (batches)
 #
 # Phases always run in crud-bench's fixed order:
@@ -621,15 +621,20 @@ parse_start_marker() {
 		NAME="scan-$(slugify "$body")"
 		TOOK_PAT="^Scan :: $(escape_re "$body") took"
 	elif [[ "$line" =~ ^BuildIndex\ ::\ (.+)\ starting$ ]]; then
+		# Rich marker is `BuildIndex :: <id> :: <name> starting` — the
+		# `<id> :: <name>` combo is what disambiguates the count-vs-select
+		# query-shape variants under the same scan id (slugify produces
+		# different filenames for each).
 		(( HAS_SCANS )) || return 1
-		local id=${BASH_REMATCH[1]}
-		NAME="scan-build-index-$(slugify "$id")"
-		TOOK_PAT="^BuildIndex :: $(escape_re "$id") took"
+		local body=${BASH_REMATCH[1]}
+		NAME="scan-build-index-$(slugify "$body")"
+		TOOK_PAT="^BuildIndex :: $(escape_re "$body") took"
 	elif [[ "$line" =~ ^RemoveIndex\ ::\ (.+)\ starting$ ]]; then
+		# Same shape as BuildIndex above; see comment there.
 		(( HAS_SCANS )) || return 1
-		local id=${BASH_REMATCH[1]}
-		NAME="scan-remove-index-$(slugify "$id")"
-		TOOK_PAT="^RemoveIndex :: $(escape_re "$id") took"
+		local body=${BASH_REMATCH[1]}
+		NAME="scan-remove-index-$(slugify "$body")"
+		TOOK_PAT="^RemoveIndex :: $(escape_re "$body") took"
 	elif [[ "$line" =~ ^Batch(Create|Read|Update|Delete)::(.+)\ starting$ ]]; then
 		(( HAS_BATCHES )) || return 1
 		local op=${BASH_REMATCH[1]} bname=${BASH_REMATCH[2]}
@@ -699,6 +704,24 @@ close_window() {
 	local newest
 	newest=$(list_rotated_perf_files | tail -1)
 	if [[ -n "$newest" && -s "$newest" ]]; then
+		# Wait for the rotated file's size to stabilise before mv'ing.
+		# Empirically perf can still be flushing the AUX buffer after
+		# the rename — taking a partial file produces a .data that opens
+		# but contains no complete sample records, which renders as the
+		# 611-byte "ERROR: No valid input provided to flamegraph" SVG.
+		# We poll the size every 50ms and consider the file stable when
+		# we see the same size on two consecutive checks (bounded ~3s).
+		local prev_size=-1 cur_size stable=0
+		for i in {1..60}; do
+			cur_size=$(wc -c < "$newest" 2>/dev/null | tr -d ' ')
+			if [[ "$cur_size" == "$prev_size" ]]; then
+				stable=1
+				break
+			fi
+			prev_size=$cur_size
+			sleep 0.05
+		done
+		(( stable )) || warn "[$name] rotated file size still changing after 3s — mv'ing anyway"
 		local dest="$OUTPUT_DIR/perf-${name}.data"
 		mv "$newest" "$dest"
 		PERF_DATA_FILES+=("$dest")

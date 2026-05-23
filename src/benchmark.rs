@@ -258,7 +258,11 @@ impl Benchmark {
 				let index_build = self
 					.run_operation::<C, D>(
 						&clients[..1],
-						BenchmarkOperation::BuildIndex(index_spec.clone(), id.clone()),
+						BenchmarkOperation::BuildIndex(
+							index_spec.clone(),
+							id.clone(),
+							name.clone(),
+						),
 						kp,
 						vp.clone(),
 						1,
@@ -297,7 +301,7 @@ impl Benchmark {
 					let index_remove = self
 						.run_operation::<C, D>(
 							&clients[..1],
-							BenchmarkOperation::RemoveIndex(id.clone()),
+							BenchmarkOperation::RemoveIndex(id.clone(), name.clone()),
 							kp,
 							vp.clone(),
 							1,
@@ -715,10 +719,10 @@ impl Benchmark {
 						)
 						.await
 					}
-					BenchmarkOperation::BuildIndex(spec, name) => {
-						client.build_index(spec, name.as_str()).await
+					BenchmarkOperation::BuildIndex(spec, id, _) => {
+						client.build_index(spec, id.as_str()).await
 					}
-					BenchmarkOperation::RemoveIndex(name) => client.drop_index(name.as_str()).await,
+					BenchmarkOperation::RemoveIndex(id, _) => client.drop_index(id.as_str()).await,
 					BenchmarkOperation::Delete => client.delete(sample, &mut kp).await,
 					BenchmarkOperation::BatchCreate(batch_op) => {
 						client.batch_create(sample, batch_op, &mut kp, &mut vp).await
@@ -764,10 +768,14 @@ pub(crate) enum BenchmarkOperation {
 	Scan(Scan, ScanContext),
 	/// Scan plus mixed writes according to [`ScanWithWrites`].
 	ScanWithWrites(Scan, ScanContext, ScanWithWrites),
-	/// Create backing index for the given analyzer/index id.
-	BuildIndex(Index, String),
-	/// Drop index by stable scan id.
-	RemoveIndex(String),
+	/// Create backing index for the given analyzer/index id, tagged with the
+	/// scan run name so two BuildIndex calls under the same scan id (e.g. the
+	/// `count` vs `select` query shapes of the same field group) are
+	/// distinguishable in phase markers and per-phase perf files.
+	BuildIndex(Index, String, String),
+	/// Drop index by stable scan id, tagged with the scan run name for the
+	/// same reason as [`BuildIndex`].
+	RemoveIndex(String, String),
 	/// Delete by key.
 	Delete,
 	/// Batch insert configured by [`BatchOperation`].
@@ -805,8 +813,8 @@ impl Display for BenchmarkOperation {
 					writes_ratio_percent(spec)
 				)
 			}
-			Self::BuildIndex(_, _) => write!(f, "BuildIndex"),
-			Self::RemoveIndex(_) => write!(f, "RemoveIndex"),
+			Self::BuildIndex(_, _, _) => write!(f, "BuildIndex"),
+			Self::RemoveIndex(_, _) => write!(f, "RemoveIndex"),
 			Self::Update => write!(f, "Update"),
 			Self::Delete => write!(f, "Delete"),
 			Self::BatchCreate(b) => write!(f, "BatchCreate::{}", b.name),
@@ -838,8 +846,12 @@ fn phase_marker_label(op: &BenchmarkOperation) -> String {
 				writes_ratio_percent(spec)
 			)
 		}
-		BenchmarkOperation::BuildIndex(_, scan_id) => format!("BuildIndex :: {scan_id}"),
-		BenchmarkOperation::RemoveIndex(scan_id) => format!("RemoveIndex :: {scan_id}"),
+		BenchmarkOperation::BuildIndex(_, scan_id, scan_name) => {
+			format!("BuildIndex :: {scan_id} :: {scan_name}")
+		}
+		BenchmarkOperation::RemoveIndex(scan_id, scan_name) => {
+			format!("RemoveIndex :: {scan_id} :: {scan_name}")
+		}
 		_ => op.to_string(),
 	}
 }
@@ -852,8 +864,8 @@ fn progress_short_label(operation: &BenchmarkOperation) -> String {
 		BenchmarkOperation::ScanWithWrites(_, ctx, spec) => {
 			format!("{}, writes {}%", scan_context_slug(*ctx), writes_ratio_percent(spec))
 		}
-		BenchmarkOperation::BuildIndex(_, _) => "BuildIndex".to_string(),
-		BenchmarkOperation::RemoveIndex(_) => "RemoveIndex".to_string(),
+		BenchmarkOperation::BuildIndex(_, _, _) => "BuildIndex".to_string(),
+		BenchmarkOperation::RemoveIndex(_, _) => "RemoveIndex".to_string(),
 		_ => operation.to_string(),
 	};
 	if s.len() > MAX {

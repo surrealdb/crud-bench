@@ -22,6 +22,10 @@ use surrealdb::types::{
 	ToSql, Uuid as SurrealUuid, Value,
 };
 use tokio::time::{sleep, timeout};
+// Bring `surrealdb_types` into scope under that name so the `SurrealValue`
+// derive macro's hardcoded `surrealdb_types::…` paths resolve here.
+// surrealdb 3.x re-exports the types crate as `surrealdb::types`.
+use surrealdb::types as surrealdb_types;
 
 /// Convert a [`BenchValue`] to a native [`surrealdb::types::Value`]. UUID,
 /// datetime, decimal, and bytes go through directly without a JSON detour.
@@ -71,7 +75,7 @@ fn surreal_to_bench_value(v: Value) -> BenchValue {
 		}
 		Value::Object(o) => {
 			let mut out: Vec<(String, BenchValue)> = Vec::new();
-			for (k, v) in o.into_inner() {
+			for (k, v) in o {
 				out.push((k, surreal_to_bench_value(v)));
 			}
 			BenchValue::Object(out)
@@ -415,10 +419,13 @@ impl BenchmarkClient for SurrealDBClient {
 		];
 		let probe_sql = "UPSERT crud_bench_quiesce_probe:sentinel \
 		                 SET ts = time::now() RETURN NONE";
+		// Use anyhow::Result inside the closure so both `surrealdb::Error`
+		// (from the `?` on `query`) and `DbResultError` (from `.check()`)
+		// convert into a single error type.
 		let fut = async {
 			loop {
 				match self.db.query(probe_sql).await?.check() {
-					Ok(_) => return Ok::<(), surrealdb::Error>(()),
+					Ok(_) => return anyhow::Ok(()),
 					Err(e) => {
 						let msg = e.to_string();
 						if RETRYABLE.iter().any(|p| msg.contains(p)) {
@@ -426,13 +433,13 @@ impl BenchmarkClient for SurrealDBClient {
 							sleep(Duration::from_millis(50)).await;
 							continue;
 						}
-						return Err(e);
+						return Err(e.into());
 					}
 				}
 			}
 		};
 		match timeout(Duration::from_secs(30), fut).await {
-			Ok(res) => res.map_err(anyhow::Error::from)?,
+			Ok(res) => res?,
 			Err(_) => bail!("quiesce probe timed out after 30s"),
 		}
 		// Floor sleep — protects against tasks that finished just before
