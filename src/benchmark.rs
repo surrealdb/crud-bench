@@ -653,7 +653,7 @@ impl Benchmark {
 	async fn build_vector_query_set<C, E>(
 		&self,
 		engine: &E,
-		_scan: &Scan,
+		scan: &Scan,
 		vq: &VectorQuerySpec,
 		mut kp: KeyProvider,
 		samples: u32,
@@ -674,14 +674,23 @@ impl Benchmark {
 			// give us a usable vector for the holdout". Treat both as skip
 			// signals so an engine without vector support never aborts the
 			// whole benchmark — the scan still records a clean `-` cell,
-			// matching how fulltext skips on engines without fulltext.
-			let Ok(row) = client.read(n, &mut kp).await else {
-				return Ok(None);
+			// matching how fulltext skips on engines without fulltext. Log
+			// the underlying cause so CI runs can tell a real engine bug
+			// (worth fixing) apart from an unsupported engine (correct skip).
+			let row = match client.read(n, &mut kp).await {
+				Ok(r) => r,
+				Err(e) => {
+					eprintln!("vector holdout: skipping scan `{}` (read: {e:#})", scan.name);
+					return Ok(None);
+				}
 			};
 			let bv: BenchValue = row.into();
 			match extract_vector_field(&bv, &vq.field) {
 				Ok(v) => queries.push(v),
-				Err(_) => return Ok(None),
+				Err(e) => {
+					eprintln!("vector holdout: skipping scan `{}` (extract: {e})", scan.name);
+					return Ok(None);
+				}
 			}
 		}
 		Ok(Some(VectorQuerySet {
