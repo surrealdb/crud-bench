@@ -74,7 +74,7 @@ fn calculate_sqlite_memory() -> u64 {
 }
 
 pub(crate) struct SqliteClientProvider {
-	conn: Arc<Connection>,
+	path: String,
 	kt: KeyType,
 	columns: Columns,
 	sync: bool,
@@ -92,13 +92,11 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 		std::fs::remove_dir_all(DATABASE_DIR).ok();
 		// Recreate the database directory
 		std::fs::create_dir(DATABASE_DIR)?;
-		// Switch to the new directory
+		// Database file path
 		let path = format!("{DATABASE_DIR}/db");
-		// Create the connection
-		let conn = Connection::open(&path).await?;
-		// Create the store
+		// Store the path so each client opens its own connection
 		Ok(Self {
-			conn: Arc::new(conn),
+			path,
 			kt,
 			columns,
 			sync: options.sync,
@@ -107,13 +105,23 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<SqliteClient> {
-		Ok(SqliteClient {
-			conn: self.conn.clone(),
+		// Open a fresh connection per client so workers across clients can
+		// run SQLite operations concurrently (one reader/writer per connection,
+		// many concurrent readers under WAL). This matches the per-client
+		// connection model used by the Postgres/MySQL/MariaDB adapters and
+		// gives us natural backpressure at `clients` in-flight ops rather
+		// than one global serial queue.
+		let conn = Connection::open(&self.path).await?;
+		let client = SqliteClient {
+			conn: Arc::new(conn),
 			kt: self.kt,
 			columns: self.columns.clone(),
 			sync: self.sync,
 			optimised: self.optimised,
-		})
+		};
+		// Apply per-connection PRAGMAs (cache, sync, mmap, temp store).
+		client.apply_pragmas().await?;
+		Ok(client)
 	}
 }
 
@@ -137,38 +145,6 @@ impl BenchmarkClient for SqliteClient {
 	}
 
 	async fn startup(&self) -> Result<()> {
-		// Calculate the size of the page cache (in pages of 16 KiB).
-		let cache_pages = calculate_sqlite_memory() / 16384;
-		// synchronous mode:
-		//   - sync=true  → FULL  (fsync on every commit; full durability)
-		//   - sync=false → OFF   (no fsync, fastest; matches the default sync=false
-		//     intent of other adapters that disable fsync entirely)
-		let synchronous = if self.sync {
-			"FULL"
-		} else {
-			"OFF"
-		};
-		// mmap_size (optimised only): 1 GiB memory-mapped reads. Off by default
-		// because some hosts (small VMs, restricted containers) reject large mmaps.
-		let mmap_size: u64 = if self.optimised {
-			1024 * 1024 * 1024
-		} else {
-			0
-		};
-		// temp_store=MEMORY keeps temp B-trees in RAM (used by ORDER BY / GROUP BY).
-		let stmt = format!(
-			"
-			PRAGMA journal_mode = WAL;
-			PRAGMA synchronous = {synchronous};
-			PRAGMA page_size = 16384;
-			PRAGMA cache_size = {cache_pages};
-			PRAGMA temp_store = MEMORY;
-			PRAGMA mmap_size = {mmap_size};
-			PRAGMA locking_mode = EXCLUSIVE;
-			PRAGMA wal_autocheckpoint = 10000;
-		"
-		);
-		self.execute_batch(Cow::Owned(stmt)).await?;
 		let id_type = match self.kt {
 			KeyType::Integer => "SERIAL",
 			KeyType::String26 => "VARCHAR(26)",
@@ -327,6 +303,46 @@ impl BenchmarkClient for SqliteClient {
 }
 
 impl SqliteClient {
+	/// Apply per-connection PRAGMAs. Called once when each connection is opened.
+	/// `journal_mode=WAL` and `page_size` are persisted database-wide; the rest
+	/// (synchronous, cache_size, temp_store, mmap_size, wal_autocheckpoint) are
+	/// per-connection and must be set on every connection.
+	async fn apply_pragmas(&self) -> Result<()> {
+		// Calculate the size of the page cache (in pages of 16 KiB).
+		let cache_pages = calculate_sqlite_memory() / 16384;
+		// synchronous mode:
+		//   - sync=true  → FULL  (fsync on every commit; full durability)
+		//   - sync=false → OFF   (no fsync, fastest; matches the default sync=false
+		//     intent of other adapters that disable fsync entirely)
+		let synchronous = if self.sync {
+			"FULL"
+		} else {
+			"OFF"
+		};
+		// mmap_size (optimised only): 1 GiB memory-mapped reads. Off by default
+		// because some hosts (small VMs, restricted containers) reject large mmaps.
+		let mmap_size: u64 = if self.optimised {
+			1024 * 1024 * 1024
+		} else {
+			0
+		};
+		// temp_store=MEMORY keeps temp B-trees in RAM (used by ORDER BY / GROUP BY).
+		// Note: no `locking_mode = EXCLUSIVE` — we want multiple connections.
+		let stmt = format!(
+			"
+			PRAGMA journal_mode = WAL;
+			PRAGMA synchronous = {synchronous};
+			PRAGMA page_size = 16384;
+			PRAGMA cache_size = {cache_pages};
+			PRAGMA temp_store = MEMORY;
+			PRAGMA mmap_size = {mmap_size};
+			PRAGMA wal_autocheckpoint = 10000;
+			PRAGMA busy_timeout = 30000;
+		"
+		);
+		self.execute_batch(Cow::Owned(stmt)).await
+	}
+
 	async fn execute_batch(&self, query: Cow<'static, str>) -> Result<()> {
 		self.conn.call(move |conn| conn.execute_batch(query.as_ref())).await?;
 		Ok(())
