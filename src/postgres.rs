@@ -7,8 +7,11 @@ use crate::memory::Config;
 use crate::util::sql::bench_to_postgres_param;
 use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::{Benchmark, Index, KeyType, Projection, Scan};
-use anyhow::{Result, anyhow};
+use crate::{
+	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
+	VectorQuerySpec,
+};
+use anyhow::{Result, anyhow, bail};
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use rust_decimal::Decimal;
 use std::hint::black_box;
@@ -16,6 +19,26 @@ use tokio_postgres::types::{Json, ToSql};
 use tokio_postgres::{Client, NoTls, Row};
 
 pub const DEFAULT: &str = "host=127.0.0.1 user=postgres password=postgres";
+
+/// pgvector operator-class for a given [`VectorDistance`].
+fn pgvector_ops_for(d: VectorDistance) -> &'static str {
+	match d {
+		VectorDistance::Cosine => "vector_cosine_ops",
+		VectorDistance::Euclidean => "vector_l2_ops",
+		VectorDistance::InnerProduct => "vector_ip_ops",
+		VectorDistance::Manhattan => "vector_l1_ops",
+	}
+}
+
+/// pgvector distance operator used in `ORDER BY` for a given [`VectorDistance`].
+fn pgvector_op_for(d: VectorDistance) -> &'static str {
+	match d {
+		VectorDistance::Cosine => "<=>",
+		VectorDistance::Euclidean => "<->",
+		VectorDistance::InnerProduct => "<#>",
+		VectorDistance::Manhattan => "<+>",
+	}
+}
 
 /// Calculate Postgres specific memory allocation
 fn calculate_postgres_memory() -> (u64, u64, u64, u64, u64, u64) {
@@ -67,7 +90,12 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	};
 	// Return Docker parameters
 	DockerParams {
-		image: "postgres",
+		// `pgvector/pgvector` is the upstream pgvector image — same upstream
+		// Postgres binaries as `postgres:*` with the `vector` extension
+		// pre-installed. Required by the vector-search benchmark; harmless
+		// for non-vector workloads (the extension is only created when the
+		// schema declares a `FloatVector` column, see `startup`).
+		image: "pgvector/pgvector:pg17",
 		pre_args:
 			"--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
 				.to_string(),
@@ -139,6 +167,12 @@ impl BenchmarkClient for PostgresClient {
 	type ReadRow = BenchValue;
 
 	async fn startup(&self) -> Result<()> {
+		// Ensure pgvector is installed when the schema declares a vector column.
+		// Safe to issue unconditionally; CREATE EXTENSION IF NOT EXISTS is a no-op
+		// when the extension is already present.
+		if self.columns.0.iter().any(|(_, t)| matches!(t, ColumnType::FloatVector(_))) {
+			self.client.batch_execute("CREATE EXTENSION IF NOT EXISTS vector;").await?;
+		}
 		let id_type = match self.kt {
 			KeyType::Integer => "SERIAL",
 			KeyType::String26 => "VARCHAR(26)",
@@ -166,6 +200,7 @@ impl BenchmarkClient for PostgresClient {
 					ColumnType::Decimal => format!("{n} NUMERIC(38, 10) NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} BYTEA NOT NULL"),
+					ColumnType::FloatVector(dim) => format!("{n} vector({dim}) NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
@@ -255,6 +290,59 @@ impl BenchmarkClient for PostgresClient {
 
 	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan(scan).await
+	}
+
+	async fn build_vector_index(
+		&self,
+		spec: &Index,
+		vq: &VectorQuerySpec,
+		_dim: usize,
+		name: &str,
+	) -> Result<()> {
+		let fields = spec.fields.join(", ");
+		let ops = pgvector_ops_for(vq.distance);
+		let stmt = match vq.index_strategy {
+			VectorIndexStrategy::Bruteforce => bail!(crate::benchmark::NOT_SUPPORTED_ERROR),
+			VectorIndexStrategy::Hnsw {
+				m,
+				ef_construction,
+				..
+			} => format!(
+				"CREATE INDEX {name} ON record USING hnsw ({fields} {ops}) WITH (m = {m}, ef_construction = {ef_construction})"
+			),
+			VectorIndexStrategy::DiskAnn {
+				..
+			} => bail!(crate::benchmark::NOT_SUPPORTED_ERROR),
+		};
+		self.client.execute(&stmt, &[]).await?;
+		// Set ef_search for HNSW (per-session GUC).
+		if let VectorIndexStrategy::Hnsw {
+			ef_search,
+			..
+		} = vq.index_strategy
+		{
+			let s = format!("SET hnsw.ef_search = {ef_search}");
+			self.client.execute(&s, &[]).await?;
+		}
+		Ok(())
+	}
+
+	async fn scan_vector_u32(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		_ctx: ScanContext,
+	) -> Result<usize> {
+		self.knn_scan(scan, query).await
+	}
+
+	async fn scan_vector_string(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		_ctx: ScanContext,
+	) -> Result<usize> {
+		self.knn_scan(scan, query).await
 	}
 
 	async fn batch_create_u32(
@@ -357,6 +445,10 @@ impl PostgresClient {
 					ColumnType::Object | ColumnType::Array => {
 						let v: Json<serde_json::Value> = row.try_get(n.as_str())?;
 						BenchValue::from(&v.0)
+					}
+					ColumnType::FloatVector(_) => {
+						let v: pgvector::Vector = row.try_get(n.as_str())?;
+						BenchValue::FloatVector(v.to_vec())
 					}
 				};
 				val.push((n.clone(), bv));
@@ -475,6 +567,25 @@ impl PostgresClient {
 				Ok(count as usize)
 			}
 		}
+	}
+
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+		let vq = scan
+			.vector_query
+			.as_ref()
+			.ok_or_else(|| anyhow!("knn_scan: scan `{}` missing vector_query", scan.name))?;
+		let op = pgvector_op_for(vq.distance);
+		let field = AnsiSqlDialect::escape_field(vq.field.clone());
+		let k = vq.top_k;
+		let stm = format!("SELECT id FROM record ORDER BY {field} {op} $1 LIMIT {k}");
+		let q = pgvector::Vector::from(query.to_vec());
+		let res = self.client.query(&stm, &[&q]).await?;
+		let mut count = 0;
+		for v in res {
+			black_box(self.consume(v, false).unwrap());
+			count += 1;
+		}
+		Ok(count)
 	}
 
 	async fn batch_create<T>(&self, key_vals: Vec<(T, BenchValue)>) -> Result<()>
@@ -665,5 +776,6 @@ fn get_column_type(column_type: &ColumnType) -> &'static str {
 		ColumnType::Uuid => "UUID",
 		ColumnType::Decimal => "NUMERIC",
 		ColumnType::Bytes => "BYTEA",
+		ColumnType::FloatVector(_) => "vector",
 	}
 }

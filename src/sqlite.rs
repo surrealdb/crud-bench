@@ -172,6 +172,7 @@ impl BenchmarkClient for SqliteClient {
 					ColumnType::Decimal => format!("{n} TEXT NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} BLOB NOT NULL"),
+					ColumnType::FloatVector(_) => format!("{n} BLOB NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()

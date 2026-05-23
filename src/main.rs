@@ -202,6 +202,9 @@ pub(crate) struct ScanRun {
 	name: String,
 	/// `ID`, `FULL`, or `COUNT`; overrides the parent [`ScanSpec`] `projection` when set.
 	projection: Option<String>,
+	/// Per-run vector-query override (e.g. each algorithm leg with its own strategy).
+	#[serde(default)]
+	vector_query: Option<VectorQuerySpec>,
 }
 
 /// Deserialized scan file entry: either a single [`Scan`] (`name`) or several (`runs`), never both.
@@ -232,6 +235,10 @@ pub(crate) struct ScanSpec {
 	/// Mixed read/write legs after each scan sample; omitted in config deserializes as empty (read-only).
 	#[serde(default)]
 	with_writes: Vec<ScanWithWrites>,
+	/// Vector-search query spec; presence flips this scan into a KNN run.
+	/// May be overridden per-run by `runs[].vector_query`.
+	#[serde(default)]
+	vector_query: Option<VectorQuerySpec>,
 }
 
 impl ScanSpec {
@@ -250,6 +257,7 @@ impl ScanSpec {
 			projection,
 			with_index,
 			with_writes,
+			vector_query,
 		} = self;
 
 		if id.trim().is_empty() {
@@ -284,6 +292,7 @@ impl ScanSpec {
 					projection,
 					with_index,
 					with_writes,
+					vector_query,
 				}])
 			}
 			(None, Some(runs)) => {
@@ -295,6 +304,7 @@ impl ScanSpec {
 						bail!("each entry in `runs` must have a non-empty `name`");
 					}
 					let run_projection = run.projection.or_else(|| default_projection.clone());
+					let run_vq = run.vector_query.or_else(|| vector_query.clone());
 					out.push(Scan {
 						id: id.clone(),
 						spec_group,
@@ -309,6 +319,7 @@ impl ScanSpec {
 						projection: run_projection,
 						with_index: with_index.clone(),
 						with_writes: with_writes.clone(),
+						vector_query: run_vq,
 					});
 				}
 				Ok(out)
@@ -327,12 +338,49 @@ fn expand_scan_specs(specs: Vec<ScanSpec>) -> Result<Scans> {
 }
 
 /// Every scan with a non-skipped `with_index` must supply a non-empty `id` for datastore index names.
+/// Vector-search scans use `vector_query.field` to drive both index creation and the KNN query;
+/// `with_index` is reserved for non-vector indexed scans and rejected on vector entries.
 fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 	for scan in scans {
 		if let Some(ref idx) = scan.with_index
 			&& !idx.skip
 		{
 			scan.required_index_id()?;
+		}
+		if let Some(ref vq) = scan.vector_query {
+			if vq.top_k == 0 {
+				bail!("scan `{}`: vector_query.top_k must be > 0", scan.name);
+			}
+			if vq.field.trim().is_empty() {
+				bail!("scan `{}`: vector_query.field must be non-empty", scan.name);
+			}
+			if scan.with_index.is_some() {
+				bail!(
+					"scan `{}`: vector scans must not declare `with_index` — the index (when needed) is derived from `vector_query.field`",
+					scan.name
+				);
+			}
+			// Without at least one query vector, `VectorQuerySet::pick` panics
+			// on the first scan iteration (sample % 0). Catch the
+			// configuration error at parse time.
+			let VectorHoldout {
+				count,
+				..
+			} = vq.holdout;
+			if count == 0 {
+				bail!("scan `{}`: vector_query.holdout.count must be > 0", scan.name);
+			}
+			// Mixed read/write workloads on a vector index need separate
+			// plumbing (the write path would invalidate the index between
+			// scan samples). Reject the combination at parse time so the
+			// benchmark doesn't silently drop the write legs and report
+			// read-only KNN as if it were a mixed workload.
+			if !scan.with_writes.is_empty() {
+				bail!(
+					"scan `{}`: vector_query with `with_writes` is not supported — mixed read/write workloads on a vector index need separate plumbing",
+					scan.name
+				);
+			}
 		}
 	}
 	Ok(())
@@ -350,6 +398,87 @@ pub(crate) struct Index {
 	pub(crate) unique: Option<bool>,
 	/// Backend-specific hint, e.g. `"fulltext"`.
 	pub(crate) index_type: Option<String>,
+}
+
+/// Distance metric used by vector indexes and KNN scans. Each engine maps these
+/// to its native operator / function set.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum VectorDistance {
+	Cosine,
+	Euclidean,
+	#[serde(alias = "inner_product", alias = "dot")]
+	InnerProduct,
+	Manhattan,
+}
+
+/// Algorithm choice for a vector-search scan. Carries the algorithm-specific
+/// build/search knobs inline so the config has one place to look for tuning.
+/// All knobs are required — benchmark results without explicit parameters
+/// are unreproducible and impossible to interpret.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub(crate) enum VectorIndexStrategy {
+	/// Exact KNN by sequential scan — no auxiliary index.
+	Bruteforce,
+	/// Hierarchical Navigable Small World graph.
+	Hnsw {
+		m: u32,
+		ef_construction: u32,
+		ef_search: u32,
+	},
+	/// DiskANN (Vamana) graph; engines that have not yet wired it return NotSupported.
+	#[serde(rename = "diskann")]
+	DiskAnn {
+		degree: u32,
+		l_build: u32,
+		alpha: f32,
+		l_search: u32,
+	},
+}
+
+/// Query-vector source: a deterministic id sample drawn from the inserted
+/// records. The id range and seed make the same query set reproducible
+/// across runs and engines.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct VectorHoldout {
+	#[serde(default = "default_holdout_count")]
+	pub(crate) count: usize,
+	#[serde(default = "default_holdout_seed")]
+	pub(crate) seed: u64,
+}
+
+fn default_holdout_count() -> usize {
+	1000
+}
+fn default_holdout_seed() -> u64 {
+	0xC0FFEE_u64
+}
+
+impl Default for VectorHoldout {
+	fn default() -> Self {
+		Self {
+			count: default_holdout_count(),
+			seed: default_holdout_seed(),
+		}
+	}
+}
+
+/// One vector-search scan configuration attached to a [`Scan`]. The presence of
+/// this struct on a scan row is what makes the run a vector benchmark.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct VectorQuerySpec {
+	/// Column to compare against (must be a `vector:<dim>` field in the schema).
+	pub(crate) field: String,
+	/// Number of nearest neighbours to return.
+	pub(crate) top_k: usize,
+	/// Distance metric — inherited by the index and the query.
+	pub(crate) distance: VectorDistance,
+	/// Algorithm + params for this scan row.
+	pub(crate) index_strategy: VectorIndexStrategy,
+	/// Holdout sampling for the query set. Defaults to a 1000-id deterministic holdout.
+	#[serde(default)]
+	pub(crate) holdout: VectorHoldout,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -381,10 +510,13 @@ pub(crate) struct Scan {
 	/// Result shape: `ID`, `FULL`, or `COUNT`.
 	projection: Option<String>,
 	/// Optional index specification for indexed scan legs (`skip`, `fields`, etc.).
-	with_index: Option<Index>,
+	pub(crate) with_index: Option<Index>,
 	/// Read+write workloads (ratio / mode / operation); omit or use `[]` for read-only scans.
 	#[serde(default)]
 	pub(crate) with_writes: Vec<ScanWithWrites>,
+	/// Vector-search query spec for KNN scans. None for non-vector benchmarks.
+	#[serde(default)]
+	pub(crate) vector_query: Option<VectorQuerySpec>,
 }
 
 /// Mixed read/write scan leg: scan samples plus paired updates that touch indexed columns while

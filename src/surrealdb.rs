@@ -7,7 +7,10 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
-use crate::{Benchmark, Index, KeyType, Projection, Scan};
+use crate::{
+	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
+	VectorQuerySpec,
+};
 use anyhow::{Result, bail};
 use log::{error, warn};
 use std::env;
@@ -50,6 +53,9 @@ fn bench_to_surreal_value(v: BenchValue) -> Value {
 			}
 			Value::Object(obj)
 		}
+		BenchValue::FloatVector(v) => Value::Array(Array::from(
+			v.into_iter().map(|f| Value::Number(Number::Float(f as f64))).collect::<Vec<_>>(),
+		)),
 	}
 }
 
@@ -86,13 +92,66 @@ fn surreal_to_bench_value(v: Value) -> BenchValue {
 const DEFAULT: &str = "ws://127.0.0.1:8000";
 const TABLE: &str = "record";
 
+/// Map a [`VectorDistance`] to the SurrealQL `DIST <kw>` clause used in
+/// `DEFINE INDEX ... HNSW/DISKANN`.
+fn surreal_distance_keyword(d: VectorDistance) -> &'static str {
+	match d {
+		VectorDistance::Cosine => "COSINE",
+		VectorDistance::Euclidean => "EUCLIDEAN",
+		VectorDistance::InnerProduct => "INNER_PRODUCT",
+		VectorDistance::Manhattan => "MANHATTAN",
+	}
+}
+
+/// Map a [`VectorDistance`] to the SurrealQL function path used by bruteforce scans.
+///
+/// SurrealDB partitions vector ops between `vector::distance::*` (lower = closer)
+/// and `vector::similarity::*` (higher = closer). `cosine` lives under similarity,
+/// so the caller must reverse the ORDER BY direction — see [`surreal_distance_order`].
+///
+/// `InnerProduct` maps to `vector::dot` (raw `Σ aᵢ·bᵢ`) so it matches what
+/// pgvector's `<#>` and Redis's `IP` measure. `vector::similarity::pearson`
+/// would mean-center the inputs first and produce a bounded [-1, 1]
+/// correlation — that's a different metric.
+fn surreal_distance_function(d: VectorDistance) -> &'static str {
+	match d {
+		VectorDistance::Cosine => "vector::similarity::cosine",
+		VectorDistance::Euclidean => "vector::distance::euclidean",
+		VectorDistance::InnerProduct => "vector::dot",
+		VectorDistance::Manhattan => "vector::distance::manhattan",
+	}
+}
+
+/// ORDER BY direction so the nearest neighbours sort to the top of the result set.
+fn surreal_distance_order(d: VectorDistance) -> &'static str {
+	match d {
+		// Similarity scores: higher is closer.
+		VectorDistance::Cosine | VectorDistance::InnerProduct => "DESC",
+		// Distance metrics: lower is closer.
+		VectorDistance::Euclidean | VectorDistance::Manhattan => "ASC",
+	}
+}
+
 /// Wraps a SurrealDB [`types::Value`](surrealdb::types::Value);
 /// [`BenchValue`] is produced only via [`From`]/[`Into`].
 pub(crate) struct Row(pub Value);
 
 impl From<Row> for BenchValue {
 	fn from(row: Row) -> BenchValue {
-		surreal_to_bench_value(row.0)
+		// `db.select(Resource::from(("record", key)))` compiles to
+		// `SELECT * FROM <id>` which always returns a `Value::Array` of
+		// matching rows — even for a single-record select. Unwrap the
+		// singleton so downstream consumers see the `BenchValue::Object`
+		// they expect from a single-row read (otherwise field lookups
+		// like `embedding` go through `BenchValue::Array.get_field(...)`
+		// and return `None`, causing the vector holdout to skip).
+		let inner = match row.0 {
+			Value::Array(a) if a.len() == 1 => {
+				Vec::from(a).into_iter().next().expect("len == 1 guard")
+			}
+			other => other,
+		};
+		surreal_to_bench_value(inner)
 	}
 }
 
@@ -117,6 +176,30 @@ impl From<Row> for BenchValue {
 ///
 /// The closure owns the SQL by value so the returned `FnOnce` is `'static`
 /// and composes cleanly with `?` across multiple result-returning steps.
+/// Returns true when a SurrealDB driver error originates from the parser
+/// rejecting unrecognised syntax (e.g. DiskANN DDL on a SurrealDB build that
+/// doesn't ship it yet, or any future version drift). Used by
+/// `build_vector_index` to convert those failures into `NOT_SUPPORTED_ERROR`
+/// so the framework skips the run cleanly instead of aborting.
+///
+/// Both the SDK's `Error::Db` path (`Error("Parse error: …")`) and the
+/// `Response::check` path surface the SurrealDB core error string verbatim,
+/// so a substring match is sufficient and version-agnostic.
+fn is_surreal_parse_error<E: std::fmt::Display>(e: &E) -> bool {
+	e.to_string().contains("Parse error")
+}
+
+/// Returns true when a SurrealDB error is the upstream DiskANN runtime
+/// reporting its own search failure. The DiskANN index ANN backend is new
+/// in nightly and surfaces intermittent runtime errors (typically on the
+/// first query against a freshly built graph). Caught at the scan boundary
+/// so the run skips cleanly until the upstream engine stabilises — the
+/// check disappears naturally once the runtime no longer emits this
+/// message.
+fn is_surreal_diskann_runtime_error<E: std::fmt::Display>(e: &E) -> bool {
+	e.to_string().contains("DiskANN KNN search failed")
+}
+
 fn log_sql_err<E>(sql: &str) -> impl FnOnce(E) -> anyhow::Error
 where
 	E: std::fmt::Display + Into<anyhow::Error>,
@@ -598,6 +681,97 @@ impl BenchmarkClient for SurrealDBClient {
 		self.scan(scan, ctx).await
 	}
 
+	async fn build_vector_index(
+		&self,
+		spec: &Index,
+		vq: &VectorQuerySpec,
+		dim: usize,
+		name: &str,
+	) -> Result<()> {
+		let fields = spec.fields.join(", ");
+		let dist = surreal_distance_keyword(vq.distance);
+		let sql = match vq.index_strategy {
+			VectorIndexStrategy::Bruteforce => {
+				// Bruteforce on SurrealDB means no auxiliary index; the scan
+				// path uses raw vector::distance::* with ORDER BY LIMIT.
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			VectorIndexStrategy::Hnsw {
+				m,
+				ef_construction,
+				..
+			} => {
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} HNSW DIMENSION {dim} DIST {dist} EFC {ef_construction} M {m} CONCURRENTLY"
+				)
+			}
+			VectorIndexStrategy::DiskAnn {
+				degree,
+				l_build,
+				alpha,
+				..
+			} => {
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} DISKANN DIMENSION {dim} DISTANCE {dist} DEGREE {degree} L_BUILD {l_build} ALPHA {alpha} CONCURRENTLY"
+				)
+			}
+		};
+		// Treat any parse error as NotSupported: the running SurrealDB
+		// version doesn't recognise the DDL (DiskANN before the syntax
+		// lands in OSS, future drift between releases, etc.). The
+		// framework already handles NotSupported as a clean skip.
+		let resp = match self.db.query(&sql).await {
+			Ok(r) => r,
+			Err(e) if is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
+			Err(e) => return Err(log_sql_err(&sql)(e)),
+		};
+		if let Err(e) = resp.check() {
+			if is_surreal_parse_error(&e) {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+			return Err(log_sql_err(&sql)(e));
+		}
+		// Wait until the index is ready (same poll loop as `build_index`).
+		loop {
+			let q = format!("INFO FOR INDEX {name} ON record");
+			let r: surrealdb::types::Value = self
+				.db
+				.query(&q)
+				.await
+				.map_err(log_sql_err(&q))?
+				.take(0)
+				.map_err(log_sql_err(&q))?;
+			let j = r.to_sql();
+			let building = r.get("building");
+			let status = building.get("status").as_string().expect(&j);
+			match status.as_str() {
+				"ready" => break,
+				"indexing" | "cleaning" | "started" => {}
+				_ => bail!("Unexpected status: {}", r.into_json_value()),
+			}
+			sleep(Duration::from_millis(500)).await;
+		}
+		Ok(())
+	}
+
+	async fn scan_vector_u32(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		_ctx: ScanContext,
+	) -> Result<usize> {
+		self.knn_scan(scan, query).await
+	}
+
+	async fn scan_vector_string(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		_ctx: ScanContext,
+	) -> Result<usize> {
+		self.knn_scan(scan, query).await
+	}
+
 	async fn batch_create_u32(
 		&self,
 		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
@@ -679,7 +853,16 @@ impl SurrealDBClient {
 		T: Into<RecordIdKey>,
 	{
 		let sql = "UPDATE $id CONTENT $content RETURN NULL";
-		let content = bench_to_surreal_value(val);
+		// Strip any `id` field from the content — `UPDATE $id CONTENT $content`
+		// rejects content that carries an explicit id ("Found 'record:…' for
+		// the `id` field, but a specific record has been specified"). The
+		// read-back side now hands back a proper Object (post-singleton-Array
+		// unwrap), so mixed read/write workloads round-trip the id field
+		// unless we drop it here.
+		let mut content = bench_to_surreal_value(val);
+		if let Value::Object(ref mut obj) = content {
+			obj.remove("id");
+		}
 		let res = self
 			.db
 			.query(sql)
@@ -710,6 +893,66 @@ impl SurrealDBClient {
 			.map_err(log_sql_err(sql))?;
 		assert!(!res.is_none());
 		Ok(())
+	}
+
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+		let vq = scan.vector_query.as_ref().ok_or_else(|| {
+			anyhow::anyhow!("knn_scan called without a vector_query on scan `{}`", scan.name)
+		})?;
+		let field = &vq.field;
+		let k = vq.top_k;
+		let is_diskann = matches!(vq.index_strategy, VectorIndexStrategy::DiskAnn { .. });
+		let sql = match vq.index_strategy {
+			VectorIndexStrategy::Bruteforce => {
+				let func_path = surreal_distance_function(vq.distance);
+				let dir = surreal_distance_order(vq.distance);
+				// Aliased distance so the parser's "ORDER BY idiom must appear
+				// in SELECT" rule is satisfied (surrealdb-private 0df9e38c era).
+				format!(
+					"SELECT id, {func_path}({field}, $q) AS _d FROM record ORDER BY _d {dir} LIMIT {k}"
+				)
+			}
+			VectorIndexStrategy::Hnsw {
+				ef_search,
+				..
+			} => {
+				format!("SELECT id FROM record WHERE {field} <|{k},{ef_search}|> $q")
+			}
+			VectorIndexStrategy::DiskAnn {
+				l_search,
+				..
+			} => {
+				format!("SELECT id FROM record WHERE {field} <|{k},{l_search}|> $q")
+			}
+		};
+		// Bind the query vector as a SurrealQL array so the server doesn't
+		// re-parse a multi-KB array literal on every iteration.
+		let q_value = Value::Array(Array::from(
+			query.iter().map(|f| Value::Number(Number::Float(*f as f64))).collect::<Vec<_>>(),
+		));
+		// DiskANN runtime in current nightly intermittently fails the search
+		// itself even though the index built successfully. Treat that as
+		// NotSupported so the scan skips cleanly — same pattern as the parse
+		// error path in `build_vector_index`. The check is scoped to the
+		// DiskANN strategy so genuine errors on Bruteforce / HNSW still abort.
+		let mut resp = match self.db.query(&sql).bind(("q", q_value)).await {
+			Ok(r) => r,
+			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			Err(e) => return Err(log_sql_err(&sql)(e)),
+		};
+		let res: surrealdb::types::Value = match resp.take(0) {
+			Ok(v) => v,
+			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			Err(e) => return Err(log_sql_err(&sql)(e)),
+		};
+		let Some(arr) = res.as_array() else {
+			bail!("knn scan: unexpected response shape: {}", res.to_sql());
+		};
+		Ok(arr.len())
 	}
 
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {

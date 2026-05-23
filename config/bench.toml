@@ -11,7 +11,9 @@
 # MongoDB query document. Ordered scans add `[scans.order_by]` (same dialect layout, with
 # inline `mongodb` for sort fields). Indexed scans add `[scans.with_index]` (`fields` array,
 # optional `index_type` such as `fulltext`). Mixed read/write workloads add one or more
-# `[[scans.with_writes]]` blocks (`ratio`, `mode`, `operation`).
+# `[[scans.with_writes]]` blocks (`ratio`, `mode`, `operation`). Vector-search scans add
+# `[scans.vector_query]` (`field`, `top_k`, `distance`, `index_strategy`); the index (when
+# the strategy needs one) is derived from `field` — engines without vector support skip the run.
 #
 # Batches — Each `[[batches]]` row names a throughput case: `name`, `operation` (CREATE,
 # READ, UPDATE, DELETE), `batch_size`, and `samples` (how many timed iterations).
@@ -48,6 +50,7 @@ geography.code = "string:3"
 geography.text = "string:15"
 geography.location = "string_enum:Africa,Antarctica,Asia,Europe,North America,South America,Oceania"
 geography.description = "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
+embedding = "vector:128"
 
 # ============================================================================
 # count
@@ -460,6 +463,46 @@ mongodb = { "$text" = { "$search" = "foo bar" } }
 [scans.with_index]
 fields = ["words"]
 index_type = "fulltext"
+
+# ============================================================================
+# vector_knn — Bruteforce / HNSW / DiskANN KNN against a 128-d embedding.
+#
+# Engines that don't support vector indexes return NotSupported and the run
+# is skipped, same pattern as the fulltext block above. The holdout query
+# set is built deterministically from inserted rows (constant memory in
+# `count`, independent of `-s N`).
+# ============================================================================
+
+[[scans]]
+id = "vector_knn"
+samples = 1000
+
+[[scans.runs]]
+name = "bruteforce knn(10)"
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "bruteforce" }
+holdout = { count = 200, seed = 42 }
+
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200 efs=64"
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = 64 }
+holdout = { count = 200, seed = 42 }
+
+[[scans.runs]]
+name = "diskann knn(10) deg=64 L=100 alpha=1.2"
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = 100 }
+holdout = { count = 200, seed = 42 }
 
 # ============================================================================
 # batch_create_100

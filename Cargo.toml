@@ -46,7 +46,7 @@ mariadb = ["dep:mysql_async"]
 mongodb = ["dep:mongodb"]
 mysql = ["dep:mysql_async"]
 neo4j = ["dep:neo4rs"]
-postgres = ["dep:tokio-postgres"]
+postgres = ["dep:tokio-postgres", "dep:pgvector"]
 redb = ["dep:redb"]
 redis = ["dep:redis"]
 rocksdb = ["dep:rocksdb"]
@@ -131,6 +131,8 @@ tokio-postgres = { version = "0.7.17", optional = true, features = [
     "with-serde_json-1",
     "with-uuid-1",
 ] }
+pgvector = { version = "0.4", optional = true, features = ["postgres"] }
+bytemuck = { version = "1", features = ["derive"] }
 tokio-rusqlite = { version = "0.7.0", optional = true, features = ["bundled"] }
 twox-hash = "2.1.2"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }

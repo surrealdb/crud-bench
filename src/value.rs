@@ -51,6 +51,8 @@ pub(crate) enum BenchValue {
 	Array(Vec<BenchValue>),
 	/// Ordered field/value map (insertion order from the template schema).
 	Object(Vec<(String, BenchValue)>),
+	/// Fixed-length packed vector of f32 components (vector search payloads).
+	FloatVector(Vec<f32>),
 }
 
 impl BenchValue {
@@ -96,6 +98,22 @@ impl BenchValue {
 				}
 				JsonValue::Object(m)
 			}
+			BenchValue::FloatVector(v) => JsonValue::Array(
+				v.iter()
+					.map(|f| match Number::from_f64(*f as f64) {
+						Some(n) => JsonValue::Number(n),
+						None => JsonValue::Null,
+					})
+					.collect(),
+			),
+		}
+	}
+
+	/// Borrow the components of a packed float vector, if this value is one.
+	pub(crate) fn as_float_vector(&self) -> Option<&[f32]> {
+		match self {
+			BenchValue::FloatVector(v) => Some(v.as_slice()),
+			_ => None,
 		}
 	}
 

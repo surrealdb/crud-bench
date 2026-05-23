@@ -84,6 +84,13 @@ enum ValueGenerator {
 	DecimalEnum(Vec<Decimal>),
 	Array(Vec<ValueGenerator>),
 	Object(Vec<(String, ValueGenerator)>),
+	/// Fixed-dimension f32 vector with a per-component uniform distribution.
+	/// Used by the vector-search benchmark.
+	Vector {
+		dim: usize,
+		lo: f32,
+		hi: f32,
+	},
 }
 
 const CHARSET: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -207,6 +214,37 @@ impl ValueGenerator {
 			}
 		} else if let Some(i) = s.strip_prefix("bytes:") {
 			Self::Bytes(Length::new(i)?)
+		} else if let Some(rest) = s.strip_prefix("vector:") {
+			// `vector:<dim>` (uniform [-1, 1]) or `vector:<dim>:<lo>..<hi>`.
+			let (dim_str, range) = match rest.split_once(':') {
+				Some((d, r)) => (d, Some(r)),
+				None => (rest, None),
+			};
+			let dim: usize = dim_str
+				.parse()
+				.map_err(|e| anyhow!("invalid vector dimension {dim_str:?}: {e}"))?;
+			if dim == 0 {
+				bail!("vector dimension must be > 0");
+			}
+			let (lo, hi) = if let Some(r) = range {
+				let parts: Vec<&str> = r.split("..").collect();
+				if parts.len() != 2 {
+					bail!("vector range must be lo..hi, got {r:?}");
+				}
+				let lo: f32 = parts[0].parse().map_err(|e| anyhow!("vector lo: {e}"))?;
+				let hi: f32 = parts[1].parse().map_err(|e| anyhow!("vector hi: {e}"))?;
+				if hi <= lo {
+					bail!("vector range hi must be greater than lo");
+				}
+				(lo, hi)
+			} else {
+				(-1.0_f32, 1.0_f32)
+			};
+			Self::Vector {
+				dim,
+				lo,
+				hi,
+			}
 		} else if let Some(s) = s.strip_prefix("string_enum:") {
 			let labels = s.split(",").map(|s| s.to_string()).collect();
 			Self::StringEnum(labels)
@@ -383,6 +421,17 @@ impl ValueGenerator {
 				}
 				BenchValue::Object(vec)
 			}
+			ValueGenerator::Vector {
+				dim,
+				lo,
+				hi,
+			} => {
+				let mut buf = Vec::with_capacity(*dim);
+				for _ in 0..*dim {
+					buf.push(rng.random_range(*lo..*hi));
+				}
+				BenchValue::FloatVector(buf)
+			}
 		}
 	}
 }
@@ -465,6 +514,8 @@ pub(crate) enum ColumnType {
 	Bool,
 	/// Opaque byte payload column.
 	Bytes,
+	/// Fixed-dimension f32 vector column for vector-search backends.
+	FloatVector(usize),
 }
 
 impl ColumnType {
@@ -489,6 +540,10 @@ impl ColumnType {
 			ValueGenerator::Bool => ColumnType::Bool,
 			ValueGenerator::Uuid => ColumnType::Uuid,
 			ValueGenerator::Bytes(_) => ColumnType::Bytes,
+			ValueGenerator::Vector {
+				dim,
+				..
+			} => ColumnType::FloatVector(*dim),
 		};
 		Ok(r)
 	}

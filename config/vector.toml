@@ -1,0 +1,45 @@
+# Vector-search benchmark template. Compares three KNN strategies — Bruteforce
+# (exact, no auxiliary index), HNSW (graph ANN), and DiskANN (graph ANN with a
+# disk-resident structure) — over a fixed-dimension embedding column.
+#
+# Engines covered end-to-end: SurrealDB, PostgreSQL (pgvector), Redis Stack.
+# Engines without vector support skip the run via `NOT_SUPPORTED_ERROR`.
+#
+# The query set is built deterministically from the inserted records: at the
+# end of the create phase the framework picks `count` ids using `seed`, reads
+# each row once (outside the timing window), and reuses those embedding
+# vectors across all scan samples. Only the KNN call itself is timed, so the
+# benchmark's RAM footprint is constant in `count` (independent of `-s N`).
+
+[value]
+embedding = "vector:128"
+
+[[scans]]
+id = "vector_knn"
+
+[[scans.runs]]
+name = "bruteforce knn(10)"
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "bruteforce" }
+holdout = { count = 200, seed = 42 }
+
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200 efs=64"
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = 64 }
+holdout = { count = 200, seed = 42 }
+
+[[scans.runs]]
+name = "diskann knn(10) deg=64 L=100 alpha=1.2"
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = 100 }
+holdout = { count = 200, seed = 42 }

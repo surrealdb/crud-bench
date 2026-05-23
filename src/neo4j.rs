@@ -278,7 +278,7 @@ fn bench_leaf_to_bolt(v: &BenchValue) -> Result<BoltType> {
 		BenchValue::Bytes(b) => BoltType::from(b.clone()),
 		BenchValue::Uuid(u) => BoltType::from(u.to_string()),
 		BenchValue::DateTime(dt) => BoltType::from(dt.to_rfc3339()),
-		BenchValue::Array(_) | BenchValue::Object(_) => {
+		BenchValue::Array(_) | BenchValue::Object(_) | BenchValue::FloatVector(_) => {
 			bail!("internal: expected scalar leaf BenchValue")
 		}
 	})
@@ -314,8 +314,38 @@ fn flatten_dispatch_value(
 			}
 			Ok(())
 		}
+		BenchValue::FloatVector(v) => {
+			// Flatten vectors the same way Array does — Neo4j writes use
+			// flattened scalars only, so the read-back form (a flat Bolt
+			// property per element) round-trips cleanly through subsequent
+			// update workloads. Storing as a single Bolt list property
+			// instead would mismatch the read shape and collide with
+			// per-index keys on a follow-up update.
+			if !v.is_empty() {
+				flatten_float_vector_into(v.as_slice(), parent_key.as_str(), depth, out)?;
+			}
+			Ok(())
+		}
 		_ => try_insert_prop(out, parent_key, bench_leaf_to_bolt(v)?),
 	}
+}
+
+fn flatten_float_vector_into(
+	elems: &[f32],
+	parent_prefix: &str,
+	_depth: u32,
+	out: &mut BoltMap,
+) -> Result<()> {
+	for (i, el) in elems.iter().enumerate() {
+		let idx_key = format!("{parent_prefix}{ARRAY_INDEX_START}{i}{ARRAY_INDEX_END}");
+		let bolt = if el.is_finite() {
+			BoltType::from(*el as f64)
+		} else {
+			BoltType::Null(BoltNull)
+		};
+		try_insert_prop(out, idx_key, bolt)?;
+	}
+	Ok(())
 }
 
 fn flatten_object_into(

@@ -101,6 +101,7 @@ impl BenchmarkClient for ScylladbClient {
 				ColumnType::Decimal => format!("{n} DECIMAL"),
 				ColumnType::Bool => format!("{n} BOOLEAN"),
 				ColumnType::Bytes => format!("{n} BLOB"),
+				ColumnType::FloatVector(_) => format!("{n} BLOB"),
 			})
 			.collect();
 		let fields = fields.join(",");
@@ -180,6 +181,11 @@ fn bench_to_cql_value(column_type: &ColumnType, v: &BenchValue) -> Result<CqlVal
 			Ok(CqlValue::Text(d.to_string()))
 		}
 		(ColumnType::Bytes, BenchValue::Bytes(b)) => Ok(CqlValue::Blob(b.clone())),
+		(ColumnType::FloatVector(_), BenchValue::FloatVector(v)) => {
+			Ok(CqlValue::Blob(bytemuck::cast_slice::<f32, u8>(v).to_vec()))
+		}
+		// Read-back round-trip on the BLOB fallback (mixed read/write workloads).
+		(ColumnType::FloatVector(_), BenchValue::Bytes(b)) => Ok(CqlValue::Blob(b.clone())),
 		(t, _) => bail!("BenchValue does not match column type {t:?}"),
 	}
 }
