@@ -176,6 +176,19 @@ impl From<Row> for BenchValue {
 ///
 /// The closure owns the SQL by value so the returned `FnOnce` is `'static`
 /// and composes cleanly with `?` across multiple result-returning steps.
+/// Returns true when a SurrealDB driver error originates from the parser
+/// rejecting unrecognised syntax (e.g. DiskANN DDL on a SurrealDB build that
+/// doesn't ship it yet, or any future version drift). Used by
+/// `build_vector_index` to convert those failures into `NOT_SUPPORTED_ERROR`
+/// so the framework skips the run cleanly instead of aborting.
+///
+/// Both the SDK's `Error::Db` path (`Error("Parse error: …")`) and the
+/// `Response::check` path surface the SurrealDB core error string verbatim,
+/// so a substring match is sufficient and version-agnostic.
+fn is_surreal_parse_error<E: std::fmt::Display>(e: &E) -> bool {
+	e.to_string().contains("Parse error")
+}
+
 fn log_sql_err<E>(sql: &str) -> impl FnOnce(E) -> anyhow::Error
 where
 	E: std::fmt::Display + Into<anyhow::Error>,
@@ -692,7 +705,21 @@ impl BenchmarkClient for SurrealDBClient {
 				)
 			}
 		};
-		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
+		// Treat any parse error as NotSupported: the running SurrealDB
+		// version doesn't recognise the DDL (DiskANN before the syntax
+		// lands in OSS, future drift between releases, etc.). The
+		// framework already handles NotSupported as a clean skip.
+		let resp = match self.db.query(&sql).await {
+			Ok(r) => r,
+			Err(e) if is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
+			Err(e) => return Err(log_sql_err(&sql)(e)),
+		};
+		if let Err(e) = resp.check() {
+			if is_surreal_parse_error(&e) {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+			return Err(log_sql_err(&sql)(e));
+		}
 		// Wait until the index is ready (same poll loop as `build_index`).
 		loop {
 			let q = format!("INFO FOR INDEX {name} ON record");
