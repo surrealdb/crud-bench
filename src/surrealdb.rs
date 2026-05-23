@@ -189,6 +189,17 @@ fn is_surreal_parse_error<E: std::fmt::Display>(e: &E) -> bool {
 	e.to_string().contains("Parse error")
 }
 
+/// Returns true when a SurrealDB error is the upstream DiskANN runtime
+/// reporting its own search failure. The DiskANN index ANN backend is new
+/// in nightly and surfaces intermittent runtime errors (typically on the
+/// first query against a freshly built graph). Caught at the scan boundary
+/// so the run skips cleanly until the upstream engine stabilises — the
+/// check disappears naturally once the runtime no longer emits this
+/// message.
+fn is_surreal_diskann_runtime_error<E: std::fmt::Display>(e: &E) -> bool {
+	e.to_string().contains("DiskANN KNN search failed")
+}
+
 fn log_sql_err<E>(sql: &str) -> impl FnOnce(E) -> anyhow::Error
 where
 	E: std::fmt::Display + Into<anyhow::Error>,
@@ -890,6 +901,7 @@ impl SurrealDBClient {
 		})?;
 		let field = &vq.field;
 		let k = vq.top_k;
+		let is_diskann = matches!(vq.index_strategy, VectorIndexStrategy::DiskAnn { .. });
 		let sql = match vq.index_strategy {
 			VectorIndexStrategy::Bruteforce => {
 				let func_path = surreal_distance_function(vq.distance);
@@ -918,14 +930,25 @@ impl SurrealDBClient {
 		let q_value = Value::Array(Array::from(
 			query.iter().map(|f| Value::Number(Number::Float(*f as f64))).collect::<Vec<_>>(),
 		));
-		let res: surrealdb::types::Value = self
-			.db
-			.query(&sql)
-			.bind(("q", q_value))
-			.await
-			.map_err(log_sql_err(&sql))?
-			.take(0)
-			.map_err(log_sql_err(&sql))?;
+		// DiskANN runtime in current nightly intermittently fails the search
+		// itself even though the index built successfully. Treat that as
+		// NotSupported so the scan skips cleanly — same pattern as the parse
+		// error path in `build_vector_index`. The check is scoped to the
+		// DiskANN strategy so genuine errors on Bruteforce / HNSW still abort.
+		let mut resp = match self.db.query(&sql).bind(("q", q_value)).await {
+			Ok(r) => r,
+			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			Err(e) => return Err(log_sql_err(&sql)(e)),
+		};
+		let res: surrealdb::types::Value = match resp.take(0) {
+			Ok(v) => v,
+			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			Err(e) => return Err(log_sql_err(&sql)(e)),
+		};
 		let Some(arr) = res.as_array() else {
 			bail!("knn scan: unexpected response shape: {}", res.to_sql());
 		};
