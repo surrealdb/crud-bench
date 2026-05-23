@@ -119,7 +119,20 @@ pub(crate) struct Row(pub Value);
 
 impl From<Row> for BenchValue {
 	fn from(row: Row) -> BenchValue {
-		surreal_to_bench_value(row.0)
+		// `db.select(Resource::from(("record", key)))` compiles to
+		// `SELECT * FROM <id>` which always returns a `Value::Array` of
+		// matching rows — even for a single-record select. Unwrap the
+		// singleton so downstream consumers see the `BenchValue::Object`
+		// they expect from a single-row read (otherwise field lookups
+		// like `embedding` go through `BenchValue::Array.get_field(...)`
+		// and return `None`, causing the vector holdout to skip).
+		let inner = match row.0 {
+			Value::Array(a) if a.len() == 1 => {
+				Vec::from(a).into_iter().next().expect("len == 1 guard")
+			}
+			other => other,
+		};
+		surreal_to_bench_value(inner)
 	}
 }
 
