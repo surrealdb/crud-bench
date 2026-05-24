@@ -216,6 +216,49 @@ where
 	}
 }
 
+/// Substrings that identify a SurrealDB error as a retryable transaction
+/// conflict. The first wraps a per-statement KV conflict ("This transaction
+/// can be retried"); the second is the executor wrapper emitted when a
+/// transaction-scoped statement aborts the surrounding query.
+const RETRYABLE_CONFLICT_MARKERS: &[&str] =
+	&["This transaction can be retried", "The query was not executed due to a failed transaction"];
+
+fn is_retryable_conflict<E: std::fmt::Display>(e: &E) -> bool {
+	let msg = e.to_string();
+	RETRYABLE_CONFLICT_MARKERS.iter().any(|p| msg.contains(p))
+}
+
+/// Run a single DML statement, retrying with bounded exponential backoff on
+/// SurrealDB optimistic-concurrency conflicts. RocksDB surfaces concurrent
+/// writes on the same keys as a "Resource busy" status that the kvs layer
+/// maps to a `TransactionConflict` error — explicitly marked retryable by
+/// SurrealDB but not auto-retried at the commit path. Crud-bench's
+/// scan-with-writes phases generate this contention by design; without
+/// application-level retry, a single conflict aborts the whole benchmark
+/// run. The retry budget is small so genuine failures still surface.
+async fn run_dml_with_retry<F, Fut>(sql: &str, mut op: F) -> Result<()>
+where
+	F: FnMut() -> Fut,
+	Fut: std::future::Future<Output = std::result::Result<(), surrealdb::Error>>,
+{
+	const MAX_RETRIES: u32 = 16;
+	const MAX_DELAY: Duration = Duration::from_millis(100);
+	let mut delay = Duration::from_millis(1);
+	let mut attempts = 0u32;
+	loop {
+		match op().await {
+			Ok(()) => return Ok(()),
+			Err(e) if is_retryable_conflict(&e) && attempts < MAX_RETRIES => {
+				attempts += 1;
+				warn!("Retrying {sql} due to transaction conflict (attempt {attempts}): {e}");
+				sleep(delay).await;
+				delay = (delay * 2).min(MAX_DELAY);
+			}
+			Err(e) => return Err(log_sql_err(sql)(e)),
+		}
+	}
+}
+
 /// Storage backend for Docker (`server:<backend>`).
 pub(crate) enum Docker {
 	Memory,
@@ -824,19 +867,21 @@ impl SurrealDBClient {
 	{
 		let sql = "CREATE $id CONTENT $content RETURN NULL";
 		let content = bench_to_surreal_value(val);
-		let res = self
-			.db
-			.query(sql)
-			.bind(Bindings {
-				id: Value::RecordId(RecordId::new(TABLE, key)),
-				content,
-			})
-			.await
-			.map_err(log_sql_err(sql))?
-			.take::<surrealdb::types::Value>(0)
-			.map_err(log_sql_err(sql))?;
-		assert!(!res.is_none());
-		Ok(())
+		let id = Value::RecordId(RecordId::new(TABLE, key));
+		run_dml_with_retry(sql, || async {
+			let res = self
+				.db
+				.query(sql)
+				.bind(Bindings {
+					id: id.clone(),
+					content: content.clone(),
+				})
+				.await?
+				.take::<surrealdb::types::Value>(0)?;
+			assert!(!res.is_none());
+			Ok(())
+		})
+		.await
 	}
 
 	async fn read<T>(&self, key: T) -> Result<Row>
@@ -863,19 +908,21 @@ impl SurrealDBClient {
 		if let Value::Object(ref mut obj) = content {
 			obj.remove("id");
 		}
-		let res = self
-			.db
-			.query(sql)
-			.bind(Bindings {
-				id: Value::RecordId(RecordId::new(TABLE, key)),
-				content,
-			})
-			.await
-			.map_err(log_sql_err(sql))?
-			.take::<surrealdb::types::Value>(0)
-			.map_err(log_sql_err(sql))?;
-		assert!(!res.is_none());
-		Ok(())
+		let id = Value::RecordId(RecordId::new(TABLE, key));
+		run_dml_with_retry(sql, || async {
+			let res = self
+				.db
+				.query(sql)
+				.bind(Bindings {
+					id: id.clone(),
+					content: content.clone(),
+				})
+				.await?
+				.take::<surrealdb::types::Value>(0)?;
+			assert!(!res.is_none());
+			Ok(())
+		})
+		.await
 	}
 
 	async fn delete<T>(&self, key: T) -> Result<()>
@@ -883,16 +930,18 @@ impl SurrealDBClient {
 		T: Into<RecordIdKey>,
 	{
 		let sql = "DELETE $id RETURN NULL";
-		let res = self
-			.db
-			.query(sql)
-			.bind(("id", Value::RecordId(RecordId::new(TABLE, key))))
-			.await
-			.map_err(log_sql_err(sql))?
-			.take::<surrealdb::types::Value>(0)
-			.map_err(log_sql_err(sql))?;
-		assert!(!res.is_none());
-		Ok(())
+		let id = Value::RecordId(RecordId::new(TABLE, key));
+		run_dml_with_retry(sql, || async {
+			let res = self
+				.db
+				.query(sql)
+				.bind(("id", id.clone()))
+				.await?
+				.take::<surrealdb::types::Value>(0)?;
+			assert!(!res.is_none());
+			Ok(())
+		})
+		.await
 	}
 
 	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
@@ -1038,16 +1087,12 @@ impl SurrealDBClient {
 			.collect();
 		// Construct the SQL query
 		let sql = "INSERT $rows RETURN NONE";
-		// Execute the SQL query
-		self.db
-			.query(sql)
-			.bind(("rows", Value::Array(Array::from(rows))))
-			.await
-			.map_err(log_sql_err(sql))?
-			.check()
-			.map_err(log_sql_err(sql))?;
-		// All ok
-		Ok(())
+		let rows = Value::Array(Array::from(rows));
+		run_dml_with_retry(sql, || async {
+			self.db.query(sql).bind(("rows", rows.clone())).await?.check()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn batch_read<K>(&self, keys: impl Iterator<Item = K> + Send) -> Result<()>
@@ -1098,15 +1143,12 @@ impl SurrealDBClient {
 			.collect();
 		// Construct the SQL query
 		let sql = "FOR $row IN $rows { UPDATE $row.id CONTENT $row RETURN NONE }";
-		// Execute the SQL query
-		self.db
-			.query(sql)
-			.bind(("rows", Value::Array(Array::from(rows))))
-			.await
-			.map_err(log_sql_err(sql))?
-			.check()
-			.map_err(log_sql_err(sql))?;
-		Ok(())
+		let rows = Value::Array(Array::from(rows));
+		run_dml_with_retry(sql, || async {
+			self.db.query(sql).bind(("rows", rows.clone())).await?.check()?;
+			Ok(())
+		})
+		.await
 	}
 
 	async fn batch_delete<K>(&self, keys: impl Iterator<Item = K> + Send) -> Result<()>
@@ -1117,15 +1159,11 @@ impl SurrealDBClient {
 		let ids: Vec<Value> = keys.map(|k| Value::RecordId(RecordId::new("record", k))).collect();
 		// Construct the SQL query
 		let sql = "DELETE $ids";
-		// Execute the SQL query
-		self.db
-			.query(sql)
-			.bind(("ids", Value::Array(Array::from(ids))))
-			.await
-			.map_err(log_sql_err(sql))?
-			.check()
-			.map_err(log_sql_err(sql))?;
-		// All ok
-		Ok(())
+		let ids = Value::Array(Array::from(ids));
+		run_dml_with_retry(sql, || async {
+			self.db.query(sql).bind(("ids", ids.clone())).await?.check()?;
+			Ok(())
+		})
+		.await
 	}
 }
