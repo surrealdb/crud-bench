@@ -270,11 +270,11 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	let cache_gb = calculate_surrealdb_memory();
 	let username = surrealdb_username();
 	let password = surrealdb_password();
-	let sync = if options.sync {
-		"every"
-	} else {
-		"never"
-	};
+	// NB: unlike v3, v2 doesn't parse `?sync=` (or the memory `aol=sync`
+	// persisted form) off the datastore path — `Datastore::new` matches the
+	// path verbatim, so any query string either fails the match (memory) or
+	// becomes part of the on-disk path (rocksdb/surrealkv). The `--sync`
+	// benchmark flag is therefore not plumbed through for v2 targets.
 	match backend {
 		Endpoint::Embedded(_) | Endpoint::Remote(_) => {
 			unreachable!("docker() must only be called when wants_docker is true")
@@ -282,12 +282,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		Endpoint::Docker(Docker::Memory) => DockerParams {
 			image: "surrealdb/surrealdb:v2",
 			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
-			post_args: match options.persisted {
-				true => format!(
-					"start --user {username} --pass {password} mem://?crud-bench.db?aol=sync&sync={sync}"
-				),
-				false => format!("start --user {username} --pass {password} mem://"),
-			},
+			post_args: format!("start --user {username} --pass {password} memory"),
 		},
 		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
 			image: "surrealdb/surrealdb:v2",
@@ -298,7 +293,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
 			},
 			post_args: format!(
-				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db?sync={sync}",
+				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db",
 			),
 		},
 		Endpoint::Docker(Docker::Surrealkv) => DockerParams {
@@ -310,7 +305,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
 			},
 			post_args: format!(
-				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db?sync={sync}",
+				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db",
 			),
 		},
 	}
@@ -350,18 +345,11 @@ impl BenchmarkEngine<SurrealDB2Client> for SurrealDB2ClientProvider {
 			Endpoint::Docker(_) => (DEFAULT.to_string(), None),
 			Endpoint::Remote(url) => (url, None),
 			Endpoint::Embedded(url) => {
-				let sync = if options.sync {
-					"every"
-				} else {
-					"never"
-				};
-				let full_url = if url.contains('?') {
-					format!("{url}&sync={sync}")
-				} else {
-					format!("{url}?sync={sync}")
-				};
-				let db = initialise_db(&full_url, &username, &password).await?;
-				(full_url, Some(db))
+				// v2 matches the datastore path verbatim and has no `?sync=`
+				// query-param support (see `docker()`), so the bare URL is
+				// passed straight through.
+				let db = initialise_db(&url, &username, &password).await?;
+				(url, Some(db))
 			}
 		};
 		Ok(Self {
@@ -856,14 +844,25 @@ impl SurrealDB2Client {
 				} else {
 					format!("SELECT count() FROM (SELECT 1 FROM record {c} {s} {l}) GROUP ALL")
 				};
-				let res: Option<usize> = self
+				// `GROUP ALL` yields `[{ count: N }]`, or an empty array when
+				// nothing matches. Read the raw value and pull `count` out of
+				// the first row rather than relying on the typed `take("count")`
+				// path, which doesn't surface the field reliably on v2.
+				let res: surrealdb::Value = self
 					.db
 					.query(&sql)
 					.await
 					.map_err(log_sql_err(&sql))?
-					.take("count")
+					.take(0)
 					.map_err(log_sql_err(&sql))?;
-				Ok(res.unwrap())
+				let j: JsonValue = res.into_inner().into_json();
+				let count = j
+					.as_array()
+					.and_then(|a| a.first())
+					.and_then(|row| row.get("count"))
+					.and_then(|c| c.as_u64())
+					.unwrap_or(0);
+				Ok(count as usize)
 			}
 		}
 	}
