@@ -29,16 +29,16 @@ use std::collections::BTreeMap;
 use std::env;
 use std::hint::black_box;
 use std::time::Duration;
-use surrealdb2 as surrealdb;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::Config;
 use surrealdb::opt::Resource;
 use surrealdb::opt::auth::Root;
 use surrealdb::sql::{
-	Array, Bytes as SurrealBytes, Datetime, Id, Number, Object, Strand, Thing,
-	Uuid as SurrealUuid, Value,
+	Array, Bytes as SurrealBytes, Datetime, Id, Number, Object, Strand, Thing, Uuid as SurrealUuid,
+	Value,
 };
+use surrealdb2 as surrealdb;
 use tokio::time::{sleep, timeout};
 
 /// Convert a [`BenchValue`] to a native v2 [`Value`].
@@ -478,7 +478,9 @@ impl BenchmarkClient for SurrealDB2Client {
 					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
 				)
 			}
-			_ => format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique} CONCURRENTLY"),
+			_ => {
+				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique} CONCURRENTLY")
+			}
 		};
 		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
 		// Poll until the index reports ready. v2's `INFO FOR INDEX` returns
@@ -764,12 +766,8 @@ impl SurrealDB2Client {
 		let sql = "DELETE $id RETURN NULL";
 		let id = thing(key);
 		run_dml_with_retry(sql, || async {
-			let res = self
-				.db
-				.query(sql)
-				.bind(("id", id.clone()))
-				.await?
-				.take::<surrealdb::Value>(0)?;
+			let res =
+				self.db.query(sql).bind(("id", id.clone())).await?.take::<surrealdb::Value>(0)?;
 			assert!(!res.into_inner().is_none());
 			Ok(())
 		})
@@ -802,8 +800,7 @@ impl SurrealDB2Client {
 		let q_value = Value::Array(Array::from(
 			query.iter().map(|f| Value::Number(Number::Float(*f as f64))).collect::<Vec<_>>(),
 		));
-		let mut resp =
-			self.db.query(&sql).bind(("q", q_value)).await.map_err(log_sql_err(&sql))?;
+		let mut resp = self.db.query(&sql).bind(("q", q_value)).await.map_err(log_sql_err(&sql))?;
 		let res: surrealdb::Value = resp.take(0).map_err(log_sql_err(&sql))?;
 		match res.into_inner() {
 			Value::Array(a) => Ok(a.0.len()),
