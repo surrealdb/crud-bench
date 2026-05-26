@@ -59,6 +59,7 @@ mod scylladb;
 mod slatedb;
 mod sqlite;
 mod surrealdb;
+mod surrealdb2;
 mod surrealds;
 mod surrealkv;
 mod surrealmx;
