@@ -280,7 +280,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			unreachable!("docker() must only be called when wants_docker is true")
 		}
 		Endpoint::Docker(Docker::Memory) => DockerParams {
-			image: "surrealdb/surrealdb:v2-latest",
+			image: "surrealdb/surrealdb:v2",
 			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
 			post_args: match options.persisted {
 				true => format!(
@@ -290,7 +290,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			},
 		},
 		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
-			image: "surrealdb/surrealdb:v2-latest",
+			image: "surrealdb/surrealdb:v2",
 			pre_args: match options.optimised {
 				true => format!(
 					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
@@ -302,7 +302,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			),
 		},
 		Endpoint::Docker(Docker::Surrealkv) => DockerParams {
-			image: "surrealdb/surrealdb:v2-latest",
+			image: "surrealdb/surrealdb:v2",
 			pre_args: match options.optimised {
 				true => format!(
 					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
