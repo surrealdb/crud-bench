@@ -280,12 +280,12 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			unreachable!("docker() must only be called when wants_docker is true")
 		}
 		Endpoint::Docker(Docker::Memory) => DockerParams {
-			image: "surrealdb/surrealdb:v2",
+			image: "surrealdb/surrealdb:v2.6.5",
 			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
 			post_args: format!("start --user {username} --pass {password} memory"),
 		},
 		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
-			image: "surrealdb/surrealdb:v2",
+			image: "surrealdb/surrealdb:v2.6.5",
 			pre_args: match options.optimised {
 				true => format!(
 					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
@@ -297,7 +297,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			),
 		},
 		Endpoint::Docker(Docker::Surrealkv) => DockerParams {
-			image: "surrealdb/surrealdb:v2",
+			image: "surrealdb/surrealdb:v2.6.5",
 			pre_args: match options.optimised {
 				true => format!(
 					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
@@ -339,6 +339,20 @@ pub(super) async fn initialise_db(
 impl BenchmarkEngine<SurrealDB2Client> for SurrealDB2ClientProvider {
 	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		let mode = parse_endpoint(options.endpoint.as_deref())?;
+		// v2 doesn't parse `?sync=`/`?aol=sync` off the datastore path (see
+		// `docker()`), so `--sync` and `--persisted` are silently no-ops here.
+		// Warn explicitly so v2-vs-v3 benchmark numbers aren't mistakenly
+		// treated as apples-to-apples.
+		if options.sync {
+			warn!(
+				"--sync has no effect on SurrealDB 2.x targets (v2 has no ?sync= support); the v2 datastore will use its default durability policy"
+			);
+		}
+		if options.persisted {
+			warn!(
+				"--persisted has no effect on SurrealDB 2.x targets (v2 has no `mem://?…&aol=sync` support); memory backends are non-persistent"
+			);
+		}
 		let username = surrealdb_username();
 		let password = surrealdb_password();
 		let (endpoint, client) = match mode {
@@ -513,13 +527,8 @@ impl BenchmarkClient for SurrealDB2Client {
 					match self.db.query(&sql).await?.check() {
 						Ok(_) => return Ok(()),
 						Err(e) => {
-							let msg = e.to_string();
-							const RETRYABLE: &[&str] = &[
-								"This transaction can be retried",
-								"The query was not executed due to a failed transaction",
-							];
-							if RETRYABLE.iter().any(|p| msg.contains(p)) {
-								warn!("Retrying {sql} due to {msg}");
+							if is_retryable_conflict(&e) {
+								warn!("Retrying {sql} due to {e}");
 								sleep(Duration::from_millis(500)).await;
 								continue;
 							}
@@ -718,7 +727,15 @@ impl SurrealDB2Client {
 	{
 		let v: surrealdb::Value = self.db.select(Resource::from(record_id(key))).await?;
 		let inner = v.into_inner();
-		assert!(!inner.is_none());
+		// `select(Resource::from(rid))` returns `Value::Array` of matching rows
+		// even for a single record (see the comment on `From<Row> for BenchValue`),
+		// so a miss is `Value::Array(vec![])`, not `Value::None`. Catch both.
+		let empty = match &inner {
+			Value::None | Value::Null => true,
+			Value::Array(a) => a.0.is_empty(),
+			_ => false,
+		};
+		assert!(!empty, "read: no record found for key");
 		Ok(black_box(Row(inner)))
 	}
 
@@ -859,12 +876,17 @@ impl SurrealDB2Client {
 					.take(0)
 					.map_err(log_sql_err(&sql))?;
 				let j: JsonValue = res.into_inner().into_json();
-				let count = j
+				let arr = j
 					.as_array()
-					.and_then(|a| a.first())
-					.and_then(|row| row.get("count"))
-					.and_then(|c| c.as_u64())
-					.unwrap_or(0);
+					.ok_or_else(|| anyhow::anyhow!("count scan: expected array, got {j}"))?;
+				// GROUP ALL on zero matches returns []; treat that as count=0
+				// rather than an error.
+				let Some(row) = arr.first() else {
+					return Ok(0);
+				};
+				let count = row.get("count").and_then(|c| c.as_u64()).ok_or_else(|| {
+					anyhow::anyhow!("count scan: missing/non-numeric `count` field in {row}")
+				})?;
 				Ok(count as usize)
 			}
 		}
