@@ -338,15 +338,40 @@ fn expand_scan_specs(specs: Vec<ScanSpec>) -> Result<Scans> {
 	Ok(scans)
 }
 
+/// Index types whose DDL applies to the whole table and accepts no `FIELDS` clause.
+/// Empty `Index.fields` is only valid when `index_type` is one of these.
+const FIELDLESS_INDEX_TYPES: &[&str] = &["count"];
+
+fn is_fieldless_index_type(kind: Option<&str>) -> bool {
+	matches!(kind, Some(k) if FIELDLESS_INDEX_TYPES.contains(&k))
+}
+
 /// Every scan with a non-skipped `with_index` must supply a non-empty `id` for datastore index names.
 /// Vector-search scans use `vector_query.field` to drive both index creation and the KNN query;
 /// `with_index` is reserved for non-vector indexed scans and rejected on vector entries.
+/// `with_index.fields` must be non-empty unless `index_type` is one of [`FIELDLESS_INDEX_TYPES`] —
+/// otherwise the per-backend DDL builders emit broken `FIELDS ` clauses and fail at runtime.
 fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 	for scan in scans {
 		if let Some(ref idx) = scan.with_index
 			&& !idx.skip
 		{
 			scan.required_index_id()?;
+			let kind = idx.index_type.as_deref();
+			if is_fieldless_index_type(kind) {
+				if !idx.fields.is_empty() {
+					bail!(
+						"scan `{}`: with_index.index_type = `{}` takes no `fields` — remove the `fields` entry",
+						scan.name,
+						kind.unwrap()
+					);
+				}
+			} else if idx.fields.is_empty() {
+				bail!(
+					"scan `{}`: with_index.fields must be non-empty (only fieldless index types such as `count` may omit fields)",
+					scan.name
+				);
+			}
 		}
 		if let Some(ref vq) = scan.vector_query {
 			if vq.top_k == 0 {
@@ -1069,6 +1094,36 @@ mod test {
 		.unwrap();
 		let scans = super::expand_scan_specs(specs).unwrap();
 		assert!(super::validate_scan_index_ids(&scans).is_ok());
+	}
+
+	#[test]
+	fn scan_with_index_rejects_empty_fields_without_fieldless_type() {
+		let specs: Vec<super::ScanSpec> =
+			serde_json::from_str(r#"[{"id":"x","name":"y","samples":1,"with_index":{}}]"#).unwrap();
+		let scans = super::expand_scan_specs(specs).unwrap();
+		let err = super::validate_scan_index_ids(&scans).unwrap_err();
+		assert!(err.to_string().contains("with_index.fields must be non-empty"));
+	}
+
+	#[test]
+	fn scan_with_index_allows_empty_fields_for_count() {
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"x","name":"y","samples":1,"with_index":{"index_type":"count"}}]"#,
+		)
+		.unwrap();
+		let scans = super::expand_scan_specs(specs).unwrap();
+		assert!(super::validate_scan_index_ids(&scans).is_ok());
+	}
+
+	#[test]
+	fn scan_with_index_rejects_fields_for_count() {
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"x","name":"y","samples":1,"with_index":{"index_type":"count","fields":["n"]}}]"#,
+		)
+		.unwrap();
+		let scans = super::expand_scan_specs(specs).unwrap();
+		let err = super::validate_scan_index_ids(&scans).unwrap_err();
+		assert!(err.to_string().contains("takes no `fields`"));
 	}
 
 	#[test]
