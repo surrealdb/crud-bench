@@ -95,13 +95,6 @@
 #                     compaction between phases (SurrealDB: ALTER SYSTEM COMPACT). SST
 #                     compaction does not shrink RocksDB WAL (*.log) files the same
 #                     way — large .log under data/ is normal.
-#   OPTIMISED         Prompted at start; any value set replicates crud-bench's
-#                     `--optimised` RocksDB tuning for the native server. crud-bench's
-#                     flag only injects env vars into its own Docker-managed server, so
-#                     it's a no-op against dev.sh's natively-started SurrealDB. We mirror
-#                     the same calculation (src/memory.rs + calculate_surrealdb_memory in
-#                     src/surrealdb.rs) and export SURREAL_ROCKSDB_BLOCK_CACHE_SIZE=<N>GB
-#                     onto the server process before launch.
 #   ELEVATED          Prompted at start; any value set turns on run.sh's `--elevated`
 #                     bare-metal isolation (Linux only, needs sudo):
 #                       * System tuning (both modes): stop unattended-upgrades, sync,
@@ -165,34 +158,6 @@ CRUD_BENCH_DIR="${CRUD_BENCH_DIR:-$SCRIPT_DIR}"
 log()  { printf '\033[0;34m[dev]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[dev]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[0;31m[dev]\033[0m %s\n' "$*" >&2; exit 1; }
-
-# -----------------------------------------------------------------------------
-# Optimised RocksDB block-cache size (GB)
-#
-# Mirrors crud-bench's `--optimised` calculation for a SurrealDB+RocksDB server
-# so the native server dev.sh launches gets the same SURREAL_ROCKSDB_BLOCK_CACHE_SIZE
-# the Docker-managed server would. Keep in sync with src/memory.rs (Config::new)
-# and calculate_surrealdb_memory() in src/surrealdb.rs.
-# -----------------------------------------------------------------------------
-calculate_surreal_cache_gb() {
-	local total_kb total_gb cache_gb
-	total_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)
-	[[ -z "$total_kb" ]] && { printf '1'; return; }
-	total_gb=$(( total_kb / 1024 / 1024 ))
-	# src/memory.rs: ~75% of RAM for cache, banded by total size
-	if (( total_gb <= 8 )); then
-		cache_gb=$(( total_gb / 2 )); (( cache_gb < 1 )) && cache_gb=1
-	elif (( total_gb <= 32 )); then
-		cache_gb=$(( total_gb * 3 / 5 )); (( cache_gb < 4 )) && cache_gb=4
-	else
-		cache_gb=$(( total_gb * 3 / 4 ))
-		(( cache_gb < 8 )) && cache_gb=8
-		(( cache_gb > total_gb - 8 )) && cache_gb=$(( total_gb - 8 ))
-	fi
-	# calculate_surrealdb_memory(): SurrealDB uses ~80% of the recommended cache
-	cache_gb=$(( cache_gb * 4 / 6 )); (( cache_gb < 1 )) && cache_gb=1
-	printf '%s' "$cache_gb"
-}
 
 # -----------------------------------------------------------------------------
 # System optimisation (elevated mode) — ported from run.sh.
@@ -326,30 +291,6 @@ while true; do
 			;;
 	esac
 done
-
-# -----------------------------------------------------------------------------
-# Optimised toggle
-#
-# Replicates crud-bench's `--optimised` RocksDB tuning for the native server by
-# exporting SURREAL_ROCKSDB_BLOCK_CACHE_SIZE (see calculate_surreal_cache_gb).
-# Like COMPACTION, "no" must unset the variable entirely.
-# -----------------------------------------------------------------------------
-SURREAL_CACHE_GB=""
-while true; do
-	ask OPTIMISED_CHOICE "Use optimised RocksDB block cache? (yes|no)" "no"
-	case "${OPTIMISED_CHOICE,,}" in
-		y|yes|true|1)  OPTIMISED=1;     OPTIMISED_CHOICE=yes; break ;;
-		n|no|false|0)  unset OPTIMISED; OPTIMISED_CHOICE=no;  break ;;
-		*)
-			warn "Please answer 'yes' or 'no'."
-			unset OPTIMISED_CHOICE
-			;;
-	esac
-done
-if [[ -n "${OPTIMISED:-}" ]]; then
-	SURREAL_CACHE_GB=$(calculate_surreal_cache_gb)
-	export SURREAL_ROCKSDB_BLOCK_CACHE_SIZE="${SURREAL_CACHE_GB}GB"
-fi
 
 # -----------------------------------------------------------------------------
 # Elevated toggle (run.sh `--elevated` parity)
@@ -521,11 +462,6 @@ printf "  %-14s %s\n" "Output:"     "$OUTPUT_DIR"
 printf "  %-14s samples=%s  clients=%s  threads=%s  key=%s\n" \
        "Params:" "$SAMPLES" "$CLIENTS" "$THREADS" "$KEY_TYPE"
 printf "  %-14s %s\n" "Compaction:" "$COMPACTION_CHOICE"
-if [[ -n "${OPTIMISED:-}" ]]; then
-	printf "  %-14s yes (SURREAL_ROCKSDB_BLOCK_CACHE_SIZE=%sGB)\n" "Optimised:" "$SURREAL_CACHE_GB"
-else
-	printf "  %-14s no\n" "Optimised:"
-fi
 if [[ -n "${ELEVATED:-}" ]]; then
 	if (( WRAP_PROCS )); then
 		printf "  %-14s yes (system tuning + sudo/nice/ionice/taskset -c %s)\n" "Elevated:" "$CPU_RANGE"
@@ -590,6 +526,12 @@ cleanup() {
 		psig -TERM "$SURREAL_PID" 2>/dev/null
 		wait "$SURREAL_PID" 2>/dev/null
 	fi
+	# Remove the RocksDB data dir now the server is stopped. In elevated release
+	# mode the server ran as root, so the dir is root-owned — remove with sudo.
+	if [[ -n "${DB_PATH:-}" && -e "$DB_PATH" ]]; then
+		log "Removing data directory ($DB_PATH)..."
+		if (( WRAP_PROCS )); then sudo rm -rf "$DB_PATH"; else rm -rf "$DB_PATH"; fi
+	fi
 	# Restore system tweaks last so a failed/interrupted run still puts the box
 	# back (no-op unless optimize_system actually ran).
 	normalize_system
@@ -652,9 +594,6 @@ fi
 # 3) Start SurrealDB
 # -----------------------------------------------------------------------------
 log "[3/6] Starting SurrealDB (rocksdb:$DB_PATH)"
-if [[ -n "${OPTIMISED:-}" ]]; then
-	log "      Optimised: SURREAL_ROCKSDB_BLOCK_CACHE_SIZE=$SURREAL_ROCKSDB_BLOCK_CACHE_SIZE"
-fi
 if (( WRAP_PROCS )); then
 	log "      Elevated: ${SERVER_PREFIX[*]}"
 	# A prior elevated run leaves the data dir root-owned, so remove it as root.
