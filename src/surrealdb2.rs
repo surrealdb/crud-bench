@@ -270,27 +270,33 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	let cache_gb = calculate_surrealdb_memory();
 	let username = surrealdb_username();
 	let password = surrealdb_password();
-	// NB: unlike v3, v2 doesn't parse `?sync=` (or the memory `aol=sync`
-	// persisted form) off the datastore path — `Datastore::new` matches the
-	// path verbatim, so any query string either fails the match (memory) or
-	// becomes part of the on-disk path (rocksdb/surrealkv). The `--sync`
-	// benchmark flag is therefore not plumbed through for v2 targets.
+	// v2 doesn't parse `?sync=` off the datastore path the way v3 does
+	// (`Datastore::new` matches the path verbatim). The only switch for
+	// fsync-on-commit in v2 is the `SURREAL_SYNC_DATA` env var — both the
+	// RocksDB and SurrealKV engines key off it (`cnf::SYNC_DATA`, default
+	// `false`). Forward `--sync` through as that env var so v2 benchmarks
+	// honour the same durability contract as v3 (`?sync=every`).
+	let sync_env = if options.sync {
+		" -e SURREAL_SYNC_DATA=true"
+	} else {
+		""
+	};
 	match backend {
 		Endpoint::Embedded(_) | Endpoint::Remote(_) => {
 			unreachable!("docker() must only be called when wants_docker is true")
 		}
 		Endpoint::Docker(Docker::Memory) => DockerParams {
 			image: "surrealdb/surrealdb:v2.6.5",
-			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
+			pre_args: format!("--ulimit nofile=65536:65536 -p 8000:8000{sync_env} --user root"),
 			post_args: format!("start --user {username} --pass {password} memory"),
 		},
 		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
 			image: "surrealdb/surrealdb:v2.6.5",
 			pre_args: match options.optimised {
 				true => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB{sync_env} --user root",
 				),
-				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
+				false => format!("--ulimit nofile=65536:65536 -p 8000:8000{sync_env} --user root"),
 			},
 			post_args: format!(
 				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db",
@@ -300,9 +306,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			image: "surrealdb/surrealdb:v2.6.5",
 			pre_args: match options.optimised {
 				true => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB{sync_env} --user root",
 				),
-				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
+				false => format!("--ulimit nofile=65536:65536 -p 8000:8000{sync_env} --user root"),
 			},
 			post_args: format!(
 				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db",
@@ -339,14 +345,20 @@ pub(super) async fn initialise_db(
 impl BenchmarkEngine<SurrealDB2Client> for SurrealDB2ClientProvider {
 	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		let mode = parse_endpoint(options.endpoint.as_deref())?;
-		// v2 doesn't parse `?sync=`/`?aol=sync` off the datastore path (see
-		// `docker()`), so `--sync` and `--persisted` are silently no-ops here.
-		// Warn explicitly so v2-vs-v3 benchmark numbers aren't mistakenly
-		// treated as apples-to-apples.
-		if options.sync {
-			warn!(
-				"--sync has no effect on SurrealDB 2.x targets (v2 has no ?sync= support); the v2 datastore will use its default durability policy"
-			);
+		// v2's only fsync-on-commit switch is the `SURREAL_SYNC_DATA` env var
+		// (no path query param, no CLI flag). For embedded mode we set it in
+		// the bench process before `initialise_db` touches the kvs layer so
+		// the LazyLock in `cnf::SYNC_DATA` resolves to the right value. For
+		// Docker mode the equivalent `-e SURREAL_SYNC_DATA=true` is wired in
+		// `docker()`. Remote mode honours whatever the remote server was
+		// started with.
+		if options.sync && matches!(mode, Endpoint::Embedded(_)) {
+			// SAFETY: `setup` runs once at startup, before any benchmark
+			// worker tasks spawn, and before the v2 SDK reads SYNC_DATA. No
+			// concurrent env access is possible at this point.
+			unsafe {
+				env::set_var("SURREAL_SYNC_DATA", "true");
+			}
 		}
 		if options.persisted {
 			warn!(
@@ -359,9 +371,6 @@ impl BenchmarkEngine<SurrealDB2Client> for SurrealDB2ClientProvider {
 			Endpoint::Docker(_) => (DEFAULT.to_string(), None),
 			Endpoint::Remote(url) => (url, None),
 			Endpoint::Embedded(url) => {
-				// v2 matches the datastore path verbatim and has no `?sync=`
-				// query-param support (see `docker()`), so the bare URL is
-				// passed straight through.
 				let db = initialise_db(&url, &username, &password).await?;
 				(url, Some(db))
 			}
