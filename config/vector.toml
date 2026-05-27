@@ -11,14 +11,53 @@
 # vectors across all scan samples. Only the KNN call itself is timed, so the
 # benchmark's RAM footprint is constant in `count` (independent of `-s N`).
 
+# ============================================================================
+# value
+# ============================================================================
+
 [value]
-embedding = "vector:128"
+text = "string:50"
+name = "string:20"
+age = "int:1..100"
+city = "string_enum:London,Paris,Berlin,Tokyo,New York,Sydney,Madrid,Rome,Beijing,Tokyo"
+score = "float:0.0..100.0"
+number = "int:1..5000"
+integer = "int"
+active = "bool"
+created_at = "datetime"
+http_status = "int_enum:200,201,400,404,500"
+request_id = "uuid"
+status = "string_enum:draft,published,archived"
+description = "text:100..400"
+tier = "int_enum:0,1,2,3"
+words = "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
+tags = [
+    "string_enum:alpha,beta,gamma,delta,epsilon",
+    "string_enum:theta,iota,kappa,lambda,mu",
+    "string_enum:nu,xi,omicron,pi,rho"
+]
+geography.code = "string:3"
+geography.text = "string:15"
+geography.location = "string_enum:Africa,Antarctica,Asia,Europe,North America,South America,Oceania"
+geography.description = "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
+embedding = "vector:3072"
+
+# ============================================================================
+# vector_knn — Bruteforce / HNSW / DiskANN KNN against a 128-d embedding.
+#
+# Engines that don't support vector indexes return NotSupported and the run
+# is skipped, same pattern as the fulltext block above. The holdout query
+# set is built deterministically from inserted rows (constant memory in
+# `count`, independent of `-s N`).
+# ============================================================================
 
 [[scans]]
 id = "vector_knn"
+samples = 1000
 
 [[scans.runs]]
 name = "bruteforce knn(10)"
+
 [scans.runs.vector_query]
 field = "embedding"
 top_k = 10
@@ -28,6 +67,7 @@ holdout = { count = 200, seed = 42 }
 
 [[scans.runs]]
 name = "hnsw knn(10) m=16 efc=200 efs=64"
+
 [scans.runs.vector_query]
 field = "embedding"
 top_k = 10
@@ -37,6 +77,7 @@ holdout = { count = 200, seed = 42 }
 
 [[scans.runs]]
 name = "diskann knn(10) deg=64 L=100 alpha=1.2"
+
 [scans.runs.vector_query]
 field = "embedding"
 top_k = 10
