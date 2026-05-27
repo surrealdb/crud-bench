@@ -260,8 +260,19 @@ impl BenchmarkClient for MariadbClient {
 	}
 
 	async fn drop_index(&self, name: &str) -> Result<()> {
+		// MariaDB's `DROP INDEX` supports `IF EXISTS`, but we go through a
+		// `SHOW INDEX` lookup for parity with the MySQL adapter. Paired with
+		// the COUNT-index no-op `build_index` above, a missing index here is
+		// not an error.
+		let mut conn = self.conn.lock().await;
+		let exists: Option<mysql_async::Row> = conn
+			.query_first(format!("SHOW INDEX FROM record WHERE Key_name = '{name}'"))
+			.await?;
+		if exists.is_none() {
+			return Ok(());
+		}
 		let stmt = format!("DROP INDEX {name} ON record");
-		self.conn.lock().await.query_drop(&stmt).await?;
+		conn.query_drop(&stmt).await?;
 		Ok(())
 	}
 

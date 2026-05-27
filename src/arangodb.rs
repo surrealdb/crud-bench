@@ -296,6 +296,12 @@ impl BenchmarkClient for ArangoDBClient {
 		bail!(NOT_SUPPORTED_ERROR)
 	}
 
+	async fn drop_index(&self, _name: &str) -> Result<()> {
+		// Symmetric to `build_index`: the only path that returns `Ok` above is
+		// the COUNT no-op, so there's no real index to drop.
+		Ok(())
+	}
+
 	async fn batch_create_u32(
 		&self,
 		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
