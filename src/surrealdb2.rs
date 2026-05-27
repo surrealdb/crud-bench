@@ -462,8 +462,11 @@ impl BenchmarkClient for SurrealDB2Client {
 					.map_err(log_sql_err(&sql))?
 					.check()
 					.map_err(log_sql_err(&sql))?;
+				// v2 spells the full-text index `SEARCH ANALYZER … BM25`;
+				// the `FULLTEXT ANALYZER` keyword is v3-only. The `@@` match
+				// operator used on the scan side is the same in both.
 				format!(
-					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} SEARCH ANALYZER {name} BM25 CONCURRENTLY"
 				)
 			}
 			_ => {
