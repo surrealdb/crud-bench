@@ -392,7 +392,10 @@ pub(crate) struct Index {
 	/// When true, skip index create/drop but still run the query leg (table scan).
 	#[serde(default)]
 	pub(crate) skip: bool,
-	/// Columns or paths included in the index.
+	/// Columns or paths included in the index. Optional for index types that
+	/// don't take field arguments (e.g. SurrealDB COUNT indexes apply to the
+	/// whole table).
+	#[serde(default)]
 	pub(crate) fields: Vec<String>,
 	/// Whether the index enforces uniqueness when supported by the backend.
 	pub(crate) unique: Option<bool>,

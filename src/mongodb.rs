@@ -270,6 +270,12 @@ impl BenchmarkClient for MongoDBClient {
 	}
 
 	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// COUNT-style indexes have no MongoDB equivalent (estimatedDocumentCount
+		// is approximate, not exact); the indexed scan leg runs the same query
+		// as the baseline so the row still populates.
+		if spec.index_type.as_deref() == Some("count") {
+			return Ok(());
+		}
 		// Define the index document
 		let mut doc = Document::new();
 		// Check if an index type is specified

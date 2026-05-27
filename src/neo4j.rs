@@ -151,6 +151,11 @@ impl BenchmarkClient for Neo4jClient {
 	}
 
 	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// COUNT-style scans are answered by Neo4j's label count store with no
+		// DDL required — the speedup lives in the scan query branch below.
+		if spec.index_type.as_deref() == Some("count") {
+			return Ok(());
+		}
 		// Reject wildcard array specs (`tags.*`). Cypher has no btree equivalent
 		// for array-element indexing, and records are flattened so there is no
 		// single property to index. Other dialects work around this with JSON
@@ -555,6 +560,20 @@ impl Neo4jClient {
 			.and_then(|idx| idx.index_type.as_ref())
 			.map(|t| t == "fulltext")
 			.unwrap_or(false);
+		// Indexed leg of a COUNT-index scan: hit Neo4j's label count store with
+		// a labeled, predicate-free match. Limited to scans with no filter /
+		// ordering / paging — those would force a scan and bypass the store.
+		let count_idx = ctx == ScanContext::WithIndex
+			&& matches!(p, Projection::Count)
+			&& scan
+				.with_index
+				.as_ref()
+				.and_then(|idx| idx.index_type.as_deref())
+				== Some("count")
+			&& c.is_empty()
+			&& o.is_empty()
+			&& s.is_empty()
+			&& l.is_empty();
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
@@ -588,11 +607,15 @@ impl Neo4jClient {
 				Ok(count)
 			}
 			Projection::Count => {
-				let stm = match fts {
-					true => format!(
+				let stm = if count_idx {
+					// Label count store: O(1), exact.
+					"MATCH (n:Record) RETURN count(n) as count".to_string()
+				} else if fts {
+					format!(
 						"CALL db.index.fulltext.queryNodes('{n}', '{c}') YIELD node as r WITH r {s} {l} RETURN count(r) as count"
-					),
-					false => format!("MATCH (r) {c} WITH r {s} {l} RETURN count(r) as count"),
+					)
+				} else {
+					format!("MATCH (r) {c} WITH r {s} {l} RETURN count(r) as count")
 				};
 				let mut res = self.graph.execute(query(&stm)).await.unwrap();
 				let count: i64 = res.next().await.unwrap().unwrap().get("count").unwrap();

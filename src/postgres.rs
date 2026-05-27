@@ -245,6 +245,11 @@ impl BenchmarkClient for PostgresClient {
 	}
 
 	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// COUNT-style indexes have no Postgres equivalent; the indexed scan
+		// leg runs the same query as the baseline so the row still populates.
+		if spec.index_type.as_deref() == Some("count") {
+			return Ok(());
+		}
 		// Get the unique flag
 		let unique = if spec.unique.unwrap_or(false) {
 			"UNIQUE"
