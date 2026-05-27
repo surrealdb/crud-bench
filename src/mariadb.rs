@@ -265,9 +265,8 @@ impl BenchmarkClient for MariadbClient {
 		// the COUNT-index no-op `build_index` above, a missing index here is
 		// not an error.
 		let mut conn = self.conn.lock().await;
-		let exists: Option<mysql_async::Row> = conn
-			.query_first(format!("SHOW INDEX FROM record WHERE Key_name = '{name}'"))
-			.await?;
+		let exists: Option<mysql_async::Row> =
+			conn.query_first(format!("SHOW INDEX FROM record WHERE Key_name = '{name}'")).await?;
 		if exists.is_none() {
 			return Ok(());
 		}

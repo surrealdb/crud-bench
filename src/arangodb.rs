@@ -505,11 +505,7 @@ impl ArangoDBClient {
 		// count, exposed via LENGTH(). Limited to predicate-free, unpaged scans.
 		let count_idx = ctx == ScanContext::WithIndex
 			&& matches!(p, Projection::Count)
-			&& scan
-				.with_index
-				.as_ref()
-				.and_then(|idx| idx.index_type.as_deref())
-				== Some("count")
+			&& scan.with_index.as_ref().and_then(|idx| idx.index_type.as_deref()) == Some("count")
 			&& c.is_empty()
 			&& o.is_empty()
 			&& l.is_empty();

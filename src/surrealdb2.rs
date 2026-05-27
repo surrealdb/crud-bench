@@ -467,6 +467,13 @@ impl BenchmarkClient for SurrealDB2Client {
 	}
 
 	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// SurrealDB 2.x has no COUNT-index feature; the indexed scan leg falls
+		// back to the same query as the baseline so the row still populates.
+		// Paired with `REMOVE INDEX IF EXISTS` in `drop_index` — the cleanup
+		// leg is already tolerant of a missing index.
+		if spec.index_type.as_deref() == Some("count") {
+			return Ok(());
+		}
 		let unique = if spec.unique.unwrap_or(false) {
 			"UNIQUE"
 		} else {

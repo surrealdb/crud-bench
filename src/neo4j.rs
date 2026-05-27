@@ -565,11 +565,7 @@ impl Neo4jClient {
 		// ordering / paging — those would force a scan and bypass the store.
 		let count_idx = ctx == ScanContext::WithIndex
 			&& matches!(p, Projection::Count)
-			&& scan
-				.with_index
-				.as_ref()
-				.and_then(|idx| idx.index_type.as_deref())
-				== Some("count")
+			&& scan.with_index.as_ref().and_then(|idx| idx.index_type.as_deref()) == Some("count")
 			&& c.is_empty()
 			&& o.is_empty()
 			&& s.is_empty()
