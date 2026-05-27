@@ -56,6 +56,12 @@ pub(crate) enum Database {
 	Sqlite,
 	#[cfg(feature = "surrealdb")]
 	Surrealdb,
+	/// SurrealDB 2.X server adapter — links against the v2 SDK (renamed
+	/// crate `surrealdb2`) and talks to a 2.x server. Use this when the
+	/// target is a v2 deployment; the default `Surrealdb` variant only
+	/// speaks the v3 RPC protocol.
+	#[cfg(feature = "surrealdb2")]
+	Surrealdb2,
 	#[cfg(feature = "surrealkv")]
 	Surrealkv,
 	#[cfg(feature = "surrealmx")]
@@ -78,6 +84,8 @@ impl Database {
 		match self {
 			#[cfg(feature = "surrealdb")]
 			Database::Surrealdb => crate::surrealdb::wants_docker(endpoint.as_deref()),
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2 => crate::surrealdb2::wants_docker(endpoint.as_deref()),
 			_ => endpoint.is_none(),
 		}
 	}
@@ -108,6 +116,8 @@ impl Database {
 			Self::Scylladb => crate::scylladb::docker(options),
 			#[cfg(feature = "surrealdb")]
 			Self::Surrealdb => crate::surrealdb::docker(options),
+			#[cfg(feature = "surrealdb2")]
+			Self::Surrealdb2 => crate::surrealdb2::docker(options),
 			#[allow(unreachable_patterns)]
 			_ => return None,
 		};
@@ -455,6 +465,26 @@ impl Database {
 					)
 					.await
 			}
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2 => {
+				benchmark
+					.run::<_, SurrealDBDialect, _>(
+						crate::surrealdb2::SurrealDB2ClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
 			#[cfg(feature = "surrealdb")]
 			Database::Surrealds => {
 				benchmark
@@ -563,6 +593,8 @@ impl Database {
 			Database::Surrealmx => "SurrealMX",
 			#[cfg(feature = "surrealdb")]
 			Database::Surrealdb => "SurrealDB",
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2 => "SurrealDB 2.x",
 			#[allow(unreachable_patterns)]
 			_ => "Unknown",
 		}

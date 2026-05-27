@@ -95,12 +95,44 @@
 #                     compaction between phases (SurrealDB: ALTER SYSTEM COMPACT). SST
 #                     compaction does not shrink RocksDB WAL (*.log) files the same
 #                     way — large .log under data/ is normal.
+#   ELEVATED          Prompted at start; any value set turns on run.sh's `--elevated`
+#                     bare-metal isolation (Linux only, needs sudo):
+#                       * System tuning (both modes): stop unattended-upgrades, sync,
+#                         compact memory, drop caches, disable THP, disable swap, raise
+#                         ulimits — restored afterwards (also on Ctrl-C). Waits for load
+#                         to settle before starting.
+#                       * Process elevation (release mode only): launch the server and
+#                         crud-bench under `sudo -E nice/ionice/taskset` for priority,
+#                         IO class, and CPU pinning. The server gets highest priority
+#                         (run.sh "embedded"), the client normal-elevated (run.sh
+#                         "networked"). SKIPPED in profiling mode: running the server as
+#                         root would force perf to attach as root and break the carefully
+#                         timed control-fifo orchestration — run.sh makes the same
+#                         carve-out for --flamegraph (see run.sh run_benchmark, line ~760).
+#                     crud-bench's `--privileged` is intentionally NOT passed: it only
+#                     affects Docker containers (src/docker.rs), which dev.sh never uses.
 #
 # Prerequisites (one-time setup — profiling mode only):
 #   sudo apt install linux-tools-common linux-tools-generic linux-tools-$(uname -r)
 #   cargo install flamegraph
 #   sudo sysctl -w kernel.perf_event_paranoid=-1
 #
+
+# -----------------------------------------------------------------------------
+# Re-exec under bash 4+ if needed.
+#
+# dev.sh relies on bash 4+ features (associative arrays, ${var,,} lowercasing,
+# etc.). The macOS system bash at /bin/bash is 3.2, so `#!/usr/bin/env bash`
+# can resolve to a too-old interpreter. Hand off to a newer bash if the current
+# one is < 4 (Homebrew installs bash 5 under /opt/homebrew/bin or /usr/local/bin).
+# -----------------------------------------------------------------------------
+if [[ -z "${BASH_VERSINFO:-}" || "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+	for _newbash in /opt/homebrew/bin/bash /usr/local/bin/bash /usr/bin/bash; do
+		[[ -x "$_newbash" ]] && exec "$_newbash" "$0" "$@"
+	done
+	echo "dev.sh requires bash 4+ (found ${BASH_VERSION:-unknown}). Install a newer bash, e.g. 'brew install bash'." >&2
+	exit 1
+fi
 
 set -euo pipefail
 
@@ -126,6 +158,71 @@ CRUD_BENCH_DIR="${CRUD_BENCH_DIR:-$SCRIPT_DIR}"
 log()  { printf '\033[0;34m[dev]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[dev]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[0;31m[dev]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# -----------------------------------------------------------------------------
+# System optimisation (elevated mode) — ported from run.sh.
+#
+# Linux only (dev.sh already assumes Linux: perf, ss, /proc). optimize_system
+# runs once before the server starts; normalize_system restores afterwards and
+# is also invoked from the cleanup trap so Ctrl-C still puts the box back.
+# SYSTEM_OPTIMISED guards the restore so we never "normalise" a box we never
+# touched.
+# -----------------------------------------------------------------------------
+SYSTEM_OPTIMISED=0
+
+optimize_system() {
+	log "Optimising system for benchmarking (sudo)..."
+	# Mark dirty before mutating so a partial failure still triggers the restore.
+	SYSTEM_OPTIMISED=1
+	sudo systemctl stop unattended-upgrades 2>/dev/null || warn "Could not stop unattended-upgrades"
+	sync
+	echo 1     | sudo tee /proc/sys/vm/compact_memory                  >/dev/null 2>&1 || warn "Could not compact memory"
+	echo 3     | sudo tee /proc/sys/vm/drop_caches                     >/dev/null 2>&1 || warn "Could not drop caches"
+	echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled  >/dev/null 2>&1 || warn "Could not disable THP"
+	sudo swapoff -a 2>/dev/null || warn "Could not disable swap"
+	# ulimits set here are inherited by the server / crud-bench / perf we launch
+	# later in the same shell.
+	ulimit -n 65536 2>/dev/null            || warn "Could not set file descriptor limit"
+	ulimit -u unlimited 2>/dev/null || ulimit -u 2048 2>/dev/null || warn "Could not set process limit"
+	ulimit -l unlimited 2>/dev/null        || warn "Could not set memory lock limit"
+	log "System optimisation complete"
+}
+
+normalize_system() {
+	(( SYSTEM_OPTIMISED )) || return 0
+	SYSTEM_OPTIMISED=0
+	log "Normalising system..."
+	sudo systemctl start unattended-upgrades 2>/dev/null || warn "Could not start unattended-upgrades"
+	sync
+	echo 1      | sudo tee /proc/sys/vm/compact_memory                 >/dev/null 2>&1 || true
+	echo 3      | sudo tee /proc/sys/vm/drop_caches                    >/dev/null 2>&1 || true
+	echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled >/dev/null 2>&1 || warn "Could not re-enable THP"
+	# run.sh leaves swap off; we re-enable it so the box isn't left swapless.
+	sudo swapon -a 2>/dev/null || warn "Could not re-enable swap"
+	log "System normalisation complete"
+}
+
+# Wait until the 1-minute load average drops below the threshold (Linux: 0.5,
+# matching run.sh's dedicated-box assumption). Warns and continues on timeout
+# rather than aborting, since this is a dev workflow.
+wait_for_system() {
+	log "Waiting for system load to settle..."
+	local timeout=900 elapsed=0 threshold="0.5" load
+	while true; do
+		load=$(awk '{print $1}' /proc/loadavg)
+		if awk -v l="$load" -v t="$threshold" 'BEGIN { exit !(l < t) }'; then
+			log "System ready — load $load (target < $threshold)"
+			break
+		fi
+		if (( elapsed >= timeout )); then
+			warn "Timeout waiting for load to drop (current $load) — continuing anyway"
+			break
+		fi
+		log "Waiting for load to decrease (current $load, target < $threshold)..."
+		sleep 15
+		elapsed=$(( elapsed + 15 ))
+	done
+}
 
 # -----------------------------------------------------------------------------
 # Interactive prompts
@@ -194,6 +291,53 @@ while true; do
 			;;
 	esac
 done
+
+# -----------------------------------------------------------------------------
+# Elevated toggle (run.sh `--elevated` parity)
+#
+# Like COMPACTION, "no" must unset the variable entirely. When enabled we run
+# optimize_system/normalize_system/wait_for_system around the benchmark (both
+# modes), and in RELEASE mode additionally launch the server + crud-bench under
+# sudo/nice/ionice/taskset. Process elevation is deliberately skipped in
+# profiling mode to keep perf's attach + control-fifo orchestration intact.
+# -----------------------------------------------------------------------------
+# Honour a pre-set ELEVATED env var by seeding the choice so `ask` skips the prompt.
+if [[ -n "${ELEVATED:-}" && -z "${ELEVATED_CHOICE:-}" ]]; then
+	ELEVATED_CHOICE=yes
+fi
+while true; do
+	ask ELEVATED_CHOICE "Elevate priorities & optimise system? (yes|no)" "no"
+	case "${ELEVATED_CHOICE,,}" in
+		y|yes|true|1)  ELEVATED=1;     ELEVATED_CHOICE=yes; break ;;
+		n|no|false|0)  unset ELEVATED; ELEVATED_CHOICE=no;  break ;;
+		*)
+			warn "Please answer 'yes' or 'no'."
+			unset ELEVATED_CHOICE
+			;;
+	esac
+done
+
+# Process-elevation wrappers. WRAP_PROCS is only set when we actually launch the
+# server/crud-bench under sudo (elevated + release) — profiling stays unwrapped.
+WRAP_PROCS=0
+SERVER_PREFIX=()
+CRUD_PREFIX=()
+CPU_RANGE=""
+if [[ -n "${ELEVATED:-}" && "$MODE" == "release" ]]; then
+	NUM_CPUS=$(nproc 2>/dev/null || echo 1)
+	CPU_RANGE="0-$(( NUM_CPUS - 1 ))"
+	WRAP_PROCS=1
+	# Server = database under test → highest priority (run.sh "embedded").
+	SERVER_PREFIX=(sudo -E nice -n -20 ionice -c 1 -n 0 taskset -c "$CPU_RANGE")
+	# Client = load generator → normal-elevated priority (run.sh "networked").
+	CRUD_PREFIX=(sudo -E nice -n -10 ionice -c 2 -n 0 taskset -c "$CPU_RANGE")
+fi
+
+# kill / kill -0 that escalate via sudo when the target was launched under sudo
+# (a root-owned process can't be signalled by the unprivileged script). The
+# pids we track are the `sudo` parents — sudo forwards the signal to its child.
+psig()   { if (( WRAP_PROCS )); then sudo kill "$@";        else kill "$@";        fi; }
+palive() { if (( WRAP_PROCS )); then sudo kill -0 "$1" 2>/dev/null; else kill -0 "$1" 2>/dev/null; fi; }
 
 # -----------------------------------------------------------------------------
 # Phase selection (profiling mode only)
@@ -270,6 +414,13 @@ if [[ "$MODE" == "profiling" ]]; then
 		|| die "kernel.perf_event_paranoid=$PARANOID; run: sudo sysctl -w kernel.perf_event_paranoid=-1"
 fi
 
+if [[ -n "${ELEVATED:-}" ]]; then
+	command -v sudo >/dev/null || die "elevated mode requires sudo"
+	# Prime the sudo credential cache up front so optimize_system / process
+	# launches don't block on a password prompt mid-run.
+	sudo -v || die "elevated mode requires sudo privileges"
+fi
+
 [[ -n "$SURREALDB_DIR" && -d "$SURREALDB_DIR" ]] \
 	|| die "SurrealDB source tree not found at: $SURREALDB_DIR"
 [[ -d "$CRUD_BENCH_DIR" ]] \
@@ -311,6 +462,15 @@ printf "  %-14s %s\n" "Output:"     "$OUTPUT_DIR"
 printf "  %-14s samples=%s  clients=%s  threads=%s  key=%s\n" \
        "Params:" "$SAMPLES" "$CLIENTS" "$THREADS" "$KEY_TYPE"
 printf "  %-14s %s\n" "Compaction:" "$COMPACTION_CHOICE"
+if [[ -n "${ELEVATED:-}" ]]; then
+	if (( WRAP_PROCS )); then
+		printf "  %-14s yes (system tuning + sudo/nice/ionice/taskset -c %s)\n" "Elevated:" "$CPU_RANGE"
+	else
+		printf "  %-14s yes (system tuning only — process elevation skipped in profiling mode)\n" "Elevated:"
+	fi
+else
+	printf "  %-14s no\n" "Elevated:"
+fi
 if [[ "$MODE" == "profiling" ]]; then
 	printf "  %-14s %s\n" "Categories:"  "${CATEGORIES[*]}"
 	printf "  %-14s %s Hz  (--call-graph fp, --control fifo, --switch-output)\n" \
@@ -356,16 +516,25 @@ cleanup() {
 	if [[ -n "$PERF_CTL_FIFO" && -p "$PERF_CTL_FIFO" ]]; then
 		rm -f "$PERF_CTL_FIFO"
 	fi
-	if [[ -n "$CRUD_PID" ]] && kill -0 "$CRUD_PID" 2>/dev/null; then
+	if [[ -n "$CRUD_PID" ]] && palive "$CRUD_PID"; then
 		log "Stopping crud-bench ($CRUD_PID)..."
-		kill -TERM "$CRUD_PID" 2>/dev/null
+		psig -TERM "$CRUD_PID" 2>/dev/null
 		wait "$CRUD_PID" 2>/dev/null
 	fi
-	if [[ -n "$SURREAL_PID" ]] && kill -0 "$SURREAL_PID" 2>/dev/null; then
+	if [[ -n "$SURREAL_PID" ]] && palive "$SURREAL_PID"; then
 		log "Stopping SurrealDB ($SURREAL_PID)..."
-		kill -TERM "$SURREAL_PID" 2>/dev/null
+		psig -TERM "$SURREAL_PID" 2>/dev/null
 		wait "$SURREAL_PID" 2>/dev/null
 	fi
+	# Remove the RocksDB data dir now the server is stopped. In elevated release
+	# mode the server ran as root, so the dir is root-owned — remove with sudo.
+	if [[ -n "${DB_PATH:-}" && -e "$DB_PATH" ]]; then
+		log "Removing data directory ($DB_PATH)..."
+		if (( WRAP_PROCS )); then sudo rm -rf "$DB_PATH"; else rm -rf "$DB_PATH"; fi
+	fi
+	# Restore system tweaks last so a failed/interrupted run still puts the box
+	# back (no-op unless optimize_system actually ran).
+	normalize_system
 	exit $rc
 }
 trap cleanup EXIT INT TERM
@@ -413,11 +582,26 @@ CRUD_BIN="$CRUD_BENCH_DIR/target/release/crud-bench"
 [[ -x "$CRUD_BIN" ]] || die "Built binary missing: $CRUD_BIN"
 
 # -----------------------------------------------------------------------------
+# Elevated: tune the system after builds (so compiler load is gone) and wait
+# for the load average to settle before benchmarking.
+# -----------------------------------------------------------------------------
+if [[ -n "${ELEVATED:-}" ]]; then
+	optimize_system
+	wait_for_system
+fi
+
+# -----------------------------------------------------------------------------
 # 3) Start SurrealDB
 # -----------------------------------------------------------------------------
 log "[3/6] Starting SurrealDB (rocksdb:$DB_PATH)"
-rm -rf "$DB_PATH"
-"$SURREAL_BIN" start \
+if (( WRAP_PROCS )); then
+	log "      Elevated: ${SERVER_PREFIX[*]}"
+	# A prior elevated run leaves the data dir root-owned, so remove it as root.
+	sudo rm -rf "$DB_PATH"
+else
+	rm -rf "$DB_PATH"
+fi
+"${SERVER_PREFIX[@]}" "$SURREAL_BIN" start \
 	--bind "127.0.0.1:$SURREAL_PORT" \
 	--allow-all -u root -p root \
 	"rocksdb:$DB_PATH" \
@@ -430,7 +614,7 @@ for _ in $(seq 1 60); do
 		log "      SurrealDB is up"
 		break
 	fi
-	if ! kill -0 "$SURREAL_PID" 2>/dev/null; then
+	if ! palive "$SURREAL_PID"; then
 		warn "SurrealDB exited early; tail of log:"
 		tail -40 "$SURREAL_LOG" >&2
 		die "SurrealDB did not start"
@@ -452,9 +636,12 @@ CRUD_PHASE_MARKER_ARGS=()
 if [[ "$MODE" == "profiling" ]]; then
 	CRUD_PHASE_MARKER_ARGS=(--emit-phase-markers)
 fi
+if (( WRAP_PROCS )); then
+	log "      Elevated: ${CRUD_PREFIX[*]}"
+fi
 (
 	cd "$CRUD_BENCH_DIR"
-	stdbuf -oL -eL "$CRUD_BIN" \
+	"${CRUD_PREFIX[@]}" stdbuf -oL -eL "$CRUD_BIN" \
 		-d surrealdb -e "ws://127.0.0.1:$SURREAL_PORT" \
 		-s "$SAMPLES" -c "$CLIENTS" -t "$THREADS" -k "$KEY_TYPE" \
 		-n "dev-$MODE-$TS" -r \

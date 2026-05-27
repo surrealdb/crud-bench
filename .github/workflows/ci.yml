@@ -341,6 +341,43 @@ jobs:
             endpoint: -e surrealkv:~/crud-bench
             description: SurrealDB embedded with SurrealKV storage
             skipped: SurrealDB with SurrealKV storage benchmark awaiting fixes
+          # SurrealDB 2.x + Memory
+          - name: surrealdb2-memory
+            database: surrealdb2
+            endpoint: -e server:memory
+            enabled: true
+            description: SurrealDB 2.x with in-memory storage
+          # SurrealDB 2.x + RocksDB
+          - name: surrealdb2-rocksdb
+            database: surrealdb2
+            endpoint: -e server:rocksdb
+            enabled: true
+            description: SurrealDB 2.x with RocksDB storage
+          # SurrealDB 2.x + SurrealKV
+          - name: surrealdb2-surrealkv
+            database: surrealdb2
+            endpoint: -e server:surrealkv
+            enabled: true
+            description: SurrealDB 2.x with SurrealKV storage
+          # SurrealDB 2.x Memory Engine
+          - name: surrealdb2-embedded-memory
+            database: surrealdb2
+            enabled: true
+            endpoint: -e memory
+            description: SurrealDB 2.x embedded with in-memory storage
+          # SurrealDB 2.x RocksDB Engine
+          - name: surrealdb2-embedded-rocksdb
+            database: surrealdb2
+            enabled: true
+            endpoint: -e rocksdb:~/crud-bench
+            description: SurrealDB 2.x embedded with RocksDB storage
+          # SurrealDB 2.x SurrealKV Engine
+          - name: surrealdb2-embedded-surrealkv
+            database: surrealdb2
+            enabled: true
+            endpoint: -e surrealkv:~/crud-bench
+            description: SurrealDB 2.x embedded with SurrealKV storage
+            skipped: SurrealDB with SurrealKV storage benchmark awaiting fixes
           # SurrealKV
           - name: surrealkv
             database: surrealkv
