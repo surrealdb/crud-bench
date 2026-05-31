@@ -4,7 +4,7 @@
 # tests (`[[batches]]`).
 #
 # Scans — Each `[[scans]]` row is one logical benchmark. Optional keys include `id`,
-# `name`, `projection`, `samples`, paging (`limit`, `start`, `expect`). Use `[[scans.runs]]`
+# `name`, `projection`, `iterations`, paging (`limit`, `start`, `expect`). Use `[[scans.runs]]`
 # when the same parameters define multiple named runs (each run has `name` and optional
 # `projection`). Conditional scans add `[scans.condition]` with per-dialect filter strings
 # (`sql`, `postgres`, `sqlite`, `mysql`, `neo4j`, `arangodb`, `surrealdb`) plus inline `mongodb = { ... }` for the
@@ -14,7 +14,7 @@
 # `[[scans.with_writes]]` blocks (`ratio`, `mode`, `operation`).
 #
 # Batches — Each `[[batches]]` row names a throughput case: `name`, `operation` (CREATE,
-# READ, UPDATE, DELETE), `batch_size`, and `samples` (how many timed iterations).
+# READ, UPDATE, DELETE), `batch_size`, and `iterations` (how many timed iterations).
 #
 # Value — The `[value]` table defines the generated document shape for each row.
 #
@@ -57,7 +57,7 @@ geography.description = "words:100;hello,world,foo,bar,test,search,data,query,in
 id = "count"
 name = "count()"
 projection = "COUNT"
-samples = 1000
+iterations = 1000
 
 # ============================================================================
 # limit
@@ -65,7 +65,7 @@ samples = 1000
 
 [[scans]]
 id = "limit"
-samples = 10000
+iterations = 10000
 limit = 100
 expect = 100
 
@@ -83,7 +83,7 @@ projection = "FULL"
 
 [[scans]]
 id = "start_limit"
-samples = 10000
+iterations = 10000
 start = 5000
 limit = 100
 expect = 100
@@ -104,7 +104,7 @@ projection = "FULL"
 name = "batch_create_100"
 operation = "CREATE"
 batch_size = 100
-samples = 1000
+iterations = 1000
 
 # ============================================================================
 # batch_read_100
@@ -114,7 +114,7 @@ samples = 1000
 name = "batch_read_100"
 operation = "READ"
 batch_size = 100
-samples = 1000
+iterations = 1000
 
 # ============================================================================
 # batch_update_100
@@ -124,7 +124,7 @@ samples = 1000
 name = "batch_update_100"
 operation = "UPDATE"
 batch_size = 100
-samples = 1000
+iterations = 1000
 
 # ============================================================================
 # batch_delete_100
@@ -134,7 +134,7 @@ samples = 1000
 name = "batch_delete_100"
 operation = "DELETE"
 batch_size = 100
-samples = 1000
+iterations = 1000
 
 # ============================================================================
 # batch_create_1000
@@ -144,7 +144,7 @@ samples = 1000
 name = "batch_create_1000"
 operation = "CREATE"
 batch_size = 1000
-samples = 1000
+iterations = 1000
 
 # ============================================================================
 # batch_read_1000
@@ -154,7 +154,7 @@ samples = 1000
 name = "batch_read_1000"
 operation = "READ"
 batch_size = 1000
-samples = 1000
+iterations = 1000
 
 # ============================================================================
 # batch_update_1000
@@ -164,7 +164,7 @@ samples = 1000
 name = "batch_update_1000"
 operation = "UPDATE"
 batch_size = 1000
-samples = 1000
+iterations = 1000
 
 # ============================================================================
 # batch_delete_1000
@@ -174,4 +174,4 @@ samples = 1000
 name = "batch_delete_1000"
 operation = "DELETE"
 batch_size = 1000
-samples = 1000
+iterations = 1000

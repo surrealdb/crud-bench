@@ -217,8 +217,8 @@ pub(crate) struct ScanSpec {
 	name: Option<String>,
 	/// Multiple named projections sharing the same parameters; omit when using `name` instead.
 	runs: Option<Vec<ScanRun>>,
-	/// Overrides the global sample count for this scan when set.
-	samples: Option<usize>,
+	/// Number of timed scan iterations; falls back to CLI `--samples` when unset.
+	iterations: Option<usize>,
 	/// Per-dialect filter fragments (`WHERE`); omit for unrestricted/table scans.
 	condition: Option<Condition>,
 	/// Per-dialect `ORDER BY` fragments; omit for unordered scans.
@@ -249,7 +249,7 @@ impl ScanSpec {
 			id,
 			name,
 			runs,
-			samples,
+			iterations,
 			condition,
 			order_by,
 			start,
@@ -284,7 +284,7 @@ impl ScanSpec {
 					spec_group,
 					multi_run_spec: false,
 					name: n,
-					samples,
+					iterations,
 					condition,
 					order_by,
 					start,
@@ -311,7 +311,7 @@ impl ScanSpec {
 						spec_group,
 						multi_run_spec,
 						name: run.name,
-						samples,
+						iterations,
 						condition: condition.clone(),
 						order_by: order_by.clone(),
 						start,
@@ -373,7 +373,7 @@ fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 			}
 			// Mixed read/write workloads on a vector index need separate
 			// plumbing (the write path would invalidate the index between
-			// scan samples). Reject the combination at parse time so the
+			// scan iterations). Reject the combination at parse time so the
 			// benchmark doesn't silently drop the write legs and report
 			// read-only KNN as if it were a mixed workload.
 			if !scan.with_writes.is_empty() {
@@ -495,8 +495,8 @@ pub(crate) struct Scan {
 	pub(crate) multi_run_spec: bool,
 	/// Human-readable title for this scan row (from `name` or a `runs[]` entry).
 	name: String,
-	/// Sample count for this scan; falls back to CLI `--samples` when unset.
-	samples: Option<usize>,
+	/// Number of timed scan iterations; falls back to CLI `--samples` when unset.
+	iterations: Option<usize>,
 	/// Filter predicates per dialect; omit for full scans.
 	condition: Option<Condition>,
 	/// Optional `ORDER BY` per datastore (omit for unordered scans).
@@ -520,14 +520,14 @@ pub(crate) struct Scan {
 	pub(crate) vector_query: Option<VectorQuerySpec>,
 }
 
-/// Mixed read/write scan leg: scan samples plus paired updates that touch indexed columns while
+/// Mixed read/write scan leg: scan iterations plus paired updates that touch indexed columns while
 /// keeping approximate match cardinality stable (see `workloads` module).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct ScanWithWrites {
-	/// Fraction of samples that include compensating writes after the scan (0.0–1.0).
+	/// Fraction of iterations that include compensating writes after the scan (0.0–1.0).
 	#[serde(default = "default_writes_ratio")]
 	pub(crate) ratio: f64,
-	/// How writes are interleaved with scan samples for this leg.
+	/// How writes are interleaved with scan iterations for this leg.
 	#[serde(default)]
 	pub(crate) mode: ScanWritesMode,
 	/// Which datastore operation the write leg performs (currently update-only).
@@ -544,7 +544,7 @@ fn default_writes_ratio() -> f64 {
 #[serde(rename_all = "lowercase")]
 /// Scheduling of writes relative to scan iterations for mixed workloads.
 pub(crate) enum ScanWritesMode {
-	/// Perform compensating writes interleaved with scan samples.
+	/// Perform compensating writes interleaved with scan iterations.
 	#[default]
 	Interleaved,
 }
@@ -642,8 +642,8 @@ pub(crate) struct BatchOperation {
 	pub(crate) operation: BatchOperationType,
 	/// Records per batch transaction or pipeline.
 	pub(crate) batch_size: usize,
-	/// Timed iterations for this batch case; backend may default when unset.
-	pub(crate) samples: Option<usize>,
+	/// Number of timed batch iterations; falls back to CLI `--samples` when unset.
+	pub(crate) iterations: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -980,7 +980,7 @@ mod test {
 	#[test]
 	fn scan_spec_name_only() -> Result<()> {
 		let specs: Vec<super::ScanSpec> =
-			serde_json::from_str(r#"[{"id":"spec_a","name":"a","samples":1,"projection":"ID"}]"#)?;
+			serde_json::from_str(r#"[{"id":"spec_a","name":"a","iterations":1,"projection":"ID"}]"#)?;
 		let scans = super::expand_scan_specs(specs)?;
 		assert_eq!(scans.len(), 1);
 		assert_eq!(scans[0].name, "a");
@@ -993,7 +993,7 @@ mod test {
 	#[test]
 	fn scan_spec_runs_expand() -> Result<()> {
 		let specs: Vec<super::ScanSpec> = serde_json::from_str(
-			r#"[{"id":"spec_runs","runs":[{"name":"x","projection":"FULL"},{"name":"y","projection":"COUNT"}],"samples":2}]"#,
+			r#"[{"id":"spec_runs","runs":[{"name":"x","projection":"FULL"},{"name":"y","projection":"COUNT"}],"iterations":2}]"#,
 		)?;
 		let scans = super::expand_scan_specs(specs)?;
 		assert_eq!(scans.len(), 2);
@@ -1011,7 +1011,7 @@ mod test {
 	#[test]
 	fn scan_spec_groups_increment() -> Result<()> {
 		let specs: Vec<super::ScanSpec> = serde_json::from_str(
-			r#"[{"id":"ga","name":"a","samples":1,"projection":"ID"},{"id":"gb","name":"b","samples":1,"projection":"ID"}]"#,
+			r#"[{"id":"ga","name":"a","iterations":1,"projection":"ID"},{"id":"gb","name":"b","iterations":1,"projection":"ID"}]"#,
 		)?;
 		let scans = super::expand_scan_specs(specs)?;
 		assert_eq!(scans.len(), 2);
@@ -1025,7 +1025,7 @@ mod test {
 	#[test]
 	fn scan_spec_single_run_array_not_multi() -> Result<()> {
 		let specs: Vec<super::ScanSpec> = serde_json::from_str(
-			r#"[{"id":"one","runs":[{"name":"only","projection":"FULL"}],"samples":1}]"#,
+			r#"[{"id":"one","runs":[{"name":"only","projection":"FULL"}],"iterations":1}]"#,
 		)?;
 		let scans = super::expand_scan_specs(specs)?;
 		assert_eq!(scans.len(), 1);
@@ -1045,7 +1045,7 @@ mod test {
 	#[test]
 	fn scan_spec_json_requires_id_field() {
 		let err = serde_json::from_str::<Vec<super::ScanSpec>>(
-			r#"[{"name":"x","samples":1,"projection":"ID"}]"#,
+			r#"[{"name":"x","iterations":1,"projection":"ID"}]"#,
 		);
 		assert!(err.is_err());
 	}
@@ -1053,7 +1053,7 @@ mod test {
 	#[test]
 	fn scan_spec_rejects_whitespace_id() {
 		let specs: Vec<super::ScanSpec> =
-			serde_json::from_str(r#"[{"id":"   ","name":"x","samples":1,"projection":"ID"}]"#)
+			serde_json::from_str(r#"[{"id":"   ","name":"x","iterations":1,"projection":"ID"}]"#)
 				.unwrap();
 		assert!(super::expand_scan_specs(specs).is_err());
 	}
@@ -1061,7 +1061,7 @@ mod test {
 	#[test]
 	fn scan_with_index_ok_when_id_present() {
 		let specs: Vec<super::ScanSpec> = serde_json::from_str(
-			r#"[{"id":"x","name":"y","samples":1,"with_index":{"fields":["n"]}}]"#,
+			r#"[{"id":"x","name":"y","iterations":1,"with_index":{"fields":["n"]}}]"#,
 		)
 		.unwrap();
 		let scans = super::expand_scan_specs(specs).unwrap();
@@ -1071,7 +1071,7 @@ mod test {
 	#[test]
 	fn scan_spec_with_writes_rejects_single_object() {
 		let err = serde_json::from_str::<Vec<super::ScanSpec>>(
-			r#"[{"id":"w","name":"n","samples":1,"with_writes":{"ratio":0.2}}]"#,
+			r#"[{"id":"w","name":"n","iterations":1,"with_writes":{"ratio":0.2}}]"#,
 		);
 		assert!(err.is_err());
 	}
@@ -1079,7 +1079,7 @@ mod test {
 	#[test]
 	fn scan_spec_with_writes_vec() {
 		let specs: Vec<super::ScanSpec> = serde_json::from_str(
-			r#"[{"id":"w","name":"n","samples":1,"with_writes":[{"ratio":0.1},{"ratio":0.5}]}]"#,
+			r#"[{"id":"w","name":"n","iterations":1,"with_writes":[{"ratio":0.1},{"ratio":0.5}]}]"#,
 		)
 		.unwrap();
 		let scans = super::expand_scan_specs(specs).unwrap();

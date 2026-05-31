@@ -285,7 +285,7 @@ impl Benchmark {
 			}
 			let id = scan.id.clone();
 			let name = scan.name.clone();
-			let samples = scan.samples.map(|s| s as u32).unwrap_or(self.samples);
+			let iterations = scan.iterations.map(|s| s as u32).unwrap_or(self.samples);
 			let write_specs = scan.with_writes.as_slice();
 			let w = write_specs.len();
 			let index_spec = scan.with_index.as_ref().filter(|i| !i.skip);
@@ -334,7 +334,7 @@ impl Benchmark {
 						ScanResult {
 							id: id.clone(),
 							name,
-							samples,
+							iterations,
 							index_build: None,
 							index_remove: None,
 							runs,
@@ -387,7 +387,7 @@ impl Benchmark {
 								),
 								kp,
 								vp.clone(),
-								samples,
+								iterations,
 							)
 							.await?
 						} else {
@@ -415,7 +415,7 @@ impl Benchmark {
 						ScanResult {
 							id: id.clone(),
 							name,
-							samples,
+							iterations,
 							index_build: vec_index_build,
 							index_remove: vec_index_remove,
 							runs,
@@ -432,7 +432,7 @@ impl Benchmark {
 						BenchmarkOperation::Scan(scan.clone(), ScanContext::WithoutIndex),
 						kp,
 						vp.clone(),
-						samples,
+						iterations,
 					)
 					.await?;
 				runs.push(ScanRun {
@@ -452,7 +452,7 @@ impl Benchmark {
 							),
 							kp,
 							vp.clone(),
-							samples,
+							iterations,
 						)
 						.await?;
 					runs.push(ScanRun {
@@ -487,7 +487,7 @@ impl Benchmark {
 							BenchmarkOperation::Scan(scan.clone(), ScanContext::WithIndex),
 							kp,
 							vp.clone(),
-							samples,
+							iterations,
 						)
 						.await?;
 					let mut iw = Vec::with_capacity(w);
@@ -502,7 +502,7 @@ impl Benchmark {
 								),
 								kp,
 								vp.clone(),
-								samples,
+								iterations,
 							)
 							.await?,
 						);
@@ -556,7 +556,7 @@ impl Benchmark {
 				ScanResult {
 					id: id.clone(),
 					name,
-					samples,
+					iterations,
 					index_build,
 					index_remove,
 					runs,
@@ -570,7 +570,7 @@ impl Benchmark {
 						BenchmarkOperation::Scan(scan.clone(), ScanContext::WithoutIndex),
 						kp,
 						vp.clone(),
-						samples,
+						iterations,
 					)
 					.await?;
 				runs.push(ScanRun {
@@ -589,7 +589,7 @@ impl Benchmark {
 							),
 							kp,
 							vp.clone(),
-							samples,
+							iterations,
 						)
 						.await?;
 					runs.push(ScanRun {
@@ -603,7 +603,7 @@ impl Benchmark {
 				ScanResult {
 					id: id.clone(),
 					name,
-					samples,
+					iterations,
 					index_build: None,
 					index_remove: None,
 					runs,
@@ -635,7 +635,7 @@ impl Benchmark {
 			// Get the name of the batch operation
 			let name = batch.name.clone();
 			let groups = batch.batch_size;
-			let samples = batch.samples.map(|s| s as u32).unwrap_or(self.samples);
+			let iterations = batch.iterations.map(|s| s as u32).unwrap_or(self.samples);
 			// Determine the batch operation type
 			let operation = match batch.operation {
 				crate::BatchOperationType::Create => BenchmarkOperation::BatchCreate(batch.clone()),
@@ -645,9 +645,9 @@ impl Benchmark {
 			};
 			// Execute the batch benchmark
 			let duration =
-				self.run_operation::<C, D>(&clients, operation, kp, vp.clone(), samples).await?;
+				self.run_operation::<C, D>(&clients, operation, kp, vp.clone(), iterations).await?;
 			// Store the batch benchmark result
-			batch_results.push((name, samples, groups, duration));
+			batch_results.push((name, iterations, groups, duration));
 		}
 		// Mark the benchmark as complete
 		if self.emit_phase_markers {
@@ -673,7 +673,7 @@ impl Benchmark {
 	/// Build the held-out [`VectorQuerySet`] for a vector-search scan.
 	/// Reads N rows (id picked deterministically from `seed`) and extracts the
 	/// `field` column. The read cost is paid once here, off the timed window;
-	/// the resulting `Vec<f32>` queries are reused across all scan samples.
+	/// the resulting `Vec<f32>` queries are reused across all scan iterations.
 	///
 	/// Returns `Ok(None)` when the engine cannot surface vector reads (the
 	/// holdout extraction hits [`NOT_SUPPORTED_ERROR`]) so the caller can skip

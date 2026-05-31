@@ -231,7 +231,7 @@ Each scan object can make use of the following values:
 
 - `id` (**required**): Stable identifier for grouping in the CLI, result tables, CSV output, and for **index create/drop** when `with_index` is present and not skipped. Use a simple identifier (e.g. `where_field_integer_eq`); human-readable titles live in `name` / run `name` and may contain characters that are not valid in SurrealDB or Neo4j index names.
 - `name`: A descriptive name for the test (use this **or** `runs`, not both).
-- `runs`: An array of `{ "name", "projection"? }` objects that share the same scan parameters (`samples`, `condition`, `with_index`, and so on). Each run becomes a separate benchmark with its own display name. Per-run `projection` overrides the entry-level `projection` when both are set; if a run omits `projection`, the entry-level value applies (defaulting to full-record scans like a single-object entry without `projection`).
+- `runs`: An array of `{ "name", "projection"? }` objects that share the same scan parameters (`iterations`, `condition`, `with_index`, and so on). Each run becomes a separate benchmark with its own display name. Per-run `projection` overrides the entry-level `projection` when both are set; if a run omits `projection`, the entry-level value applies (defaulting to full-record scans like a single-object entry without `projection`).
 - `projection`: The projection type of the scan:
     - `"ID"`: only the ID is returned.
     - `"FULL"`: the whole record is returned.
@@ -271,7 +271,7 @@ Multiple benchmarks that share the same filter, index, and write settings can us
       { "name": "select(*) where(x = 1)", "projection": "FULL" },
       { "name": "count(*) where(x = 1)", "projection": "COUNT" }
     ],
-    "samples": 10000,
+    "iterations": 10000,
     "condition": { "sql": "x = 1", "mysql": "x = 1" },
     "with_index": { "fields": ["x"] }
   }

@@ -11,7 +11,7 @@ expect = 100
 name = "batch_test"
 operation = "CREATE"
 batch_size = 5
-samples = 10
+iterations = 10
 
 [value]
 text = "String:50"

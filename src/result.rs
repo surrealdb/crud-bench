@@ -84,7 +84,7 @@ where
 pub(crate) enum ScanWorkload {
 	/// Pure read/query workload.
 	Read,
-	/// Read path plus compensating writes at this percentage of samples.
+	/// Read path plus compensating writes at this percentage of iterations.
 	ReadWrite {
 		write_ratio_percent: u32,
 	},
@@ -108,7 +108,7 @@ pub(crate) fn writes_ratio_percent(spec: &crate::ScanWithWrites) -> u32 {
 }
 
 /// Table row title for a scan leg (matches `[S]can` markers in stdout tables).
-pub(crate) fn scan_run_row_label(id: &str, name: &str, samples: u32, run: &ScanRun) -> String {
+pub(crate) fn scan_run_row_label(id: &str, name: &str, iterations: u32, run: &ScanRun) -> String {
 	let index_slug = if run.indexed {
 		"indexed"
 	} else {
@@ -120,7 +120,7 @@ pub(crate) fn scan_run_row_label(id: &str, name: &str, samples: u32, run: &ScanR
 			write_ratio_percent: p,
 		} => format!("reads+writes ({p}%) - {index_slug}"),
 	};
-	format!("[S]can · {id} · {name} - {mid} ({samples})")
+	format!("[S]can · {id} · {name} - {mid} ({iterations})")
 }
 
 impl ScanRun {
@@ -147,8 +147,8 @@ pub(crate) struct ScanResult {
 	pub(crate) id: String,
 	/// Human-readable scan title.
 	pub(crate) name: String,
-	/// Sample count for timed scan legs (may override global default).
-	pub(crate) samples: u32,
+	/// Iteration count for timed scan legs (may override global default).
+	pub(crate) iterations: u32,
 	/// Index creation phase when an indexed leg exists.
 	pub(crate) index_build: Option<OperationResult>,
 	/// Index teardown phase.
@@ -233,7 +233,7 @@ impl Display for BenchmarkResult {
 		}
 		for scan in &self.scans {
 			for run in scan.runs.iter().filter(|r| !r.indexed) {
-				let label = scan_run_row_label(&scan.id, &scan.name, scan.samples, run);
+				let label = scan_run_row_label(&scan.id, &scan.name, scan.iterations, run);
 				if let Some(res) = &run.result {
 					table.add_row(res.output(label));
 				} else {
@@ -253,7 +253,7 @@ impl Display for BenchmarkResult {
 				}
 			}
 			for run in scan.runs.iter().filter(|r| r.indexed) {
-				let label = scan_run_row_label(&scan.id, &scan.name, scan.samples, run);
+				let label = scan_run_row_label(&scan.id, &scan.name, scan.iterations, run);
 				if let Some(res) = &run.result {
 					table.add_row(res.output(label));
 				} else {
@@ -273,8 +273,8 @@ impl Display for BenchmarkResult {
 				}
 			}
 		}
-		for (name, samples, groups, result) in &self.batches {
-			let name = format!("[B]atch::{name} ({samples} batches of {groups})");
+		for (name, iterations, groups, result) in &self.batches {
+			let name = format!("[B]atch::{name} ({iterations} batches of {groups})");
 			if let Some(res) = &result {
 				table.add_row(res.output(name));
 			} else {
@@ -325,7 +325,7 @@ impl BenchmarkResult {
 		// Add the [S]cans results to the output
 		for scan in &self.scans {
 			for run in scan.runs.iter().filter(|r| !r.indexed) {
-				let label = scan_run_row_label(&scan.id, &scan.name, scan.samples, run);
+				let label = scan_run_row_label(&scan.id, &scan.name, scan.iterations, run);
 				if let Some(res) = &run.result {
 					w.write_record(res.output_csv(label))?;
 				} else {
@@ -345,7 +345,7 @@ impl BenchmarkResult {
 				}
 			}
 			for run in scan.runs.iter().filter(|r| r.indexed) {
-				let label = scan_run_row_label(&scan.id, &scan.name, scan.samples, run);
+				let label = scan_run_row_label(&scan.id, &scan.name, scan.iterations, run);
 				if let Some(res) = &run.result {
 					w.write_record(res.output_csv(label))?;
 				} else {
@@ -366,8 +366,8 @@ impl BenchmarkResult {
 			}
 		}
 		// Add the [B]atch results to the output
-		for (name, samples, groups, result) in &self.batches {
-			let name = format!("[B]atch::{name} ({samples} batches of {groups})");
+		for (name, iterations, groups, result) in &self.batches {
+			let name = format!("[B]atch::{name} ({iterations} batches of {groups})");
 			if let Some(res) = &result {
 				w.write_record(res.output_csv(name))?;
 			} else {
