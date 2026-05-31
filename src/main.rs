@@ -979,8 +979,9 @@ mod test {
 
 	#[test]
 	fn scan_spec_name_only() -> Result<()> {
-		let specs: Vec<super::ScanSpec> =
-			serde_json::from_str(r#"[{"id":"spec_a","name":"a","iterations":1,"projection":"ID"}]"#)?;
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"spec_a","name":"a","iterations":1,"projection":"ID"}]"#,
+		)?;
 		let scans = super::expand_scan_specs(specs)?;
 		assert_eq!(scans.len(), 1);
 		assert_eq!(scans[0].name, "a");
