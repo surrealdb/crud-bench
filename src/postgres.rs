@@ -254,6 +254,10 @@ impl BenchmarkClient for PostgresClient {
 		.to_string();
 		// Get the fields
 		let fields = PostgresDialect::btree_index_key_list(&self.columns, spec);
+		// Surreal-style `tags.*` specs target a JSONB array/object column that the
+		// scan filters with the `@>` containment operator — a B-tree cannot serve
+		// it, so these columns need a GIN index instead.
+		let gin_columns = PostgresDialect::gin_containment_columns(&self.columns, spec);
 		// Check if an index type is specified
 		let stmt = match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
@@ -267,6 +271,20 @@ impl BenchmarkClient for PostgresClient {
 			}
 			Some(kind) => {
 				format!("CREATE {unique} INDEX {name} ON record USING {kind} ({fields})")
+			}
+			// Auto-select GIN for JSONB array-containment fields. GIN returns an
+			// unordered bitmap, so it indexes only the JSONB column(s) with
+			// `jsonb_path_ops`; any companion ordering column (e.g. created_at) is
+			// dropped, since it cannot coexist usefully in a GIN index. This makes
+			// the `@>` filter index-assisted (the prior B-tree was unusable), though
+			// the trailing `ORDER BY ... LIMIT` still forces a Top-N sort.
+			None if !gin_columns.is_empty() => {
+				let cols = gin_columns
+					.iter()
+					.map(|c| format!("{c} jsonb_path_ops"))
+					.collect::<Vec<_>>()
+					.join(", ");
+				format!("CREATE INDEX {name} ON record USING GIN ({cols})")
 			}
 			None => {
 				format!("CREATE {unique} INDEX {name} ON record ({fields})")

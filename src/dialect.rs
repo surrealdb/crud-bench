@@ -127,6 +127,23 @@ impl PostgresDialect {
 			.collect::<Vec<_>>()
 			.join(", ")
 	}
+
+	/// JSONB array/object columns targeted by Surreal-style `tags.*` wildcard specs.
+	///
+	/// The `[string] CONTAINS string` scan filters these with the `@>` containment
+	/// operator, which only a GIN index (`jsonb_path_ops`) can serve — a B-tree on
+	/// the column is unusable. Returned escaped, ready for a `USING GIN (...)` clause.
+	pub(crate) fn gin_containment_columns(columns: &Columns, spec: &crate::Index) -> Vec<String> {
+		spec.fields
+			.iter()
+			.filter_map(|field| {
+				let base = field.strip_suffix(".*")?;
+				let (_, col_type) = columns.0.iter().find(|(n, _)| n == base)?;
+				matches!(col_type, ColumnType::Array | ColumnType::Object)
+					.then(|| AnsiSqlDialect::escape_field(base.to_string()))
+			})
+			.collect()
+	}
 }
 
 // --------------------------------------------------
@@ -534,5 +551,52 @@ mod mongodb_tests {
 	fn leaves_plain_fields_untouched() {
 		let keys = MongoDBDialect::index_key_list(&index(&["status", "created_at"]));
 		assert_eq!(keys, vec!["status".to_string(), "created_at".to_string()]);
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::Index;
+
+	fn columns() -> Columns {
+		Columns(vec![
+			("tags".to_string(), ColumnType::Array),
+			("created_at".to_string(), ColumnType::DateTime),
+		])
+	}
+
+	fn index(fields: &[&str]) -> Index {
+		Index {
+			skip: false,
+			fields: fields.iter().map(|s| s.to_string()).collect(),
+			unique: None,
+			index_type: None,
+		}
+	}
+
+	#[test]
+	fn postgres_gin_containment_selects_only_jsonb_array_column() {
+		// `tags.*` filters with `@>`, which needs GIN; the companion ordering
+		// column `created_at` cannot live in a GIN index and is dropped.
+		let cols = columns();
+		let spec = index(&["tags.*", "created_at"]);
+		assert_eq!(PostgresDialect::gin_containment_columns(&cols, &spec), vec!["\"tags\""]);
+	}
+
+	#[test]
+	fn postgres_gin_containment_empty_without_wildcard() {
+		// A plain composite btree spec has no array-containment column.
+		let cols = columns();
+		let spec = index(&["created_at"]);
+		assert!(PostgresDialect::gin_containment_columns(&cols, &spec).is_empty());
+	}
+
+	#[test]
+	fn postgres_btree_key_list_still_collapses_wildcard_to_bare_column() {
+		// The btree path (used when no GIN column is present) is unchanged.
+		let cols = columns();
+		let spec = index(&["tags.*", "created_at"]);
+		assert_eq!(PostgresDialect::btree_index_key_list(&cols, &spec), "\"tags\", \"created_at\"");
 	}
 }
