@@ -558,24 +558,14 @@ impl MongoDBClient {
 				.await
 			}
 			Projection::Full => {
+				// No projection: return the full document, matching `SELECT *`
+				// in the SQL/Surreal adapters. (`Projection::Id` above projects
+				// only `_id`.)
 				consume(match o {
 					Some(o) => {
-						self.collection()
-							.find(c)
-							.sort(o)
-							.skip(s as u64)
-							.limit(l as i64)
-							.projection(doc! { "_id": 1 })
-							.await?
+						self.collection().find(c).sort(o).skip(s as u64).limit(l as i64).await?
 					}
-					None => {
-						self.collection()
-							.find(c)
-							.skip(s as u64)
-							.limit(l as i64)
-							.projection(doc! { "_id": 1 })
-							.await?
-					}
+					None => self.collection().find(c).skip(s as u64).limit(l as i64).await?,
 				})
 				.await
 			}
