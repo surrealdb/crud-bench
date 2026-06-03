@@ -40,6 +40,23 @@ fn calculate_mysql_memory() -> (u64, u64, u64) {
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Calculate memory allocation
 	let (buffer_pool_gb, redo_log_gb, buffer_pool_instances) = calculate_mysql_memory();
+	// Durability keyed on `--sync`. At `--sync=false`, innodb_flush_log_at_trx_commit=2
+	// still writes the redo log to the OS page cache on every commit and only
+	// defers the fsync (~1/sec) — the same no-sync tier as the other adapters
+	// (process-crash safe, OS/power-crash unsafe). `0` would also skip the
+	// per-commit write, which is strictly more aggressive. `--sync=true` keeps a
+	// full per-commit fsync (`1`). sync_binlog stays 0/1: at 0 the binlog is
+	// still written per commit, only its fsync is skipped — already this tier.
+	let trx_commit = if options.sync {
+		"1"
+	} else {
+		"2"
+	};
+	let sync_binlog = if options.sync {
+		"1"
+	} else {
+		"0"
+	};
 	// Return Docker parameters
 	DockerParams {
 		image: "mysql",
@@ -69,18 +86,8 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--binlog-format=ROW \
 				--server-id=1 \
 				--binlog-row-image=MINIMAL \
-				--sync_binlog={} \
-				--innodb-flush-log-at-trx-commit={}",
-				if options.sync {
-					"1"
-				} else {
-					"0"
-				},
-				if options.sync {
-					"1"
-				} else {
-					"0"
-				}
+				--sync_binlog={sync_binlog} \
+				--innodb-flush-log-at-trx-commit={trx_commit}"
 			),
 			// Default configuration
 			false => format!(
@@ -89,18 +96,8 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--binlog-format=ROW \
 				--server-id=1 \
 				--binlog-row-image=FULL \
-				--sync_binlog={} \
-				--innodb-flush-log-at-trx-commit={}",
-				if options.sync {
-					"1"
-				} else {
-					"0"
-				},
-				if options.sync {
-					"1"
-				} else {
-					"0"
-				}
+				--sync_binlog={sync_binlog} \
+				--innodb-flush-log-at-trx-commit={trx_commit}"
 			),
 		},
 	}
