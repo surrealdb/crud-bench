@@ -475,6 +475,15 @@ impl Dialect for MongoDBDialect {}
 
 #[cfg(feature = "mongodb")]
 impl MongoDBDialect {
+	/// Bench `tags.*` denotes an array-element index; MongoDB has no Surreal-style
+	/// path syntax and would treat `*` as a literal sub-field, building a dead index
+	/// on a path no document has. The `.*` suffix is itself the array/object signal
+	/// in the bench schema, so strip it: the key then targets the field directly,
+	/// which MongoDB auto-promotes to a multikey index.
+	pub(crate) fn index_key_list(spec: &crate::Index) -> Vec<String> {
+		spec.fields.iter().map(|f| f.strip_suffix(".*").unwrap_or(f).to_string()).collect()
+	}
+
 	/// Constructs the filter document for [S]scan tests
 	pub fn filter_clause(scan: &Scan) -> Result<Document> {
 		if let Some(ref c) = scan.condition {
@@ -496,5 +505,34 @@ impl MongoDBDialect {
 				_ => bail!(NOT_SUPPORTED_ERROR),
 			},
 		}
+	}
+}
+
+#[cfg(all(test, feature = "mongodb"))]
+mod mongodb_tests {
+	use super::*;
+	use crate::Index;
+
+	fn index(fields: &[&str]) -> Index {
+		Index {
+			skip: false,
+			fields: fields.iter().map(|s| s.to_string()).collect(),
+			unique: None,
+			index_type: None,
+		}
+	}
+
+	#[test]
+	fn strips_array_element_suffix() {
+		// `tags.*` is Surreal index syntax; the MongoDB key must target the
+		// `tags` array itself so it auto-promotes to a multikey index.
+		let keys = MongoDBDialect::index_key_list(&index(&["tags.*", "created_at"]));
+		assert_eq!(keys, vec!["tags".to_string(), "created_at".to_string()]);
+	}
+
+	#[test]
+	fn leaves_plain_fields_untouched() {
+		let keys = MongoDBDialect::index_key_list(&index(&["status", "created_at"]));
+		assert_eq!(keys, vec!["status".to_string(), "created_at".to_string()]);
 	}
 }
