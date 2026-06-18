@@ -20,10 +20,24 @@ defaults:
   run:
     shell: bash
 
+# sccache → S3 backend, shared across the compile jobs (clippy, test, build).
+# Set at workflow level so the values are in the environment when the
+# sccache-action daemon starts (it reads its backend config at start time).
+# The AWS credentials the daemon needs are scoped to each compile job instead
+# of here, so they don't override the docker-build job's ECR authentication.
+# Fork PRs have no secrets, so SCCACHE_BUCKET is empty there and sccache
+# transparently falls back to a local cache — builds still succeed, just
+# without the shared cache.
+env:
+  SCCACHE_BUCKET: ${{ secrets.AWS_S3_SCCACHE_BUCKET_NAME }}
+  SCCACHE_REGION: us-east-1
+  SCCACHE_S3_KEY_PREFIX: ${{ github.repository }} # scope cache to this repo
+  SCCACHE_IDLE_TIMEOUT: "0" # don't let the daemon exit mid-compile
+
 jobs:
   format:
     name: Check format
-    runs-on: [runner-amd64-large]
+    runs-on: [runner-amd-16-cores-spot]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -45,7 +59,10 @@ jobs:
 
   clippy:
     name: Check clippy
-    runs-on: [runner-amd64-large]
+    runs-on: [runner-amd-16-cores-spot]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -56,18 +73,50 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Configure AWS credentials for sccache
+        run: |
+          # Materialize whatever credentials the AWS CLI resolves (static env
+          # keys here, or an instance role) so the sccache S3 daemon can read
+          # them — it loads its creds at start time, before the steps below.
+          # Non-fatal and skipped when SCCACHE_BUCKET is empty (fork PRs).
+          if [[ -n "$SCCACHE_BUCKET" ]]; then
+            aws configure export-credentials --format env-no-export >> "$GITHUB_ENV" \
+              || echo "::warning title=sccache::no AWS credentials resolved; compiling without the cache"
+          fi
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
+
+      - name: Configure sccache environment
+        run: |
+          # Only enable RUSTC_WRAPPER if the S3 backend is actually reachable.
+          # If it isn't — missing perms, bucket outage, or a fork PR with no
+          # creds — compile uncached rather than failing every rustc call.
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+          sccache --stop-server >/dev/null 2>&1 || true
+          if sccache --start-server; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            echo "sccache backend reachable — compiler cache enabled"
+          else
+            echo "::warning title=sccache disabled::sccache server failed to start (cache backend unreachable); compiling without the cache"
+          fi
+
       - name: Setup cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: false
 
       - name: Check clippy
         run: cargo clippy --tests --all-features -- -D warnings
 
   test:
     name: Check tests
-    runs-on: [runner-amd64-large]
+    runs-on: [runner-amd-16-cores-spot]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -77,11 +126,40 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Configure AWS credentials for sccache
+        run: |
+          # Materialize whatever credentials the AWS CLI resolves (static env
+          # keys here, or an instance role) so the sccache S3 daemon can read
+          # them — it loads its creds at start time, before the steps below.
+          # Non-fatal and skipped when SCCACHE_BUCKET is empty (fork PRs).
+          if [[ -n "$SCCACHE_BUCKET" ]]; then
+            aws configure export-credentials --format env-no-export >> "$GITHUB_ENV" \
+              || echo "::warning title=sccache::no AWS credentials resolved; compiling without the cache"
+          fi
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
+
+      - name: Configure sccache environment
+        run: |
+          # Only enable RUSTC_WRAPPER if the S3 backend is actually reachable.
+          # If it isn't — missing perms, bucket outage, or a fork PR with no
+          # creds — compile uncached rather than failing every rustc call.
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+          sccache --stop-server >/dev/null 2>&1 || true
+          if sccache --start-server; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            echo "sccache backend reachable — compiler cache enabled"
+          else
+            echo "::warning title=sccache disabled::sccache server failed to start (cache backend unreachable); compiling without the cache"
+          fi
+
       - name: Setup cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: false
 
       - name: Check tests
         run: cargo test
@@ -92,12 +170,15 @@ jobs:
       matrix:
         include:
           - name: amd64
-            runner: runner-amd64-large
+            runner: runner-amd-32-cores-spot
             target: x86_64-unknown-linux-gnu
           - name: arm64
-            runner: runner-arm64-large
+            runner: runner-arm-32-cores-spot
             target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -107,11 +188,40 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Configure AWS credentials for sccache
+        run: |
+          # Materialize whatever credentials the AWS CLI resolves (static env
+          # keys here, or an instance role) so the sccache S3 daemon can read
+          # them — it loads its creds at start time, before the steps below.
+          # Non-fatal and skipped when SCCACHE_BUCKET is empty (fork PRs).
+          if [[ -n "$SCCACHE_BUCKET" ]]; then
+            aws configure export-credentials --format env-no-export >> "$GITHUB_ENV" \
+              || echo "::warning title=sccache::no AWS credentials resolved; compiling without the cache"
+          fi
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
+
+      - name: Configure sccache environment
+        run: |
+          # Only enable RUSTC_WRAPPER if the S3 backend is actually reachable.
+          # If it isn't — missing perms, bucket outage, or a fork PR with no
+          # creds — compile uncached rather than failing every rustc call.
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+          sccache --stop-server >/dev/null 2>&1 || true
+          if sccache --start-server; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            echo "sccache backend reachable — compiler cache enabled"
+          else
+            echo "::warning title=sccache disabled::sccache server failed to start (cache backend unreachable); compiling without the cache"
+          fi
+
       - name: Setup cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: false
 
       - name: Build benchmark
         run: cargo build --release --target ${{ matrix.target }}
@@ -124,7 +234,7 @@ jobs:
 
   docker-build:
     name: Build Docker image
-    runs-on: [runner-amd64-large-private]
+    runs-on: [runner-arm-4-cores-spot-private]
     needs: build
     steps:
       - name: Checkout sources
