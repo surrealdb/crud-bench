@@ -1,4 +1,4 @@
-name: Setup sccache
+name: Setup cache
 description: >-
   Configure the sccache S3 compiler cache (RUSTC_WRAPPER) and the companion
   Swatinem/rust-cache. Expects the SCCACHE_* config to be present in the

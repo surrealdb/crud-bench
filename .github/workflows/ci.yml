@@ -73,8 +73,8 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Setup sccache
-        uses: ./.github/actions/setup-sccache
+      - name: Setup cache
+        uses: ./.github/actions/setup-cache
 
       - name: Check clippy
         run: cargo clippy --tests --all-features -- -D warnings
@@ -94,8 +94,8 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Setup sccache
-        uses: ./.github/actions/setup-sccache
+      - name: Setup cache
+        uses: ./.github/actions/setup-cache
 
       - name: Check tests
         run: cargo test
@@ -124,8 +124,8 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Setup sccache
-        uses: ./.github/actions/setup-sccache
+      - name: Setup cache
+        uses: ./.github/actions/setup-cache
 
       - name: Build benchmark
         run: cargo build --release --target ${{ matrix.target }}
