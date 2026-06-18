@@ -37,7 +37,7 @@ env:
 jobs:
   format:
     name: Check format
-    runs-on: [runner-amd-16-cores-spot]
+    runs-on: [runner-arm-4-cores-spot]
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -59,7 +59,7 @@ jobs:
 
   clippy:
     name: Check clippy
-    runs-on: [runner-amd-16-cores-spot]
+    runs-on: [runner-arm-16-cores-spot]
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
@@ -113,7 +113,7 @@ jobs:
 
   test:
     name: Check tests
-    runs-on: [runner-amd-16-cores-spot]
+    runs-on: [runner-arm-16-cores-spot]
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
