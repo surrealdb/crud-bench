@@ -80,10 +80,15 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		max_wal_gb,
 		min_wal_gb,
 	) = calculate_postgres_memory();
-	// fsync and synchronous_commit must agree: with fsync=off the WAL is not
-	// flushed to disk, so synchronous_commit=on cannot give the durability it
-	// claims. Set both consistently based on `options.sync`.
-	let sync_setting = if options.sync {
+	// `synchronous_commit=on` makes every commit force a `write(2)` of the WAL
+	// to the OS page cache before returning; `fsync` then carries the `--sync`
+	// flag: `on` fsyncs that WAL to disk per commit (full durability), `off`
+	// skips the fsync but keeps the per-commit page-cache write. The no-`--sync`
+	// profile is therefore process-crash safe / power-crash unsafe, matching
+	// SurrealDB (RocksDB `sync=never`) and ArcadeDB (`txWALFlush=1`) — rather
+	// than `synchronous_commit=off`, which defers the `write(2)` itself and so
+	// skips work the other adapters still do. See issue #256.
+	let fsync_setting = if options.sync {
 		"on"
 	} else {
 		"off"
@@ -114,14 +119,14 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				-c effective_io_concurrency=200 \
 				-c min_wal_size={min_wal_gb}GB \
 				-c max_wal_size={max_wal_gb}GB \
-				-c fsync={sync_setting} \
-				-c synchronous_commit={sync_setting}"
+				-c fsync={fsync_setting} \
+				-c synchronous_commit=on"
 			),
 			// Default configuration
 			false => format!(
 				"postgres -N 1024 \
-				-c fsync={sync_setting} \
-				-c synchronous_commit={sync_setting}"
+				-c fsync={fsync_setting} \
+				-c synchronous_commit=on"
 			),
 		},
 	}
@@ -259,6 +264,10 @@ impl BenchmarkClient for PostgresClient {
 		.to_string();
 		// Get the fields
 		let fields = PostgresDialect::btree_index_key_list(&self.columns, spec);
+		// Surreal-style `tags.*` specs target a JSONB array/object column that the
+		// scan filters with the `@>` containment operator — a B-tree cannot serve
+		// it, so these columns need a GIN index instead.
+		let gin_columns = PostgresDialect::gin_containment_columns(&self.columns, spec);
 		// Check if an index type is specified
 		let stmt = match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
@@ -272,6 +281,20 @@ impl BenchmarkClient for PostgresClient {
 			}
 			Some(kind) => {
 				format!("CREATE {unique} INDEX {name} ON record USING {kind} ({fields})")
+			}
+			// Auto-select GIN for JSONB array-containment fields. GIN returns an
+			// unordered bitmap, so it indexes only the JSONB column(s) with
+			// `jsonb_path_ops`; any companion ordering column (e.g. created_at) is
+			// dropped, since it cannot coexist usefully in a GIN index. This makes
+			// the `@>` filter index-assisted (the prior B-tree was unusable), though
+			// the trailing `ORDER BY ... LIMIT` still forces a Top-N sort.
+			None if !gin_columns.is_empty() => {
+				let cols = gin_columns
+					.iter()
+					.map(|c| format!("{c} jsonb_path_ops"))
+					.collect::<Vec<_>>()
+					.join(", ");
+				format!("CREATE INDEX {name} ON record USING GIN ({cols})")
 			}
 			None => {
 				format!("CREATE {unique} INDEX {name} ON record ({fields})")

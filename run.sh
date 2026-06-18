@@ -26,6 +26,7 @@ OPTIMISED="false"
 ELEVATED="false"
 TIMEOUT=""
 DATASTORE=""
+ENDPOINT_OVERRIDE=""
 BUILD="true"
 DATA_DIR="$(pwd)/data"
 NAME=""
@@ -86,6 +87,8 @@ OPTIONS:
     -t, --threads <num>       Number of threads (default: 48)
     -k, --key <type>          Primary key type (default: string26)
                               Options: integer, string26, string90, string250, string506
+    -e, --endpoint <value>    Override the default endpoint for the chosen datastore
+                              (passed through to crud-bench as -e <value>)
     --name <name>             Custom name for this benchmark run (default: database name)
     --sync                    Acknowledge disk writes (default: false)
     --persisted               Enable disk persistence where supported (e.g. Redis family, SurrealMX)
@@ -134,7 +137,10 @@ AVAILABLE DATASTORES:
     mysql, neo4j, postgres, redb, redis, rocksdb, sqlite,
     surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv,
     surrealdb-embedded-memory, surrealdb-embedded-rocksdb,
-    surrealdb-embedded-surrealkv, surrealkv, surrealmx
+    surrealdb-embedded-surrealkv,
+    surrealdb2, surrealdb2-memory, surrealdb2-rocksdb, surrealdb2-surrealkv,
+    surrealdb2-embedded-memory, surrealdb2-embedded-rocksdb,
+    surrealdb2-embedded-surrealkv, surrealkv, surrealmx
 
 ENVIRONMENT VARIABLES:
     CRUD_BENCH_CONFIG
@@ -172,6 +178,10 @@ parse_args() {
                 ;;
             -k|--key)
                 KEY_TYPE="$2"
+                shift 2
+                ;;
+            -e|--endpoint)
+                ENDPOINT_OVERRIDE="$2"
                 shift 2
                 ;;
             --name)
@@ -327,6 +337,13 @@ surrealdb-surrealkv|surrealdb|networked|SurrealDB (server: SurrealKV)|-e server:
 surrealdb-embedded-memory|surrealdb|embedded|SurrealDB embedded with in-memory storage|-e memory
 surrealdb-embedded-rocksdb|surrealdb|embedded|SurrealDB embedded with RocksDB storage|-e rocksdb:DATA_DIR
 surrealdb-embedded-surrealkv|surrealdb|embedded|SurrealDB embedded with SurrealKV storage|-e surrealkv:DATA_DIR
+surrealdb2|surrealdb2|networked|SurrealDB 2.x (server: RocksDB)|
+surrealdb2-memory|surrealdb2|networked|SurrealDB 2.x (server: memory)|-e server:memory
+surrealdb2-rocksdb|surrealdb2|networked|SurrealDB 2.x (server: RocksDB)|-e server:rocksdb
+surrealdb2-surrealkv|surrealdb2|networked|SurrealDB 2.x (server: SurrealKV)|-e server:surrealkv
+surrealdb2-embedded-memory|surrealdb2|embedded|SurrealDB 2.x embedded with in-memory storage|-e memory
+surrealdb2-embedded-rocksdb|surrealdb2|embedded|SurrealDB 2.x embedded with RocksDB storage|-e rocksdb:DATA_DIR
+surrealdb2-embedded-surrealkv|surrealdb2|embedded|SurrealDB 2.x embedded with SurrealKV storage|-e surrealkv:DATA_DIR
 surrealkv|surrealkv|embedded|SurrealKV|
 surrealmx|surrealmx|embedded|SurrealMX|
 "
@@ -692,6 +709,11 @@ run_benchmark() {
     # Get CLI args and endpoint
     local cli_args=$(get_db_cli_args "$db")
     local endpoint=$(get_db_endpoint "$db")
+
+    # Allow overriding the endpoint from the command line
+    if [[ -n "$ENDPOINT_OVERRIDE" ]]; then
+        endpoint="-e $ENDPOINT_OVERRIDE"
+    fi
 
     # Get number of CPUs
     local num_cpus=$(get_cpu_count)

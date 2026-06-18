@@ -4,7 +4,7 @@
 # tests (`[[batches]]`).
 #
 # Scans — Each `[[scans]]` row is one logical benchmark. Optional keys include `id`,
-# `name`, `projection`, `samples`, paging (`limit`, `start`, `expect`). Use `[[scans.runs]]`
+# `name`, `projection`, `iterations`, paging (`limit`, `start`, `expect`). Use `[[scans.runs]]`
 # when the same parameters define multiple named runs (each run has `name` and optional
 # `projection`). Conditional scans add `[scans.condition]` with per-dialect filter strings
 # (`sql`, `postgres`, `sqlite`, `mysql`, `neo4j`, `arangodb`, `surrealdb`) plus inline `mongodb = { ... }` for the
@@ -16,7 +16,7 @@
 # the strategy needs one) is derived from `field` — engines without vector support skip the run.
 #
 # Batches — Each `[[batches]]` row names a throughput case: `name`, `operation` (CREATE,
-# READ, UPDATE, DELETE), `batch_size`, and `samples` (how many timed iterations).
+# READ, UPDATE, DELETE), `batch_size`, and `iterations` (how many timed iterations).
 #
 # Value — The `[value]` table defines the generated document shape for each row.
 #
@@ -60,7 +60,7 @@ embedding = "vector:128"
 id = "count"
 name = "count()"
 projection = "COUNT"
-samples = 10
+iterations = 10
 
 # ============================================================================
 # count_count_idx
@@ -81,7 +81,7 @@ index_type = "count"
 
 [[scans]]
 id = "limit"
-samples = 10
+iterations = 10
 limit = 100
 expect = 100
 
@@ -99,7 +99,7 @@ projection = "FULL"
 
 [[scans]]
 id = "start_limit"
-samples = 10
+iterations = 10
 start = 5000
 limit = 100
 expect = 100
@@ -118,7 +118,7 @@ projection = "FULL"
 
 [[scans]]
 id = "where_field_integer_eq"
-samples = 10
+iterations = 10
 
 [[scans.runs]]
 name = "count(*) where(integer = integer)"
@@ -150,7 +150,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_integer_eq_or_eq"
-samples = 10
+iterations = 10
 
 [[scans.runs]]
 name = "count(*) where(integer = integer OR integer = integer)"
@@ -185,7 +185,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_integer_gte_lte"
-samples = 10
+iterations = 10
 
 [[scans.runs]]
 name = "count(*) where(integer >= integer AND integer <= integer)"
@@ -217,7 +217,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_integer_in_many"
-samples = 10
+iterations = 10
 limit = 1000
 
 [[scans.runs]]
@@ -257,7 +257,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_string_eq_order_by_desc"
-samples = 10
+iterations = 10
 limit = 1000
 
 [[scans.runs]]
@@ -298,7 +298,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_integer_in_many_order_by_desc"
-samples = 10
+iterations = 10
 limit = 1000
 
 [[scans.runs]]
@@ -339,7 +339,7 @@ operation = "UPDATE"
 
 [[scans]]
 id = "where_field_many_contains_string_order_by_desc"
-samples = 10
+iterations = 10
 limit = 1000
 
 [[scans.runs]]
@@ -384,7 +384,7 @@ operation = "UPDATE"
 id = "where_field_fulltext_single"
 name = "select(*) where(string @@ string) limit(1000) - BM25"
 projection = "FULL"
-samples = 10
+iterations = 10
 limit = 1000
 
 [scans.condition]
@@ -406,7 +406,7 @@ index_type = "fulltext"
 id = "where_field_fulltext_multi_and"
 name = "select(*) where(string @@ string AND string @@ string) limit(1000) - BM25"
 projection = "FULL"
-samples = 10
+iterations = 10
 limit = 1000
 
 [scans.condition]
@@ -428,7 +428,7 @@ index_type = "fulltext"
 id = "where_field_fulltext_multi_or"
 name = "select(*) where(string @@ string OR string @@ string) limit(1000) - BM25"
 projection = "FULL"
-samples = 10
+iterations = 10
 limit = 1000
 
 [scans.condition]
@@ -453,7 +453,7 @@ index_type = "fulltext"
 
 [[scans]]
 id = "vector_knn"
-samples = 10
+iterations = 10
 
 [[scans.runs]]
 name = "bruteforce knn(10)"
@@ -490,7 +490,7 @@ holdout = { count = 50, seed = 42 }
 name = "batch_create_100"
 operation = "CREATE"
 batch_size = 100
-samples = 10
+iterations = 10
 
 # ============================================================================
 # batch_read_100
@@ -500,7 +500,7 @@ samples = 10
 name = "batch_read_100"
 operation = "READ"
 batch_size = 100
-samples = 10
+iterations = 10
 
 # ============================================================================
 # batch_update_100
@@ -510,7 +510,7 @@ samples = 10
 name = "batch_update_100"
 operation = "UPDATE"
 batch_size = 100
-samples = 10
+iterations = 10
 
 # ============================================================================
 # batch_delete_100
@@ -520,4 +520,4 @@ samples = 10
 name = "batch_delete_100"
 operation = "DELETE"
 batch_size = 100
-samples = 10
+iterations = 10

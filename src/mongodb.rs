@@ -278,23 +278,26 @@ impl BenchmarkClient for MongoDBClient {
 		}
 		// Define the index document
 		let mut doc = Document::new();
+		// Translate bench `tags.*` array-element paths to the base array field so
+		// the index targets a real path (MongoDB has no Surreal-style path syntax).
+		let fields = MongoDBDialect::index_key_list(spec);
 		// Check if an index type is specified
 		match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
 				// Create a text index
-				for field in &spec.fields {
+				for field in &fields {
 					doc.insert(field, "text");
 				}
 			}
 			Some(kind) => {
 				// Other index types (e.g., "2d", "2dsphere", "hashed")
-				for field in &spec.fields {
+				for field in &fields {
 					doc.insert(field, kind.as_str());
 				}
 			}
 			None => {
 				// Standard ascending index
-				for field in &spec.fields {
+				for field in &fields {
 					doc.insert(field, 1);
 				}
 			}
@@ -571,24 +574,14 @@ impl MongoDBClient {
 				.await
 			}
 			Projection::Full => {
+				// No projection: return the full document, matching `SELECT *`
+				// in the SQL/Surreal adapters. (`Projection::Id` above projects
+				// only `_id`.)
 				consume(match o {
 					Some(o) => {
-						self.collection()
-							.find(c)
-							.sort(o)
-							.skip(s as u64)
-							.limit(l as i64)
-							.projection(doc! { "_id": 1 })
-							.await?
+						self.collection().find(c).sort(o).skip(s as u64).limit(l as i64).await?
 					}
-					None => {
-						self.collection()
-							.find(c)
-							.skip(s as u64)
-							.limit(l as i64)
-							.projection(doc! { "_id": 1 })
-							.await?
-					}
+					None => self.collection().find(c).skip(s as u64).limit(l as i64).await?,
 				})
 				.await
 			}

@@ -279,12 +279,13 @@ impl ScylladbClient {
 				Ok(count)
 			}
 			Projection::Full => {
-				let stm = format!("SELECT id FROM bench.record {c} {l}");
+				let stm = format!("SELECT JSON * FROM bench.record {c} {l}");
 				let mut res = self.session.query_iter(stm, ()).await?.rows_stream()?.skip(s);
 				let mut count = 0;
 				while let Some(v) = res.next().await {
-					let v: (String,) = v?;
-					black_box(v);
+					let (v,): (String,) = v?;
+					let json: serde_json::Value = serde_json::from_str(&v)?;
+					black_box(BenchValue::from(&json));
 					count += 1;
 				}
 				Ok(count)

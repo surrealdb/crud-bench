@@ -8,7 +8,7 @@
 # The query set is built deterministically from the inserted records: at the
 # end of the create phase the framework picks `count` ids using `seed`, reads
 # each row once (outside the timing window), and reuses those embedding
-# vectors across all scan samples. Only the KNN call itself is timed, so the
+# vectors across all scan iterations. Only the KNN call itself is timed, so the
 # benchmark's RAM footprint is constant in `count` (independent of `-s N`).
 
 # ============================================================================
@@ -53,7 +53,7 @@ embedding = "vector:3072"
 
 [[scans]]
 id = "vector_knn"
-samples = 1000
+iterations = 1000
 
 [[scans.runs]]
 name = "bruteforce knn(10)"
