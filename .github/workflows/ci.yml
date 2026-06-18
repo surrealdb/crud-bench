@@ -23,8 +23,6 @@ defaults:
 # sccache → S3 backend, shared across the compile jobs (clippy, test, build).
 # Set at workflow level so the values are in the environment when the
 # sccache-action daemon starts (it reads its backend config at start time).
-# The AWS credentials the daemon needs are scoped to each compile job instead
-# of here, so they don't override the docker-build job's ECR authentication.
 # Fork PRs have no secrets, so SCCACHE_BUCKET is empty there and sccache
 # transparently falls back to a local cache — builds still succeed, just
 # without the shared cache.
@@ -33,6 +31,8 @@ env:
   SCCACHE_REGION: us-east-1
   SCCACHE_S3_KEY_PREFIX: ${{ github.repository }} # scope cache to this repo
   SCCACHE_IDLE_TIMEOUT: "0" # don't let the daemon exit mid-compile
+  AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
 
 jobs:
   format:
@@ -60,9 +60,6 @@ jobs:
   clippy:
     name: Check clippy
     runs-on: [runner-arm-16-cores-spot]
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -114,9 +111,6 @@ jobs:
   test:
     name: Check tests
     runs-on: [runner-arm-16-cores-spot]
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -176,9 +170,6 @@ jobs:
             runner: runner-arm-32-cores-spot
             target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
