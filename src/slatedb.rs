@@ -7,10 +7,14 @@ use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
-use slatedb::config::{CompressionCodec, Settings, SstBlockSize, WriteOptions};
+use slatedb::config::{
+	CompactionWorkerOptions, CompactorOptions, FlushOptions, FlushType, ScanOptions, Settings,
+	SstBlockSize, WriteOptions,
+};
 use slatedb::db_cache::foyer::{FoyerCache, FoyerCacheOptions};
+use slatedb::db_cache::{DbCache, SplitCache};
 use slatedb::object_store::local::LocalFileSystem;
-use slatedb::{Db, IsolationLevel};
+use slatedb::{CompactorBuilder, Db, DbTransaction, IsolationLevel};
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,27 +54,83 @@ impl BenchmarkEngine<SlateDBClient> for SlateDBClientProvider {
 		let data_store = Arc::new(LocalFileSystem::new_with_prefix(DATA_DIR)?);
 		// Create object store for WAL
 		let wal_store = Arc::new(LocalFileSystem::new_with_prefix(WAL_DIR)?);
-		// Create a custom block cache
-		let cache = Arc::new(FoyerCache::new_with_opts(FoyerCacheOptions {
-			max_capacity: memory,
+		// Create a block cache for SST data blocks
+		let block_cache = Arc::new(FoyerCache::new_with_opts(FoyerCacheOptions {
+			max_capacity: memory / 8 * 7,
 			shards: num_cpus::get(),
 		}));
+		// Create a meta cache for SST indexes and bloom filters
+		let meta_cache = Arc::new(FoyerCache::new_with_opts(FoyerCacheOptions {
+			max_capacity: memory / 8,
+			shards: num_cpus::get(),
+		}));
+		// Keep data blocks from evicting indexes and filters
+		let cache = SplitCache::new()
+			.with_block_cache(Some(block_cache as Arc<dyn DbCache>))
+			.with_meta_cache(Some(meta_cache as Arc<dyn DbCache>))
+			.build();
+		// Create a dedicated runtime for background work, so that
+		// compaction and garbage collection do not steal CPU time
+		// from the runtime executing benchmark operations
+		let background = tokio::runtime::Builder::new_multi_thread()
+			.worker_threads(num_cpus::get().min(8))
+			.thread_name("slatedb-background")
+			.enable_all()
+			.build()?;
+		// Get a handle to the background runtime
+		let handle = background.handle().clone();
+		// Keep the background runtime alive for the process lifetime,
+		// as dropping a runtime within an async context is not allowed
+		std::mem::forget(background);
+		// Configure the background compactor
+		let compactor = CompactorBuilder::new(DATABASE_DIR, data_store.clone())
+			.with_runtime(handle.clone())
+			.with_options(CompactorOptions {
+				// Check for new compaction work regularly
+				poll_interval: Duration::from_secs(1),
+				// Allow multiple compactions to run concurrently
+				max_concurrent_compactions: num_cpus::get().min(8),
+				// Configure the embedded compaction worker
+				worker: Some(CompactionWorkerOptions {
+					// Pick up scheduled compaction jobs quickly
+					compactions_poll_interval: Duration::from_millis(500),
+					// Allow multiple compactions to run concurrently
+					max_concurrent_compactions: num_cpus::get().min(8),
+					// Enable bloom filters for SSTs with 100+ keys
+					min_filter_keys: 100,
+					// Use other default worker settings
+					..Default::default()
+				}),
+				// Use other default compactor settings
+				..Default::default()
+			});
 		// Configure database settings
 		let settings = Settings {
-			// Flush the WAL regularly
-			flush_interval: Some(Duration::from_millis(200)),
+			// Flush the WAL buffer and check memtable sizes regularly.
+			// Commits which await durability wait for the next flush, so
+			// when sync is enabled we flush often, grouping concurrent
+			// commits into a single write to the object store.
+			flush_interval: Some(match options.sync {
+				true => Duration::from_millis(1),
+				false => Duration::from_millis(100),
+			}),
 			// Set the L0 SST size to 256MB
 			l0_sst_size_bytes: 256 * 1024 * 1024,
-			// Set max L0 SSTs before compaction
-			l0_max_ssts: 8,
-			// Set backpressure limit to 512MB
-			max_unflushed_bytes: 512 * 1024 * 1024,
+			// Allow more L0 SSTs before memtable flushes stall
+			l0_max_ssts: 24,
+			// Random keys make every L0 SST span the whole keyspace,
+			// so the per-key overlap limit is the gate which actually
+			// stalls memtable flushes, and must be raised in tandem
+			l0_max_ssts_per_key: 24,
+			// Set backpressure limit to 2GB
+			max_unflushed_bytes: 2 * 1024 * 1024 * 1024,
 			// Enable bloom filters for SSTs with 100+ keys
 			min_filter_keys: 100,
-			// Set bloom filter bits per key
-			filter_bits_per_key: 10,
-			// Enable Snappy compression
-			compression_codec: Some(CompressionCodec::Snappy),
+			// Store SSTs uncompressed, matching RocksDB which leaves
+			// the hot L0 and L1 levels and all blob files uncompressed
+			compression_codec: None,
+			// The compactor is configured through the builder instead
+			compactor_options: None,
 			// Use other default settings
 			..Default::default()
 		};
@@ -80,8 +140,12 @@ impl BenchmarkEngine<SlateDBClient> for SlateDBClientProvider {
 		let builder = builder.with_settings(settings);
 		// Setup the separate WAL object store
 		let builder = builder.with_wal_object_store(wal_store);
-		// Configure custom memory cache
-		let builder = builder.with_memory_cache(cache);
+		// Configure the split block and meta cache
+		let builder = builder.with_db_cache(Arc::new(cache));
+		// Run the compactor on the background runtime
+		let builder = builder.with_compactor_builder(compactor);
+		// Run the garbage collector on the background runtime
+		let builder = builder.with_gc_runtime(handle);
 		// Use a larger block size for better sequential performance
 		let builder = builder.with_sst_block_size(SstBlockSize::Block64Kib);
 		// Open the database
@@ -98,6 +162,7 @@ impl BenchmarkEngine<SlateDBClient> for SlateDBClientProvider {
 			db: self.db.clone(),
 			opts: WriteOptions {
 				await_durable: self.sync,
+				..Default::default()
 			},
 		})
 	}
@@ -122,7 +187,18 @@ impl BenchmarkClient for SlateDBClient {
 	}
 
 	async fn compact(&self) -> Result<()> {
-		// SlateDB handles compaction automatically
+		// SlateDB does not expose a manual full-compaction API,
+		// so this is best-effort: persist all in-memory data and
+		// let the background compactor process the L0 SSTs.
+		// Flush the WAL to object storage
+		self.db.flush().await?;
+		// Flush the memtables to L0 object storage
+		self.db
+			.flush_with_options(FlushOptions {
+				flush_type: FlushType::MemTable,
+			})
+			.await?;
+		// Ok
 		Ok(())
 	}
 
@@ -232,6 +308,13 @@ impl BenchmarkClient for SlateDBClient {
 }
 
 impl SlateDBClient {
+	/// Commit a transaction with the configured write options
+	async fn commit(&self, txn: DbTransaction) -> Result<()> {
+		// Commit the transaction
+		txn.commit_with_options(&self.opts).await?;
+		Ok(())
+	}
+
 	async fn create_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Serialise the value
 		let val = val.encode()?;
@@ -239,7 +322,7 @@ impl SlateDBClient {
 		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Process the data
 		txn.put(key, val)?;
-		txn.commit_with_options(&self.opts).await?;
+		self.commit(txn).await?;
 		Ok(())
 	}
 
@@ -263,7 +346,7 @@ impl SlateDBClient {
 		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Process the data
 		txn.put(key, val)?;
-		txn.commit_with_options(&self.opts).await?;
+		self.commit(txn).await?;
 		Ok(())
 	}
 
@@ -272,7 +355,7 @@ impl SlateDBClient {
 		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
 		// Process the data
 		txn.delete(key)?;
-		txn.commit_with_options(&self.opts).await?;
+		self.commit(txn).await?;
 		Ok(())
 	}
 
@@ -288,7 +371,7 @@ impl SlateDBClient {
 			txn.put(&key, val)?;
 		}
 		// Commit the batch
-		txn.commit_with_options(&self.opts).await?;
+		self.commit(txn).await?;
 		Ok(())
 	}
 
@@ -322,7 +405,7 @@ impl SlateDBClient {
 			txn.put(&key, val)?;
 		}
 		// Commit the batch
-		txn.commit_with_options(&self.opts).await?;
+		self.commit(txn).await?;
 		Ok(())
 	}
 
@@ -334,7 +417,7 @@ impl SlateDBClient {
 			txn.delete(&key)?;
 		}
 		// Commit the batch
-		txn.commit_with_options(&self.opts).await?;
+		self.commit(txn).await?;
 		Ok(())
 	}
 
@@ -347,10 +430,21 @@ impl SlateDBClient {
 		let s = scan.start.unwrap_or(0);
 		let l = scan.limit.unwrap_or(usize::MAX);
 		let p = scan.projection()?;
+		// Configure scan options
+		let opts = ScanOptions {
+			// Read ahead by 2MB when fetching blocks
+			read_ahead_bytes: 2 * 1024 * 1024,
+			// Fetch blocks concurrently when reading ahead
+			max_fetch_tasks: 4,
+			// Store any fetched blocks in the block cache
+			cache_blocks: true,
+			// Use other default scan settings
+			..Default::default()
+		};
 		// Create a new transaction
 		let txn = self.db.begin(IsolationLevel::Snapshot).await?;
-		// Create an iterator
-		let mut iter = txn.scan::<Vec<u8>, _>(..).await?;
+		// Create an iterator over the full range
+		let mut iter = txn.scan_with_options(.., &opts).await?;
 		// Skip the necessary number of entries
 		let mut skipped = 0;
 		while skipped < s {
@@ -367,7 +461,7 @@ impl SlateDBClient {
 				// otherwise the loop is optimised out by the compiler
 				// when calling `count` at the end.
 				let mut count = 0;
-				while let Ok(Some(item)) = iter.next().await {
+				while let Some(item) = iter.next().await? {
 					black_box(item.key);
 					count += 1;
 					if count >= l {
@@ -382,7 +476,7 @@ impl SlateDBClient {
 				// otherwise the loop is optimised out by the compiler
 				// when calling `count` at the end.
 				let mut count = 0;
-				while let Ok(Some(item)) = iter.next().await {
+				while let Some(item) = iter.next().await? {
 					black_box(item.value);
 					count += 1;
 					if count >= l {
@@ -394,7 +488,7 @@ impl SlateDBClient {
 			Projection::Count => {
 				// Count entries without processing values
 				let mut count = 0;
-				while let Ok(Some(_)) = iter.next().await {
+				while iter.next().await?.is_some() {
 					count += 1;
 					if count >= l {
 						break;
