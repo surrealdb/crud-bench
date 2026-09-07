@@ -604,6 +604,10 @@ impl BenchmarkClient for SurrealDBClient {
 					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
 				)
 			}
+			Some(kind) if kind == "count" => {
+				// COUNT indexes apply to the whole table and accept no FIELDS / UNIQUE.
+				format!("DEFINE INDEX {name} ON TABLE record COUNT CONCURRENTLY")
+			}
 			_ => {
 				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique} CONCURRENTLY")
 			}

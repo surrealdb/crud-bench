@@ -213,6 +213,11 @@ impl BenchmarkClient for MysqlClient {
 	}
 
 	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// COUNT-style indexes have no MySQL equivalent; the indexed scan
+		// leg runs the same query as the baseline so the row still populates.
+		if spec.index_type.as_deref() == Some("count") {
+			return Ok(());
+		}
 		// Get the unique flag
 		let unique = if spec.unique.unwrap_or(false) {
 			"UNIQUE"
@@ -248,8 +253,17 @@ impl BenchmarkClient for MysqlClient {
 	}
 
 	async fn drop_index(&self, name: &str) -> Result<()> {
+		// MySQL's `DROP INDEX` has no `IF EXISTS`. Paired with the COUNT-index
+		// no-op `build_index` above, a missing index here is not an error —
+		// check existence first and skip the DDL when there's nothing to drop.
+		let mut conn = self.conn.lock().await;
+		let exists: Option<mysql_async::Row> =
+			conn.query_first(format!("SHOW INDEX FROM record WHERE Key_name = '{name}'")).await?;
+		if exists.is_none() {
+			return Ok(());
+		}
 		let stmt = format!("DROP INDEX {name} ON record");
-		self.conn.lock().await.query_drop(&stmt).await?;
+		conn.query_drop(&stmt).await?;
 		Ok(())
 	}
 

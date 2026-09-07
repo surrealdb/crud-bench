@@ -7,7 +7,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
-use crate::{Benchmark, KeyType, Projection, Scan};
+use crate::{Benchmark, Index, KeyType, Projection, Scan};
 use anyhow::{Result, bail};
 use arangors::aql::AqlQuery;
 use arangors::client::ClientExt;
@@ -273,18 +273,33 @@ impl BenchmarkClient for ArangoDBClient {
 		}
 	}
 
-	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
+	async fn scan_u32(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
-			_ => self.scan(scan).await,
+			_ => self.scan(scan, ctx).await,
 		}
 	}
 
-	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
+	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		match self.keytype {
 			KeyType::String506 => bail!(NOT_SUPPORTED_ERROR),
-			_ => self.scan(scan).await,
+			_ => self.scan(scan, ctx).await,
 		}
+	}
+
+	async fn build_index(&self, spec: &Index, _name: &str) -> Result<()> {
+		// COUNT-style scans are answered by ArangoDB's collection count with no
+		// DDL required — the speedup lives in the scan query branch below.
+		if spec.index_type.as_deref() == Some("count") {
+			return Ok(());
+		}
+		bail!(NOT_SUPPORTED_ERROR)
+	}
+
+	async fn drop_index(&self, _name: &str) -> Result<()> {
+		// Symmetric to `build_index`: the only path that returns `Ok` above is
+		// the COUNT no-op, so there's no real index to drop.
+		Ok(())
 	}
 
 	async fn batch_create_u32(
@@ -475,7 +490,7 @@ impl ArangoDBClient {
 		Ok(())
 	}
 
-	async fn scan(&self, scan: &Scan) -> Result<usize> {
+	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
 		// Extract parameters
 		let l = match (scan.start, scan.limit) {
 			(Some(s), Some(l)) => format!("LIMIT {s}, {l}"),
@@ -486,6 +501,14 @@ impl ArangoDBClient {
 		let c = ArangoDBDialect::filter_clause(scan)?;
 		let o = ArangoDBDialect::sort_clause(scan)?;
 		let p = scan.projection()?;
+		// Indexed leg of a COUNT-index scan: ArangoDB tracks an exact collection
+		// count, exposed via LENGTH(). Limited to predicate-free, unpaged scans.
+		let count_idx = ctx == ScanContext::WithIndex
+			&& matches!(p, Projection::Count)
+			&& scan.with_index.as_ref().and_then(|idx| idx.index_type.as_deref()) == Some("count")
+			&& c.is_empty()
+			&& o.is_empty()
+			&& l.is_empty();
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
@@ -517,8 +540,12 @@ impl ArangoDBClient {
 				Ok(count)
 			}
 			Projection::Count => {
-				let stm =
-					format!("FOR r IN record {c} {l} COLLECT WITH COUNT INTO count RETURN count");
+				let stm = if count_idx {
+					// Collection count: O(1), exact.
+					"RETURN LENGTH(record)".to_string()
+				} else {
+					format!("FOR r IN record {c} {l} COLLECT WITH COUNT INTO count RETURN count")
+				};
 				let res: Vec<Value> = self.database.aql_str(&stm).await.unwrap();
 				let count = res.first().unwrap().as_i64().unwrap();
 				Ok(count as usize)

@@ -270,6 +270,12 @@ impl BenchmarkClient for MongoDBClient {
 	}
 
 	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// COUNT-style indexes have no MongoDB equivalent (estimatedDocumentCount
+		// is approximate, not exact); the indexed scan leg runs the same query
+		// as the baseline so the row still populates.
+		if spec.index_type.as_deref() == Some("count") {
+			return Ok(());
+		}
 		// Define the index document
 		let mut doc = Document::new();
 		// Translate bench `tags.*` array-element paths to the base array field so
@@ -311,6 +317,13 @@ impl BenchmarkClient for MongoDBClient {
 	}
 
 	async fn drop_index(&self, name: &str) -> Result<()> {
+		// Paired with the COUNT-index no-op `build_index` above, the named
+		// index may not exist — check the catalog and skip the drop in that
+		// case so the cleanup leg of the new `count_count_idx` scan succeeds.
+		let names = self.collection().list_index_names().await?;
+		if !names.iter().any(|n| n == name) {
+			return Ok(());
+		}
 		self.collection().drop_index(name).await?;
 		Ok(())
 	}
