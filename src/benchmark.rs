@@ -171,6 +171,38 @@ impl Benchmark {
 		Ok(())
 	}
 
+	/// Block until `index` is queryable as an index, not merely built.
+	///
+	/// SurrealDB reports `building.status = "ready"` once the initial build
+	/// finishes, but rows indexed afterwards sit in a pending queue that
+	/// queries answer by scanning it linearly, drained by a background task on
+	/// its own interval. A leg timed against an undrained queue measures that
+	/// scan wearing the index's name.
+	///
+	/// Called between timed operations so the wait lands in no measurement, and
+	/// before every indexed leg rather than only after the build: a leg that
+	/// writes leaves a queue behind, and the next leg would otherwise inherit
+	/// it and report a number that depends on what ran before it.
+	///
+	/// Unrelated to `COMPACTION` / `ALTER SYSTEM COMPACT`, which compacts the
+	/// storage keyspace and does nothing for this queue. Engines without such a
+	/// queue no-op.
+	async fn await_index_queryable<C>(&self, client: &Arc<C>, index: &str) -> Result<()>
+	where
+		C: BenchmarkClient + Send + Sync,
+	{
+		let started = Instant::now();
+		client.await_index_queryable(index).await?;
+		let waited = started.elapsed();
+		if waited > Duration::from_millis(200) {
+			self.bench_ui.println_muted(&format!(
+				"Waited {} for index `{index}` to become queryable",
+				format_duration(waited)
+			));
+		}
+		Ok(())
+	}
+
 	/// Sleep a fixed beat to let any server-side phase tail settle (open
 	/// snapshots, draining tasks, deferred cleanup that outlives the
 	/// client's `try_join_all`), then emit the grep-friendly `Server idle`
@@ -328,22 +360,7 @@ impl Benchmark {
 					)
 					.await?;
 				if vec_index_build.is_some() {
-					// A vector index reports itself built well before it is
-					// actually serving queries from the graph: newly indexed
-					// vectors sit in a pending queue that KNN answers by
-					// scanning linearly. Waiting here — after the timed build,
-					// before the timed scan — keeps a background drain out of
-					// the build number and a brute-force scan out of the KNN
-					// number.
-					let waited = Instant::now();
-					clients[0].await_index_queryable(&id).await?;
-					let waited = waited.elapsed();
-					if waited > Duration::from_millis(200) {
-						self.bench_ui.println_muted(&format!(
-							"Waited {} for index `{id}` to become queryable",
-							format_duration(waited)
-						));
-					}
+					self.await_index_queryable(&clients[0], &id).await?;
 					self.maybe_compact_datastore::<C, E>(&engine).await?;
 				}
 				// Run the scan if either the strategy doesn't require an index
@@ -452,6 +469,7 @@ impl Benchmark {
 				let (with_index, index_remove, indexed_write_results) = if index_build.is_some() {
 					// Compact the datastore so the indexed-scan phases benchmark a compacted index.
 					self.maybe_compact_datastore::<C, E>(&engine).await?;
+					self.await_index_queryable(&clients[0], &id).await?;
 					// Same query shape using the new index
 					let with_index = self
 						.run_operation::<C, D>(
@@ -464,6 +482,10 @@ impl Benchmark {
 						.await?;
 					let mut iw = Vec::with_capacity(w);
 					for spec in write_specs {
+						// The previous leg's writes leave a queue behind; drain
+						// it so each leg is timed from the same index state
+						// instead of inheriting whatever ran before it.
+						self.await_index_queryable(&clients[0], &id).await?;
 						iw.push(
 							self.run_operation::<C, D>(
 								&clients,

@@ -122,10 +122,10 @@ fn surreal_distance_function(d: VectorDistance) -> &'static str {
 	}
 }
 
-/// How long to wait for a vector index's pending queue to drain before giving
-/// up. The background task runs every `index_compaction_interval` (5s by
-/// default), so this allows for a slow drain without hanging a run forever.
-const VECTOR_COMPACTION_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long to wait for an index's pending queue to drain before giving up. The
+/// background task runs every `index_compaction_interval` (5s by default), so
+/// this allows for a slow drain without hanging a run forever.
+const INDEX_COMPACTION_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Pull the record key out of one `SELECT id` KNN row.
 fn surreal_knn_key(row: &Value) -> Result<KnnKey> {
@@ -819,15 +819,16 @@ impl BenchmarkClient for SurrealDBClient {
 		Ok(())
 	}
 
-	/// Wait for the HNSW / DiskANN pending queue to drain.
+	/// Wait for an index's pending queue to drain.
 	///
 	/// `INFO FOR INDEX` reports `building.status = "ready"` as soon as the
-	/// initial build finishes, but newly indexed vectors sit in a pending queue
-	/// that KNN searches answer by scanning linearly. A background task drains
-	/// it every `index_compaction_interval` (5s by default), and only then does
-	/// the graph actually serve the query. Scanning before that measures a
-	/// brute-force scan wearing the index's name: the latency is wrong, and
-	/// recall comes back a perfect 1.0 for the wrong reason.
+	/// initial build finishes, but rows indexed after that sit in a pending
+	/// queue that queries answer by scanning it linearly. A background task
+	/// drains it every `index_compaction_interval` (5s by default), and only
+	/// then does the index itself serve the query. In SurrealDB 3.x this
+	/// applies to fulltext, count and HNSW indexes alike; for a KNN scan it is
+	/// especially misleading, since a queue scan is exact and so reports a
+	/// perfect recall of 1.0 for entirely the wrong reason.
 	///
 	/// `building.pending` carries the queue depth, so poll until it clears.
 	/// Note this is unrelated to `ALTER SYSTEM COMPACT` (see [`Self::compact`]),
@@ -843,17 +844,23 @@ impl BenchmarkClient for SurrealDBClient {
 				.map_err(log_sql_err(&q))?
 				.take(0)
 				.map_err(log_sql_err(&q))?;
+			let j = r.to_sql();
 			let building = r.get("building");
+			let status = building.get("status").as_string().expect(&j);
 			// Absent means the engine does not track a queue for this index
 			// kind, which is the same as an empty one.
 			let pending = match building.get("pending") {
 				Value::Number(n) => n.to_int().unwrap_or(0),
 				_ => 0,
 			};
-			if pending == 0 {
-				return Ok(());
+			// `pending` sits at 0 while the initial build is still running, so
+			// it only means "drained" once the build itself reports ready.
+			match status.as_str() {
+				"ready" if pending == 0 => return Ok(()),
+				"ready" | "indexing" | "cleaning" | "started" => {}
+				_ => bail!("Unexpected index status: {j}"),
 			}
-			if started.elapsed() > VECTOR_COMPACTION_TIMEOUT {
+			if started.elapsed() > INDEX_COMPACTION_TIMEOUT {
 				bail!(
 					"index {name}: {pending} entries still pending after {:?}; 					 a KNN scan now would measure a brute-force scan over the queue",
 					started.elapsed()
