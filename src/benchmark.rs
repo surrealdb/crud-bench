@@ -4,7 +4,7 @@
 //! [`crate::result::OperationResult`] values for reporting.
 
 use crate::dialect::Dialect;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::keyprovider::KeyProvider;
 use crate::result::{
 	BenchmarkMetadata, BenchmarkResult, OperationMetric, OperationResult, ScanResult, ScanRun,
@@ -15,7 +15,7 @@ use crate::terminal::BenchUi;
 use crate::util::format_duration;
 use crate::valueprovider::ColumnType;
 use crate::valueprovider::{ValueProvider, ValueStream};
-use crate::vectorgt::{self, GroundTruth};
+use crate::vectorgt::{self, GroundTruth, RecallTally, VectorAnswer};
 use crate::workloads;
 use crate::{
 	Args, BatchOperation, Batches, Index, Scan, ScanWithWrites, Scans, VectorHoldout,
@@ -66,12 +66,21 @@ pub(crate) struct VectorQuerySet {
 	/// every engine rather than taken from the engine's own exact leg, so the
 	/// recall it scores is comparable across engines.
 	pub(crate) ground_truth: Option<Arc<GroundTruth>>,
+	/// The answer key resolved into this run's key shape, ready to score
+	/// against. Built once per scan so an iteration costs a set lookup.
+	pub(crate) accept: Option<Arc<Vec<VectorAnswer>>>,
 }
 
 impl VectorQuerySet {
 	pub(crate) fn pick(&self, sample: u32) -> &[f32] {
-		let q = &self.queries[(sample as usize) % self.queries.len()];
+		let q = &self.queries[self.query_index(sample)];
 		q.as_slice()
+	}
+
+	/// Index of the query `pick` returns for `sample`; scoring needs it to line
+	/// a result up with its answer.
+	pub(crate) fn query_index(&self, sample: u32) -> usize {
+		(sample as usize) % self.queries.len()
 	}
 }
 
@@ -330,7 +339,7 @@ impl Benchmark {
 					ScanContext::WithoutIndex
 				};
 				let scan_result = if !strategy_needs_index || vec_index_build.is_some() {
-					self.attach_ground_truth(&scan, &vq, &vp, &mut query_set)?;
+					self.attach_ground_truth(&scan, &vq, &vp, &kp, &mut query_set)?;
 					self.run_operation::<C, D>(
 						&clients,
 						BenchmarkOperation::VectorScan(scan.clone(), ctx, query_set.clone()),
@@ -652,6 +661,7 @@ impl Benchmark {
 		Ok(VectorQuerySet {
 			queries: Arc::new(queries),
 			ground_truth: None,
+			accept: None,
 		})
 	}
 
@@ -666,6 +676,7 @@ impl Benchmark {
 		scan: &Scan,
 		vq: &VectorQuerySpec,
 		vp: &ValueProvider,
+		kp: &KeyProvider,
 		query_set: &mut VectorQuerySet,
 	) -> Result<()> {
 		let Some(corpus_seed) = vp.seed() else {
@@ -700,6 +711,8 @@ impl Benchmark {
 				format_duration(started.elapsed())
 			));
 		}
+		query_set.accept =
+			Some(Arc::new(vectorgt::build_answers(&gt, kp, vq.top_k, vq.tie_epsilon)));
 		query_set.ground_truth = Some(Arc::new(gt));
 		Ok(())
 	}
@@ -823,10 +836,12 @@ impl Benchmark {
 		}
 		// Wait for the threads to complete, aborting the remaining tasks on the first failure.
 		let mut global_histogram = Histogram::new(3)?;
+		let mut global_recall = RecallTally::default();
 		while let Some(result) = tasks.join_next().await {
 			match result {
-				Ok(Ok(Some(histogram))) => {
+				Ok(Ok(Some((histogram, recall)))) => {
 					global_histogram.add(histogram)?;
+					global_recall.merge(recall);
 				}
 				Ok(Ok(None)) => {}
 				Ok(Err(e)) => {
@@ -858,7 +873,8 @@ impl Benchmark {
 			bail!("Task failure");
 		}
 		// Histogram + sysinfo snapshots → OperationResult; then print phase timing line
-		let result = OperationResult::new(metric, global_histogram);
+		let result =
+			OperationResult::new(metric, global_histogram).with_recall(global_recall.summarise());
 		let took = result.total_time();
 		match &operation {
 			BenchmarkOperation::Scan(_, ctx) => {
@@ -921,12 +937,13 @@ impl Benchmark {
 		operation: BenchmarkOperation,
 		operation_timeout: Duration,
 		(mut kp, mut vp, progress): (KeyProvider, ValueProvider, Option<Arc<ProgressBar>>),
-	) -> Result<Histogram<u64>>
+	) -> Result<(Histogram<u64>, RecallTally)>
 	where
 		C: BenchmarkClient,
 		D: Dialect,
 	{
 		let mut histogram = Histogram::new(3)?;
+		let mut tally = RecallTally::default();
 		// Check if we have encountered an error
 		while !error.load(Ordering::Relaxed) {
 			// Get the current sample number
@@ -944,6 +961,9 @@ impl Benchmark {
 			// parking the worker task forever; the operation `JoinSet` then
 			// short-circuits with the operation name in the error
 			// chain rather than hanging in `block_on`.
+			// KNN hits, kept so recall can be scored after the latency is
+			// recorded rather than inside the measured window.
+			let mut scored: Option<(usize, Vec<KnnKey>)> = None;
 			let time = Instant::now();
 			tokio::time::timeout(operation_timeout, async {
 				match &operation {
@@ -959,7 +979,9 @@ impl Benchmark {
 					BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await,
 					BenchmarkOperation::VectorScan(s, ctx, qs) => {
 						let q = qs.pick(sample);
-						client.scan_vector(s, q, &kp, *ctx).await
+						let hits = client.scan_vector(s, q, &kp, *ctx).await?;
+						scored = Some((qs.query_index(sample), hits));
+						Ok(())
 					}
 					BenchmarkOperation::ScanWithWrites(scan, ctx, spec) => {
 						workloads::run_scan_with_writes(
@@ -1000,8 +1022,18 @@ impl Benchmark {
 				pb.set_position(done);
 			}
 			histogram.record(time.elapsed().as_micros() as u64)?;
+			// Scoring happens strictly after the latency is banked, so recall
+			// never inflates the number it is reported beside.
+			if let Some((query, hits)) = scored
+				&& let BenchmarkOperation::VectorScan(_, _, qs) = &operation
+				&& let Some(answers) = qs.accept.as_ref()
+				&& let Some(answer) = answers.get(query)
+				&& let Some(value) = vectorgt::recall(answer, &hits)
+			{
+				tally.record(value);
+			}
 		}
-		Ok(histogram)
+		Ok((histogram, tally))
 	}
 }
 

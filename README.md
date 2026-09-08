@@ -94,6 +94,17 @@ and lists those which are planned in the future.
 - [x] Full-text search query, using boolean OR search terms, projecting id field
 - [x] Full-text search query, using boolean OR search terms, counting rows
 
+**Vector search**
+
+- [x] Bruteforce (exact) KNN query
+- [x] HNSW KNN query, with configurable `m` / `ef_construction` / `ef_search`
+- [x] DiskANN KNN query, with configurable `degree` / `l_build` / `alpha` / `l_search`
+- [x] Vector index build timing
+- [x] Recall@k against exact ground truth, scored identically for every engine
+- [ ] Parameter sweeps tracing the recall/latency curve
+- [ ] Index size on disk and resident memory
+- [ ] Filtered KNN (`WHERE … ORDER BY <embedding> LIMIT k`)
+
 **Relationships**
 
 - [ ] Fetching or traversing 1-level, one-to-one relationships or joins
@@ -149,6 +160,8 @@ Options:
       --skip-batches                           Skip all batch benchmarks
       --skip-indexes                           Skip index operations, but still table scan queries
       --emit-phase-markers                     Emit line-oriented phase markers (`… starting`, `Benchmark starting`) for log-based tooling (e.g. `dev.sh` perf windows). Off by default; also on when `CRUD_BENCH_EMIT_PHASE_MARKERS` is `1`, `true`, `yes`, or `on`
+      --corpus-seed <CORPUS_SEED>              Seed for generated row content, overriding `seed` in the benchmark TOML. With a seed the corpus is a pure function of `(seed, sample)`, making the run reproducible and letting vector-search ground truth reconstruct the corpus instead of reading it back
+      --ground-truth-cache <DIR>               Directory holding cached vector-search ground truth [env: CRUD_BENCH_GROUND_TRUTH_CACHE=] [default: .crud-bench-gt]
   -h, --help                                   Print help (see more with '--help')
   ```
 
@@ -276,6 +289,58 @@ Multiple benchmarks that share the same filter, index, and write settings can us
     "with_index": { "fields": ["x"] }
   }
 ]
+```
+
+### Vector search
+
+Vector workloads live in [`config/vector.toml`](config/vector.toml). Each `[scans.runs.vector_query]`
+block describes one KNN benchmark:
+
+- `field` (**required**): the `vector:<dim>` column to search. The index, when the strategy needs
+  one, is derived from this — do not also declare `with_index`.
+- `top_k` (**required**): number of neighbours to return.
+- `distance`: `cosine` (default), `euclidean`, `inner_product`, or `manhattan`.
+- `index_strategy` (**required**): `{ kind = "bruteforce" }`, `{ kind = "hnsw", m, ef_construction,
+  ef_search }`, or `{ kind = "diskann", degree, l_build, alpha, l_search }`. All knobs are required —
+  results without explicit parameters cannot be interpreted.
+- `holdout`: `{ count, seed }` for the query set. Query vectors are generated from `seed` using the
+  schema's own vector generator and are **never inserted**, so no query is its own nearest neighbour.
+- `tie_epsilon`: relative tolerance when deciding whether a returned neighbour counts as correct
+  (default `0.0`, i.e. strict recall@k). Engines compute distances at different precisions, so rows
+  straddling the k-th boundary can swap without any real quality difference; a small tolerance stops
+  that reading as a recall gap.
+
+> [!NOTE]
+> Engines without vector support skip these runs rather than failing. DiskANN is currently
+> implemented for SurrealDB only.
+
+#### Recall
+
+An approximate index has a free parameter — `ef_search`, `l_search` — that trades accuracy for
+latency, so a latency number on its own cannot tell a fast index from an inaccurate one. Every KNN
+run is therefore scored for recall@k, reported as `mean / 5th percentile` in the summary table and in
+full in the JSON and CSV output. The 5th percentile is shown because a mean can look healthy while a
+tail of queries is answered badly.
+
+Ground truth is computed by crud-bench itself and shared by every engine, rather than taken from each
+engine's own bruteforce leg. Scoring an engine against itself measures whether its index agrees with
+its own exact path — useful for tracking regressions, but not a number that can sit beside another
+engine's, because a quirk shared by an engine's exact and approximate paths cancels out and divergent
+metric definitions leave every engine near 1.0 against itself. A useful side effect: each engine's
+own bruteforce leg is scored too, and should read `1.000`. Anything less is a metric divergence or an
+engine bug.
+
+Recall needs a reproducible corpus, so a vector config must set `seed` (or the run must pass
+`--corpus-seed`). Row content then becomes a pure function of the seed and the sample index, which
+also means the same dataset is benchmarked across engines and across runs. Without a seed the KNN
+runs still execute and report latency, and print why recall is unavailable.
+
+The answer key is a pure function of its inputs — both seeds, the sample count, `top_k`, the metric,
+the field, and the value template — so it is computed once, cached under `--ground-truth-cache`
+(default `.crud-bench-gt`, gitignored), and reused by every subsequent engine and run.
+
+```bash
+cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 --config config/vector.toml
 ```
 
 ## Databases

@@ -2,7 +2,7 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{
@@ -253,8 +253,15 @@ impl BenchmarkClient for RedisClient {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
-		self.knn_scan(scan, query).await
+	) -> Result<Vec<KnnKey>> {
+		let hits = self.knn_scan(scan, query).await?;
+		hits.into_iter()
+			.map(|k| {
+				k.parse::<u32>()
+					.map(KnnKey::Integer)
+					.map_err(|e| anyhow!("redis: knn hit {k:?} is not a numeric key: {e}"))
+			})
+			.collect()
 	}
 
 	async fn scan_vector_string(
@@ -262,8 +269,8 @@ impl BenchmarkClient for RedisClient {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
-		self.knn_scan(scan, query).await
+	) -> Result<Vec<KnnKey>> {
+		Ok(self.knn_scan(scan, query).await?.into_iter().map(KnnKey::Text).collect())
 	}
 
 	async fn batch_create_u32(
@@ -442,7 +449,8 @@ impl RedisClient {
 		Ok(())
 	}
 
-	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+	/// Run the KNN query and return the raw document keys, best-first.
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<Vec<String>> {
 		let vq = scan
 			.vector_query
 			.as_ref()
@@ -466,14 +474,29 @@ impl RedisClient {
 			.arg(0)
 			.query_async(&mut *conn)
 			.await?;
-		// FT.SEARCH returns `[total, key1, key2, ...]` (with RETURN 0). Use the
-		// reported `total` capped at `k` for the row-count return.
+		// FT.SEARCH returns `[total, key1, key2, ...]` (with RETURN 0). The keys
+		// after the count are the hits, in rank order; recall scores by
+		// identity so they are what we return.
 		if let redis::Value::Array(items) = &res
-			&& let Some(redis::Value::Int(total)) = items.first()
+			&& matches!(items.first(), Some(redis::Value::Int(_)))
 		{
-			return Ok((*total as usize).min(k));
+			let mut hits = Vec::with_capacity(k);
+			for item in items.iter().skip(1) {
+				let raw = match item {
+					redis::Value::BulkString(b) => String::from_utf8_lossy(b).into_owned(),
+					redis::Value::SimpleString(t) => t.clone(),
+					// Anything else at this position is a field payload, not a
+					// document key — `RETURN 0` should prevent it.
+					_ => continue,
+				};
+				// Documents live in the `vec:{key}` mirror the CRUD paths
+				// dual-write, so strip that prefix back off.
+				hits.push(raw.strip_prefix("vec:").unwrap_or(&raw).to_string());
+			}
+			hits.truncate(k);
+			return Ok(hits);
 		}
-		Ok(k)
+		bail!("knn scan: unexpected FT.SEARCH response shape: {res:?}")
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {

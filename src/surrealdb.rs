@@ -3,7 +3,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
@@ -120,6 +120,19 @@ fn surreal_distance_function(d: VectorDistance) -> &'static str {
 		VectorDistance::InnerProduct => "vector::dot",
 		VectorDistance::Manhattan => "vector::distance::manhattan",
 	}
+}
+
+/// Pull the record key out of one `SELECT id` KNN row.
+fn surreal_knn_key(row: &Value) -> Result<KnnKey> {
+	let Value::RecordId(rid) = row.get("id") else {
+		bail!("knn scan: row is missing a record id: {}", row.to_sql());
+	};
+	Ok(match &rid.key {
+		RecordIdKey::Number(n) => KnnKey::Integer(*n as u32),
+		RecordIdKey::String(t) => KnnKey::Text(t.clone()),
+		RecordIdKey::Uuid(u) => KnnKey::Text(u.to_string()),
+		other => bail!("knn scan: unsupported record key: {other:?}"),
+	})
 }
 
 /// ORDER BY direction so the nearest neighbours sort to the top of the result set.
@@ -806,7 +819,7 @@ impl BenchmarkClient for SurrealDBClient {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
+	) -> Result<Vec<KnnKey>> {
 		self.knn_scan(scan, query).await
 	}
 
@@ -815,7 +828,7 @@ impl BenchmarkClient for SurrealDBClient {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
+	) -> Result<Vec<KnnKey>> {
 		self.knn_scan(scan, query).await
 	}
 
@@ -948,7 +961,7 @@ impl SurrealDBClient {
 		.await
 	}
 
-	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<Vec<KnnKey>> {
 		let vq = scan.vector_query.as_ref().ok_or_else(|| {
 			anyhow::anyhow!("knn_scan called without a vector_query on scan `{}`", scan.name)
 		})?;
@@ -1005,7 +1018,10 @@ impl SurrealDBClient {
 		let Some(arr) = res.as_array() else {
 			bail!("knn scan: unexpected response shape: {}", res.to_sql());
 		};
-		Ok(arr.len())
+		// Recall is scored by identity, so return the record keys rather than a
+		// count. `SELECT id` yields the record id; the table half is constant
+		// so only the key half is kept.
+		arr.iter().map(surreal_knn_key).collect()
 	}
 
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {

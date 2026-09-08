@@ -13,7 +13,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
@@ -118,6 +118,22 @@ fn surreal_distance_function(d: VectorDistance) -> &'static str {
 		VectorDistance::InnerProduct => "vector::dot",
 		VectorDistance::Manhattan => "vector::distance::manhattan",
 	}
+}
+
+/// Pull the record key out of one `SELECT id` KNN row.
+fn surreal_knn_key(row: &Value) -> Result<KnnKey> {
+	let Value::Object(obj) = row else {
+		bail!("knn scan: row is not an object: {row}");
+	};
+	let Some(Value::Thing(thing)) = obj.get("id") else {
+		bail!("knn scan: row is missing a record id: {row}");
+	};
+	Ok(match &thing.id {
+		Id::Number(n) => KnnKey::Integer(*n as u32),
+		Id::String(t) => KnnKey::Text(t.clone()),
+		Id::Uuid(u) => KnnKey::Text(u.to_string()),
+		other => bail!("knn scan: unsupported record key: {other:?}"),
+	})
 }
 
 fn surreal_distance_order(d: VectorDistance) -> &'static str {
@@ -643,7 +659,7 @@ impl BenchmarkClient for SurrealDB2Client {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
+	) -> Result<Vec<KnnKey>> {
 		self.knn_scan(scan, query).await
 	}
 
@@ -652,7 +668,7 @@ impl BenchmarkClient for SurrealDB2Client {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
+	) -> Result<Vec<KnnKey>> {
 		self.knn_scan(scan, query).await
 	}
 
@@ -798,7 +814,7 @@ impl SurrealDB2Client {
 		.await
 	}
 
-	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<Vec<KnnKey>> {
 		let vq = scan.vector_query.as_ref().ok_or_else(|| {
 			anyhow::anyhow!("knn_scan called without a vector_query on scan `{}`", scan.name)
 		})?;
@@ -827,7 +843,9 @@ impl SurrealDB2Client {
 		let mut resp = self.db.query(&sql).bind(("q", q_value)).await.map_err(log_sql_err(&sql))?;
 		let res: surrealdb::Value = resp.take(0).map_err(log_sql_err(&sql))?;
 		match res.into_inner() {
-			Value::Array(a) => Ok(a.0.len()),
+			// Recall is scored by identity, so return the record keys rather
+			// than a count.
+			Value::Array(a) => a.0.iter().map(surreal_knn_key).collect(),
 			other => bail!("knn scan: unexpected response shape: {}", other),
 		}
 	}

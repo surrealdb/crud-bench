@@ -2,7 +2,7 @@
 
 use crate::dialect::{AnsiSqlDialect, Dialect, PostgresDialect};
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::memory::Config;
 use crate::util::sql::bench_to_postgres_param;
 use crate::value::BenchValue;
@@ -360,7 +360,7 @@ impl BenchmarkClient for PostgresClient {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
+	) -> Result<Vec<KnnKey>> {
 		self.knn_scan(scan, query).await
 	}
 
@@ -369,7 +369,7 @@ impl BenchmarkClient for PostgresClient {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
+	) -> Result<Vec<KnnKey>> {
 		self.knn_scan(scan, query).await
 	}
 
@@ -597,7 +597,7 @@ impl PostgresClient {
 		}
 	}
 
-	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<Vec<KnnKey>> {
 		let vq = scan
 			.vector_query
 			.as_ref()
@@ -608,12 +608,14 @@ impl PostgresClient {
 		let stm = format!("SELECT id FROM record ORDER BY {field} {op} $1 LIMIT {k}");
 		let q = pgvector::Vector::from(query.to_vec());
 		let res = self.client.query(&stm, &[&q]).await?;
-		let mut count = 0;
+		let mut hits = Vec::with_capacity(res.len());
 		for v in res {
-			black_box(self.consume(v, false).unwrap());
-			count += 1;
+			// Materialise the row as any other scan would, then keep its key:
+			// recall is scored by identity, so the ids have to come back.
+			let row = self.consume(v, false)?;
+			hits.push(black_box(KnnKey::from_id_field(&row)?));
 		}
-		Ok(count)
+		Ok(hits)
 	}
 
 	async fn batch_create<T>(&self, key_vals: Vec<(T, BenchValue)>) -> Result<()>

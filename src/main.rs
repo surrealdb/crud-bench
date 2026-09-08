@@ -525,6 +525,17 @@ pub(crate) struct VectorQuerySpec {
 	/// Holdout sampling for the query set. Defaults to a 1000-id deterministic holdout.
 	#[serde(default)]
 	pub(crate) holdout: VectorHoldout,
+	/// Relative tolerance when deciding whether a returned neighbour counts as
+	/// correct: a hit is accepted when its true distance is within this
+	/// fraction of the k-th true distance.
+	///
+	/// Engines compute distances at different precisions, so rows straddling
+	/// the k-th boundary can swap without any real quality difference. The
+	/// default of 0.0 is strict recall@k; raise it to stop that showing up as
+	/// a recall gap that is not really there. Scoring-time only — changing it
+	/// never invalidates a cached answer key.
+	#[serde(default)]
+	pub(crate) tie_epsilon: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

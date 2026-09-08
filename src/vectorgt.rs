@@ -17,9 +17,12 @@
 //! database under test.
 
 use crate::VectorDistance;
+use crate::engine::KnnKey;
+use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::valueprovider::{ValueProvider, ValueStream};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use twox_hash::XxHash64;
@@ -37,9 +40,152 @@ pub(crate) struct Neighbour {
 }
 
 /// The answer key: for each query, its true nearest neighbours, best first.
+///
+/// More than `top_k` neighbours are stored so the tie tolerance has candidates
+/// beyond the cut to admit; the first `top_k` remain the strict answer.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct GroundTruth {
 	pub(crate) neighbours: Vec<Vec<Neighbour>>,
+}
+
+/// How many neighbours to store for a given `top_k`.
+///
+/// Twice the cut is enough for any realistic tolerance: it is a scoring-time
+/// parameter, so widening the tolerance never invalidates a cached answer key.
+fn storage_depth(top_k: usize) -> usize {
+	top_k.saturating_mul(2)
+}
+
+/// One query's accepted answers, resolved into the run's key shape.
+///
+/// Built once per scan rather than per iteration: deriving `top_k` keys from
+/// the [`KeyProvider`] on every KNN call would put avoidable work next to the
+/// timed window.
+#[derive(Clone, Debug)]
+pub(crate) struct VectorAnswer {
+	/// Number of true neighbours that exist, which is `min(top_k, corpus)`.
+	/// Recall divides by this, so a corpus smaller than k is not penalised.
+	truth_len: usize,
+	/// Keys that count as a correct hit, including any admitted by the tie
+	/// tolerance.
+	keys: HashSet<KnnKey>,
+}
+
+/// Resolve the answer key into the run's key shape, applying the tie tolerance.
+///
+/// A hit counts when the engine returned a row inside the true top-k, or one
+/// whose true distance is within `tie_epsilon` (relative) of the k-th true
+/// distance. Engines compute distances at different precisions, so rows
+/// straddling the k-th boundary can swap places without any real quality
+/// difference; without a tolerance that shows up as a recall gap that is not
+/// really there. The default is 0.0 — strict recall@k.
+pub(crate) fn build_answers(
+	gt: &GroundTruth,
+	kp: &KeyProvider,
+	top_k: usize,
+	tie_epsilon: f64,
+) -> Vec<VectorAnswer> {
+	gt.neighbours
+		.iter()
+		.map(|row| {
+			let truth_len = row.len().min(top_k);
+			// Everything at or inside the k-th distance, widened by the
+			// tolerance. `cut` is the k-th distance when one exists.
+			let limit = row.get(truth_len.saturating_sub(1)).map(|n| {
+				let cut = n.distance as f64;
+				// Relative on magnitude, with an absolute floor so a cut at or
+				// near zero still admits its neighbours.
+				cut + tie_epsilon * cut.abs().max(f64::EPSILON)
+			});
+			let keys = row
+				.iter()
+				.enumerate()
+				.filter(|(i, n)| match limit {
+					Some(limit) => *i < truth_len || (n.distance as f64) <= limit,
+					None => false,
+				})
+				.map(|(_, n)| key_for(kp, n.sample))
+				.collect();
+			VectorAnswer {
+				truth_len,
+				keys,
+			}
+		})
+		.collect()
+}
+
+/// Map a benchmark sample index into the run's key shape.
+fn key_for(kp: &KeyProvider, sample: u32) -> KnnKey {
+	// `KeyProvider` is `Copy` and its `key` needs `&mut`, so score against a
+	// local copy rather than threading mutability through the caller.
+	let mut kp = *kp;
+	match &mut kp {
+		KeyProvider::OrderedInteger(p) => KnnKey::Integer(p.key(sample)),
+		KeyProvider::UnorderedInteger(p) => KnnKey::Integer(p.key(sample)),
+		KeyProvider::OrderedString(p) => KnnKey::Text(p.key(sample)),
+		KeyProvider::UnorderedString(p) => KnnKey::Text(p.key(sample)),
+	}
+}
+
+/// Recall of one KNN result: the share of a query's true neighbours the engine
+/// actually returned. `None` when the query has no true neighbours to find.
+pub(crate) fn recall(answer: &VectorAnswer, returned: &[KnnKey]) -> Option<f64> {
+	if answer.truth_len == 0 {
+		return None;
+	}
+	let found = returned.iter().filter(|k| answer.keys.contains(k)).count();
+	Some((found as f64 / answer.truth_len as f64).min(1.0))
+}
+
+/// Per-iteration recall values for one scan, merged across workers.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RecallTally {
+	values: Vec<f64>,
+}
+
+impl RecallTally {
+	pub(crate) fn record(&mut self, value: f64) {
+		self.values.push(value);
+	}
+
+	pub(crate) fn merge(&mut self, other: RecallTally) {
+		self.values.extend(other.values);
+	}
+
+	/// Collapse into the reported figures.
+	///
+	/// The mean alone hides the shape: an index can average well and still
+	/// answer a tail of queries badly, which is exactly the failure mode a
+	/// graph index has on data it indexed poorly. `p5` and `min` surface it.
+	pub(crate) fn summarise(&self) -> Option<RecallSummary> {
+		if self.values.is_empty() {
+			return None;
+		}
+		let mut sorted = self.values.clone();
+		sorted.sort_by(f64::total_cmp);
+		let mean = sorted.iter().sum::<f64>() / sorted.len() as f64;
+		// Nearest-rank percentile, clamped into range for tiny samples.
+		let idx = ((0.05 * sorted.len() as f64).ceil() as usize).clamp(1, sorted.len()) - 1;
+		Some(RecallSummary {
+			mean,
+			p5: sorted[idx],
+			min: sorted[0],
+			queries: sorted.len(),
+		})
+	}
+}
+
+/// Reported recall figures for one vector scan.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub(crate) struct RecallSummary {
+	/// Mean recall@k across scored iterations.
+	pub(crate) mean: f64,
+	/// 5th-percentile recall — the tail the mean hides.
+	pub(crate) p5: f64,
+	/// Worst single query.
+	pub(crate) min: f64,
+	/// Number of iterations scored.
+	pub(crate) queries: usize,
 }
 
 /// Everything the answer key depends on. Two runs sharing a fingerprint share
@@ -106,7 +252,16 @@ pub(crate) fn load_or_compute(
 	let path = request.cache_path(cache_dir);
 	if let Ok(text) = fs::read_to_string(&path) {
 		match serde_json::from_str::<GroundTruth>(&text) {
-			Ok(gt) if gt.neighbours.len() == queries.len() => return Ok((gt, true)),
+			// Depth as well as width: a key stored before the tie window was
+			// widened would silently score against too few candidates.
+			Ok(gt)
+				if gt.neighbours.len() == queries.len()
+					&& gt.neighbours.iter().all(|n| {
+						n.len() >= storage_depth(request.top_k).min(request.samples as usize)
+					}) =>
+			{
+				return Ok((gt, true));
+			}
 			// A truncated or stale file is simply a miss: recompute over it.
 			_ => {}
 		}
@@ -172,9 +327,9 @@ pub(crate) fn compute(
 			let end = start.saturating_add(chunk).min(request.samples);
 			let mut worker_vp = vp.clone();
 			let field = request.field.as_str();
-			let (top_k, metric) = (request.top_k, request.metric);
+			let (depth, metric) = (storage_depth(request.top_k), request.metric);
 			handles.push(scope.spawn(move || -> Result<Vec<TopK>> {
-				let mut acc: Vec<TopK> = (0..queries.len()).map(|_| TopK::new(top_k)).collect();
+				let mut acc: Vec<TopK> = (0..queries.len()).map(|_| TopK::new(depth)).collect();
 				for n in start..end {
 					// Scans run after the update phase, so the corpus a scan
 					// observes is the one the update phase left behind.
@@ -198,7 +353,8 @@ pub(crate) fn compute(
 		handles.into_iter().map(|h| h.join().expect("ground-truth worker panicked")).collect()
 	})?;
 
-	let mut merged: Vec<TopK> = (0..queries.len()).map(|_| TopK::new(request.top_k)).collect();
+	let mut merged: Vec<TopK> =
+		(0..queries.len()).map(|_| TopK::new(storage_depth(request.top_k))).collect();
 	for partial in &partials {
 		for (slot, part) in merged.iter_mut().zip(partial.iter()) {
 			slot.merge(part);
@@ -410,8 +566,11 @@ mod test {
 					.map(|(n, v)| (n as u32, distance(metric, q, v)))
 					.collect();
 				all.sort_by(|a, b| a.1.total_cmp(&b.1));
+				// The key stores beyond `top_k` for the tie window; the strict
+				// answer is its prefix.
 				let expected: Vec<u32> = all[..top_k].iter().map(|(n, _)| *n).collect();
-				let got: Vec<u32> = gt.neighbours[qi].iter().map(|n| n.sample).collect();
+				let got: Vec<u32> =
+					gt.neighbours[qi].iter().take(top_k).map(|n| n.sample).collect();
 				assert_eq!(expected, got, "{metric:?} query {qi}");
 			}
 		}
@@ -425,7 +584,7 @@ mod test {
 		let queries = vp.generate_vectors("embedding", 2, 7).unwrap();
 		let gt = compute(&request(300, 8, VectorDistance::Euclidean), &vp, &queries).unwrap();
 		for row in &gt.neighbours {
-			assert_eq!(row.len(), 8);
+			assert_eq!(row.len(), storage_depth(8));
 			assert!(row.windows(2).all(|w| w[0].distance <= w[1].distance), "{row:?}");
 		}
 	}
@@ -484,6 +643,131 @@ mod test {
 			assert!(!seen.contains(&f), "fingerprint collision for {v:?}");
 			seen.push(f);
 		}
+	}
+
+	fn answer_key(rows: Vec<Vec<(u32, f32)>>) -> GroundTruth {
+		GroundTruth {
+			neighbours: rows
+				.into_iter()
+				.map(|r| {
+					r.into_iter()
+						.map(|(sample, distance)| Neighbour {
+							sample,
+							distance,
+						})
+						.collect()
+				})
+				.collect(),
+		}
+	}
+
+	fn integer_kp() -> KeyProvider {
+		KeyProvider::new(crate::KeyType::Integer, false)
+	}
+
+	/// Engines return keys, not sample indices, so tests have to address rows
+	/// the same way — the two are not the same number.
+	fn keys(kp: &KeyProvider, samples: &[u32]) -> Vec<KnnKey> {
+		samples.iter().map(|n| key_for(kp, *n)).collect()
+	}
+
+	#[test]
+	fn recall_counts_only_true_neighbours() {
+		let gt = answer_key(vec![vec![(1, 0.1), (2, 0.2), (3, 0.3), (9, 0.9), (8, 1.0), (7, 1.1)]]);
+		let kp = integer_kp();
+		let answers = build_answers(&gt, &kp, 3, 0.0);
+		let hit = |ids: &[u32]| -> Option<f64> { recall(&answers[0], &keys(&kp, ids)) };
+		assert_eq!(hit(&[1, 2, 3]), Some(1.0));
+		assert_eq!(hit(&[1, 2, 99]), Some(2.0 / 3.0));
+		assert_eq!(hit(&[97, 98, 99]), Some(0.0));
+		// Rows outside the true top-k earn nothing, even though the answer key
+		// stores them for the tie window.
+		assert_eq!(hit(&[9, 8, 7]), Some(0.0));
+	}
+
+	/// A near-tie at the k-th place should not read as a quality gap: engines
+	/// compute distances at different precisions and can legitimately swap the
+	/// rows straddling the cut.
+	#[test]
+	fn tie_epsilon_admits_a_boundary_neighbour() {
+		let gt = answer_key(vec![vec![(1, 0.10), (2, 0.20), (3, 0.2001), (4, 0.9)]]);
+		let kp = integer_kp();
+		let returned = keys(&kp, &[1, 3]);
+
+		let strict = build_answers(&gt, &kp, 2, 0.0);
+		assert_eq!(recall(&strict[0], &returned), Some(0.5));
+
+		let tolerant = build_answers(&gt, &kp, 2, 0.01);
+		assert_eq!(recall(&tolerant[0], &returned), Some(1.0));
+
+		// The tolerance must stay narrow: a genuinely distant row is still wrong.
+		assert_eq!(recall(&tolerant[0], &keys(&kp, &[1, 4])), Some(0.5));
+	}
+
+	/// Recall divides by the neighbours that exist, so a corpus smaller than k
+	/// is not scored as a miss.
+	#[test]
+	fn short_answer_key_is_not_penalised() {
+		let gt = answer_key(vec![vec![(1, 0.1), (2, 0.2)]]);
+		let kp = integer_kp();
+		let answers = build_answers(&gt, &kp, 10, 0.0);
+		assert_eq!(recall(&answers[0], &keys(&kp, &[1, 2])), Some(1.0));
+	}
+
+	/// Ground truth stores sample indices; scoring compares engine keys. The
+	/// mapping between them has to be the run's own KeyProvider or every hit
+	/// silently misses.
+	#[test]
+	fn answers_use_the_runs_key_shape() {
+		let gt = answer_key(vec![vec![(0, 0.1), (1, 0.2)]]);
+
+		let mut kp = KeyProvider::new(crate::KeyType::Integer, true);
+		let KeyProvider::UnorderedInteger(p) = &mut kp else {
+			panic!("expected an unordered integer provider");
+		};
+		let expected: Vec<KnnKey> = [0u32, 1].iter().map(|n| KnnKey::Integer(p.key(*n))).collect();
+		let answers = build_answers(&gt, &kp, 2, 0.0);
+		assert_eq!(recall(&answers[0], &expected), Some(1.0));
+
+		let mut string_kp = KeyProvider::new(crate::KeyType::String26, false);
+		let KeyProvider::OrderedString(sp) = &mut string_kp else {
+			panic!("expected an ordered string provider");
+		};
+		let expected: Vec<KnnKey> = [0u32, 1].iter().map(|n| KnnKey::Text(sp.key(*n))).collect();
+		let answers = build_answers(&gt, &string_kp, 2, 0.0);
+		assert_eq!(recall(&answers[0], &expected), Some(1.0));
+	}
+
+	#[test]
+	fn summary_reports_the_tail_not_just_the_mean() {
+		let mut tally = RecallTally::default();
+		for _ in 0..95 {
+			tally.record(1.0);
+		}
+		for _ in 0..5 {
+			tally.record(0.2);
+		}
+		let s = tally.summarise().unwrap();
+		assert_eq!(s.queries, 100);
+		assert!((s.mean - 0.96).abs() < 1e-9, "{}", s.mean);
+		// A mean of 0.96 hides a 5% tail answering at 0.2.
+		assert_eq!(s.p5, 0.2);
+		assert_eq!(s.min, 0.2);
+		assert!(RecallTally::default().summarise().is_none());
+	}
+
+	/// Tallies are merged across workers, so the summary must not depend on
+	/// which worker happened to score which query.
+	#[test]
+	fn tallies_merge_across_workers() {
+		let mut a = RecallTally::default();
+		a.record(1.0);
+		let mut b = RecallTally::default();
+		b.record(0.0);
+		a.merge(b);
+		let s = a.summarise().unwrap();
+		assert_eq!(s.queries, 2);
+		assert!((s.mean - 0.5).abs() < 1e-9);
 	}
 
 	#[test]

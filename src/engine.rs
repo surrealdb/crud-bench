@@ -8,6 +8,35 @@ use anyhow::{Result, bail};
 use std::future::Future;
 use std::time::Duration;
 
+/// One hit returned by a KNN query, in whatever key shape the run is using.
+///
+/// Recall is scored by identity, so adapters return the row's key rather than a
+/// count. Ground truth stores benchmark sample indices, which
+/// [`crate::keyprovider::KeyProvider`] maps into this same shape for comparison
+/// — that keeps the cached answer key reusable across key types instead of
+/// baking one engine's identifier format into it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum KnnKey {
+	/// Numeric primary key.
+	Integer(u32),
+	/// String or UUID primary key, as the engine rendered it.
+	Text(String),
+}
+
+impl KnnKey {
+	/// Read a hit key out of a materialised row's `id` field, for adapters
+	/// whose KNN projection goes through the usual row decoding.
+	pub(crate) fn from_id_field(row: &BenchValue) -> Result<Self> {
+		match row.get_field("id") {
+			Some(BenchValue::Int(i)) => Ok(KnnKey::Integer(*i as u32)),
+			Some(BenchValue::UInt(u)) => Ok(KnnKey::Integer(*u as u32)),
+			Some(BenchValue::String(s)) => Ok(KnnKey::Text(s.clone())),
+			Some(BenchValue::Uuid(u)) => Ok(KnnKey::Text(u.to_string())),
+			other => bail!("knn hit has an unusable id field: {other:?}"),
+		}
+	}
+}
+
 /// Indicates whether a scan is running with or without an index
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanContext {
@@ -155,9 +184,9 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		query: &[f32],
 		kp: &KeyProvider,
 		ctx: ScanContext,
-	) -> impl Future<Output = Result<()>> + Send {
+	) -> impl Future<Output = Result<Vec<KnnKey>>> + Send {
 		async move {
-			let result = match kp {
+			let hits = match kp {
 				KeyProvider::OrderedInteger(_) | KeyProvider::UnorderedInteger(_) => {
 					self.scan_vector_u32(scan, query, ctx).await?
 				}
@@ -167,12 +196,14 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 			};
 			if let Some(expect) = scan.expect {
 				assert_eq!(
-					expect, result,
-					"Expected a length of {expect} but found {result} for {}",
+					expect,
+					hits.len(),
+					"Expected a length of {expect} but found {} for {}",
+					hits.len(),
 					scan.name
 				);
 			}
-			Ok(())
+			Ok(hits)
 		}
 	}
 
@@ -226,23 +257,25 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
-	/// Vector KNN scan with a numeric key — engines override this for vector backends.
+	/// Vector KNN scan with a numeric key, returning the hit keys best-first —
+	/// engines override this for vector backends.
 	fn scan_vector_u32(
 		&self,
 		_scan: &Scan,
 		_query: &[f32],
 		_ctx: ScanContext,
-	) -> impl Future<Output = Result<usize>> + Send {
+	) -> impl Future<Output = Result<Vec<KnnKey>>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
-	/// Vector KNN scan with a string key — engines override this for vector backends.
+	/// Vector KNN scan with a string key, returning the hit keys best-first —
+	/// engines override this for vector backends.
 	fn scan_vector_string(
 		&self,
 		_scan: &Scan,
 		_query: &[f32],
 		_ctx: ScanContext,
-	) -> impl Future<Output = Result<usize>> + Send {
+	) -> impl Future<Output = Result<Vec<KnnKey>>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
