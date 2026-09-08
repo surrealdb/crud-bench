@@ -2,7 +2,7 @@ use crate::Benchmark;
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::value::BenchValue;
-use crate::valueprovider::Columns;
+use crate::valueprovider::{Columns, ValueStream};
 use crate::{BatchOperation, Index, KeyType, Scan, VectorQuerySpec};
 use anyhow::{Result, bail};
 use std::future::Future;
@@ -279,19 +279,23 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		async move {
 			match kp {
 				KeyProvider::OrderedInteger(p) => {
-					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_integer_key_values_iter(n, batch_op, p, vp, ValueStream::Create);
 					self.batch_create_u32(pairs_iter).await
 				}
 				KeyProvider::UnorderedInteger(p) => {
-					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_integer_key_values_iter(n, batch_op, p, vp, ValueStream::Create);
 					self.batch_create_u32(pairs_iter).await
 				}
 				KeyProvider::OrderedString(p) => {
-					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_string_key_values_iter(n, batch_op, p, vp, ValueStream::Create);
 					self.batch_create_string(pairs_iter).await
 				}
 				KeyProvider::UnorderedString(p) => {
-					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_string_key_values_iter(n, batch_op, p, vp, ValueStream::Create);
 					self.batch_create_string(pairs_iter).await
 				}
 			}
@@ -338,19 +342,23 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		async move {
 			match kp {
 				KeyProvider::OrderedInteger(p) => {
-					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_integer_key_values_iter(n, batch_op, p, vp, ValueStream::Update);
 					self.batch_update_u32(pairs_iter).await
 				}
 				KeyProvider::UnorderedInteger(p) => {
-					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_integer_key_values_iter(n, batch_op, p, vp, ValueStream::Update);
 					self.batch_update_u32(pairs_iter).await
 				}
 				KeyProvider::OrderedString(p) => {
-					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_string_key_values_iter(n, batch_op, p, vp, ValueStream::Update);
 					self.batch_update_string(pairs_iter).await
 				}
 				KeyProvider::UnorderedString(p) => {
-					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_string_key_values_iter(n, batch_op, p, vp, ValueStream::Update);
 					self.batch_update_string(pairs_iter).await
 				}
 			}
@@ -518,6 +526,9 @@ struct IntegerKeyValuesIter<'a> {
 	current: usize,
 	kp: &'a mut dyn IntegerKeyProvider,
 	vp: &'a mut crate::valueprovider::ValueProvider,
+	/// Derivation stream for the payloads, so a seeded run reproduces batch
+	/// content the same way single-row create and update do.
+	stream: ValueStream,
 }
 
 impl<'a> Iterator for IntegerKeyValuesIter<'a> {
@@ -527,7 +538,7 @@ impl<'a> Iterator for IntegerKeyValuesIter<'a> {
 		if self.current < self.batch_size {
 			let sample_idx = self.n * self.batch_size as u32 + self.current as u32;
 			let key = self.kp.key(sample_idx);
-			let value = self.vp.generate_value();
+			let value = self.vp.generate_value_for(self.stream, sample_idx);
 			self.current += 1;
 			Some((key, value))
 		} else {
@@ -550,6 +561,9 @@ struct StringKeyValuesIter<'a> {
 	current: usize,
 	kp: &'a mut dyn StringKeyProvider,
 	vp: &'a mut crate::valueprovider::ValueProvider,
+	/// Derivation stream for the payloads, so a seeded run reproduces batch
+	/// content the same way single-row create and update do.
+	stream: ValueStream,
 }
 
 impl<'a> Iterator for StringKeyValuesIter<'a> {
@@ -559,7 +573,7 @@ impl<'a> Iterator for StringKeyValuesIter<'a> {
 		if self.current < self.batch_size {
 			let sample_idx = self.n * self.batch_size as u32 + self.current as u32;
 			let key = self.kp.key(sample_idx);
-			let value = self.vp.generate_value();
+			let value = self.vp.generate_value_for(self.stream, sample_idx);
 			self.current += 1;
 			Some((key, value))
 		} else {
@@ -609,6 +623,7 @@ fn generate_integer_key_values_iter<'a>(
 	batch_op: &BatchOperation,
 	kp: &'a mut dyn IntegerKeyProvider,
 	vp: &'a mut crate::valueprovider::ValueProvider,
+	stream: ValueStream,
 ) -> IntegerKeyValuesIter<'a> {
 	IntegerKeyValuesIter {
 		n,
@@ -616,6 +631,7 @@ fn generate_integer_key_values_iter<'a>(
 		current: 0,
 		kp,
 		vp,
+		stream,
 	}
 }
 
@@ -625,6 +641,7 @@ fn generate_string_key_values_iter<'a>(
 	batch_op: &BatchOperation,
 	kp: &'a mut dyn StringKeyProvider,
 	vp: &'a mut crate::valueprovider::ValueProvider,
+	stream: ValueStream,
 ) -> StringKeyValuesIter<'a> {
 	StringKeyValuesIter {
 		n,
@@ -632,5 +649,6 @@ fn generate_string_key_values_iter<'a>(
 		current: 0,
 		kp,
 		vp,
+		stream,
 	}
 }

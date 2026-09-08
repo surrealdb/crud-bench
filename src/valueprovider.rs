@@ -3,6 +3,7 @@ use anyhow::{Result, anyhow, bail};
 use chrono::{TimeZone, Utc};
 use log::debug;
 use rand::RngExt as RandGen;
+use rand::SeedableRng;
 use rand::prelude::SmallRng;
 use rust_decimal::Decimal;
 use serde_json::{Map, Number, Value};
@@ -12,14 +13,66 @@ use std::ops::Range;
 use std::str::FromStr;
 use uuid::Uuid;
 
+/// Which derivation stream a generated payload belongs to.
+///
+/// A seeded provider salts each stream differently so they stay independent.
+/// The create and update phases both write every sample, and salting them apart
+/// means updates write genuinely different content rather than rewriting
+/// identical bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ValueStream {
+	/// Payloads written by the create phase.
+	Create,
+	/// Payloads written by the update phase. Scans run after the update phase,
+	/// so this is the content a scan actually observes — and therefore the
+	/// stream vector-search ground truth has to be derived from.
+	Update,
+	/// Query vectors for vector search. Never inserted, so a query set drawn
+	/// from this stream is disjoint from the corpus by construction.
+	Query,
+}
+
+impl ValueStream {
+	/// Per-stream salt. Distinct arbitrary constants; the values carry no
+	/// meaning beyond being unrelated to one another and to [`SAMPLE_ODD`].
+	const fn salt(self) -> u64 {
+		match self {
+			ValueStream::Create => 0x243F_6A88_85A3_08D3,
+			ValueStream::Update => 0xB7E1_5162_8AED_2A6B,
+			ValueStream::Query => 0xC13F_A9A9_02A6_328E,
+		}
+	}
+}
+
+/// Odd multiplier spreading consecutive sample indices before mixing.
+const SAMPLE_ODD: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// Derive the RNG seed for one sample of one stream.
+///
+/// SplitMix64's finalisation step decorrelates neighbouring sample indices, so
+/// sample `n` and sample `n + 1` do not produce visibly related payloads.
+fn sample_seed(seed: u64, stream: ValueStream, n: u32) -> u64 {
+	let mut z = seed ^ stream.salt() ^ (n as u64).wrapping_mul(SAMPLE_ODD);
+	z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+	z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+	z ^ (z >> 31)
+}
+
 /// Generates synthetic [`BenchValue`] payloads from a JSON template authored in
 /// `bench.toml`. The template is parsed once into a [`ValueGenerator`] tree and
 /// each call to [`Self::generate_value`] produces a fresh randomised
 /// [`BenchValue`] following the schema.
+///
+/// A provider carrying a corpus seed (see [`Self::with_seed`]) can additionally
+/// produce the payload for a given sample index as a pure function of that
+/// seed, so the same index yields the same row in every client, every run and
+/// every engine. Vector-search ground truth depends on that property: it lets
+/// the corpus be reconstructed for scoring without reading a single row back.
 pub(crate) struct ValueProvider {
 	generator: ValueGenerator,
 	rng: SmallRng,
 	columns: Columns,
+	seed: Option<u64>,
 }
 
 impl ValueProvider {
@@ -37,7 +90,19 @@ impl ValueProvider {
 			generator,
 			columns,
 			rng: rand::make_rng(),
+			seed: None,
 		})
+	}
+
+	/// Attach a corpus seed, making [`Self::generate_value_for`] deterministic.
+	pub(crate) fn with_seed(mut self, seed: u64) -> Self {
+		self.seed = Some(seed);
+		self
+	}
+
+	/// The corpus seed, when this provider was built with one.
+	pub(crate) fn seed(&self) -> Option<u64> {
+		self.seed
 	}
 
 	/// Returns the schema's columns in their declared order.
@@ -49,6 +114,63 @@ impl ValueProvider {
 	pub(crate) fn generate_value(&mut self) -> BenchValue {
 		self.generator.generate(&mut self.rng)
 	}
+
+	/// Produce the payload for sample `n` of `stream`.
+	///
+	/// With a corpus seed this is a pure function of `(seed, stream, n)`.
+	/// Without one it draws from the provider's own stream and behaves exactly
+	/// like [`Self::generate_value`], which keeps unseeded runs — every
+	/// non-vector config — byte-for-byte unchanged.
+	pub(crate) fn generate_value_for(&mut self, stream: ValueStream, n: u32) -> BenchValue {
+		match self.seed {
+			Some(seed) => {
+				let mut rng = SmallRng::seed_from_u64(sample_seed(seed, stream, n));
+				self.generator.generate(&mut rng)
+			}
+			None => self.generator.generate(&mut self.rng),
+		}
+	}
+
+	/// Generate `count` standalone vectors shaped like the schema's `field`
+	/// column, drawn deterministically from `seed`.
+	///
+	/// Queries come from the same generator as the corpus, so they follow the
+	/// corpus distribution by construction rather than by a parallel
+	/// implementation that could drift from it. Each query is seeded on its own
+	/// index, so raising `count` extends the set instead of reshuffling it.
+	pub(crate) fn generate_vectors(
+		&self,
+		field: &str,
+		count: usize,
+		seed: u64,
+	) -> Result<Vec<Vec<f32>>> {
+		let generator = self.vector_generator(field)?;
+		let mut out = Vec::with_capacity(count);
+		for i in 0..count {
+			let mut rng = SmallRng::seed_from_u64(sample_seed(seed, ValueStream::Query, i as u32));
+			match generator.generate(&mut rng) {
+				BenchValue::FloatVector(v) => out.push(v),
+				other => bail!("field {field:?} generated {other:?}, expected a vector"),
+			}
+		}
+		Ok(out)
+	}
+
+	/// Locate the generator for a top-level `vector:<dim>` column.
+	fn vector_generator(&self, field: &str) -> Result<&ValueGenerator> {
+		let ValueGenerator::Object(fields) = &self.generator else {
+			bail!("value template must be an object");
+		};
+		let Some((_, generator)) = fields.iter().find(|(name, _)| name == field) else {
+			bail!("field {field:?} is not present in the value template");
+		};
+		match generator {
+			ValueGenerator::Vector {
+				..
+			} => Ok(generator),
+			other => bail!("field {field:?} is {other:?}, not a `vector:<dim>` column"),
+		}
+	}
 }
 
 impl Clone for ValueProvider {
@@ -57,6 +179,7 @@ impl Clone for ValueProvider {
 			generator: self.generator.clone(),
 			rng: rand::make_rng(),
 			columns: self.columns.clone(),
+			seed: self.seed,
 		}
 	}
 }

@@ -36,6 +36,7 @@ mod terminal;
 mod util;
 mod value;
 mod valueprovider;
+mod vectorgt;
 mod workloads;
 
 // Datastore modules
@@ -171,6 +172,20 @@ pub(crate) struct Args {
 	/// Emit debug phase markers for log-based tooling
 	#[arg(long, default_value_t = false)]
 	pub(crate) emit_phase_markers: bool,
+
+	/// Seed for generated row content, overriding `seed` in the benchmark TOML.
+	/// With a seed the corpus is a pure function of `(seed, sample)`, which
+	/// makes a run reproducible and lets vector-search ground truth reconstruct
+	/// the corpus instead of reading it back. Without one, values come from
+	/// entropy as before.
+	#[arg(long)]
+	pub(crate) corpus_seed: Option<u64>,
+
+	/// Directory holding cached vector-search ground truth. The answer key is a
+	/// pure function of the corpus and query seeds, so it is computed once and
+	/// reused across engines and runs.
+	#[arg(long, env = "CRUD_BENCH_GROUND_TRUTH_CACHE", default_value = ".crud-bench-gt")]
+	pub(crate) ground_truth_cache: String,
 }
 
 /// Primary key shape and size for generated record ids.
@@ -466,8 +481,10 @@ pub(crate) enum VectorIndexStrategy {
 	},
 }
 
-/// Query-vector source: a deterministic id sample drawn from the inserted
-/// records. The id range and seed make the same query set reproducible
+/// Query-vector source: vectors generated from `seed` using the schema's own
+/// vector generator, so they follow the corpus distribution but are never
+/// inserted. Keeping them out of the corpus means no query is its own nearest
+/// neighbour. The count and seed make the same query set reproducible
 /// across runs and engines.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct VectorHoldout {
@@ -754,7 +771,14 @@ fn run(args: Args) -> Result<()> {
 	let kp = KeyProvider::new(args.key, args.random);
 	let bench_toml = load_bench_toml(&args.config)?;
 	let value_json = serde_json::to_string(&bench_toml.value)?;
-	let vp = ValueProvider::new(&value_json)?;
+	// A CLI seed overrides the config's, so a sweep can vary the corpus without
+	// editing the workload file.
+	let corpus_seed = args.corpus_seed.or(bench_toml.seed);
+	let vp = match corpus_seed {
+		Some(seed) => ValueProvider::new(&value_json)?.with_seed(seed),
+		None => ValueProvider::new(&value_json)?,
+	};
+	benchmark.set_value_template(value_json.clone());
 	let mut batches = bench_toml.batches;
 	if args.skip_batches {
 		batches.clear();
@@ -904,6 +928,8 @@ mod test {
 
 	fn test(database: Database, key: KeyType, random: bool) -> Result<()> {
 		run(Args {
+			corpus_seed: None,
+			ground_truth_cache: ".crud-bench-gt".to_string(),
 			image: None,
 			name: None,
 			database,
