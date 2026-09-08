@@ -82,6 +82,13 @@ embedding = "vector:768:clustered:200"
 [[scans]]
 id = "vector_knn"
 iterations = 1000
+# KNN answers in well under a millisecond once the index is warm, so at the
+# default concurrency these legs measure queueing rather than search — the same
+# query timed 0.4ms at one client and roughly 1500ms at sixty-four. Latency is
+# only interpretable at a low setting; raise these to measure throughput under
+# load instead, and read the numbers as such.
+clients = 1
+threads = 1
 
 [[scans.runs]]
 name = "bruteforce knn(10)"

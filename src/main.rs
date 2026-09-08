@@ -228,6 +228,20 @@ pub(crate) struct ScanRun {
 pub(crate) struct ScanSpec {
 	/// Stable identifier for grouping, results, and index job names when `with_index` is set.
 	id: String,
+	/// Concurrent clients for this scan's timed legs, capped at `--clients`.
+	/// Defaults to `--clients`.
+	///
+	/// A query that answers in well under a millisecond spends its time
+	/// queueing rather than working at the default concurrency — a KNN scan
+	/// measured 0.4ms at one client and ~1500ms at sixty-four, which is the
+	/// queue, not the index. Latency for such a scan only means something at a
+	/// low setting.
+	#[serde(default)]
+	pub(crate) clients: Option<u32>,
+	/// Threads per client for this scan's timed legs. Defaults to `--threads`.
+	#[serde(default)]
+	pub(crate) threads: Option<u32>,
+
 	/// Display name for a single-run scan; omit when using `runs` instead (mutually exclusive).
 	name: Option<String>,
 	/// Multiple named projections sharing the same parameters; omit when using `name` instead.
@@ -262,6 +276,8 @@ impl ScanSpec {
 	fn into_scans(self, spec_group: u32) -> Result<Vec<Scan>> {
 		let ScanSpec {
 			id,
+			clients,
+			threads,
 			name,
 			runs,
 			iterations,
@@ -296,6 +312,8 @@ impl ScanSpec {
 				}
 				Ok(vec![Scan {
 					id: id.clone(),
+					clients,
+					threads,
 					spec_group,
 					multi_run_spec: false,
 					name: n,
@@ -323,6 +341,8 @@ impl ScanSpec {
 					let run_vq = run.vector_query.or_else(|| vector_query.clone());
 					out.push(Scan {
 						id: id.clone(),
+						clients,
+						threads,
 						spec_group,
 						multi_run_spec,
 						name: run.name,
@@ -645,6 +665,20 @@ pub(crate) struct VectorQuerySpec {
 pub(crate) struct Scan {
 	/// Stable id from the scan spec (grouping, results, index names when indexed).
 	pub(crate) id: String,
+	/// Concurrent clients for this scan's timed legs, capped at `--clients`.
+	/// Defaults to `--clients`.
+	///
+	/// A query that answers in well under a millisecond spends its time
+	/// queueing rather than working at the default concurrency — a KNN scan
+	/// measured 0.4ms at one client and ~1500ms at sixty-four, which is the
+	/// queue, not the index. Latency for such a scan only means something at a
+	/// low setting.
+	#[serde(default)]
+	pub(crate) clients: Option<u32>,
+	/// Threads per client for this scan's timed legs. Defaults to `--threads`.
+	#[serde(default)]
+	pub(crate) threads: Option<u32>,
+
 	/// Which top-level scan JSON object this row came from (CLI grouping only).
 	#[serde(skip)]
 	pub(crate) spec_group: u32,
@@ -1141,6 +1175,30 @@ mod test {
 			)
 			.is_err()
 		);
+	}
+
+	/// The override has to survive `runs` expansion, or a multi-run scan would
+	/// silently fall back to the CLI concurrency on every leg but the first.
+	#[test]
+	fn scan_concurrency_override_expands_to_every_run() {
+		let json = r#"[{ "id": "s", "clients": 1, "threads": 2,
+		   "runs": [{ "name": "a" }, { "name": "b" }] }]"#;
+		let scans = expand_scan_specs(serde_json::from_str(json).unwrap()).unwrap();
+		assert_eq!(scans.len(), 2);
+		for scan in &scans {
+			assert_eq!(scan.clients, Some(1));
+			assert_eq!(scan.threads, Some(2));
+		}
+	}
+
+	/// Omitting it means "use the CLI settings", which is what every existing
+	/// config does.
+	#[test]
+	fn scan_concurrency_override_defaults_to_unset() {
+		let json = r#"[{ "id": "s", "name": "a" }]"#;
+		let scans = expand_scan_specs(serde_json::from_str(json).unwrap()).unwrap();
+		assert_eq!(scans[0].clients, None);
+		assert_eq!(scans[0].threads, None);
 	}
 
 	fn test(database: Database, key: KeyType, random: bool) -> Result<()> {

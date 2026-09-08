@@ -256,6 +256,9 @@ Each scan object can make use of the following values:
 - `start`: Skips the specified number of rows before starting to return rows.
 - `limit`: Specifies the maximum number of rows to return.
 - `expect`: (optional) Asserts the expected number of rows returned.
+- `clients` / `threads`: (optional) Concurrency for this scan's timed legs, overriding `--clients`
+  and `--threads`. `clients` is capped at the pool `--clients` created. Index DDL is unaffected — it
+  always runs on a single client.
 
 ```json
 [
@@ -358,6 +361,20 @@ KNN operator, Redis passes `EF_RUNTIME` on the query rather than fixing it at `F
 pgvector takes it from the `hnsw.ef_search` session GUC, which is applied to every client before each
 leg — a setting made only on the client that built the index would reach one session out of
 `--clients`.
+
+#### Concurrency
+
+Vector legs default to `clients = 1`, `threads = 1` in `config/vector.toml`, and that default is
+load-bearing. Once an index is warm a KNN query answers in well under a millisecond, so at the
+benchmark's usual concurrency the timed legs measure queueing rather than search: the same query
+measured **0.4 ms at one client and roughly 1500 ms at sixty-four**. Raise the setting to measure
+throughput under load — that is a legitimate thing to want — but do not read the latency columns of
+such a run as search cost.
+
+The first leg timed after an index build is also warmed with untimed queries first. Without that it
+absorbs the whole cost of warming the index, and not by a little: on a 50k-row HNSW the first leg
+measured ~295 ms per query against ~0.5 ms for the identical query in the leg that followed, and it
+was *more accurate* as well — a cold index answers differently, not just slower.
 
 #### Recall
 
