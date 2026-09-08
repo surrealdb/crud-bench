@@ -205,6 +205,10 @@ Within the JSON structure, the following values are replaced by randomly generat
 - Every `int_enum:A,B,C` will be replaced by a i32 from `A` `B` or `C`.
 - Every `float_enum:A,B,C` will be replaced by a f32 from `A` `B` or `C`.
 - Every `datetime` will be replaced by a datetime (ISO 8601).
+- Every `vector:X` will be replaced by an `X`-dimension vector with uniform components in `[-1, 1]`.
+- Every `vector:X:LO..HI` will be replaced by an `X`-dimension vector with uniform components in `[LO, HI]`.
+- Every `vector:X:clustered:N` will be replaced by an `X`-dimension unit vector drawn from a mixture
+  of `N` clusters. Add `:SIGMA` (default `0.35`) to widen or tighten the clusters.
 
 ```json
 {
@@ -313,6 +317,25 @@ block describes one KNN benchmark:
 > [!NOTE]
 > Engines without vector support skip these runs rather than failing. DiskANN is currently
 > implemented for SurrealDB only.
+
+#### Vector data
+
+Use `vector:<dim>:clustered:<n>` rather than `vector:<dim>` for anything whose recall you intend to
+read. Uniform components leave a corpus with no neighbourhood structure — under distance
+concentration every pair sits at roughly the same distance, so a query's true neighbours are
+conspicuous and any index walks straight to them. Measured over 20k 128-d rows, the nearest neighbour
+sits at 65% of a random pair's distance under `vector:128`, and at 8% under
+`vector:128:clustered:200`. Recall only tells you anything on the second.
+
+Clusters are drawn from the corpus seed, so two seeds give two genuinely different datasets rather
+than one structure populated differently. Query vectors come from the same generator, so they follow
+the corpus distribution by construction.
+
+Corpus size matters more than dimension. Dimension scales cost linearly without making the search
+harder; rows add candidates that can confuse a graph. Measured against embedded SurrealDB at 128
+dimensions, neither graph index beats a linear scan below ~100k rows — at 200k, HNSW is 1.7x faster
+than bruteforce and DiskANN 3.4x. Treat 100k as a floor, and 1M as the size worth quoting, which also
+matches the scale of the standard ANN datasets.
 
 #### Recall
 

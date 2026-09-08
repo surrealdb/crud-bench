@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::ops::Range;
 use std::str::FromStr;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Which derivation stream a generated payload belongs to.
@@ -95,8 +96,13 @@ impl ValueProvider {
 	}
 
 	/// Attach a corpus seed, making [`Self::generate_value_for`] deterministic.
+	///
+	/// Cluster centres are re-drawn from the seed as well, so two seeds give two
+	/// genuinely different datasets rather than the same clusters populated
+	/// differently.
 	pub(crate) fn with_seed(mut self, seed: u64) -> Self {
 		self.seed = Some(seed);
+		self.generator.reseed_clusters(seed);
 		self
 	}
 
@@ -167,6 +173,9 @@ impl ValueProvider {
 		match generator {
 			ValueGenerator::Vector {
 				..
+			}
+			| ValueGenerator::ClusteredVector {
+				..
 			} => Ok(generator),
 			other => bail!("field {field:?} is {other:?}, not a `vector:<dim>` column"),
 		}
@@ -214,6 +223,69 @@ enum ValueGenerator {
 		lo: f32,
 		hi: f32,
 	},
+	/// Fixed-dimension f32 vector drawn from a mixture of clusters on the unit
+	/// sphere: pick a centroid, add Gaussian noise, renormalise.
+	///
+	/// Uniform components (see [`ValueGenerator::Vector`]) give a corpus with no
+	/// neighbourhood structure — in high dimensions every pair sits at roughly
+	/// the same distance, so a query's true neighbours are conspicuous and any
+	/// graph walks straight to them. Recall then reads 1.0 for every index and
+	/// discriminates nothing. Clusters put many plausible near-neighbours at
+	/// similar distances, which is what an approximate index actually has to
+	/// get right, and what real embeddings look like.
+	ClusteredVector {
+		dim: usize,
+		/// Shared cluster centres. Every row must land in the same structure
+		/// regardless of which client generated it, so these are fixed for the
+		/// provider rather than drawn per row.
+		centroids: Arc<Vec<Vec<f32>>>,
+		/// Noise length relative to a unit centroid.
+		sigma: f32,
+	},
+}
+
+/// Cluster spread when `vector:<dim>:clustered:<n>` omits it.
+///
+/// At 0.35 a point sits well inside its own cluster while the cluster still has
+/// real internal spread, so a query has many same-cluster candidates to confuse
+/// an index without the clusters bleeding into one another.
+const DEFAULT_CLUSTER_SIGMA: f32 = 0.35;
+
+/// Seed for cluster centres before a corpus seed is attached.
+const DEFAULT_CENTROID_SEED: u64 = 0x5EED_C0DE_CE47_401D;
+
+/// Draw `clusters` unit-length centres, deterministically from `seed`.
+///
+/// Gaussian components normalised to length 1 give directions spread evenly over
+/// the sphere; sampling components uniformly would bunch them toward the corners
+/// of the cube instead.
+fn cluster_centroids(dim: usize, clusters: usize, seed: u64) -> Vec<Vec<f32>> {
+	let mut rng = SmallRng::seed_from_u64(seed);
+	(0..clusters)
+		.map(|_| {
+			let mut v: Vec<f32> = (0..dim).map(|_| standard_normal(&mut rng)).collect();
+			normalise(&mut v);
+			v
+		})
+		.collect()
+}
+
+/// One draw from N(0, 1) by the Box-Muller transform.
+fn standard_normal(rng: &mut SmallRng) -> f32 {
+	// `u1` must exclude 0 or `ln` diverges.
+	let u1: f32 = RandGen::random_range(rng, f32::EPSILON..1.0);
+	let u2: f32 = RandGen::random_range(rng, 0.0..1.0);
+	(-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
+}
+
+/// Scale a vector to unit length, leaving an all-zero vector untouched.
+fn normalise(v: &mut [f32]) {
+	let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+	if norm > 0.0 {
+		for x in v.iter_mut() {
+			*x /= norm;
+		}
+	}
 }
 
 const CHARSET: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -286,6 +358,35 @@ fn bytes_range(rng: &mut SmallRng, range: Range<usize>) -> Vec<u8> {
 }
 
 impl ValueGenerator {
+	/// Re-draw cluster centres from the corpus seed, in place, throughout the
+	/// template tree.
+	fn reseed_clusters(&mut self, seed: u64) {
+		match self {
+			ValueGenerator::ClusteredVector {
+				dim,
+				centroids,
+				..
+			} => {
+				// Salted so the centres are not the same draw as sample 0 of any
+				// stream, which would correlate the structure with a row.
+				let clusters = centroids.len();
+				*centroids =
+					Arc::new(cluster_centroids(*dim, clusters, seed ^ DEFAULT_CENTROID_SEED));
+			}
+			ValueGenerator::Array(items) => {
+				for g in items {
+					g.reseed_clusters(seed);
+				}
+			}
+			ValueGenerator::Object(fields) => {
+				for (_, g) in fields {
+					g.reseed_clusters(seed);
+				}
+			}
+			_ => {}
+		}
+	}
+
 	fn new(value: Value) -> Result<Self> {
 		match value {
 			Value::Null => bail!("Unsupported type: Null"),
@@ -338,7 +439,8 @@ impl ValueGenerator {
 		} else if let Some(i) = s.strip_prefix("bytes:") {
 			Self::Bytes(Length::new(i)?)
 		} else if let Some(rest) = s.strip_prefix("vector:") {
-			// `vector:<dim>` (uniform [-1, 1]) or `vector:<dim>:<lo>..<hi>`.
+			// `vector:<dim>` (uniform [-1, 1]), `vector:<dim>:<lo>..<hi>`, or
+			// `vector:<dim>:clustered:<clusters>[:<sigma>]`.
 			let (dim_str, range) = match rest.split_once(':') {
 				Some((d, r)) => (d, Some(r)),
 				None => (rest, None),
@@ -348,6 +450,34 @@ impl ValueGenerator {
 				.map_err(|e| anyhow!("invalid vector dimension {dim_str:?}: {e}"))?;
 			if dim == 0 {
 				bail!("vector dimension must be > 0");
+			}
+			if let Some(spec) = range.and_then(|r| r.strip_prefix("clustered:")) {
+				let (clusters_str, sigma_str) = match spec.split_once(':') {
+					Some((c, g)) => (c, Some(g)),
+					None => (spec, None),
+				};
+				let clusters: usize = clusters_str
+					.parse()
+					.map_err(|e| anyhow!("invalid cluster count {clusters_str:?}: {e}"))?;
+				if clusters == 0 {
+					bail!("vector cluster count must be > 0");
+				}
+				// Scaled by 1/sqrt(dim) so the default means the same spread at
+				// any dimension: the noise vector's length is `sigma` relative
+				// to a unit-length centroid, rather than growing with `dim`.
+				let sigma: f32 = match sigma_str {
+					Some(g) => g.parse().map_err(|e| anyhow!("invalid cluster sigma: {e}"))?,
+					None => DEFAULT_CLUSTER_SIGMA,
+				};
+				// Also rejects NaN, which would silently poison every centroid.
+				if !sigma.is_finite() || sigma <= 0.0 {
+					bail!("vector cluster sigma must be a finite value > 0");
+				}
+				return Ok(Self::ClusteredVector {
+					dim,
+					sigma,
+					centroids: Arc::new(cluster_centroids(dim, clusters, DEFAULT_CENTROID_SEED)),
+				});
 			}
 			let (lo, hi) = if let Some(r) = range {
 				let parts: Vec<&str> = r.split("..").collect();
@@ -555,6 +685,23 @@ impl ValueGenerator {
 				}
 				BenchValue::FloatVector(buf)
 			}
+			ValueGenerator::ClusteredVector {
+				dim,
+				centroids,
+				sigma,
+			} => {
+				let centroid = &centroids[rng.random_range(0..centroids.len())];
+				// `sigma / sqrt(dim)` per component makes the noise vector's
+				// length `sigma` overall, so the spread means the same thing at
+				// any dimension.
+				let scale = *sigma / (*dim as f32).sqrt();
+				let mut buf: Vec<f32> =
+					centroid.iter().map(|c| c + scale * standard_normal(rng)).collect();
+				// Real embeddings are commonly unit-normalised, and it keeps
+				// cosine and inner-product rankings consistent with each other.
+				normalise(&mut buf);
+				BenchValue::FloatVector(buf)
+			}
 		}
 	}
 }
@@ -666,6 +813,10 @@ impl ColumnType {
 			ValueGenerator::Vector {
 				dim,
 				..
+			}
+			| ValueGenerator::ClusteredVector {
+				dim,
+				..
 			} => ColumnType::FloatVector(*dim),
 		};
 		Ok(r)
@@ -676,6 +827,84 @@ impl ColumnType {
 mod test {
 	use super::*;
 	use tokio::task;
+
+	fn vector_of(template: &str, seed: u64, sample: u32) -> Vec<f32> {
+		ValueProvider::new(template)
+			.unwrap()
+			.with_seed(seed)
+			.generate_value_for(ValueStream::Create, sample)
+			.get_field("v")
+			.and_then(|v| v.as_float_vector())
+			.unwrap()
+			.to_vec()
+	}
+
+	#[test]
+	fn clustered_vectors_are_unit_length() {
+		let v = vector_of(r#"{ "v": "vector:32:clustered:8" }"#, 1, 0);
+		assert_eq!(v.len(), 32);
+		let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+		assert!((norm - 1.0).abs() < 1e-4, "norm was {norm}");
+	}
+
+	/// The corpus has to be reconstructible for ground truth, which means the
+	/// cluster draw must be part of that determinism, not an extra source of
+	/// randomness on top of it.
+	#[test]
+	fn clustered_vectors_are_deterministic() {
+		let tmpl = r#"{ "v": "vector:32:clustered:8" }"#;
+		assert_eq!(vector_of(tmpl, 1, 7), vector_of(tmpl, 1, 7));
+		assert_ne!(vector_of(tmpl, 1, 7), vector_of(tmpl, 1, 8));
+	}
+
+	/// Two corpus seeds should give two different datasets, cluster centres
+	/// included — otherwise every seed reuses one structure.
+	#[test]
+	fn cluster_centres_follow_the_corpus_seed() {
+		let tmpl = r#"{ "v": "vector:32:clustered:4" }"#;
+		assert_ne!(vector_of(tmpl, 1, 0), vector_of(tmpl, 2, 0));
+	}
+
+	/// Tighter clusters must actually be tighter, or `sigma` means nothing.
+	#[test]
+	fn sigma_controls_cluster_spread() {
+		fn spread(sigma: &str) -> f32 {
+			let tmpl = format!(r#"{{ "v": "vector:64:clustered:4:{sigma}" }}"#);
+			let mut vp = ValueProvider::new(&tmpl).unwrap().with_seed(9);
+			let vs: Vec<Vec<f32>> = (0..200u32)
+				.map(|i| match vp.generate_value_for(ValueStream::Create, i) {
+					BenchValue::Object(o) => match &o[0].1 {
+						BenchValue::FloatVector(v) => v.clone(),
+						other => panic!("expected a vector, got {other:?}"),
+					},
+					other => panic!("expected an object, got {other:?}"),
+				})
+				.collect();
+			// Mean pairwise cosine distance over a fixed sample of pairs.
+			let mut total = 0.0;
+			let mut n = 0;
+			for i in 0..vs.len() {
+				for j in (i + 1)..vs.len() {
+					total += 1.0 - vs[i].iter().zip(&vs[j]).map(|(a, b)| a * b).sum::<f32>();
+					n += 1;
+				}
+			}
+			total / n as f32
+		}
+		assert!(spread("0.15") < spread("0.80"), "tighter sigma should cluster more closely");
+	}
+
+	#[test]
+	fn clustered_template_rejects_bad_parameters() {
+		for bad in [
+			r#"{ "v": "vector:8:clustered:0" }"#,
+			r#"{ "v": "vector:8:clustered:4:0" }"#,
+			r#"{ "v": "vector:8:clustered:4:-1" }"#,
+			r#"{ "v": "vector:8:clustered:x" }"#,
+		] {
+			assert!(ValueProvider::new(bad).is_err(), "should have rejected {bad}");
+		}
+	}
 
 	#[tokio::test]
 	async fn check_all_values_are_unique() {

@@ -20,6 +20,20 @@
 # dataset; the ground-truth cache keys on it, so each seed is computed once.
 seed = 20260908
 
+# The embedding column below uses the clustered generator. Uniform components
+# (`vector:<dim>`) leave a corpus with no neighbourhood structure: in high
+# dimensions every pair sits at roughly the same distance, so a query's true
+# neighbours are conspicuous and every index returns them exactly. Measured on
+# 20k 128-d rows, uniform puts the nearest neighbour at 65% of a random pair's
+# distance; clustered puts it at 8%. Recall only discriminates on the second.
+#
+# 768 dimensions matches common embedding models and keeps a 1M-row corpus at
+# ~3 GB with a ~2 minute one-off ground-truth build. Raise it for a
+# high-dimension variant — 3072 is ~12 GB at 1M rows — but note dimension scales
+# cost linearly without making the search harder; corpus size is the dial that
+# does that. Below ~100k rows a linear scan beats both graph indexes here, so
+# treat 100k as a floor and 1M as the size worth quoting.
+
 # ============================================================================
 # value
 # ============================================================================
@@ -49,7 +63,7 @@ geography.code = "string:3"
 geography.text = "string:15"
 geography.location = "string_enum:Africa,Antarctica,Asia,Europe,North America,South America,Oceania"
 geography.description = "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
-embedding = "vector:3072"
+embedding = "vector:768:clustered:200"
 
 # ============================================================================
 # vector_knn — Bruteforce / HNSW / DiskANN KNN against a 128-d embedding.

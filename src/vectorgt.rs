@@ -770,6 +770,48 @@ mod test {
 		assert!((s.mean - 0.5).abs() < 1e-9);
 	}
 
+	/// The clustered generator exists because uniform components give a corpus
+	/// with no neighbourhood structure. Assert the structure is actually there:
+	/// a query's nearest neighbour should sit far closer, relative to a random
+	/// point, than it does under the uniform generator.
+	#[test]
+	fn clustered_data_has_neighbourhood_structure() {
+		fn profile(template: &str) -> (f32, f32) {
+			let vp = ValueProvider::new(template).unwrap().with_seed(42);
+			let mut src = vp.clone();
+			let corpus: Vec<Vec<f32>> = (0..4_000u32)
+				.map(|i| {
+					src.generate_value_for(ValueStream::Update, i)
+						.get_field("embedding")
+						.and_then(|v| v.as_float_vector())
+						.unwrap()
+						.to_vec()
+				})
+				.collect();
+			let queries = vp.generate_vectors("embedding", 10, 7).unwrap();
+			let (mut nearest, mut mean) = (0.0f32, 0.0f32);
+			for q in &queries {
+				let ds: Vec<f32> =
+					corpus.iter().map(|v| distance(VectorDistance::Cosine, q, v)).collect();
+				mean += ds.iter().sum::<f32>() / ds.len() as f32;
+				nearest += ds.iter().copied().fold(f32::INFINITY, f32::min);
+			}
+			let n = queries.len() as f32;
+			(nearest / n, mean / n)
+		}
+
+		let (u_near, u_mean) = profile(r#"{ "embedding": "vector:64" }"#);
+		let (c_near, c_mean) = profile(r#"{ "embedding": "vector:64:clustered:50" }"#);
+
+		// Under uniform components the nearest neighbour is only modestly
+		// closer than an arbitrary point — the distance concentration that
+		// makes every index look perfect.
+		assert!(u_near / u_mean > 0.4, "uniform nn ratio {}", u_near / u_mean);
+		// Clustered draws put the nearest neighbour an order of magnitude
+		// closer, so there is a real neighbourhood for a search to miss.
+		assert!(c_near / c_mean < 0.2, "clustered nn ratio {}", c_near / c_mean);
+	}
+
 	#[test]
 	fn cache_round_trips() {
 		let dir = std::env::temp_dir().join(format!("crud-bench-gt-test-{}", std::process::id()));
