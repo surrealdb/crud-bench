@@ -110,6 +110,8 @@ pub(crate) struct Benchmark {
 	pub(crate) operation_timeout: Duration,
 	/// Directory holding cached vector-search ground truth
 	pub(crate) ground_truth_cache: PathBuf,
+	/// Safety cap on warming a vector index before a timed leg
+	pub(crate) vector_warmup_budget: Duration,
 	/// JSON form of the configured value template. Ground truth keys its cache
 	/// on it: a schema change alters the corpus even at an unchanged seed.
 	pub(crate) value_template: String,
@@ -142,6 +144,7 @@ impl Benchmark {
 			bench_ui: BenchUi::new(args.color),
 			emit_phase_markers,
 			ground_truth_cache: PathBuf::from(&args.ground_truth_cache),
+			vector_warmup_budget: Duration::from_secs(args.vector_warmup_seconds),
 			value_template: String::new(),
 		}
 	}
@@ -202,7 +205,7 @@ impl Benchmark {
 		for client in clients.iter() {
 			let mut previous: Option<Duration> = None;
 			let mut q = 0u32;
-			while started.elapsed() <= VECTOR_WARMUP_BUDGET {
+			while started.elapsed() <= self.vector_warmup_budget {
 				// Time a whole window rather than single queries: while an index
 				// is warming its latency is *falling*, and once warm it is flat.
 				// Comparing consecutive windows detects that transition, where
@@ -230,7 +233,17 @@ impl Benchmark {
 			}
 		}
 		let waited = started.elapsed();
-		if waited > Duration::from_millis(500) {
+		if waited > self.vector_warmup_budget {
+			// A truncated warm-up leaves the index cold, and a cold index is
+			// both slower and — because it answers by a different path — more
+			// accurate. Reporting that silently is how this went unnoticed for
+			// several runs, so say it loudly instead.
+			self.bench_ui.println_muted(&format!(
+				"Warm-up hit its {} budget: the next leg's latency is understated and its \
+				 recall overstated. Raise --vector-warmup-seconds.",
+				format_duration(self.vector_warmup_budget)
+			));
+		} else if waited > Duration::from_millis(500) {
 			self.bench_ui
 				.println_muted(&format!("Warmed the vector index in {}", format_duration(waited)));
 		}
@@ -1263,13 +1276,6 @@ const VECTOR_WARMUP_WINDOW: u32 = 25;
 /// A window this close to the one before it means warming has plateaued.
 /// Expressed as a percentage so the comparison stays in integer arithmetic.
 const VECTOR_WARMUP_PLATEAU_PCT: u32 = 90;
-
-/// Cap on warm-up across all clients, so a slow engine cannot stall a run.
-///
-/// Deliberately short. Warming is an accuracy fix, not a benchmark phase, and a
-/// cap long enough to matter is long enough to blow a CI step's timeout — which
-/// it did at 120s.
-const VECTOR_WARMUP_BUDGET: Duration = Duration::from_secs(30);
 
 /// Config name of a strategy's search-time knob, for labelling sweep legs.
 fn search_param_label(strategy: &VectorIndexStrategy) -> &'static str {

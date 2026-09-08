@@ -181,6 +181,14 @@ pub(crate) struct Args {
 	#[arg(long)]
 	pub(crate) corpus_seed: Option<u64>,
 
+	/// Seconds a vector index may be warmed before a timed leg, per scan.
+	///
+	/// Warming stops on its own once latency plateaus; this is only a safety
+	/// cap. Raise it for large corpora — a truncated warm-up leaves the index
+	/// cold and understates its speed, and the run says so when it happens.
+	#[arg(long, default_value_t = 30)]
+	pub(crate) vector_warmup_seconds: u64,
+
 	/// Directory holding cached vector-search ground truth. The answer key is a
 	/// pure function of the corpus and query seeds, so it is computed once and
 	/// reused across engines and runs.
@@ -1205,6 +1213,7 @@ mod test {
 		run(Args {
 			corpus_seed: None,
 			ground_truth_cache: ".crud-bench-gt".to_string(),
+			vector_warmup_seconds: 30,
 			image: None,
 			name: None,
 			database,
