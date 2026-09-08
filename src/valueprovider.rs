@@ -156,7 +156,7 @@ impl ValueProvider {
 			let mut rng = SmallRng::seed_from_u64(sample_seed(seed, ValueStream::Query, i as u32));
 			match generator.generate(&mut rng) {
 				BenchValue::FloatVector(v) => out.push(v),
-				other => bail!("field {field:?} generated {other:?}, expected a vector"),
+				_ => bail!("field {field:?} did not generate a vector"),
 			}
 		}
 		Ok(out)
@@ -872,12 +872,12 @@ mod test {
 			let tmpl = format!(r#"{{ "v": "vector:64:clustered:4:{sigma}" }}"#);
 			let mut vp = ValueProvider::new(&tmpl).unwrap().with_seed(9);
 			let vs: Vec<Vec<f32>> = (0..200u32)
-				.map(|i| match vp.generate_value_for(ValueStream::Create, i) {
-					BenchValue::Object(o) => match &o[0].1 {
-						BenchValue::FloatVector(v) => v.clone(),
-						other => panic!("expected a vector, got {other:?}"),
-					},
-					other => panic!("expected an object, got {other:?}"),
+				.map(|i| {
+					vp.generate_value_for(ValueStream::Create, i)
+						.get_field("v")
+						.and_then(|v| v.as_float_vector())
+						.expect("template declares `v` as a vector column")
+						.to_vec()
 				})
 				.collect();
 			// Mean pairwise cosine distance over a fixed sample of pairs.

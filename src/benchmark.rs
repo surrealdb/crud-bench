@@ -409,6 +409,26 @@ impl Benchmark {
 								search_param_label(&vq.index_strategy)
 							));
 						}
+						// Warm the index before timing. The first leg after a
+						// build otherwise absorbs the cost of faulting the
+						// structure in, which made it read ~1000x slower than
+						// the identical leg that followed it — a sweep would
+						// have reported its first point as its worst whatever
+						// the parameter said.
+						for client in clients.iter() {
+							for w in 0..VECTOR_WARMUP_QUERIES {
+								match client
+									.scan_vector(&leg_scan, query_set.pick(w), &kp, ctx)
+									.await
+								{
+									Ok(_) => {}
+									// An engine that cannot serve this scan
+									// fails the same way in the timed run,
+									// which is where it is reported.
+									Err(_) => break,
+								}
+							}
+						}
 						let result = self
 							.run_operation::<C, D>(
 								&clients,
@@ -1132,6 +1152,12 @@ impl Benchmark {
 		Ok((histogram, tally))
 	}
 }
+
+/// Untimed queries issued per client before a vector leg is timed.
+///
+/// Enough to fault in the index structure and warm the caches the engine keeps
+/// per connection, without materially adding to a run's wall time.
+const VECTOR_WARMUP_QUERIES: u32 = 5;
 
 /// Config name of a strategy's search-time knob, for labelling sweep legs.
 fn search_param_label(strategy: &VectorIndexStrategy) -> &'static str {
