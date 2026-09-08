@@ -1,3 +1,9 @@
+# Corpus seed. Without one the vector legs run but report no recall, so CI would
+# never exercise the ground-truth and scoring paths at all. Ground truth at this
+# scale costs about 9ms (50 queries over 10k rows), and seeding also makes every
+# CI benchmark reproducible run to run.
+seed = 20260908
+
 # crud-bench benchmark specification (TOML).
 #
 # Three parts: document shape (`[value]`), scan workloads (`[[scans]]`), and batch throughput
