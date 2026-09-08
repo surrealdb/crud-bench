@@ -101,6 +101,10 @@ pub(crate) struct ScanRun {
 	/// Latency histogram + resource stats; [`None`] when the backend skipped the leg.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub result: Option<OperationResult>,
+	/// Distinguishes legs of a parameter sweep, e.g. `ef_search = 64`. `None`
+	/// for a scan that ran once, which is every non-swept leg.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub label: Option<String>,
 }
 
 /// Normalised `with_writes.ratio` for labels and serialised results.
@@ -121,12 +125,19 @@ pub(crate) fn scan_run_row_label(id: &str, name: &str, iterations: u32, run: &Sc
 			write_ratio_percent: p,
 		} => format!("reads+writes ({p}%) - {index_slug}"),
 	};
-	format!("[S]can · {id} · {name} - {mid} ({iterations})")
+	match &run.label {
+		Some(label) => format!("[S]can · {id} · {name} · {label} - {mid} ({iterations})"),
+		None => format!("[S]can · {id} · {name} - {mid} ({iterations})"),
+	}
 }
 
 impl ScanRun {
 	/// Short label for charts (query text + leg description).
 	pub(crate) fn chart_label(&self, query: &str) -> String {
+		let query = match &self.label {
+			Some(label) => &format!("{query} · {label}"),
+			None => query,
+		};
 		let index_slug = if self.indexed {
 			"indexed"
 		} else {

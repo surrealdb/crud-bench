@@ -301,6 +301,21 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		async { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
+	/// Apply a scan's search-time parameters to this client, before its leg runs.
+	///
+	/// Engines whose search budget travels in the query itself read it from the
+	/// spec and no-op here. Engines that hold it in session state apply it —
+	/// and must do so on *every* client, since a setting made on the one client
+	/// that built the index reaches only that session.
+	///
+	/// Called outside the timed window, once per client per swept value.
+	fn prepare_vector_search(
+		&self,
+		_vq: &VectorQuerySpec,
+	) -> impl Future<Output = Result<()>> + Send {
+		async { Ok(()) }
+	}
+
 	/// Block until an index is fully queryable, not merely built.
 	///
 	/// Some engines report an index ready while newly indexed rows still sit in

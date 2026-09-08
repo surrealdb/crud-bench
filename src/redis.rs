@@ -201,12 +201,11 @@ impl BenchmarkClient for RedisClient {
 			VectorIndexStrategy::Hnsw {
 				m,
 				ef_construction,
-				ef_search,
 				..
 			} => (
 				"HNSW",
 				vec![
-					"12".into(),
+					"10".into(),
 					"TYPE".into(),
 					"FLOAT32".into(),
 					"DIM".into(),
@@ -217,8 +216,10 @@ impl BenchmarkClient for RedisClient {
 					m.to_string(),
 					"EF_CONSTRUCTION".into(),
 					ef_construction.to_string(),
-					"EF_RUNTIME".into(),
-					ef_search.to_string(),
+					// EF_RUNTIME is deliberately not set here: as an index
+					// attribute it would pin the search budget to the build, so
+					// a sweep would need one index per point. The KNN query
+					// carries it instead.
 				],
 			),
 			VectorIndexStrategy::DiskAnn {
@@ -460,7 +461,15 @@ impl RedisClient {
 		let mut conn = self.conn_record.lock().await;
 		let res: redis::Value = redis::cmd("FT.SEARCH")
 			.arg(&scan.id)
-			.arg(format!("*=>[KNN {k} @v $q AS score]"))
+			.arg(match vq.index_strategy {
+				// Bruteforce is a FLAT index — an exact scan with no search
+				// budget to set.
+				VectorIndexStrategy::Bruteforce => format!("*=>[KNN {k} @v $q AS score]"),
+				_ => {
+					let ef = vq.index_strategy.search_value();
+					format!("*=>[KNN {k} @v $q EF_RUNTIME {ef} AS score]")
+				}
+			})
 			.arg("PARAMS")
 			.arg(2)
 			.arg("q")

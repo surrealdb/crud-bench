@@ -306,7 +306,8 @@ block describes one KNN benchmark:
 - `distance`: `cosine` (default), `euclidean`, `inner_product`, or `manhattan`.
 - `index_strategy` (**required**): `{ kind = "bruteforce" }`, `{ kind = "hnsw", m, ef_construction,
   ef_search }`, or `{ kind = "diskann", degree, l_build, alpha, l_search }`. All knobs are required —
-  results without explicit parameters cannot be interpreted.
+  results without explicit parameters cannot be interpreted. The search-time knob (`ef_search`,
+  `l_search`) also accepts a **list**, which is swept: see below.
 - `holdout`: `{ count, seed }` for the query set. Query vectors are generated from `seed` using the
   schema's own vector generator and are **never inserted**, so no query is its own nearest neighbour.
 - `tie_epsilon`: relative tolerance when deciding whether a returned neighbour counts as correct
@@ -336,6 +337,27 @@ harder; rows add candidates that can confuse a graph. Measured against embedded 
 dimensions, neither graph index beats a linear scan below ~100k rows — at 200k, HNSW is 1.7x faster
 than bruteforce and DiskANN 3.4x. Treat 100k as a floor, and 1M as the size worth quoting, which also
 matches the scale of the standard ANN datasets.
+
+#### Parameter sweeps
+
+`ef_search` and `l_search` accept a list as well as a single value:
+
+```toml
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 32, 64, 128, 256] }
+```
+
+Each value becomes its own timed leg, all sharing a **single** index build, and each is reported as a
+separate row labelled with the value it used. A lone `ef_search` is one arbitrary point on a curve —
+the comparison worth making is the curve itself, what recall an index reaches at a given latency
+budget — and tracing it this way costs one index build rather than one per point.
+
+Values must be at least `top_k`: a search budget narrower than `k` cannot return `k` neighbours.
+
+Engines apply the budget differently and crud-bench hides the difference. SurrealDB carries it in the
+KNN operator, Redis passes `EF_RUNTIME` on the query rather than fixing it at `FT.CREATE`, and
+pgvector takes it from the `hnsw.ef_search` session GUC, which is applied to every client before each
+leg — a setting made only on the client that built the index would reach one session out of
+`--clients`.
 
 #### Recall
 

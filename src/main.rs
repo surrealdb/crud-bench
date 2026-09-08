@@ -395,6 +395,28 @@ fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 			if vq.field.trim().is_empty() {
 				bail!("scan `{}`: vector_query.field must be non-empty", scan.name);
 			}
+			// A sweep expands into one timed leg per value, so an empty list
+			// would silently produce no legs at all rather than an error.
+			let sweep = vq.index_strategy.search_values();
+			if !matches!(vq.index_strategy, VectorIndexStrategy::Bruteforce) {
+				if sweep.is_empty() {
+					bail!("scan `{}`: the search parameter list must not be empty", scan.name);
+				}
+				if let Some(bad) = sweep.iter().position(|v| *v == 0) {
+					bail!(
+						"scan `{}`: search parameter values must be > 0 (index {bad} is 0)",
+						scan.name
+					);
+				}
+				if sweep.iter().any(|v| (*v as usize) < vq.top_k) {
+					bail!(
+						"scan `{}`: search parameter values must be >= top_k ({}); a budget \
+						 narrower than k cannot return k neighbours",
+						scan.name,
+						vq.top_k
+					);
+				}
+			}
 			if scan.with_index.is_some() {
 				bail!(
 					"scan `{}`: vector scans must not declare `with_index` — the index (when needed) is derived from `vector_query.field`",
@@ -456,6 +478,31 @@ pub(crate) enum VectorDistance {
 	Manhattan,
 }
 
+/// A search-time knob, given either as one value or as a list to sweep.
+///
+/// A single `ef_search` is one arbitrary point on a curve; the comparison worth
+/// making is the curve itself — what recall an index reaches at a given latency.
+/// A list is expanded into one timed leg per value over a **single** index
+/// build, so tracing the frontier costs one build rather than one per point.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub(crate) enum SearchParam {
+	/// One value: a single timed leg, as before.
+	One(u32),
+	/// Several values: one timed leg each, sharing one index build.
+	Sweep(Vec<u32>),
+}
+
+impl SearchParam {
+	/// The values to sweep, in config order.
+	pub(crate) fn values(&self) -> Vec<u32> {
+		match self {
+			SearchParam::One(v) => vec![*v],
+			SearchParam::Sweep(v) => v.clone(),
+		}
+	}
+}
+
 /// Algorithm choice for a vector-search scan. Carries the algorithm-specific
 /// build/search knobs inline so the config has one place to look for tuning.
 /// All knobs are required — benchmark results without explicit parameters
@@ -469,7 +516,7 @@ pub(crate) enum VectorIndexStrategy {
 	Hnsw {
 		m: u32,
 		ef_construction: u32,
-		ef_search: u32,
+		ef_search: SearchParam,
 	},
 	/// DiskANN (Vamana) graph; engines that have not yet wired it return NotSupported.
 	#[serde(rename = "diskann")]
@@ -477,8 +524,63 @@ pub(crate) enum VectorIndexStrategy {
 		degree: u32,
 		l_build: u32,
 		alpha: f32,
-		l_search: u32,
+		l_search: SearchParam,
 	},
+}
+
+impl VectorIndexStrategy {
+	/// Search-time values this strategy sweeps. Empty for bruteforce, which has
+	/// no search knob to vary.
+	pub(crate) fn search_values(&self) -> Vec<u32> {
+		match self {
+			VectorIndexStrategy::Bruteforce => Vec::new(),
+			VectorIndexStrategy::Hnsw {
+				ef_search,
+				..
+			} => ef_search.values(),
+			VectorIndexStrategy::DiskAnn {
+				l_search,
+				..
+			} => l_search.values(),
+		}
+	}
+
+	/// This strategy pinned to one search value, which is the form an adapter
+	/// sees: sweeps are resolved before the spec reaches an engine.
+	pub(crate) fn with_search_value(&self, value: u32) -> Self {
+		match self {
+			VectorIndexStrategy::Bruteforce => VectorIndexStrategy::Bruteforce,
+			VectorIndexStrategy::Hnsw {
+				m,
+				ef_construction,
+				..
+			} => VectorIndexStrategy::Hnsw {
+				m: *m,
+				ef_construction: *ef_construction,
+				ef_search: SearchParam::One(value),
+			},
+			VectorIndexStrategy::DiskAnn {
+				degree,
+				l_build,
+				alpha,
+				..
+			} => VectorIndexStrategy::DiskAnn {
+				degree: *degree,
+				l_build: *l_build,
+				alpha: *alpha,
+				l_search: SearchParam::One(value),
+			},
+		}
+	}
+
+	/// The single search value for a resolved leg.
+	///
+	/// Adapters only ever see a resolved strategy, so a sweep reaching here is a
+	/// bug in the expansion rather than a config error; fall back to the first
+	/// value rather than panicking mid-benchmark.
+	pub(crate) fn search_value(&self) -> u32 {
+		self.search_values().first().copied().unwrap_or(0)
+	}
 }
 
 /// Query-vector source: vectors generated from `seed` using the schema's own
@@ -933,9 +1035,113 @@ fn run(args: Args) -> Result<()> {
 /// Unit and integration-style tests for scan expansion and CLI wiring.
 mod test {
 	use crate::terminal::ColorChoice;
-	use crate::{Args, Database, KeyType, run};
+	use crate::{
+		Args, Database, KeyType, Scans, VectorIndexStrategy, expand_scan_specs, run,
+		validate_scan_index_ids,
+	};
 	use anyhow::Result;
 	use serial_test::serial;
+
+	fn vector_scan_spec(strategy: &str) -> Result<Scans> {
+		let json = format!(
+			r#"[{{ "id": "v", "name": "v", "iterations": 1,
+			   "vector_query": {{ "field": "e", "top_k": 10, "distance": "cosine",
+			   "index_strategy": {strategy} }} }}]"#
+		);
+		// Mirror `run`: expansion and validation are separate steps, and the
+		// vector checks live in the second.
+		let scans = expand_scan_specs(serde_json::from_str(&json)?)?;
+		validate_scan_index_ids(&scans)?;
+		Ok(scans)
+	}
+
+	/// A scalar keeps its old meaning: one timed leg.
+	#[test]
+	fn search_param_accepts_a_scalar() {
+		let scans = vector_scan_spec(
+			r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": 64 }"#,
+		)
+		.unwrap();
+		let vq = scans[0].vector_query.as_ref().unwrap();
+		assert_eq!(vq.index_strategy.search_values(), vec![64]);
+		assert_eq!(vq.index_strategy.search_value(), 64);
+	}
+
+	/// A list is the sweep: several legs over one index build.
+	#[test]
+	fn search_param_accepts_a_sweep() {
+		let scans = vector_scan_spec(
+			r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": [16, 32, 64] }"#,
+		)
+		.unwrap();
+		let vq = scans[0].vector_query.as_ref().unwrap();
+		assert_eq!(vq.index_strategy.search_values(), vec![16, 32, 64]);
+	}
+
+	/// Adapters must only ever see a resolved strategy, and pinning a value must
+	/// leave the build parameters alone — the whole point is one shared build.
+	#[test]
+	fn pinning_a_sweep_value_preserves_build_parameters() {
+		let scans = vector_scan_spec(
+			r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": [16, 64] }"#,
+		)
+		.unwrap();
+		let strategy = &scans[0].vector_query.as_ref().unwrap().index_strategy;
+		let pinned = strategy.with_search_value(64);
+		assert_eq!(pinned.search_values(), vec![64]);
+		let VectorIndexStrategy::Hnsw {
+			m,
+			ef_construction,
+			..
+		} = pinned
+		else {
+			panic!("expected an HNSW strategy");
+		};
+		assert_eq!((m, ef_construction), (16, 200));
+	}
+
+	#[test]
+	fn diskann_sweeps_l_search() {
+		let scans = vector_scan_spec(
+			r#"{ "kind": "diskann", "degree": 64, "l_build": 100, "alpha": 1.2,
+			   "l_search": [50, 100] }"#,
+		)
+		.unwrap();
+		let vq = scans[0].vector_query.as_ref().unwrap();
+		assert_eq!(vq.index_strategy.search_values(), vec![50, 100]);
+	}
+
+	#[test]
+	fn bruteforce_has_no_search_parameter() {
+		let scans = vector_scan_spec(r#"{ "kind": "bruteforce" }"#).unwrap();
+		let vq = scans[0].vector_query.as_ref().unwrap();
+		assert!(vq.index_strategy.search_values().is_empty());
+	}
+
+	#[test]
+	fn search_param_rejects_unusable_values() {
+		// Empty list: would expand to no legs at all.
+		assert!(
+			vector_scan_spec(
+				r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": [] }"#
+			)
+			.is_err()
+		);
+		// Zero is not a search budget.
+		assert!(
+			vector_scan_spec(
+				r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": [64, 0] }"#
+			)
+			.is_err()
+		);
+		// Narrower than k cannot return k neighbours.
+		assert!(
+			vector_scan_spec(
+				r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": [4] }"#
+			)
+			.is_err()
+		);
+	}
 
 	fn test(database: Database, key: KeyType, random: bool) -> Result<()> {
 		run(Args {

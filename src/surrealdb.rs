@@ -1035,15 +1035,15 @@ impl SurrealDBClient {
 				)
 			}
 			VectorIndexStrategy::Hnsw {
-				ef_search,
 				..
 			} => {
+				let ef_search = vq.index_strategy.search_value();
 				format!("SELECT id FROM record WHERE {field} <|{k},{ef_search}|> $q")
 			}
 			VectorIndexStrategy::DiskAnn {
-				l_search,
 				..
 			} => {
+				let l_search = vq.index_strategy.search_value();
 				format!("SELECT id FROM record WHERE {field} <|{k},{l_search}|> $q")
 			}
 		};

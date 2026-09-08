@@ -829,13 +829,17 @@ impl SurrealDB2Client {
 				)
 			}
 			VectorIndexStrategy::Hnsw {
-				ef_search,
 				..
-			} => format!("SELECT id FROM record WHERE {field} <|{k},{ef_search}|> $q"),
+			} => {
+				let ef_search = vq.index_strategy.search_value();
+				format!("SELECT id FROM record WHERE {field} <|{k},{ef_search}|> $q")
+			}
 			VectorIndexStrategy::DiskAnn {
-				l_search,
 				..
-			} => format!("SELECT id FROM record WHERE {field} <|{k},{l_search}|> $q"),
+			} => {
+				let l_search = vq.index_strategy.search_value();
+				format!("SELECT id FROM record WHERE {field} <|{k},{l_search}|> $q")
+			}
 		};
 		let q_value = Value::Array(Array::from(
 			query.iter().map(|f| Value::Number(Number::Float(*f as f64))).collect::<Vec<_>>(),

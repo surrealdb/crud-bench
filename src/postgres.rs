@@ -343,14 +343,22 @@ impl BenchmarkClient for PostgresClient {
 			} => bail!(crate::benchmark::NOT_SUPPORTED_ERROR),
 		};
 		self.client.execute(&stmt, &[]).await?;
-		// Set ef_search for HNSW (per-session GUC).
-		if let VectorIndexStrategy::Hnsw {
-			ef_search,
-			..
-		} = vq.index_strategy
-		{
-			let s = format!("SET hnsw.ef_search = {ef_search}");
-			self.client.execute(&s, &[]).await?;
+		// `hnsw.ef_search` is deliberately not set here. It is a per-session
+		// GUC, and this runs on one client while the scan runs on all of them,
+		// so setting it here reaches one session in `--clients`. It is applied
+		// per leg through `prepare_vector_search` instead, which also lets a
+		// sweep vary it over a single index build.
+		Ok(())
+	}
+
+	/// pgvector takes the HNSW search budget from the `hnsw.ef_search` GUC,
+	/// which is per session. Applying it here puts it on every client's own
+	/// connection before the leg runs, and lets a sweep change it between legs
+	/// without rebuilding the index.
+	async fn prepare_vector_search(&self, vq: &VectorQuerySpec) -> Result<()> {
+		if matches!(vq.index_strategy, VectorIndexStrategy::Hnsw { .. }) {
+			let ef_search = vq.index_strategy.search_value();
+			self.client.execute(&format!("SET hnsw.ef_search = {ef_search}"), &[]).await?;
 		}
 		Ok(())
 	}

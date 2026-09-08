@@ -371,19 +371,58 @@ impl Benchmark {
 				} else {
 					ScanContext::WithoutIndex
 				};
-				let scan_result = if !strategy_needs_index || vec_index_build.is_some() {
+				// A search-time knob given as a list becomes one timed leg per
+				// value over this *single* index build. A lone `ef_search` is
+				// one arbitrary point on a curve; the comparison worth making
+				// is the curve, and tracing it should not cost a rebuild per
+				// point.
+				let sweep = vq.index_strategy.search_values();
+				let mut sweep_results: Vec<(Option<u32>, Option<OperationResult>)> = Vec::new();
+				if !strategy_needs_index || vec_index_build.is_some() {
 					self.attach_ground_truth(&scan, &vq, &vp, &kp, &mut query_set)?;
-					self.run_operation::<C, D>(
-						&clients,
-						BenchmarkOperation::VectorScan(scan.clone(), ctx, query_set.clone()),
-						kp,
-						vp.clone(),
-						iterations,
-					)
-					.await?
+					// Bruteforce has no search budget, so it runs once with no
+					// value to report.
+					let legs: Vec<Option<u32>> = if sweep.len() > 1 {
+						sweep.iter().map(|v| Some(*v)).collect()
+					} else {
+						vec![None]
+					};
+					for leg in legs {
+						// Pin the spec to this leg's value so adapters only ever
+						// see a resolved strategy.
+						let mut leg_scan = scan.clone();
+						if let (Some(value), Some(lvq)) = (leg, leg_scan.vector_query.as_mut()) {
+							lvq.index_strategy = vq.index_strategy.with_search_value(value);
+						}
+						let leg_vq = leg_scan
+							.vector_query
+							.clone()
+							.expect("vector scan always carries a vector_query");
+						// Engines holding the budget in session state need it on
+						// every client, not just the one that built the index.
+						for client in clients.iter() {
+							client.prepare_vector_search(&leg_vq).await?;
+						}
+						if let Some(value) = leg {
+							self.bench_ui.println_scan_run(&format!(
+								"{name} · {} = {value}",
+								search_param_label(&vq.index_strategy)
+							));
+						}
+						let result = self
+							.run_operation::<C, D>(
+								&clients,
+								BenchmarkOperation::VectorScan(leg_scan, ctx, query_set.clone()),
+								kp,
+								vp.clone(),
+								iterations,
+							)
+							.await?;
+						sweep_results.push((leg, result));
+					}
 				} else {
-					None
-				};
+					sweep_results.push((None, None));
+				}
 				// Drop the index *after* the scan finishes — strictly in this
 				// order so the timed scan sees the index.
 				let vec_index_remove = if vec_index_build.is_some() {
@@ -398,14 +437,25 @@ impl Benchmark {
 				} else {
 					None
 				};
-				runs.push(ScanRun {
-					workload: ScanWorkload::Read,
-					indexed: strategy_needs_index,
-					result: scan_result,
-				});
+				let swept = sweep_results.len() > 1;
+				for (value, result) in sweep_results {
+					runs.push(ScanRun {
+						workload: ScanWorkload::Read,
+						indexed: strategy_needs_index,
+						result,
+						label: value
+							.map(|v| format!("{} = {v}", search_param_label(&vq.index_strategy))),
+					});
+				}
 				ScanResult {
 					id: id.clone(),
-					name,
+					// A swept scan reports several legs under one build, so the
+					// value each leg used has to reach the row label.
+					name: if swept {
+						format!("{name} (sweep)")
+					} else {
+						name
+					},
 					iterations,
 					index_build: vec_index_build,
 					index_remove: vec_index_remove,
@@ -428,6 +478,7 @@ impl Benchmark {
 					workload: ScanWorkload::Read,
 					indexed: false,
 					result: without_index,
+					label: None,
 				});
 				// Optional mixed read+write legs on the heap path (one per `with_writes` entry)
 				for spec in write_specs {
@@ -450,6 +501,7 @@ impl Benchmark {
 						},
 						indexed: false,
 						result: mixed_without_index,
+						label: None,
 					});
 				}
 				// BuildIndex uses a single client to avoid races on DDL
@@ -520,6 +572,7 @@ impl Benchmark {
 						workload: ScanWorkload::Read,
 						indexed: true,
 						result: with_index,
+						label: None,
 					});
 					for (spec, r) in write_specs.iter().zip(indexed_write_results) {
 						runs.push(ScanRun {
@@ -528,6 +581,7 @@ impl Benchmark {
 							},
 							indexed: true,
 							result: r,
+							label: None,
 						});
 					}
 				} else {
@@ -536,6 +590,7 @@ impl Benchmark {
 						workload: ScanWorkload::Read,
 						indexed: true,
 						result: None,
+						label: None,
 					});
 					for spec in write_specs {
 						runs.push(ScanRun {
@@ -544,6 +599,7 @@ impl Benchmark {
 							},
 							indexed: true,
 							result: None,
+							label: None,
 						});
 					}
 				}
@@ -571,6 +627,7 @@ impl Benchmark {
 					workload: ScanWorkload::Read,
 					indexed: false,
 					result: without_index,
+					label: None,
 				});
 				for spec in write_specs {
 					let mixed_without_index = self
@@ -592,6 +649,7 @@ impl Benchmark {
 						},
 						indexed: false,
 						result: mixed_without_index,
+						label: None,
 					});
 				}
 				ScanResult {
@@ -1072,6 +1130,19 @@ impl Benchmark {
 			}
 		}
 		Ok((histogram, tally))
+	}
+}
+
+/// Config name of a strategy's search-time knob, for labelling sweep legs.
+fn search_param_label(strategy: &VectorIndexStrategy) -> &'static str {
+	match strategy {
+		VectorIndexStrategy::Hnsw {
+			..
+		} => "ef_search",
+		VectorIndexStrategy::DiskAnn {
+			..
+		} => "l_search",
+		VectorIndexStrategy::Bruteforce => "search",
 	}
 }
 
