@@ -202,10 +202,14 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 	{
 		let started = Instant::now();
+		let ceiling = (self.samples / VECTOR_WARMUP_ROWS_PER_QUERY).max(VECTOR_WARMUP_MIN_QUERIES);
+		// Set when a client stopped on a limit rather than on a settled rate.
+		let mut truncated = false;
 		for client in clients.iter() {
 			let mut previous: Option<Duration> = None;
 			let mut q = 0u32;
-			while started.elapsed() <= self.vector_warmup_budget {
+			let mut plateaued = false;
+			while started.elapsed() <= self.vector_warmup_budget && q < ceiling {
 				// Time a whole window rather than single queries: while an index
 				// is warming its latency is *falling*, and once warm it is flat.
 				// Comparing consecutive windows detects that transition, where
@@ -226,22 +230,27 @@ impl Benchmark {
 					// which is true immediately for an index that was already
 					// warm, so a later sweep leg pays only two windows.
 					if window * 100 >= previous * VECTOR_WARMUP_PLATEAU_PCT {
+						plateaued = true;
 						break;
 					}
 				}
 				previous = Some(window);
 			}
+			if !plateaued {
+				truncated = true;
+			}
 		}
 		let waited = started.elapsed();
-		if waited > self.vector_warmup_budget {
+		if truncated {
 			// A truncated warm-up leaves the index cold, and a cold index is
 			// both slower and — because it answers by a different path — more
 			// accurate. Reporting that silently is how this went unnoticed for
 			// several runs, so say it loudly instead.
 			self.bench_ui.println_muted(&format!(
-				"Warm-up hit its {} budget: the next leg's latency is understated and its \
-				 recall overstated. Raise --vector-warmup-seconds.",
-				format_duration(self.vector_warmup_budget)
+				"Warm-up stopped on a limit after {} without the rate settling: the next leg's \
+				 latency may be understated and its recall overstated. Raise \
+				 --vector-warmup-seconds if this persists.",
+				format_duration(waited)
 			));
 		} else if waited > Duration::from_millis(500) {
 			self.bench_ui
@@ -1272,6 +1281,19 @@ impl Benchmark {
 
 /// Warm-up queries measured together before checking for a plateau.
 const VECTOR_WARMUP_WINDOW: u32 = 25;
+
+/// Floor on the warm-up query ceiling, for small corpora.
+const VECTOR_WARMUP_MIN_QUERIES: u32 = 500;
+
+/// Rows per permitted warm-up query, so the ceiling grows with the index.
+///
+/// The plateau check compares consecutive windows, and on a noisy machine a
+/// window can beat the one before it by chance for a long time — which kept
+/// warm-up running for thousands of queries against a 10k-row index that needed
+/// a few hundred, and blew a CI step's budget. A ceiling bounds that, but a
+/// fixed one under-warms a large index just as silently, so it scales: 500
+/// queries at 10k rows, 4000 at 200k.
+const VECTOR_WARMUP_ROWS_PER_QUERY: u32 = 50;
 
 /// A window this close to the one before it means warming has plateaued.
 /// Expressed as a percentage so the comparison stays in integer arithmetic.
