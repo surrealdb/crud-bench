@@ -301,6 +301,21 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		async { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
+	/// Block until an index is fully queryable, not merely built.
+	///
+	/// Some engines report an index ready while newly indexed rows still sit in
+	/// a pending queue that searches answer by scanning it linearly. Timing a
+	/// KNN scan in that state measures a brute-force scan wearing the index's
+	/// name — the latency is wrong and the recall is a perfect 1.0 for the wrong
+	/// reason. Engines that drain such a queue in the background override this
+	/// to wait for it.
+	///
+	/// Called outside the timed build so a background task's polling interval
+	/// does not land in the reported build time. The default is a no-op.
+	fn await_index_queryable(&self, _name: &str) -> impl Future<Output = Result<()>> + Send {
+		async { Ok(()) }
+	}
+
 	/// Perform a batch create operation
 	fn batch_create(
 		&self,

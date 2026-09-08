@@ -15,7 +15,7 @@ use anyhow::{Result, bail};
 use log::{error, warn};
 use std::env;
 use std::hint::black_box;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
@@ -121,6 +121,11 @@ fn surreal_distance_function(d: VectorDistance) -> &'static str {
 		VectorDistance::Manhattan => "vector::distance::manhattan",
 	}
 }
+
+/// How long to wait for a vector index's pending queue to drain before giving
+/// up. The background task runs every `index_compaction_interval` (5s by
+/// default), so this allows for a slow drain without hanging a run forever.
+const VECTOR_COMPACTION_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Pull the record key out of one `SELECT id` KNN row.
 fn surreal_knn_key(row: &Value) -> Result<KnnKey> {
@@ -812,6 +817,50 @@ impl BenchmarkClient for SurrealDBClient {
 			sleep(Duration::from_millis(500)).await;
 		}
 		Ok(())
+	}
+
+	/// Wait for the HNSW / DiskANN pending queue to drain.
+	///
+	/// `INFO FOR INDEX` reports `building.status = "ready"` as soon as the
+	/// initial build finishes, but newly indexed vectors sit in a pending queue
+	/// that KNN searches answer by scanning linearly. A background task drains
+	/// it every `index_compaction_interval` (5s by default), and only then does
+	/// the graph actually serve the query. Scanning before that measures a
+	/// brute-force scan wearing the index's name: the latency is wrong, and
+	/// recall comes back a perfect 1.0 for the wrong reason.
+	///
+	/// `building.pending` carries the queue depth, so poll until it clears.
+	/// Note this is unrelated to `ALTER SYSTEM COMPACT` (see [`Self::compact`]),
+	/// which compacts the RocksDB keyspace and does nothing for this queue.
+	async fn await_index_queryable(&self, name: &str) -> Result<()> {
+		let started = Instant::now();
+		loop {
+			let q = format!("INFO FOR INDEX {name} ON record");
+			let r: surrealdb::types::Value = self
+				.db
+				.query(&q)
+				.await
+				.map_err(log_sql_err(&q))?
+				.take(0)
+				.map_err(log_sql_err(&q))?;
+			let building = r.get("building");
+			// Absent means the engine does not track a queue for this index
+			// kind, which is the same as an empty one.
+			let pending = match building.get("pending") {
+				Value::Number(n) => n.to_int().unwrap_or(0),
+				_ => 0,
+			};
+			if pending == 0 {
+				return Ok(());
+			}
+			if started.elapsed() > VECTOR_COMPACTION_TIMEOUT {
+				bail!(
+					"index {name}: {pending} entries still pending after {:?}; 					 a KNN scan now would measure a brute-force scan over the queue",
+					started.elapsed()
+				);
+			}
+			sleep(Duration::from_millis(250)).await;
+		}
 	}
 
 	async fn scan_vector_u32(

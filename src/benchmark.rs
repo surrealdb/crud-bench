@@ -328,6 +328,22 @@ impl Benchmark {
 					)
 					.await?;
 				if vec_index_build.is_some() {
+					// A vector index reports itself built well before it is
+					// actually serving queries from the graph: newly indexed
+					// vectors sit in a pending queue that KNN answers by
+					// scanning linearly. Waiting here — after the timed build,
+					// before the timed scan — keeps a background drain out of
+					// the build number and a brute-force scan out of the KNN
+					// number.
+					let waited = Instant::now();
+					clients[0].await_index_queryable(&id).await?;
+					let waited = waited.elapsed();
+					if waited > Duration::from_millis(200) {
+						self.bench_ui.println_muted(&format!(
+							"Waited {} for index `{id}` to become queryable",
+							format_duration(waited)
+						));
+					}
 					self.maybe_compact_datastore::<C, E>(&engine).await?;
 				}
 				// Run the scan if either the strategy doesn't require an index
