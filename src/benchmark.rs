@@ -505,8 +505,14 @@ impl Benchmark {
 								search_param_label(&vq.index_strategy)
 							));
 						}
-						self.warm_vector_index(leg_clients, &leg_scan, &query_set, &kp, ctx)
-							.await?;
+						// Only an index needs priming. A bruteforce leg has none,
+						// and every warm-up query there is a full linear scan —
+						// which is both pointless and the most expensive query
+						// the benchmark can issue.
+						if strategy_needs_index {
+							self.warm_vector_index(leg_clients, &leg_scan, &query_set, &kp, ctx)
+								.await?;
+						}
 						let result = self
 							.run_operation::<C, D>(
 								leg_clients,
@@ -1259,7 +1265,11 @@ const VECTOR_WARMUP_WINDOW: u32 = 25;
 const VECTOR_WARMUP_PLATEAU_PCT: u32 = 90;
 
 /// Cap on warm-up across all clients, so a slow engine cannot stall a run.
-const VECTOR_WARMUP_BUDGET: Duration = Duration::from_secs(120);
+///
+/// Deliberately short. Warming is an accuracy fix, not a benchmark phase, and a
+/// cap long enough to matter is long enough to blow a CI step's timeout — which
+/// it did at 120s.
+const VECTOR_WARMUP_BUDGET: Duration = Duration::from_secs(30);
 
 /// Config name of a strategy's search-time knob, for labelling sweep legs.
 fn search_param_label(strategy: &VectorIndexStrategy) -> &'static str {
