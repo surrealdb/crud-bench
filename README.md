@@ -620,6 +620,13 @@ cargo run -r -- -d sqlite -s 100000 -c 12 -t 24 -r
 cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 -r
 ```
 
+> [!NOTE]
+> The embedded engine tracks the **published version closest to SurrealDB's `main`**, prereleases
+> included, rather than the latest stable release — crud-bench exists to monitor SurrealDB as it is
+> developed, so it should sit where the development is. Server mode already does the same by pulling
+> the `surrealdb/surrealdb:nightly` image. Embedded and server therefore benchmark different builds,
+> and a result should say which it used.
+
 Specify a custom endpoint using `-e` or `--endpoint` to benchmark a custom deployment:
 
 | Endpoint | Meaning |

@@ -130,6 +130,13 @@ serde = { version = "1.0.228", features = ["derive"] }
 slatedb = { version = "0.15.0", features = ["foyer"], optional = true }
 serde_json = "1.0.150"
 serial_test = "3.4.0"
+# Track the published version closest to surrealdb's main branch, prereleases
+# included, rather than the latest stable. crud-bench exists to monitor SurrealDB
+# as it is developed, so the embedded engine should sit where the development is
+# — and this matches what server mode already does, which pulls the `nightly`
+# image. Pinning stable also means inheriting whatever a stable release carries:
+# 3.2.4 regressed full-table COUNT scans on embedded RocksDB by ~11x (#286),
+# which 3.3.0-beta.3 does not.
 surrealdb = { version = "3.3.0-beta.3", default-features = false, optional = true }
 surrealdb2 = { package = "surrealdb", version = "2.6", default-features = false, optional = true }
 surrealkv = { version = "0.21.2", optional = true }
