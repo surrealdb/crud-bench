@@ -2,8 +2,10 @@
 # (exact, no auxiliary index), HNSW (graph ANN), and DiskANN (graph ANN with a
 # disk-resident structure) — over a fixed-dimension embedding column.
 #
-# Engines covered end-to-end: SurrealDB, PostgreSQL (pgvector), Redis Stack.
-# Engines without vector support skip the run via `NOT_SUPPORTED_ERROR`.
+# Engines covered end-to-end: SurrealDB 3.x and 2.x, PostgreSQL (pgvector) and
+# Redis Stack. DiskANN is SurrealDB 3.x only; Postgres and Redis skip that leg.
+# Engines without vector support skip the run via `NOT_SUPPORTED_ERROR` rather
+# than failing it, so a mixed run reports `-` for them.
 #
 # `seed` below makes row content a pure function of (seed, sample index), so
 # the corpus is identical across engines and across runs. That is what lets

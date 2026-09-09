@@ -101,7 +101,8 @@ and lists those which are planned in the future.
 - [x] DiskANN KNN query, with configurable `degree` / `l_build` / `alpha` / `l_search`
 - [x] Vector index build timing
 - [x] Recall@k against exact ground truth, scored identically for every engine
-- [ ] Parameter sweeps tracing the recall/latency curve
+- [x] Parameter sweeps tracing the recall/latency curve over a single index build
+- [x] Reproducible corpora, so engines and runs are compared on identical data
 - [ ] Index size on disk and resident memory
 - [ ] Filtered KNN (`WHERE … ORDER BY <embedding> LIMIT k`)
 
@@ -162,6 +163,7 @@ Options:
       --emit-phase-markers                     Emit line-oriented phase markers (`… starting`, `Benchmark starting`) for log-based tooling (e.g. `dev.sh` perf windows). Off by default; also on when `CRUD_BENCH_EMIT_PHASE_MARKERS` is `1`, `true`, `yes`, or `on`
       --corpus-seed <CORPUS_SEED>              Seed for generated row content, overriding `seed` in the benchmark TOML. With a seed the corpus is a pure function of `(seed, sample)`, making the run reproducible and letting vector-search ground truth reconstruct the corpus instead of reading it back
       --ground-truth-cache <DIR>               Directory holding cached vector-search ground truth [env: CRUD_BENCH_GROUND_TRUTH_CACHE=] [default: .crud-bench-gt]
+      --vector-warmup-seconds <SECONDS>        Seconds a vector index may be warmed before a timed leg. Warming stops on its own once latency plateaus; this is a safety cap. Raise it for large corpora [default: 30]
   -h, --help                                   Print help (see more with '--help')
   ```
 
@@ -318,9 +320,19 @@ block describes one KNN benchmark:
   straddling the k-th boundary can swap without any real quality difference; a small tolerance stops
   that reading as a recall gap.
 
-> [!NOTE]
-> Engines without vector support skip these runs rather than failing. DiskANN is currently
-> implemented for SurrealDB only.
+#### Engine support
+
+| engine | bruteforce | HNSW | DiskANN | notes |
+|---|---|---|---|---|
+| SurrealDB (3.x) | ✓ | ✓ | ✓ | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL |
+| SurrealDB (2.x) | ✓ | ✓ | — | 2.6 has no DiskANN |
+| PostgreSQL | ✓ | ✓ | — | pgvector; DiskANN would need pgvectorscale |
+| Redis Stack | ✓ (FLAT) | ✓ | — | no native L1/Manhattan metric |
+| everything else | — | — | — | the run is skipped, not failed |
+
+Engines without vector support skip these runs rather than failing, so a mixed run reports `-` for
+them rather than aborting. A leg whose strategy needs an index it cannot build is skipped the same
+way.
 
 #### Vector data
 

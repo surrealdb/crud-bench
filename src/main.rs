@@ -943,7 +943,11 @@ fn run(args: Args) -> Result<()> {
 		sync: args.sync,
 		persisted: args.persisted,
 		optimised: args.optimised,
+		// Filled in below, once the benchmark TOML has been read: the seed may
+		// come from the config as well as the CLI.
+		corpus_seed: None,
 	};
+	let mut metadata = metadata;
 	// Get database display name
 	let name = args.database.name().to_string();
 	// Build the key provider
@@ -953,6 +957,7 @@ fn run(args: Args) -> Result<()> {
 	// A CLI seed overrides the config's, so a sweep can vary the corpus without
 	// editing the workload file.
 	let corpus_seed = args.corpus_seed.or(bench_toml.seed);
+	metadata.corpus_seed = corpus_seed;
 	let vp = match corpus_seed {
 		Some(seed) => ValueProvider::new(&value_json)?.with_seed(seed),
 		None => ValueProvider::new(&value_json)?,

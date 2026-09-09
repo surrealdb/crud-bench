@@ -40,6 +40,14 @@ pub(crate) struct BenchmarkMetadata {
 	pub(crate) persisted: bool,
 	/// Tuned server settings vs defaults where supported.
 	pub(crate) optimised: bool,
+	/// Corpus seed the run generated its rows from, when one was set.
+	///
+	/// Without it a stored result cannot say which dataset produced it, which
+	/// defeats the point of seeding: two results are only comparable if they
+	/// were measured against the same corpus, and vector ground truth is keyed
+	/// on this value.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub(crate) corpus_seed: Option<u64>,
 }
 
 /// Full benchmark output: timings per phase plus one representative generated [`BenchValue`].
