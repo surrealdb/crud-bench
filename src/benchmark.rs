@@ -19,7 +19,7 @@ use crate::valueprovider::ValueProvider;
 use crate::workloads;
 use crate::{
 	Args, BatchOperation, Batches, Index, Scan, ScanWithWrites, Scans, VectorHoldout,
-	VectorIndexStrategy, VectorQuerySpec,
+	VectorQuerySpec,
 };
 
 use anyhow::{Context, Result, bail};
@@ -315,10 +315,7 @@ impl Benchmark {
 							vq.field
 						)
 					})?;
-				let strategy_needs_index = matches!(
-					vq.index_strategy,
-					VectorIndexStrategy::Hnsw { .. } | VectorIndexStrategy::DiskAnn { .. }
-				);
+				let strategy_needs_index = vq.index_strategy.requires_index();
 				let query_set = self
 					.build_vector_query_set::<C>(&clients[0], &scan, &vq, kp, self.samples)
 					.await?;
