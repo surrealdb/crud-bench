@@ -588,6 +588,8 @@ impl Benchmark {
 					index_build: vec_index_build,
 					index_remove: vec_index_remove,
 					runs,
+					clients: leg_clients.len() as u32,
+					threads: leg_threads,
 				}
 			} else if let Some(index_spec) = index_spec {
 				// Indexed scan: heap legs → build index → indexed legs → drop index
@@ -744,6 +746,8 @@ impl Benchmark {
 					index_build,
 					index_remove,
 					runs,
+					clients: leg_clients.len() as u32,
+					threads: leg_threads,
 				}
 			} else {
 				// No index spec (or index skipped): only heap scan + optional write-mix legs
@@ -795,6 +799,8 @@ impl Benchmark {
 					index_build: None,
 					index_remove: None,
 					runs,
+					clients: leg_clients.len() as u32,
+					threads: leg_threads,
 				}
 			};
 			scan_results.push(result);

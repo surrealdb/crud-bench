@@ -50,11 +50,21 @@ pub(crate) struct GroundTruth {
 
 /// How many neighbours to store for a given `top_k`.
 ///
-/// Twice the cut is enough for any realistic tolerance: it is a scoring-time
-/// parameter, so widening the tolerance never invalidates a cached answer key.
+/// `tie_epsilon` is a scoring-time parameter deliberately kept out of the cache
+/// fingerprint, so a stored key has to cover any tolerance a later run might
+/// apply. Twice the cut covers a realistic one; [`MAX_TIE_EPSILON`] bounds the
+/// configuration to what this depth can actually honour.
 fn storage_depth(top_k: usize) -> usize {
 	top_k.saturating_mul(2)
 }
+
+/// Largest tolerance the stored answer key can honour.
+///
+/// The key holds [`storage_depth`] neighbours. A tolerance wide enough to admit
+/// candidates beyond that would silently score a legitimately-returned boundary
+/// neighbour as a miss, because `build_answers` can only accept rows the key
+/// actually stored.
+pub(crate) const MAX_TIE_EPSILON: f64 = 0.5;
 
 /// One query's accepted answers, resolved into the run's key shape.
 ///

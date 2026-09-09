@@ -167,6 +167,17 @@ pub(crate) struct ScanResult {
 	pub(crate) index_remove: Option<OperationResult>,
 	/// Timed scan legs in benchmark order (baseline → optional write-mix → indexed variants).
 	pub(crate) runs: Vec<ScanRun>,
+	/// Clients this scan's timed legs actually ran at, after any per-scan
+	/// override and the cap at the pool size.
+	///
+	/// The run's metadata records the CLI settings, which a scan may override —
+	/// `config/vector.toml` runs its legs at 1x1 by default. Without this, a
+	/// scan run at 1x1 is indistinguishable in the results from one run at
+	/// 12x24, and those measure very different things: the same KNN query timed
+	/// 0.4ms at one client and roughly 1500ms at sixty-four.
+	pub(crate) clients: u32,
+	/// Threads per client this scan's timed legs actually ran at.
+	pub(crate) threads: u32,
 }
 
 /// Column titles for the ASCII summary table ([`BenchmarkResult`]'s [`Display`] impl).

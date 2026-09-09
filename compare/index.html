@@ -765,6 +765,7 @@
    * mean: number, min?: number, max?: number, q99: number, q95?: number,
    * q75?: number, q50?: number, ops: number,
    * recall?: { mean: number, p5: number, min: number, queries: number },
+   * label?: string,
    * elapsed?: ElapsedSerde
    * }} OperationResultLike */
 
@@ -847,7 +848,13 @@
     } else {
       mid = `reads - ${indexSlug}`;
     }
-    return `[S]can · ${id} · ${scanName} - ${mid} (${samples})`;
+    // Sweep legs share id, name and index state, differing only by `label`.
+    // Leaving it out makes every leg hash to the same key, so `flattenBenchmark`
+    // keeps only the last one and the rest of the curve is silently dropped.
+    // Mirrors `scan_run_row_label` in src/result.rs.
+    return run.label
+      ? `[S]can · ${id} · ${scanName} · ${run.label} - ${mid} (${samples})`
+      : `[S]can · ${id} · ${scanName} - ${mid} (${samples})`;
   }
 
   /**

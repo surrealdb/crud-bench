@@ -247,6 +247,8 @@ pub(crate) struct ScanSpec {
 	#[serde(default)]
 	pub(crate) clients: Option<u32>,
 	/// Threads per client for this scan's timed legs. Defaults to `--threads`.
+	/// Must be at least 1: zero spawns no workers, and the phase would still
+	/// report a result for iterations that never ran.
 	#[serde(default)]
 	pub(crate) threads: Option<u32>,
 
@@ -396,6 +398,16 @@ fn is_fieldless_index_type(kind: Option<&str>) -> bool {
 /// otherwise the per-backend DDL builders emit broken `FIELDS ` clauses and fail at runtime.
 fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 	for scan in scans {
+		// Zero workers spawns no tasks, but the phase still builds an
+		// `OperationResult` from the requested iteration count — zero latency
+		// and unbounded throughput for work that never happened. `clients` is
+		// additionally clamped to the pool at run time; neither may be zero.
+		if scan.threads == Some(0) {
+			bail!("scan `{}`: threads must be >= 1", scan.name);
+		}
+		if scan.clients == Some(0) {
+			bail!("scan `{}`: clients must be >= 1", scan.name);
+		}
 		if let Some(ref idx) = scan.with_index
 			&& !idx.skip
 		{
@@ -422,6 +434,16 @@ fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 			}
 			if vq.field.trim().is_empty() {
 				bail!("scan `{}`: vector_query.field must be non-empty", scan.name);
+			}
+			// The answer key stores a fixed depth beyond `top_k`, so a tolerance
+			// wider than that depth can admit would score legitimately-returned
+			// boundary neighbours as misses.
+			if !(0.0..=crate::vectorgt::MAX_TIE_EPSILON).contains(&vq.tie_epsilon) {
+				bail!(
+					"scan `{}`: vector_query.tie_epsilon must be between 0.0 and {}",
+					scan.name,
+					crate::vectorgt::MAX_TIE_EPSILON
+				);
 			}
 			// A sweep expands into one timed leg per value, so an empty list
 			// would silently produce no legs at all rather than an error.
@@ -684,6 +706,8 @@ pub(crate) struct Scan {
 	#[serde(default)]
 	pub(crate) clients: Option<u32>,
 	/// Threads per client for this scan's timed legs. Defaults to `--threads`.
+	/// Must be at least 1: zero spawns no workers, and the phase would still
+	/// report a result for iterations that never ran.
 	#[serde(default)]
 	pub(crate) threads: Option<u32>,
 
@@ -1201,6 +1225,18 @@ mod test {
 
 	/// Omitting it means "use the CLI settings", which is what every existing
 	/// config does.
+	/// Zero workers would report a result for iterations that never ran.
+	#[test]
+	fn scan_concurrency_override_rejects_zero() {
+		for bad in [
+			r#"[{ "id": "s", "name": "a", "threads": 0 }]"#,
+			r#"[{ "id": "s", "name": "a", "clients": 0 }]"#,
+		] {
+			let scans = expand_scan_specs(serde_json::from_str(bad).unwrap()).unwrap();
+			assert!(validate_scan_index_ids(&scans).is_err(), "should have rejected {bad}");
+		}
+	}
+
 	#[test]
 	fn scan_concurrency_override_defaults_to_unset() {
 		let json = r#"[{ "id": "s", "name": "a" }]"#;
