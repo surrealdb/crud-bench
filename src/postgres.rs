@@ -2,7 +2,7 @@
 
 use crate::dialect::{AnsiSqlDialect, Dialect, PostgresDialect};
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::memory::Config;
 use crate::util::sql::bench_to_postgres_param;
 use crate::value::BenchValue;
@@ -343,14 +343,22 @@ impl BenchmarkClient for PostgresClient {
 			} => bail!(crate::benchmark::NOT_SUPPORTED_ERROR),
 		};
 		self.client.execute(&stmt, &[]).await?;
-		// Set ef_search for HNSW (per-session GUC).
-		if let VectorIndexStrategy::Hnsw {
-			ef_search,
-			..
-		} = vq.index_strategy
-		{
-			let s = format!("SET hnsw.ef_search = {ef_search}");
-			self.client.execute(&s, &[]).await?;
+		// `hnsw.ef_search` is deliberately not set here. It is a per-session
+		// GUC, and this runs on one client while the scan runs on all of them,
+		// so setting it here reaches one session in `--clients`. It is applied
+		// per leg through `prepare_vector_search` instead, which also lets a
+		// sweep vary it over a single index build.
+		Ok(())
+	}
+
+	/// pgvector takes the HNSW search budget from the `hnsw.ef_search` GUC,
+	/// which is per session. Applying it here puts it on every client's own
+	/// connection before the leg runs, and lets a sweep change it between legs
+	/// without rebuilding the index.
+	async fn prepare_vector_search(&self, vq: &VectorQuerySpec) -> Result<()> {
+		if matches!(vq.index_strategy, VectorIndexStrategy::Hnsw { .. }) {
+			let ef_search = vq.index_strategy.search_value();
+			self.client.execute(&format!("SET hnsw.ef_search = {ef_search}"), &[]).await?;
 		}
 		Ok(())
 	}
@@ -360,7 +368,7 @@ impl BenchmarkClient for PostgresClient {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
+	) -> Result<Vec<KnnKey>> {
 		self.knn_scan(scan, query).await
 	}
 
@@ -369,7 +377,7 @@ impl BenchmarkClient for PostgresClient {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
+	) -> Result<Vec<KnnKey>> {
 		self.knn_scan(scan, query).await
 	}
 
@@ -597,7 +605,7 @@ impl PostgresClient {
 		}
 	}
 
-	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<Vec<KnnKey>> {
 		let vq = scan
 			.vector_query
 			.as_ref()
@@ -608,12 +616,14 @@ impl PostgresClient {
 		let stm = format!("SELECT id FROM record ORDER BY {field} {op} $1 LIMIT {k}");
 		let q = pgvector::Vector::from(query.to_vec());
 		let res = self.client.query(&stm, &[&q]).await?;
-		let mut count = 0;
+		let mut hits = Vec::with_capacity(res.len());
 		for v in res {
-			black_box(self.consume(v, false).unwrap());
-			count += 1;
+			// Materialise the row as any other scan would, then keep its key:
+			// recall is scored by identity, so the ids have to come back.
+			let row = self.consume(v, false)?;
+			hits.push(black_box(KnnKey::from_id_field(&row)?));
 		}
-		Ok(count)
+		Ok(hits)
 	}
 
 	async fn batch_create<T>(&self, key_vals: Vec<(T, BenchValue)>) -> Result<()>

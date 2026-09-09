@@ -4,7 +4,7 @@
 //! [`crate::result::OperationResult`] values for reporting.
 
 use crate::dialect::Dialect;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::keyprovider::KeyProvider;
 use crate::result::{
 	BenchmarkMetadata, BenchmarkResult, OperationMetric, OperationResult, ScanResult, ScanRun,
@@ -13,9 +13,9 @@ use crate::result::{
 use crate::system::SystemInfo;
 use crate::terminal::BenchUi;
 use crate::util::format_duration;
-use crate::value::BenchValue;
 use crate::valueprovider::ColumnType;
-use crate::valueprovider::ValueProvider;
+use crate::valueprovider::{ValueProvider, ValueStream};
+use crate::vectorgt::{self, GroundTruth, RecallTally, VectorAnswer};
 use crate::workloads;
 use crate::{
 	Args, BatchOperation, Batches, Index, Scan, ScanWithWrites, Scans, VectorHoldout,
@@ -31,6 +31,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 use std::fmt::{Display, Formatter};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
@@ -48,70 +49,39 @@ const QUIESCE_DELAY: Duration = Duration::from_secs(1);
 /// Error string returned by adapters to mark an operation as unsupported (skipped, not fatal).
 pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
 
-/// Pre-fetched query set for a vector-search scan. Holds `count` query vectors
-/// sampled deterministically from the inserted records, indexed by sample
-/// number with simple modulo wrap-around. Memory cost is constant in `count`
-/// (independent of the dataset size).
+/// Query set for a vector-search scan, indexed by sample number with simple
+/// modulo wrap-around. Memory cost is constant in `count`, independent of the
+/// dataset size.
+///
+/// Queries are generated from their own seed and never inserted, so they are
+/// disjoint from the corpus by construction: no query is its own nearest
+/// neighbour, which would otherwise hand every index one free hit in each
+/// top-k. Generating them also means no engine read is needed to materialise
+/// the set, so an engine that cannot round-trip a vector column no longer
+/// changes how the queries are built.
 #[derive(Debug, Clone)]
 pub(crate) struct VectorQuerySet {
 	pub(crate) queries: Arc<Vec<Vec<f32>>>,
+	/// Exact answer key for these queries, when one was computed. Shared by
+	/// every engine rather than taken from the engine's own exact leg, so the
+	/// recall it scores is comparable across engines.
+	pub(crate) ground_truth: Option<Arc<GroundTruth>>,
+	/// The answer key resolved into this run's key shape, ready to score
+	/// against. Built once per scan so an iteration costs a set lookup.
+	pub(crate) accept: Option<Arc<Vec<VectorAnswer>>>,
 }
 
 impl VectorQuerySet {
 	pub(crate) fn pick(&self, sample: u32) -> &[f32] {
-		let q = &self.queries[(sample as usize) % self.queries.len()];
+		let q = &self.queries[self.query_index(sample)];
 		q.as_slice()
 	}
-}
 
-/// Pull a `FloatVector` out of a row's named column, accepting the packed
-/// [`BenchValue::FloatVector`], a generic `Array<Float>` (SurrealDB), or a
-/// `Bytes` payload of packed little-endian f32s (SQL backends that fall back
-/// to BYTEA/BLOB columns for vectors).
-///
-/// Any other shape — including a missing field — bails with
-/// [`NOT_SUPPORTED_ERROR`] so the scan skips cleanly on backends that don't
-/// round-trip vector payloads in any of these forms.
-fn extract_vector_field(row: &BenchValue, field: &str) -> Result<Vec<f32>> {
-	let Some(v) = row.get_field(field) else {
-		bail!(NOT_SUPPORTED_ERROR);
-	};
-	match v {
-		BenchValue::FloatVector(v) => Ok(v.clone()),
-		BenchValue::Array(a) => {
-			let mut out = Vec::with_capacity(a.len());
-			for elem in a {
-				match elem {
-					BenchValue::Float(f) => out.push(*f as f32),
-					BenchValue::Int(i) => out.push(*i as f32),
-					BenchValue::UInt(u) => out.push(*u as f32),
-					BenchValue::Decimal(d) => {
-						out.push(rust_decimal::prelude::ToPrimitive::to_f32(d).unwrap_or(0.0))
-					}
-					_ => bail!(NOT_SUPPORTED_ERROR),
-				}
-			}
-			Ok(out)
-		}
-		BenchValue::Bytes(b) if b.len() % 4 == 0 => Ok(bytemuck::cast_slice::<u8, f32>(b).to_vec()),
-		_ => bail!(NOT_SUPPORTED_ERROR),
+	/// Index of the query `pick` returns for `sample`; scoring needs it to line
+	/// a result up with its answer.
+	pub(crate) fn query_index(&self, sample: u32) -> usize {
+		(sample as usize) % self.queries.len()
 	}
-}
-
-/// Deterministically pick `count` sample indices from `[0, samples)` using `seed`.
-fn holdout_indices(samples: u32, count: usize, seed: u64) -> Vec<u32> {
-	use rand::RngExt as _;
-	use rand::SeedableRng;
-	use rand::prelude::SmallRng;
-	let total = samples as usize;
-	let count = count.min(total);
-	let mut rng = SmallRng::seed_from_u64(seed);
-	let mut out = Vec::with_capacity(count);
-	for _ in 0..count {
-		let pick = rng.random_range(0u32..samples);
-		out.push(pick);
-	}
-	out
 }
 
 /// Shared benchmark settings and UI, built from CLI [`crate::Args`].
@@ -138,6 +108,13 @@ pub(crate) struct Benchmark {
 	pub(crate) optimised: bool,
 	/// Per-operation timeout
 	pub(crate) operation_timeout: Duration,
+	/// Directory holding cached vector-search ground truth
+	pub(crate) ground_truth_cache: PathBuf,
+	/// Safety cap on warming a vector index before a timed leg
+	pub(crate) vector_warmup_budget: Duration,
+	/// JSON form of the configured value template. Ground truth keys its cache
+	/// on it: a schema change alters the corpus even at an unchanged seed.
+	pub(crate) value_template: String,
 	/// Terminal UI (tables, progress bars, phase markers).
 	pub(crate) bench_ui: BenchUi,
 	/// Grep-friendly `… starting` / `Benchmark starting` lines for profiling scripts
@@ -166,7 +143,16 @@ impl Benchmark {
 			operation_timeout: Duration::from_secs(args.operation_timeout),
 			bench_ui: BenchUi::new(args.color),
 			emit_phase_markers,
+			ground_truth_cache: PathBuf::from(&args.ground_truth_cache),
+			vector_warmup_budget: Duration::from_secs(args.vector_warmup_seconds),
+			value_template: String::new(),
 		}
+	}
+
+	/// Record the value template this run was configured with, which is part of
+	/// the vector ground-truth cache key.
+	pub(crate) fn set_value_template(&mut self, template: String) {
+		self.value_template = template;
 	}
 
 	/// When `COMPACTION` is set in the environment, run the engine-specific
@@ -184,6 +170,123 @@ impl Benchmark {
 			self.wait_for_client(engine).await?.compact().await?;
 			self.bench_ui.println_took_head("Compaction", &format_duration(t.elapsed()));
 			self.quiesce_and_mark().await;
+		}
+		Ok(())
+	}
+
+	/// Issue untimed queries until a freshly built vector index answers at a
+	/// steady rate.
+	///
+	/// The first leg timed after a build otherwise absorbs the whole cost of
+	/// warming the index, and not by a small margin: on a 50k-row HNSW the
+	/// first leg measured ~295ms per query against ~0.5ms for the identical
+	/// query in the leg that followed. Worse, it was *more accurate* — 0.935
+	/// recall against 0.853 for the same `ef_search` run later — so the first
+	/// leg is not merely slow, it answers differently. Reversing a sweep's order
+	/// moved the effect to whichever value ran first, which is what identified
+	/// it.
+	///
+	/// The cost is progressive rather than a single fault, so a fixed handful of
+	/// queries does not clear it. Warming instead runs until queries settle:
+	/// a run of consecutive ones close to the fastest seen, or a wall-clock cap
+	/// so a slow engine cannot stall the benchmark.
+	async fn warm_vector_index<C>(
+		&self,
+		clients: &[Arc<C>],
+		scan: &Scan,
+		query_set: &VectorQuerySet,
+		kp: &KeyProvider,
+		ctx: ScanContext,
+	) -> Result<()>
+	where
+		C: BenchmarkClient + Send + Sync,
+	{
+		let started = Instant::now();
+		let ceiling = (self.samples / VECTOR_WARMUP_ROWS_PER_QUERY).max(VECTOR_WARMUP_MIN_QUERIES);
+		// Set when a client stopped on a limit rather than on a settled rate.
+		let mut truncated = false;
+		for client in clients.iter() {
+			let mut previous: Option<Duration> = None;
+			let mut q = 0u32;
+			let mut plateaued = false;
+			while started.elapsed() <= self.vector_warmup_budget && q < ceiling {
+				// Time a whole window rather than single queries: while an index
+				// is warming its latency is *falling*, and once warm it is flat.
+				// Comparing consecutive windows detects that transition, where
+				// comparing single queries to the fastest so far does not — a
+				// uniformly slow cold index looks perfectly steady.
+				let window = Instant::now();
+				for _ in 0..VECTOR_WARMUP_WINDOW {
+					// An engine that cannot serve this scan fails the same way
+					// in the timed run, which is where it belongs in the output.
+					if client.scan_vector(scan, query_set.pick(q), kp, ctx).await.is_err() {
+						return Ok(());
+					}
+					q += 1;
+				}
+				let window = window.elapsed();
+				if let Some(previous) = previous {
+					// Stop once a window is no real improvement on the last —
+					// which is true immediately for an index that was already
+					// warm, so a later sweep leg pays only two windows.
+					if window * 100 >= previous * VECTOR_WARMUP_PLATEAU_PCT {
+						plateaued = true;
+						break;
+					}
+				}
+				previous = Some(window);
+			}
+			if !plateaued {
+				truncated = true;
+			}
+		}
+		let waited = started.elapsed();
+		if truncated {
+			// A truncated warm-up leaves the index cold, and a cold index is
+			// both slower and — because it answers by a different path — more
+			// accurate. Reporting that silently is how this went unnoticed for
+			// several runs, so say it loudly instead.
+			self.bench_ui.println_muted(&format!(
+				"Warm-up stopped on a limit after {} without the rate settling: the next leg's \
+				 latency may be understated and its recall overstated. Raise \
+				 --vector-warmup-seconds if this persists.",
+				format_duration(waited)
+			));
+		} else if waited > Duration::from_millis(500) {
+			self.bench_ui
+				.println_muted(&format!("Warmed the vector index in {}", format_duration(waited)));
+		}
+		Ok(())
+	}
+
+	/// Block until `index` is queryable as an index, not merely built.
+	///
+	/// SurrealDB reports `building.status = "ready"` once the initial build
+	/// finishes, but rows indexed afterwards sit in a pending queue that
+	/// queries answer by scanning it linearly, drained by a background task on
+	/// its own interval. A leg timed against an undrained queue measures that
+	/// scan wearing the index's name.
+	///
+	/// Called between timed operations so the wait lands in no measurement, and
+	/// before every indexed leg rather than only after the build: a leg that
+	/// writes leaves a queue behind, and the next leg would otherwise inherit
+	/// it and report a number that depends on what ran before it.
+	///
+	/// Unrelated to `COMPACTION` / `ALTER SYSTEM COMPACT`, which compacts the
+	/// storage keyspace and does nothing for this queue. Engines without such a
+	/// queue no-op.
+	async fn await_index_queryable<C>(&self, client: &Arc<C>, index: &str) -> Result<()>
+	where
+		C: BenchmarkClient + Send + Sync,
+	{
+		let started = Instant::now();
+		client.await_index_queryable(index).await?;
+		let waited = started.elapsed();
+		if waited > Duration::from_millis(200) {
+			self.bench_ui.println_muted(&format!(
+				"Waited {} for index `{index}` to become queryable",
+				format_duration(waited)
+			));
 		}
 		Ok(())
 	}
@@ -243,13 +346,21 @@ impl Benchmark {
 				kp,
 				vp.clone(),
 				self.samples,
+				self.threads,
 			)
 			.await?;
 		// Compact the datastore
 		self.maybe_compact_datastore::<C, E>(&engine).await?;
 		// Run the "reads" benchmark
 		let reads = self
-			.run_operation::<C, D>(&clients, BenchmarkOperation::Read, kp, vp.clone(), self.samples)
+			.run_operation::<C, D>(
+				&clients,
+				BenchmarkOperation::Read,
+				kp,
+				vp.clone(),
+				self.samples,
+				self.threads,
+			)
 			.await?;
 		// Compact the datastore
 		self.maybe_compact_datastore::<C, E>(&engine).await?;
@@ -261,6 +372,7 @@ impl Benchmark {
 				kp,
 				vp.clone(),
 				self.samples,
+				self.threads,
 			)
 			.await?;
 		// Compact the datastore
@@ -288,17 +400,41 @@ impl Benchmark {
 			let iterations = scan.iterations.map(|s| s as u32).unwrap_or(self.samples);
 			let write_specs = scan.with_writes.as_slice();
 			let w = write_specs.len();
+			// A scan may run at its own concurrency. A query answering in
+			// well under a millisecond spends its time queueing rather than
+			// searching at the default settings — a KNN leg measured 0.4ms at
+			// one client and roughly 1500ms at sixty-four, which is the queue,
+			// not the index — so its latency only means anything lower down.
+			// Index DDL is unaffected; it always runs on a single client.
+			let leg_clients = match scan.clients {
+				Some(requested) => {
+					let capped = (requested as usize).clamp(1, clients.len());
+					if capped < requested as usize {
+						self.bench_ui.println_muted(&format!(
+							"Scan `{}` asked for {requested} clients; the pool holds {capped}",
+							scan.id
+						));
+					}
+					&clients[..capped]
+				}
+				None => &clients[..],
+			};
+			let leg_threads = scan.threads.unwrap_or(self.threads);
 			let index_spec = scan.with_index.as_ref().filter(|i| !i.skip);
 
 			// Vector-search scans take a dedicated path. Order matters:
-			//   1. Build the holdout query set (skipped if the engine can't
-			//      surface a readable vector — same skip semantics as fulltext).
+			//   1. Generate the query set from its own seed. These vectors are
+			//      never inserted, so they are disjoint from the corpus and
+			//      need no engine read to materialise.
 			//   2. Always invoke BuildVectorIndex. Engines decide whether the
 			//      chosen strategy needs an actual index (Redis Bruteforce
 			//      builds a FLAT FT index; Surreal/Postgres Bruteforce return
 			//      NotSupported and the scan still runs without one).
-			//   3. Run the timed VectorScan.
-			//   4. RemoveIndex iff Build succeeded — strictly after the scan.
+			//   3. Compute or load the exact answer key, but only once the scan
+			//      is known to run — an unsupported engine skips before paying
+			//      for a corpus sweep.
+			//   4. Run the timed VectorScan.
+			//   5. RemoveIndex iff Build succeeded — strictly after the scan.
 			let result = if let Some(vq) = scan.vector_query.clone() {
 				let dim = vp
 					.columns()
@@ -319,108 +455,141 @@ impl Benchmark {
 					vq.index_strategy,
 					VectorIndexStrategy::Hnsw { .. } | VectorIndexStrategy::DiskAnn { .. }
 				);
-				let query_set = self
-					.build_vector_query_set::<C>(&clients[0], &scan, &vq, kp, self.samples)
-					.await?;
+				let mut query_set = self.build_vector_query_set(&scan, &vq, &vp)?;
 				let mut runs = Vec::with_capacity(1);
-				match query_set {
-					None => {
-						// Engine doesn't surface vector reads — skip the whole scan.
-						runs.push(ScanRun {
-							workload: ScanWorkload::Read,
-							indexed: strategy_needs_index,
-							result: None,
-						});
-						ScanResult {
-							id: id.clone(),
-							name,
-							iterations,
-							index_build: None,
-							index_remove: None,
-							runs,
+				// Derive the index spec from `vector_query.field` so the user
+				// only declares the field once. Engines that don't need an
+				// index for the chosen strategy ignore `idx_spec` and return
+				// NotSupported from build.
+				let idx_spec = Index {
+					skip: false,
+					fields: vec![vq.field.clone()],
+					unique: None,
+					index_type: None,
+				};
+				let vec_index_build = self
+					.run_operation::<C, D>(
+						&clients[..1],
+						BenchmarkOperation::BuildVectorIndex(idx_spec, vq.clone(), dim, id.clone()),
+						kp,
+						vp.clone(),
+						1,
+						leg_threads,
+					)
+					.await?;
+				if vec_index_build.is_some() {
+					self.await_index_queryable(&clients[0], &id).await?;
+					self.maybe_compact_datastore::<C, E>(&engine).await?;
+				}
+				// Run the scan if either the strategy doesn't require an index
+				// (so a missing build is fine) or build actually produced one.
+				// HNSW/DiskANN with no index = skip.
+				let ctx = if strategy_needs_index {
+					ScanContext::WithIndex
+				} else {
+					ScanContext::WithoutIndex
+				};
+				// A search-time knob given as a list becomes one timed leg per
+				// value over this *single* index build. A lone `ef_search` is
+				// one arbitrary point on a curve; the comparison worth making
+				// is the curve, and tracing it should not cost a rebuild per
+				// point.
+				let sweep = vq.index_strategy.search_values();
+				let mut sweep_results: Vec<(Option<u32>, Option<OperationResult>)> = Vec::new();
+				if !strategy_needs_index || vec_index_build.is_some() {
+					self.attach_ground_truth(&scan, &vq, &vp, &kp, &mut query_set)?;
+					// Bruteforce has no search budget, so it runs once with no
+					// value to report.
+					let legs: Vec<Option<u32>> = if sweep.len() > 1 {
+						sweep.iter().map(|v| Some(*v)).collect()
+					} else {
+						vec![None]
+					};
+					for leg in legs {
+						// Pin the spec to this leg's value so adapters only ever
+						// see a resolved strategy.
+						let mut leg_scan = scan.clone();
+						if let (Some(value), Some(lvq)) = (leg, leg_scan.vector_query.as_mut()) {
+							lvq.index_strategy = vq.index_strategy.with_search_value(value);
 						}
-					}
-					Some(query_set) => {
-						// Derive the index spec from `vector_query.field` so
-						// the user only declares the field once. Engines that
-						// don't need an index for the chosen strategy ignore
-						// `idx_spec` and return NotSupported from build.
-						let idx_spec = Index {
-							skip: false,
-							fields: vec![vq.field.clone()],
-							unique: None,
-							index_type: None,
-						};
-						let vec_index_build = self
+						let leg_vq = leg_scan
+							.vector_query
+							.clone()
+							.expect("vector scan always carries a vector_query");
+						// Engines holding the budget in session state need it on
+						// every client, not just the one that built the index.
+						for client in clients.iter() {
+							client.prepare_vector_search(&leg_vq).await?;
+						}
+						if let Some(value) = leg {
+							self.bench_ui.println_scan_run(&format!(
+								"{name} · {} = {value}",
+								search_param_label(&vq.index_strategy)
+							));
+						}
+						// Only an index needs priming. A bruteforce leg has none,
+						// and every warm-up query there is a full linear scan —
+						// which is both pointless and the most expensive query
+						// the benchmark can issue.
+						if strategy_needs_index {
+							self.warm_vector_index(leg_clients, &leg_scan, &query_set, &kp, ctx)
+								.await?;
+						}
+						let result = self
 							.run_operation::<C, D>(
-								&clients[..1],
-								BenchmarkOperation::BuildVectorIndex(
-									idx_spec,
-									vq.clone(),
-									dim,
-									id.clone(),
-								),
-								kp,
-								vp.clone(),
-								1,
-							)
-							.await?;
-						if vec_index_build.is_some() {
-							self.maybe_compact_datastore::<C, E>(&engine).await?;
-						}
-						// Run the scan if either the strategy doesn't require
-						// an index (so a missing build is fine) or build
-						// actually produced an index. HNSW/DiskANN with no
-						// index = skip.
-						let ctx = if strategy_needs_index {
-							ScanContext::WithIndex
-						} else {
-							ScanContext::WithoutIndex
-						};
-						let scan_result = if !strategy_needs_index || vec_index_build.is_some() {
-							self.run_operation::<C, D>(
-								&clients,
-								BenchmarkOperation::VectorScan(
-									scan.clone(),
-									ctx,
-									query_set.clone(),
-								),
+								leg_clients,
+								BenchmarkOperation::VectorScan(leg_scan, ctx, query_set.clone()),
 								kp,
 								vp.clone(),
 								iterations,
+								leg_threads,
 							)
-							.await?
-						} else {
-							None
-						};
-						// Drop the index *after* the scan finishes — strictly
-						// in this order so the timed scan sees the index.
-						let vec_index_remove = if vec_index_build.is_some() {
-							self.run_operation::<C, D>(
-								&clients[..1],
-								BenchmarkOperation::RemoveIndex(id.clone(), name.clone()),
-								kp,
-								vp.clone(),
-								1,
-							)
-							.await?
-						} else {
-							None
-						};
-						runs.push(ScanRun {
-							workload: ScanWorkload::Read,
-							indexed: strategy_needs_index,
-							result: scan_result,
-						});
-						ScanResult {
-							id: id.clone(),
-							name,
-							iterations,
-							index_build: vec_index_build,
-							index_remove: vec_index_remove,
-							runs,
-						}
+							.await?;
+						sweep_results.push((leg, result));
 					}
+				} else {
+					sweep_results.push((None, None));
+				}
+				// Drop the index *after* the scan finishes — strictly in this
+				// order so the timed scan sees the index.
+				let vec_index_remove = if vec_index_build.is_some() {
+					self.run_operation::<C, D>(
+						&clients[..1],
+						BenchmarkOperation::RemoveIndex(id.clone(), name.clone()),
+						kp,
+						vp.clone(),
+						1,
+						leg_threads,
+					)
+					.await?
+				} else {
+					None
+				};
+				let swept = sweep_results.len() > 1;
+				for (value, result) in sweep_results {
+					runs.push(ScanRun {
+						workload: ScanWorkload::Read,
+						indexed: strategy_needs_index,
+						result,
+						label: value
+							.map(|v| format!("{} = {v}", search_param_label(&vq.index_strategy))),
+					});
+				}
+				ScanResult {
+					id: id.clone(),
+					// A swept scan reports several legs under one build, so the
+					// value each leg used has to reach the row label.
+					name: if swept {
+						format!("{name} (sweep)")
+					} else {
+						name
+					},
+					iterations,
+					index_build: vec_index_build,
+					index_remove: vec_index_remove,
+					runs,
+					clients: leg_clients.len() as u32,
+					threads: leg_threads,
 				}
 			} else if let Some(index_spec) = index_spec {
 				// Indexed scan: heap legs → build index → indexed legs → drop index
@@ -428,23 +597,25 @@ impl Benchmark {
 				// Table-scan / heap query (no physical index)
 				let without_index = self
 					.run_operation::<C, D>(
-						&clients,
+						leg_clients,
 						BenchmarkOperation::Scan(scan.clone(), ScanContext::WithoutIndex),
 						kp,
 						vp.clone(),
 						iterations,
+						leg_threads,
 					)
 					.await?;
 				runs.push(ScanRun {
 					workload: ScanWorkload::Read,
 					indexed: false,
 					result: without_index,
+					label: None,
 				});
 				// Optional mixed read+write legs on the heap path (one per `with_writes` entry)
 				for spec in write_specs {
 					let mixed_without_index = self
 						.run_operation::<C, D>(
-							&clients,
+							leg_clients,
 							BenchmarkOperation::ScanWithWrites(
 								scan.clone(),
 								ScanContext::WithoutIndex,
@@ -453,6 +624,7 @@ impl Benchmark {
 							kp,
 							vp.clone(),
 							iterations,
+							leg_threads,
 						)
 						.await?;
 					runs.push(ScanRun {
@@ -461,6 +633,7 @@ impl Benchmark {
 						},
 						indexed: false,
 						result: mixed_without_index,
+						label: None,
 					});
 				}
 				// BuildIndex uses a single client to avoid races on DDL
@@ -475,26 +648,33 @@ impl Benchmark {
 						kp,
 						vp.clone(),
 						1,
+						leg_threads,
 					)
 					.await?;
 				let (with_index, index_remove, indexed_write_results) = if index_build.is_some() {
 					// Compact the datastore so the indexed-scan phases benchmark a compacted index.
 					self.maybe_compact_datastore::<C, E>(&engine).await?;
+					self.await_index_queryable(&clients[0], &id).await?;
 					// Same query shape using the new index
 					let with_index = self
 						.run_operation::<C, D>(
-							&clients,
+							leg_clients,
 							BenchmarkOperation::Scan(scan.clone(), ScanContext::WithIndex),
 							kp,
 							vp.clone(),
 							iterations,
+							leg_threads,
 						)
 						.await?;
 					let mut iw = Vec::with_capacity(w);
 					for spec in write_specs {
+						// The previous leg's writes leave a queue behind; drain
+						// it so each leg is timed from the same index state
+						// instead of inheriting whatever ran before it.
+						self.await_index_queryable(&clients[0], &id).await?;
 						iw.push(
 							self.run_operation::<C, D>(
-								&clients,
+								leg_clients,
 								BenchmarkOperation::ScanWithWrites(
 									scan.clone(),
 									ScanContext::WithIndex,
@@ -503,6 +683,7 @@ impl Benchmark {
 								kp,
 								vp.clone(),
 								iterations,
+								leg_threads,
 							)
 							.await?,
 						);
@@ -514,6 +695,7 @@ impl Benchmark {
 							kp,
 							vp.clone(),
 							1,
+							leg_threads,
 						)
 						.await?;
 					(with_index, index_remove, iw)
@@ -526,6 +708,7 @@ impl Benchmark {
 						workload: ScanWorkload::Read,
 						indexed: true,
 						result: with_index,
+						label: None,
 					});
 					for (spec, r) in write_specs.iter().zip(indexed_write_results) {
 						runs.push(ScanRun {
@@ -534,6 +717,7 @@ impl Benchmark {
 							},
 							indexed: true,
 							result: r,
+							label: None,
 						});
 					}
 				} else {
@@ -542,6 +726,7 @@ impl Benchmark {
 						workload: ScanWorkload::Read,
 						indexed: true,
 						result: None,
+						label: None,
 					});
 					for spec in write_specs {
 						runs.push(ScanRun {
@@ -550,6 +735,7 @@ impl Benchmark {
 							},
 							indexed: true,
 							result: None,
+							label: None,
 						});
 					}
 				}
@@ -560,28 +746,32 @@ impl Benchmark {
 					index_build,
 					index_remove,
 					runs,
+					clients: leg_clients.len() as u32,
+					threads: leg_threads,
 				}
 			} else {
 				// No index spec (or index skipped): only heap scan + optional write-mix legs
 				let mut runs = Vec::with_capacity(1 + w);
 				let without_index = self
 					.run_operation::<C, D>(
-						&clients,
+						leg_clients,
 						BenchmarkOperation::Scan(scan.clone(), ScanContext::WithoutIndex),
 						kp,
 						vp.clone(),
 						iterations,
+						leg_threads,
 					)
 					.await?;
 				runs.push(ScanRun {
 					workload: ScanWorkload::Read,
 					indexed: false,
 					result: without_index,
+					label: None,
 				});
 				for spec in write_specs {
 					let mixed_without_index = self
 						.run_operation::<C, D>(
-							&clients,
+							leg_clients,
 							BenchmarkOperation::ScanWithWrites(
 								scan.clone(),
 								ScanContext::WithoutIndex,
@@ -590,6 +780,7 @@ impl Benchmark {
 							kp,
 							vp.clone(),
 							iterations,
+							leg_threads,
 						)
 						.await?;
 					runs.push(ScanRun {
@@ -598,6 +789,7 @@ impl Benchmark {
 						},
 						indexed: false,
 						result: mixed_without_index,
+						label: None,
 					});
 				}
 				ScanResult {
@@ -607,6 +799,8 @@ impl Benchmark {
 					index_build: None,
 					index_remove: None,
 					runs,
+					clients: leg_clients.len() as u32,
+					threads: leg_threads,
 				}
 			};
 			scan_results.push(result);
@@ -622,6 +816,7 @@ impl Benchmark {
 				kp,
 				vp.clone(),
 				self.samples,
+				self.threads,
 			)
 			.await?;
 		// Compact the datastore
@@ -644,8 +839,16 @@ impl Benchmark {
 				crate::BatchOperationType::Delete => BenchmarkOperation::BatchDelete(batch.clone()),
 			};
 			// Execute the batch benchmark
-			let duration =
-				self.run_operation::<C, D>(&clients, operation, kp, vp.clone(), iterations).await?;
+			let duration = self
+				.run_operation::<C, D>(
+					&clients,
+					operation,
+					kp,
+					vp.clone(),
+					iterations,
+					self.threads,
+				)
+				.await?;
 			// Store the batch benchmark result
 			batch_results.push((name, iterations, groups, duration));
 		}
@@ -683,59 +886,82 @@ impl Benchmark {
 	/// rather than spawning a fresh one — `wait_for_client` carries a
 	/// per-engine pre-connect sleep (5s on SurrealDB) that compounds across
 	/// the three vector legs.
-	async fn build_vector_query_set<C>(
+	fn build_vector_query_set(
 		&self,
-		client: &Arc<C>,
 		scan: &Scan,
 		vq: &VectorQuerySpec,
-		mut kp: KeyProvider,
-		samples: u32,
-	) -> Result<Option<VectorQuerySet>>
-	where
-		C: BenchmarkClient + Send + Sync,
-	{
+		vp: &ValueProvider,
+	) -> Result<VectorQuerySet> {
 		let VectorHoldout {
 			count,
 			seed,
 		} = vq.holdout.clone();
-		let ids = holdout_indices(samples, count, seed);
-		let mut queries = Vec::with_capacity(ids.len());
-		for n in ids {
-			// Read failures and shape mismatches both mean "this engine can't
-			// give us a usable vector for the holdout". Treat both as skip
-			// signals so an engine without vector support never aborts the
-			// whole benchmark — the scan still records a clean `-` cell,
-			// matching how fulltext skips on engines without fulltext. Log
-			// the underlying cause so CI runs can tell a real engine bug
-			// (worth fixing) apart from an unsupported engine (correct skip).
-			let row = match client.read(n, &mut kp).await {
-				Ok(r) => r,
-				Err(e) => {
-					eprintln!("vector holdout: skipping scan `{}` (read: {e:#})", scan.name);
-					return Ok(None);
-				}
-			};
-			let bv: BenchValue = row.into();
-			match extract_vector_field(&bv, &vq.field) {
-				Ok(v) => queries.push(v),
-				Err(e) => {
-					eprintln!("vector holdout: skipping scan `{}` (extract: {e})", scan.name);
-					return Ok(None);
-				}
-			}
-		}
-		// Belt-and-suspenders for `VectorQuerySet::pick`'s
-		// `sample % queries.len()` — the validator already rejects
-		// `holdout.count == 0`, but anything else that ends up returning
-		// zero queries (e.g. `samples = 0`) skips the scan cleanly here
-		// rather than panicking inside the timed window.
+		let queries = vp
+			.generate_vectors(&vq.field, count, seed)
+			.with_context(|| format!("scan `{}`: building the vector query set", scan.name))?;
+		// `VectorQuerySet::pick` indexes modulo the query count, so an empty set
+		// would panic inside the timed window. The validator already rejects
+		// `holdout.count == 0`; this covers anything else that reaches zero.
 		if queries.is_empty() {
-			eprintln!("vector holdout: skipping scan `{}` (empty query set)", scan.name);
-			return Ok(None);
+			bail!("scan `{}`: vector query set is empty", scan.name);
 		}
-		Ok(Some(VectorQuerySet {
+		Ok(VectorQuerySet {
 			queries: Arc::new(queries),
-		}))
+			ground_truth: None,
+			accept: None,
+		})
+	}
+
+	/// Attach the exact answer key for a scan's query set, computing it or
+	/// loading it from cache.
+	///
+	/// Deferred until the scan is known to run: an engine without vector
+	/// support skips before this point, and there is no reason to spend a full
+	/// corpus sweep producing a key nothing will score against.
+	fn attach_ground_truth(
+		&self,
+		scan: &Scan,
+		vq: &VectorQuerySpec,
+		vp: &ValueProvider,
+		kp: &KeyProvider,
+		query_set: &mut VectorQuerySet,
+	) -> Result<()> {
+		let Some(corpus_seed) = vp.seed() else {
+			// Recall needs a reconstructible corpus. Without a seed the scan is
+			// still perfectly valid as a latency measurement, so say what is
+			// missing and carry on rather than failing the run.
+			eprintln!(
+				"vector ground truth: scan `{}` will report latency only — set `seed` in the benchmark TOML or pass --corpus-seed to enable recall",
+				scan.name
+			);
+			return Ok(());
+		};
+		let request = vectorgt::Request {
+			field: vq.field.clone(),
+			samples: self.samples,
+			top_k: vq.top_k,
+			metric: vq.distance,
+			corpus_seed,
+			query_seed: vq.holdout.seed,
+			query_count: query_set.queries.len(),
+			template: self.value_template.clone(),
+		};
+		let started = Instant::now();
+		let (gt, cached) =
+			vectorgt::load_or_compute(&request, vp, &query_set.queries, &self.ground_truth_cache)
+				.with_context(|| format!("scan `{}`: computing vector ground truth", scan.name))?;
+		if !cached {
+			self.bench_ui.println_muted(&format!(
+				"Computed exact ground truth for {} queries over {} rows in {}",
+				query_set.queries.len(),
+				self.samples,
+				format_duration(started.elapsed())
+			));
+		}
+		query_set.accept =
+			Some(Arc::new(vectorgt::build_answers(&gt, kp, vq.top_k, vq.tie_epsilon)));
+		query_set.ground_truth = Some(Arc::new(gt));
+		Ok(())
 	}
 
 	/// Polls until [`BenchmarkEngine::create_client`] succeeds or [`TIMEOUT`] elapses.
@@ -790,6 +1016,7 @@ impl Benchmark {
 		kp: KeyProvider,
 		vp: ValueProvider,
 		samples: u32,
+		threads: u32,
 	) -> Result<Option<OperationResult>>
 	where
 		C: BenchmarkClient + Send + Sync,
@@ -818,7 +1045,7 @@ impl Benchmark {
 		// Loop over the clients
 		for (client, _) in clients.iter().cloned().zip(1..) {
 			// Loop over the threads
-			for _ in 0..self.threads {
+			for _ in 0..threads {
 				let error = error.clone();
 				let skip = skip.clone();
 				let current = current.clone();
@@ -857,10 +1084,12 @@ impl Benchmark {
 		}
 		// Wait for the threads to complete, aborting the remaining tasks on the first failure.
 		let mut global_histogram = Histogram::new(3)?;
+		let mut global_recall = RecallTally::default();
 		while let Some(result) = tasks.join_next().await {
 			match result {
-				Ok(Ok(Some(histogram))) => {
+				Ok(Ok(Some((histogram, recall)))) => {
 					global_histogram.add(histogram)?;
+					global_recall.merge(recall);
 				}
 				Ok(Ok(None)) => {}
 				Ok(Err(e)) => {
@@ -892,7 +1121,8 @@ impl Benchmark {
 			bail!("Task failure");
 		}
 		// Histogram + sysinfo snapshots → OperationResult; then print phase timing line
-		let result = OperationResult::new(metric, global_histogram);
+		let result =
+			OperationResult::new(metric, global_histogram).with_recall(global_recall.summarise());
 		let took = result.total_time();
 		match &operation {
 			BenchmarkOperation::Scan(_, ctx) => {
@@ -955,12 +1185,13 @@ impl Benchmark {
 		operation: BenchmarkOperation,
 		operation_timeout: Duration,
 		(mut kp, mut vp, progress): (KeyProvider, ValueProvider, Option<Arc<ProgressBar>>),
-	) -> Result<Histogram<u64>>
+	) -> Result<(Histogram<u64>, RecallTally)>
 	where
 		C: BenchmarkClient,
 		D: Dialect,
 	{
 		let mut histogram = Histogram::new(3)?;
+		let mut tally = RecallTally::default();
 		// Check if we have encountered an error
 		while !error.load(Ordering::Relaxed) {
 			// Get the current sample number
@@ -978,22 +1209,27 @@ impl Benchmark {
 			// parking the worker task forever; the operation `JoinSet` then
 			// short-circuits with the operation name in the error
 			// chain rather than hanging in `block_on`.
+			// KNN hits, kept so recall can be scored after the latency is
+			// recorded rather than inside the measured window.
+			let mut scored: Option<(usize, Vec<KnnKey>)> = None;
 			let time = Instant::now();
 			tokio::time::timeout(operation_timeout, async {
 				match &operation {
 					BenchmarkOperation::Create => {
-						let value = vp.generate_value();
+						let value = vp.generate_value_for(ValueStream::Create, sample);
 						client.create(sample, value, &mut kp).await
 					}
 					BenchmarkOperation::Read => client.read(sample, &mut kp).await.map(|_| ()),
 					BenchmarkOperation::Update => {
-						let value = vp.generate_value();
+						let value = vp.generate_value_for(ValueStream::Update, sample);
 						client.update(sample, value, &mut kp).await
 					}
 					BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await,
 					BenchmarkOperation::VectorScan(s, ctx, qs) => {
 						let q = qs.pick(sample);
-						client.scan_vector(s, q, &kp, *ctx).await
+						let hits = client.scan_vector(s, q, &kp, *ctx).await?;
+						scored = Some((qs.query_index(sample), hits));
+						Ok(())
 					}
 					BenchmarkOperation::ScanWithWrites(scan, ctx, spec) => {
 						workloads::run_scan_with_writes(
@@ -1034,8 +1270,51 @@ impl Benchmark {
 				pb.set_position(done);
 			}
 			histogram.record(time.elapsed().as_micros() as u64)?;
+			// Scoring happens strictly after the latency is banked, so recall
+			// never inflates the number it is reported beside.
+			if let Some((query, hits)) = scored
+				&& let BenchmarkOperation::VectorScan(_, _, qs) = &operation
+				&& let Some(answers) = qs.accept.as_ref()
+				&& let Some(answer) = answers.get(query)
+				&& let Some(value) = vectorgt::recall(answer, &hits)
+			{
+				tally.record(value);
+			}
 		}
-		Ok(histogram)
+		Ok((histogram, tally))
+	}
+}
+
+/// Warm-up queries measured together before checking for a plateau.
+const VECTOR_WARMUP_WINDOW: u32 = 25;
+
+/// Floor on the warm-up query ceiling, for small corpora.
+const VECTOR_WARMUP_MIN_QUERIES: u32 = 500;
+
+/// Rows per permitted warm-up query, so the ceiling grows with the index.
+///
+/// The plateau check compares consecutive windows, and on a noisy machine a
+/// window can beat the one before it by chance for a long time — which kept
+/// warm-up running for thousands of queries against a 10k-row index that needed
+/// a few hundred, and blew a CI step's budget. A ceiling bounds that, but a
+/// fixed one under-warms a large index just as silently, so it scales: 500
+/// queries at 10k rows, 4000 at 200k.
+const VECTOR_WARMUP_ROWS_PER_QUERY: u32 = 50;
+
+/// A window this close to the one before it means warming has plateaued.
+/// Expressed as a percentage so the comparison stays in integer arithmetic.
+const VECTOR_WARMUP_PLATEAU_PCT: u32 = 90;
+
+/// Config name of a strategy's search-time knob, for labelling sweep legs.
+fn search_param_label(strategy: &VectorIndexStrategy) -> &'static str {
+	match strategy {
+		VectorIndexStrategy::Hnsw {
+			..
+		} => "ef_search",
+		VectorIndexStrategy::DiskAnn {
+			..
+		} => "l_search",
+		VectorIndexStrategy::Bruteforce => "search",
 	}
 }
 

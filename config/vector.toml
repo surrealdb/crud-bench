@@ -2,14 +2,39 @@
 # (exact, no auxiliary index), HNSW (graph ANN), and DiskANN (graph ANN with a
 # disk-resident structure) — over a fixed-dimension embedding column.
 #
-# Engines covered end-to-end: SurrealDB, PostgreSQL (pgvector), Redis Stack.
-# Engines without vector support skip the run via `NOT_SUPPORTED_ERROR`.
+# Engines covered end-to-end: SurrealDB 3.x and 2.x, PostgreSQL (pgvector) and
+# Redis Stack. DiskANN is SurrealDB 3.x only; Postgres and Redis skip that leg.
+# Engines without vector support skip the run via `NOT_SUPPORTED_ERROR` rather
+# than failing it, so a mixed run reports `-` for them.
 #
-# The query set is built deterministically from the inserted records: at the
-# end of the create phase the framework picks `count` ids using `seed`, reads
-# each row once (outside the timing window), and reuses those embedding
-# vectors across all scan iterations. Only the KNN call itself is timed, so the
-# benchmark's RAM footprint is constant in `count` (independent of `-s N`).
+# `seed` below makes row content a pure function of (seed, sample index), so
+# the corpus is identical across engines and across runs. That is what lets
+# recall be compared between engines at all, and it lets the harness rebuild
+# the corpus locally to compute exact ground truth instead of trusting any one
+# engine's bruteforce leg as the answer key.
+#
+# Query vectors are generated from `holdout.seed` using the same generator as
+# the corpus, and are never inserted, so no query is its own nearest neighbour.
+# Only the KNN call itself is timed, and the benchmark's RAM footprint stays
+# constant in `holdout.count` (independent of `-s N`).
+
+# Corpus seed. Change it to benchmark a different (but still reproducible)
+# dataset; the ground-truth cache keys on it, so each seed is computed once.
+seed = 20260908
+
+# The embedding column below uses the clustered generator. Uniform components
+# (`vector:<dim>`) leave a corpus with no neighbourhood structure: in high
+# dimensions every pair sits at roughly the same distance, so a query's true
+# neighbours are conspicuous and every index returns them exactly. Measured on
+# 20k 128-d rows, uniform puts the nearest neighbour at 65% of a random pair's
+# distance; clustered puts it at 8%. Recall only discriminates on the second.
+#
+# 768 dimensions matches common embedding models and keeps a 1M-row corpus at
+# ~3 GB with a ~2 minute one-off ground-truth build. Raise it for a
+# high-dimension variant — 3072 is ~12 GB at 1M rows — but note dimension scales
+# cost linearly without making the search harder; corpus size is the dial that
+# does that. Below ~100k rows a linear scan beats both graph indexes here, so
+# treat 100k as a floor and 1M as the size worth quoting.
 
 # ============================================================================
 # value
@@ -40,8 +65,13 @@ geography.code = "string:3"
 geography.text = "string:15"
 geography.location = "string_enum:Africa,Antarctica,Asia,Europe,North America,South America,Oceania"
 geography.description = "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
-embedding = "vector:3072"
+embedding = "vector:768:clustered:200"
 
+# A search-time knob given as a list is swept: one timed leg per value over a
+# SINGLE index build. A lone `ef_search` is one arbitrary point on a curve; the
+# comparison worth making is the curve — what recall an index reaches at a given
+# latency budget — and tracing it should not cost a rebuild per point.
+#
 # ============================================================================
 # vector_knn — Bruteforce / HNSW / DiskANN KNN against a 128-d embedding.
 #
@@ -54,6 +84,13 @@ embedding = "vector:3072"
 [[scans]]
 id = "vector_knn"
 iterations = 1000
+# KNN answers in well under a millisecond once the index is warm, so at the
+# default concurrency these legs measure queueing rather than search — the same
+# query timed 0.4ms at one client and roughly 1500ms at sixty-four. Latency is
+# only interpretable at a low setting; raise these to measure throughput under
+# load instead, and read the numbers as such.
+clients = 1
+threads = 1
 
 [[scans.runs]]
 name = "bruteforce knn(10)"
@@ -66,13 +103,13 @@ index_strategy = { kind = "bruteforce" }
 holdout = { count = 200, seed = 42 }
 
 [[scans.runs]]
-name = "hnsw knn(10) m=16 efc=200 efs=64"
+name = "hnsw knn(10) m=16 efc=200"
 
 [scans.runs.vector_query]
 field = "embedding"
 top_k = 10
 distance = "cosine"
-index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = 64 }
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 32, 64, 128, 256] }
 holdout = { count = 200, seed = 42 }
 
 [[scans.runs]]
@@ -82,5 +119,5 @@ name = "diskann knn(10) deg=64 L=100 alpha=1.2"
 field = "embedding"
 top_k = 10
 distance = "cosine"
-index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = 100 }
+index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = [25, 50, 100, 200] }
 holdout = { count = 200, seed = 42 }

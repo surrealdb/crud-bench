@@ -67,3 +67,11 @@ result.html
 result-*.csv
 result-*.json
 result-*.html
+
+# -----------------------------------
+# crud-bench
+# -----------------------------------
+
+# Cached vector-search ground truth (a pure function of the corpus and query
+# seeds, so it is always reproducible and never worth committing)
+.crud-bench-gt/

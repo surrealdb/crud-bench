@@ -3,6 +3,7 @@
 use crate::system::SystemInfo;
 use crate::util::format_duration;
 use crate::value::BenchValue;
+use crate::vectorgt::RecallSummary;
 use bytesize::ByteSize;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_FULL;
@@ -39,6 +40,14 @@ pub(crate) struct BenchmarkMetadata {
 	pub(crate) persisted: bool,
 	/// Tuned server settings vs defaults where supported.
 	pub(crate) optimised: bool,
+	/// Corpus seed the run generated its rows from, when one was set.
+	///
+	/// Without it a stored result cannot say which dataset produced it, which
+	/// defeats the point of seeding: two results are only comparable if they
+	/// were measured against the same corpus, and vector ground truth is keyed
+	/// on this value.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub(crate) corpus_seed: Option<u64>,
 }
 
 /// Full benchmark output: timings per phase plus one representative generated [`BenchValue`].
@@ -100,6 +109,10 @@ pub(crate) struct ScanRun {
 	/// Latency histogram + resource stats; [`None`] when the backend skipped the leg.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub result: Option<OperationResult>,
+	/// Distinguishes legs of a parameter sweep, e.g. `ef_search = 64`. `None`
+	/// for a scan that ran once, which is every non-swept leg.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub label: Option<String>,
 }
 
 /// Normalised `with_writes.ratio` for labels and serialised results.
@@ -120,12 +133,19 @@ pub(crate) fn scan_run_row_label(id: &str, name: &str, iterations: u32, run: &Sc
 			write_ratio_percent: p,
 		} => format!("reads+writes ({p}%) - {index_slug}"),
 	};
-	format!("[S]can · {id} · {name} - {mid} ({iterations})")
+	match &run.label {
+		Some(label) => format!("[S]can · {id} · {name} · {label} - {mid} ({iterations})"),
+		None => format!("[S]can · {id} · {name} - {mid} ({iterations})"),
+	}
 }
 
 impl ScanRun {
 	/// Short label for charts (query text + leg description).
 	pub(crate) fn chart_label(&self, query: &str) -> String {
+		let query = match &self.label {
+			Some(label) => &format!("{query} · {label}"),
+			None => query,
+		};
 		let index_slug = if self.indexed {
 			"indexed"
 		} else {
@@ -155,10 +175,21 @@ pub(crate) struct ScanResult {
 	pub(crate) index_remove: Option<OperationResult>,
 	/// Timed scan legs in benchmark order (baseline → optional write-mix → indexed variants).
 	pub(crate) runs: Vec<ScanRun>,
+	/// Clients this scan's timed legs actually ran at, after any per-scan
+	/// override and the cap at the pool size.
+	///
+	/// The run's metadata records the CLI settings, which a scan may override —
+	/// `config/vector.toml` runs its legs at 1x1 by default. Without this, a
+	/// scan run at 1x1 is indistinguishable in the results from one run at
+	/// 12x24, and those measure very different things: the same KNN query timed
+	/// 0.4ms at one client and roughly 1500ms at sixty-four.
+	pub(crate) clients: u32,
+	/// Threads per client this scan's timed legs actually ran at.
+	pub(crate) threads: u32,
 }
 
 /// Column titles for the ASCII summary table ([`BenchmarkResult`]'s [`Display`] impl).
-const HEADERS: [&str; 12] = [
+const HEADERS: [&str; 13] = [
 	"Test",
 	"Total time",
 	"Mean",
@@ -166,6 +197,7 @@ const HEADERS: [&str; 12] = [
 	"99th",
 	"95th",
 	"Min",
+	"Recall",
 	"OPS",
 	"CPU",
 	"Memory",
@@ -174,7 +206,7 @@ const HEADERS: [&str; 12] = [
 ];
 
 /// Extended columns for CSV export (extra quantiles + load averages).
-const CSV_HEADERS: [&str; 22] = [
+const CSV_HEADERS: [&str; 25] = [
 	"Test",
 	"Total time",
 	"Mean",
@@ -187,6 +219,9 @@ const CSV_HEADERS: [&str; 22] = [
 	"1st",
 	"Min",
 	"IQR",
+	"Recall_mean",
+	"Recall_p5",
+	"Recall_min",
 	"OPS",
 	"CPU_avg",
 	"CPU_min",
@@ -200,9 +235,9 @@ const CSV_HEADERS: [&str; 22] = [
 ];
 
 /// Placeholder cells when a phase was skipped or unsupported.
-const SKIP: [&str; 11] = ["-"; 11];
+const SKIP: [&str; 12] = ["-"; 12];
 /// Placeholder row for wide CSV rows.
-const CSV_SKIP: [&str; 21] = ["-"; 21];
+const CSV_SKIP: [&str; 24] = ["-"; 24];
 
 /// ASCII summary table matching [`HEADERS`] (used by CLI stdout).
 impl Display for BenchmarkResult {
@@ -621,6 +656,11 @@ pub(crate) struct OperationResult {
 	elapsed: Duration,
 	/// Number of logical iterations aggregated into `histogram`.
 	samples: u32,
+	/// Recall@k for a vector scan, scored against harness-computed ground
+	/// truth. `None` for every non-vector operation, and for a vector scan run
+	/// without a corpus seed (no reproducible corpus, so no answer key).
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub(crate) recall: Option<RecallSummary>,
 	/// Snapshot CPU at end of phase (normalised by core count).
 	cpu_usage: f32,
 	/// Min / max / avg from polled samples when available.
@@ -642,6 +682,25 @@ pub(crate) struct OperationResult {
 }
 
 impl OperationResult {
+	/// Recall cell for the summary table: mean and 5th percentile, or `-` for
+	/// anything that is not a scored vector scan.
+	///
+	/// Both figures are shown because the mean alone hides the shape — an index
+	/// can average well and still answer a tail of queries badly, which is the
+	/// characteristic failure of a graph index on data it indexed poorly.
+	fn recall_display(&self) -> String {
+		match self.recall {
+			Some(r) => format!("{:.3} / {:.2}", r.mean, r.p5),
+			None => "-".to_string(),
+		}
+	}
+
+	/// Attach recall figures scored for a vector scan.
+	pub(crate) fn with_recall(mut self, recall: Option<RecallSummary>) -> Self {
+		self.recall = recall;
+		self
+	}
+
 	/// Finalises histogram + [`OperationMetric`] snapshots into serialisable stats.
 	pub(crate) fn new(mut metric: OperationMetric, histogram: Histogram<u64>) -> Self {
 		let elapsed = metric.start_time.elapsed();
@@ -706,6 +765,8 @@ impl OperationResult {
 
 		Self {
 			samples: metric.samples,
+			// Set by `with_recall` for vector scans only.
+			recall: None,
 			mean: histogram.mean(),
 			min: histogram.min(),
 			max: histogram.max(),
@@ -760,6 +821,7 @@ impl OperationResult {
 			format!("{:.2} ms", self.q99 as f64 / 1000.0),
 			format!("{:.2} ms", self.q95 as f64 / 1000.0),
 			format!("{:.2} ms", self.min as f64 / 1000.0),
+			self.recall_display(),
 			format!("{:.2}", self.ops),
 			cpu_display,
 			memory_display,
@@ -813,6 +875,9 @@ impl OperationResult {
 			format!("{:.2} ms", self.q01 as f64 / 1000.0),
 			format!("{:.2} ms", self.min as f64 / 1000.0),
 			format!("{:.2} ms", self.iqr as f64 / 1000.0),
+			self.recall.map_or_else(|| "-".to_string(), |r| format!("{:.4}", r.mean)),
+			self.recall.map_or_else(|| "-".to_string(), |r| format!("{:.4}", r.p5)),
+			self.recall.map_or_else(|| "-".to_string(), |r| format!("{:.4}", r.min)),
 			format!("{:.2}", self.ops),
 			format!("{:.2}", cpu_avg),
 			format!("{:.2}", cpu_min),

@@ -2,11 +2,40 @@ use crate::Benchmark;
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::value::BenchValue;
-use crate::valueprovider::Columns;
+use crate::valueprovider::{Columns, ValueStream};
 use crate::{BatchOperation, Index, KeyType, Scan, VectorQuerySpec};
 use anyhow::{Result, bail};
 use std::future::Future;
 use std::time::Duration;
+
+/// One hit returned by a KNN query, in whatever key shape the run is using.
+///
+/// Recall is scored by identity, so adapters return the row's key rather than a
+/// count. Ground truth stores benchmark sample indices, which
+/// [`crate::keyprovider::KeyProvider`] maps into this same shape for comparison
+/// — that keeps the cached answer key reusable across key types instead of
+/// baking one engine's identifier format into it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum KnnKey {
+	/// Numeric primary key.
+	Integer(u32),
+	/// String or UUID primary key, as the engine rendered it.
+	Text(String),
+}
+
+impl KnnKey {
+	/// Read a hit key out of a materialised row's `id` field, for adapters
+	/// whose KNN projection goes through the usual row decoding.
+	pub(crate) fn from_id_field(row: &BenchValue) -> Result<Self> {
+		match row.get_field("id") {
+			Some(BenchValue::Int(i)) => Ok(KnnKey::Integer(*i as u32)),
+			Some(BenchValue::UInt(u)) => Ok(KnnKey::Integer(*u as u32)),
+			Some(BenchValue::String(s)) => Ok(KnnKey::Text(s.clone())),
+			Some(BenchValue::Uuid(u)) => Ok(KnnKey::Text(u.to_string())),
+			other => bail!("knn hit has an unusable id field: {other:?}"),
+		}
+	}
+}
 
 /// Indicates whether a scan is running with or without an index
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,9 +184,9 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		query: &[f32],
 		kp: &KeyProvider,
 		ctx: ScanContext,
-	) -> impl Future<Output = Result<()>> + Send {
+	) -> impl Future<Output = Result<Vec<KnnKey>>> + Send {
 		async move {
-			let result = match kp {
+			let hits = match kp {
 				KeyProvider::OrderedInteger(_) | KeyProvider::UnorderedInteger(_) => {
 					self.scan_vector_u32(scan, query, ctx).await?
 				}
@@ -167,12 +196,14 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 			};
 			if let Some(expect) = scan.expect {
 				assert_eq!(
-					expect, result,
-					"Expected a length of {expect} but found {result} for {}",
+					expect,
+					hits.len(),
+					"Expected a length of {expect} but found {} for {}",
+					hits.len(),
 					scan.name
 				);
 			}
-			Ok(())
+			Ok(hits)
 		}
 	}
 
@@ -226,23 +257,25 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
-	/// Vector KNN scan with a numeric key — engines override this for vector backends.
+	/// Vector KNN scan with a numeric key, returning the hit keys best-first —
+	/// engines override this for vector backends.
 	fn scan_vector_u32(
 		&self,
 		_scan: &Scan,
 		_query: &[f32],
 		_ctx: ScanContext,
-	) -> impl Future<Output = Result<usize>> + Send {
+	) -> impl Future<Output = Result<Vec<KnnKey>>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
-	/// Vector KNN scan with a string key — engines override this for vector backends.
+	/// Vector KNN scan with a string key, returning the hit keys best-first —
+	/// engines override this for vector backends.
 	fn scan_vector_string(
 		&self,
 		_scan: &Scan,
 		_query: &[f32],
 		_ctx: ScanContext,
-	) -> impl Future<Output = Result<usize>> + Send {
+	) -> impl Future<Output = Result<Vec<KnnKey>>> + Send {
 		async move { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
@@ -268,6 +301,36 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		async { bail!(NOT_SUPPORTED_ERROR) }
 	}
 
+	/// Apply a scan's search-time parameters to this client, before its leg runs.
+	///
+	/// Engines whose search budget travels in the query itself read it from the
+	/// spec and no-op here. Engines that hold it in session state apply it —
+	/// and must do so on *every* client, since a setting made on the one client
+	/// that built the index reaches only that session.
+	///
+	/// Called outside the timed window, once per client per swept value.
+	fn prepare_vector_search(
+		&self,
+		_vq: &VectorQuerySpec,
+	) -> impl Future<Output = Result<()>> + Send {
+		async { Ok(()) }
+	}
+
+	/// Block until an index is fully queryable, not merely built.
+	///
+	/// Some engines report an index ready while newly indexed rows still sit in
+	/// a pending queue that searches answer by scanning it linearly. Timing a
+	/// KNN scan in that state measures a brute-force scan wearing the index's
+	/// name — the latency is wrong and the recall is a perfect 1.0 for the wrong
+	/// reason. Engines that drain such a queue in the background override this
+	/// to wait for it.
+	///
+	/// Called outside the timed build so a background task's polling interval
+	/// does not land in the reported build time. The default is a no-op.
+	fn await_index_queryable(&self, _name: &str) -> impl Future<Output = Result<()>> + Send {
+		async { Ok(()) }
+	}
+
 	/// Perform a batch create operation
 	fn batch_create(
 		&self,
@@ -279,19 +342,23 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		async move {
 			match kp {
 				KeyProvider::OrderedInteger(p) => {
-					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_integer_key_values_iter(n, batch_op, p, vp, ValueStream::Create);
 					self.batch_create_u32(pairs_iter).await
 				}
 				KeyProvider::UnorderedInteger(p) => {
-					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_integer_key_values_iter(n, batch_op, p, vp, ValueStream::Create);
 					self.batch_create_u32(pairs_iter).await
 				}
 				KeyProvider::OrderedString(p) => {
-					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_string_key_values_iter(n, batch_op, p, vp, ValueStream::Create);
 					self.batch_create_string(pairs_iter).await
 				}
 				KeyProvider::UnorderedString(p) => {
-					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_string_key_values_iter(n, batch_op, p, vp, ValueStream::Create);
 					self.batch_create_string(pairs_iter).await
 				}
 			}
@@ -338,19 +405,23 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		async move {
 			match kp {
 				KeyProvider::OrderedInteger(p) => {
-					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_integer_key_values_iter(n, batch_op, p, vp, ValueStream::Update);
 					self.batch_update_u32(pairs_iter).await
 				}
 				KeyProvider::UnorderedInteger(p) => {
-					let pairs_iter = generate_integer_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_integer_key_values_iter(n, batch_op, p, vp, ValueStream::Update);
 					self.batch_update_u32(pairs_iter).await
 				}
 				KeyProvider::OrderedString(p) => {
-					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_string_key_values_iter(n, batch_op, p, vp, ValueStream::Update);
 					self.batch_update_string(pairs_iter).await
 				}
 				KeyProvider::UnorderedString(p) => {
-					let pairs_iter = generate_string_key_values_iter(n, batch_op, p, vp);
+					let pairs_iter =
+						generate_string_key_values_iter(n, batch_op, p, vp, ValueStream::Update);
 					self.batch_update_string(pairs_iter).await
 				}
 			}
@@ -518,6 +589,9 @@ struct IntegerKeyValuesIter<'a> {
 	current: usize,
 	kp: &'a mut dyn IntegerKeyProvider,
 	vp: &'a mut crate::valueprovider::ValueProvider,
+	/// Derivation stream for the payloads, so a seeded run reproduces batch
+	/// content the same way single-row create and update do.
+	stream: ValueStream,
 }
 
 impl<'a> Iterator for IntegerKeyValuesIter<'a> {
@@ -527,7 +601,7 @@ impl<'a> Iterator for IntegerKeyValuesIter<'a> {
 		if self.current < self.batch_size {
 			let sample_idx = self.n * self.batch_size as u32 + self.current as u32;
 			let key = self.kp.key(sample_idx);
-			let value = self.vp.generate_value();
+			let value = self.vp.generate_value_for(self.stream, sample_idx);
 			self.current += 1;
 			Some((key, value))
 		} else {
@@ -550,6 +624,9 @@ struct StringKeyValuesIter<'a> {
 	current: usize,
 	kp: &'a mut dyn StringKeyProvider,
 	vp: &'a mut crate::valueprovider::ValueProvider,
+	/// Derivation stream for the payloads, so a seeded run reproduces batch
+	/// content the same way single-row create and update do.
+	stream: ValueStream,
 }
 
 impl<'a> Iterator for StringKeyValuesIter<'a> {
@@ -559,7 +636,7 @@ impl<'a> Iterator for StringKeyValuesIter<'a> {
 		if self.current < self.batch_size {
 			let sample_idx = self.n * self.batch_size as u32 + self.current as u32;
 			let key = self.kp.key(sample_idx);
-			let value = self.vp.generate_value();
+			let value = self.vp.generate_value_for(self.stream, sample_idx);
 			self.current += 1;
 			Some((key, value))
 		} else {
@@ -609,6 +686,7 @@ fn generate_integer_key_values_iter<'a>(
 	batch_op: &BatchOperation,
 	kp: &'a mut dyn IntegerKeyProvider,
 	vp: &'a mut crate::valueprovider::ValueProvider,
+	stream: ValueStream,
 ) -> IntegerKeyValuesIter<'a> {
 	IntegerKeyValuesIter {
 		n,
@@ -616,6 +694,7 @@ fn generate_integer_key_values_iter<'a>(
 		current: 0,
 		kp,
 		vp,
+		stream,
 	}
 }
 
@@ -625,6 +704,7 @@ fn generate_string_key_values_iter<'a>(
 	batch_op: &BatchOperation,
 	kp: &'a mut dyn StringKeyProvider,
 	vp: &'a mut crate::valueprovider::ValueProvider,
+	stream: ValueStream,
 ) -> StringKeyValuesIter<'a> {
 	StringKeyValuesIter {
 		n,
@@ -632,5 +712,6 @@ fn generate_string_key_values_iter<'a>(
 		current: 0,
 		kp,
 		vp,
+		stream,
 	}
 }

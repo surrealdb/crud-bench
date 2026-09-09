@@ -94,6 +94,18 @@ and lists those which are planned in the future.
 - [x] Full-text search query, using boolean OR search terms, projecting id field
 - [x] Full-text search query, using boolean OR search terms, counting rows
 
+**Vector search**
+
+- [x] Bruteforce (exact) KNN query
+- [x] HNSW KNN query, with configurable `m` / `ef_construction` / `ef_search`
+- [x] DiskANN KNN query, with configurable `degree` / `l_build` / `alpha` / `l_search`
+- [x] Vector index build timing
+- [x] Recall@k against exact ground truth, scored identically for every engine
+- [x] Parameter sweeps tracing the recall/latency curve over a single index build
+- [x] Reproducible corpora, so engines and runs are compared on identical data
+- [ ] Index size on disk and resident memory
+- [ ] Filtered KNN (`WHERE … ORDER BY <embedding> LIMIT k`)
+
 **Relationships**
 
 - [ ] Fetching or traversing 1-level, one-to-one relationships or joins
@@ -149,6 +161,9 @@ Options:
       --skip-batches                           Skip all batch benchmarks
       --skip-indexes                           Skip index operations, but still table scan queries
       --emit-phase-markers                     Emit line-oriented phase markers (`… starting`, `Benchmark starting`) for log-based tooling (e.g. `dev.sh` perf windows). Off by default; also on when `CRUD_BENCH_EMIT_PHASE_MARKERS` is `1`, `true`, `yes`, or `on`
+      --corpus-seed <CORPUS_SEED>              Seed for generated row content, overriding `seed` in the benchmark TOML. With a seed the corpus is a pure function of `(seed, sample)`, making the run reproducible and letting vector-search ground truth reconstruct the corpus instead of reading it back
+      --ground-truth-cache <DIR>               Directory holding cached vector-search ground truth [env: CRUD_BENCH_GROUND_TRUTH_CACHE=] [default: .crud-bench-gt]
+      --vector-warmup-seconds <SECONDS>        Seconds a vector index may be warmed before a timed leg. Warming stops on its own once latency plateaus; this is a safety cap. Raise it for large corpora [default: 30]
   -h, --help                                   Print help (see more with '--help')
   ```
 
@@ -192,6 +207,10 @@ Within the JSON structure, the following values are replaced by randomly generat
 - Every `int_enum:A,B,C` will be replaced by a i32 from `A` `B` or `C`.
 - Every `float_enum:A,B,C` will be replaced by a f32 from `A` `B` or `C`.
 - Every `datetime` will be replaced by a datetime (ISO 8601).
+- Every `vector:X` will be replaced by an `X`-dimension vector with uniform components in `[-1, 1]`.
+- Every `vector:X:LO..HI` will be replaced by an `X`-dimension vector with uniform components in `[LO, HI]`.
+- Every `vector:X:clustered:N` will be replaced by an `X`-dimension unit vector drawn from a mixture
+  of `N` clusters. Add `:SIGMA` (default `0.35`) to widen or tighten the clusters.
 
 ```json
 {
@@ -239,6 +258,9 @@ Each scan object can make use of the following values:
 - `start`: Skips the specified number of rows before starting to return rows.
 - `limit`: Specifies the maximum number of rows to return.
 - `expect`: (optional) Asserts the expected number of rows returned.
+- `clients` / `threads`: (optional) Concurrency for this scan's timed legs, overriding `--clients`
+  and `--threads`. `clients` is capped at the pool `--clients` created. Index DDL is unaffected — it
+  always runs on a single client.
 
 ```json
 [
@@ -276,6 +298,123 @@ Multiple benchmarks that share the same filter, index, and write settings can us
     "with_index": { "fields": ["x"] }
   }
 ]
+```
+
+### Vector search
+
+Vector workloads live in [`config/vector.toml`](config/vector.toml). Each `[scans.runs.vector_query]`
+block describes one KNN benchmark:
+
+- `field` (**required**): the `vector:<dim>` column to search. The index, when the strategy needs
+  one, is derived from this — do not also declare `with_index`.
+- `top_k` (**required**): number of neighbours to return.
+- `distance`: `cosine` (default), `euclidean`, `inner_product`, or `manhattan`.
+- `index_strategy` (**required**): `{ kind = "bruteforce" }`, `{ kind = "hnsw", m, ef_construction,
+  ef_search }`, or `{ kind = "diskann", degree, l_build, alpha, l_search }`. All knobs are required —
+  results without explicit parameters cannot be interpreted. The search-time knob (`ef_search`,
+  `l_search`) also accepts a **list**, which is swept: see below.
+- `holdout`: `{ count, seed }` for the query set. Query vectors are generated from `seed` using the
+  schema's own vector generator and are **never inserted**, so no query is its own nearest neighbour.
+- `tie_epsilon`: relative tolerance when deciding whether a returned neighbour counts as correct
+  (default `0.0`, i.e. strict recall@k). Engines compute distances at different precisions, so rows
+  straddling the k-th boundary can swap without any real quality difference; a small tolerance stops
+  that reading as a recall gap.
+
+#### Engine support
+
+| engine | bruteforce | HNSW | DiskANN | notes |
+|---|---|---|---|---|
+| SurrealDB (3.x) | ✓ | ✓ | ✓ | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL |
+| SurrealDB (2.x) | ✓ | ✓ | — | 2.6 has no DiskANN |
+| PostgreSQL | ✓ | ✓ | — | pgvector; DiskANN would need pgvectorscale |
+| Redis Stack | ✓ (FLAT) | ✓ | — | no native L1/Manhattan metric |
+| everything else | — | — | — | the run is skipped, not failed |
+
+Engines without vector support skip these runs rather than failing, so a mixed run reports `-` for
+them rather than aborting. A leg whose strategy needs an index it cannot build is skipped the same
+way.
+
+#### Vector data
+
+Use `vector:<dim>:clustered:<n>` rather than `vector:<dim>` for anything whose recall you intend to
+read. Uniform components leave a corpus with no neighbourhood structure — under distance
+concentration every pair sits at roughly the same distance, so a query's true neighbours are
+conspicuous and any index walks straight to them. Measured over 20k 128-d rows, the nearest neighbour
+sits at 65% of a random pair's distance under `vector:128`, and at 8% under
+`vector:128:clustered:200`. Recall only tells you anything on the second.
+
+Clusters are drawn from the corpus seed, so two seeds give two genuinely different datasets rather
+than one structure populated differently. Query vectors come from the same generator, so they follow
+the corpus distribution by construction.
+
+Corpus size matters more than dimension. Dimension scales cost linearly without making the search
+harder; rows add candidates that can confuse a graph. Measured against embedded SurrealDB at 128
+dimensions, neither graph index beats a linear scan below ~100k rows — at 200k, HNSW is 1.7x faster
+than bruteforce and DiskANN 3.4x. Treat 100k as a floor, and 1M as the size worth quoting, which also
+matches the scale of the standard ANN datasets.
+
+#### Parameter sweeps
+
+`ef_search` and `l_search` accept a list as well as a single value:
+
+```toml
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 32, 64, 128, 256] }
+```
+
+Each value becomes its own timed leg, all sharing a **single** index build, and each is reported as a
+separate row labelled with the value it used. A lone `ef_search` is one arbitrary point on a curve —
+the comparison worth making is the curve itself, what recall an index reaches at a given latency
+budget — and tracing it this way costs one index build rather than one per point.
+
+Values must be at least `top_k`: a search budget narrower than `k` cannot return `k` neighbours.
+
+Engines apply the budget differently and crud-bench hides the difference. SurrealDB carries it in the
+KNN operator, Redis passes `EF_RUNTIME` on the query rather than fixing it at `FT.CREATE`, and
+pgvector takes it from the `hnsw.ef_search` session GUC, which is applied to every client before each
+leg — a setting made only on the client that built the index would reach one session out of
+`--clients`.
+
+#### Concurrency
+
+Vector legs default to `clients = 1`, `threads = 1` in `config/vector.toml`, and that default is
+load-bearing. Once an index is warm a KNN query answers in well under a millisecond, so at the
+benchmark's usual concurrency the timed legs measure queueing rather than search: the same query
+measured **0.4 ms at one client and roughly 1500 ms at sixty-four**. Raise the setting to measure
+throughput under load — that is a legitimate thing to want — but do not read the latency columns of
+such a run as search cost.
+
+The first leg timed after an index build is also warmed with untimed queries first. Without that it
+absorbs the whole cost of warming the index, and not by a little: on a 50k-row HNSW the first leg
+measured ~295 ms per query against ~0.5 ms for the identical query in the leg that followed, and it
+was *more accurate* as well — a cold index answers differently, not just slower.
+
+#### Recall
+
+An approximate index has a free parameter — `ef_search`, `l_search` — that trades accuracy for
+latency, so a latency number on its own cannot tell a fast index from an inaccurate one. Every KNN
+run is therefore scored for recall@k, reported as `mean / 5th percentile` in the summary table and in
+full in the JSON and CSV output. The 5th percentile is shown because a mean can look healthy while a
+tail of queries is answered badly.
+
+Ground truth is computed by crud-bench itself and shared by every engine, rather than taken from each
+engine's own bruteforce leg. Scoring an engine against itself measures whether its index agrees with
+its own exact path — useful for tracking regressions, but not a number that can sit beside another
+engine's, because a quirk shared by an engine's exact and approximate paths cancels out and divergent
+metric definitions leave every engine near 1.0 against itself. A useful side effect: each engine's
+own bruteforce leg is scored too, and should read `1.000`. Anything less is a metric divergence or an
+engine bug.
+
+Recall needs a reproducible corpus, so a vector config must set `seed` (or the run must pass
+`--corpus-seed`). Row content then becomes a pure function of the seed and the sample index, which
+also means the same dataset is benchmarked across engines and across runs. Without a seed the KNN
+runs still execute and report latency, and print why recall is unavailable.
+
+The answer key is a pure function of its inputs — both seeds, the sample count, `top_k`, the metric,
+the field, and the value template — so it is computed once, cached under `--ground-truth-cache`
+(default `.crud-bench-gt`, gitignored), and reused by every subsequent engine and run.
+
+```bash
+cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 --config config/vector.toml
 ```
 
 ## Databases
@@ -492,6 +631,13 @@ cargo run -r -- -d sqlite -s 100000 -c 12 -t 24 -r
 ```bash
 cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 -r
 ```
+
+> [!NOTE]
+> The embedded engine tracks the **published version closest to SurrealDB's `main`**, prereleases
+> included, rather than the latest stable release — crud-bench exists to monitor SurrealDB as it is
+> developed, so it should sit where the development is. Server mode already does the same by pulling
+> the `surrealdb/surrealdb:nightly` image. Embedded and server therefore benchmark different builds,
+> and a result should say which it used.
 
 Specify a custom endpoint using `-e` or `--endpoint` to benchmark a custom deployment:
 

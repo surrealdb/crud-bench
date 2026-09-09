@@ -694,6 +694,8 @@
             <option value="ops">Throughput (OPS)</option>
             <option value="mean">Mean latency (µs)</option>
             <option value="q99">p99 latency (µs)</option>
+            <option value="recall">Recall@k (mean)</option>
+            <option value="recall_p5">Recall@k (5th pct)</option>
           </select>
         </div>
         <div class="control-group">
@@ -762,6 +764,8 @@
   /** @typedef {{
    * mean: number, min?: number, max?: number, q99: number, q95?: number,
    * q75?: number, q50?: number, ops: number,
+   * recall?: { mean: number, p5: number, min: number, queries: number },
+   * label?: string,
    * elapsed?: ElapsedSerde
    * }} OperationResultLike */
 
@@ -844,7 +848,13 @@
     } else {
       mid = `reads - ${indexSlug}`;
     }
-    return `[S]can · ${id} · ${scanName} - ${mid} (${samples})`;
+    // Sweep legs share id, name and index state, differing only by `label`.
+    // Leaving it out makes every leg hash to the same key, so `flattenBenchmark`
+    // keeps only the last one and the rest of the curve is silently dropped.
+    // Mirrors `scan_run_row_label` in src/result.rs.
+    return run.label
+      ? `[S]can · ${id} · ${scanName} · ${run.label} - ${mid} (${samples})`
+      : `[S]can · ${id} · ${scanName} - ${mid} (${samples})`;
   }
 
   /**
@@ -973,7 +983,17 @@
     if (metric === "ops") return typeof op.ops === "number" ? op.ops : null;
     if (metric === "mean") return typeof op.mean === "number" ? op.mean : null;
     if (metric === "q99") return typeof op.q99 === "number" ? op.q99 : Number(op.q99);
+    // Recall is present only on vector scans, and only when the run had a
+    // corpus seed to score against. Everything else reports null and renders
+    // as an empty cell rather than a zero, which would read as "recall 0".
+    if (metric === "recall") return typeof op.recall?.mean === "number" ? op.recall.mean : null;
+    if (metric === "recall_p5") return typeof op.recall?.p5 === "number" ? op.recall.p5 : null;
     return null;
+  }
+
+  /** Metrics where a bigger number is a better result. */
+  function higherIsBetter(metric) {
+    return metric === "ops" || metric === "recall" || metric === "recall_p5";
   }
 
   /** Five-number summary for box plot (µs), matches crud-bench `scan_boxplot_json`. */
@@ -1226,7 +1246,14 @@
     trh.appendChild(document.createElement("th")).textContent = "Test";
     okRuns.forEach((r) => {
       const th = document.createElement("th");
-      th.textContent = r.displayLabel + (metric === "ops" ? "\nOPS" : metric === "mean" ? "\nµs mean" : "\nµs p99");
+      const metricLabel = {
+        ops: "\nOPS",
+        mean: "\nµs mean",
+        q99: "\nµs p99",
+        recall: "\nrecall",
+        recall_p5: "\nrecall p5",
+      }[metric] ?? "";
+      th.textContent = r.displayLabel + metricLabel;
       trh.appendChild(th);
       if (r.id !== baseline) {
         const th2 = document.createElement("th");
@@ -1258,7 +1285,9 @@
           if (r.id !== baseline) tr.appendChild(document.createElement("td")).textContent = "-";
           return;
         }
-        td.textContent = metric === "ops" ? Number(v.toFixed(2)) : Number(v.toFixed(2));
+        // Recall lives in [0, 1], where the interesting differences are in the
+        // third decimal; latency and throughput read better at two.
+        td.textContent = Number(v.toFixed(metric.startsWith("recall") ? 4 : 2));
 
         const okey = outlierCellKey(r.id, k);
         if (outliers.outOps.has(okey) || outliers.outLatMean.has(okey) || outliers.outLatP99.has(okey)) td.classList.add("out-cell");
@@ -1278,10 +1307,7 @@
             tdd.textContent = "-";
           } else {
             const pct = ((v - bv) / Math.abs(bv)) * 100;
-            const good =
-              metric === "ops"
-                ? v >= bv
-                : v <= bv;
+            const good = higherIsBetter(metric) ? v >= bv : v <= bv;
             tdd.textContent = (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
             tdd.className = good ? "delta-pos" : "delta-neg";
           }
@@ -1871,14 +1897,22 @@
           formatter(val, tooltipOpts) {
             const idx = tooltipOpts.dataPointIndex;
             const full = catKeys[idx] || "";
-            const unit = metric === "ops" ? " ops" : " µs";
+            const unit = metric === "ops" ? " ops" : metric.startsWith("recall") ? "" : " µs";
             const show = val != null && typeof val === "number" ? val + unit : "—";
             return `${show}\n\n${full}`;
           },
         },
       },
       title: {
-        text: `${metric === "ops" ? "Throughput (OPS)" : metric === "mean" ? "Mean latency (µs)" : "p99 latency (µs)"}${capApplied}`,
+        text: `${
+          {
+            ops: "Throughput (OPS)",
+            mean: "Mean latency (µs)",
+            q99: "p99 latency (µs)",
+            recall: "Recall@k (mean)",
+            recall_p5: "Recall@k (5th percentile)",
+          }[metric] ?? metric
+        }${capApplied}`,
         align: "left",
         style: {
           fontSize: "15px",
