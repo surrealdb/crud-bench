@@ -1,6 +1,7 @@
 use crate::BatchOperation;
 use crate::KeyType;
 use crate::Scan;
+use crate::VectorIndexStrategy;
 use crate::benchmark::Benchmark;
 use crate::dialect::{
 	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MariaDBDialect, MongoDBDialect, MySqlDialect,
@@ -79,6 +80,19 @@ pub(crate) enum Database {
 }
 
 impl Database {
+	/// Whether this database materializes the vector strategy as a physical index.
+	pub(crate) fn vector_scan_builds_index(&self, strategy: &VectorIndexStrategy) -> bool {
+		if strategy.requires_index() {
+			return true;
+		}
+
+		match self {
+			#[cfg(feature = "redis")]
+			Self::Redis => matches!(strategy, VectorIndexStrategy::Bruteforce),
+			_ => false,
+		}
+	}
+
 	/// Whether `start_docker` should run for this database when `endpoint` is set.
 	pub(crate) fn wants_docker(&self, endpoint: &Option<String>) -> bool {
 		match self {
