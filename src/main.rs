@@ -963,9 +963,11 @@ fn run(args: Args) -> Result<()> {
 		sync: args.sync,
 		persisted: args.persisted,
 		optimised: args.optimised,
-		// Filled in below, once the benchmark TOML has been read: the seed may
-		// come from the config as well as the CLI.
+		// Both filled in below, once the benchmark TOML has been read: the
+		// seed may come from the config as well as the CLI, and the template
+		// comes from the config alone.
 		corpus_seed: None,
+		template_digest: None,
 	};
 	let mut metadata = metadata;
 	// Get database display name
@@ -978,6 +980,8 @@ fn run(args: Args) -> Result<()> {
 	// editing the workload file.
 	let corpus_seed = args.corpus_seed.or(bench_toml.seed);
 	metadata.corpus_seed = corpus_seed;
+	metadata.template_digest =
+		Some(format!("{:016x}", twox_hash::XxHash64::oneshot(0, value_json.as_bytes())));
 	let vp = match corpus_seed {
 		Some(seed) => ValueProvider::new(&value_json)?.with_seed(seed),
 		None => ValueProvider::new(&value_json)?,

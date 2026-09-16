@@ -954,7 +954,7 @@
     // recall figures measured against different corpora and different answer
     // keys, so aligning their vector rows compares numbers that were never
     // about the same data.
-    const fields = ["samples", "clients", "threads", "key_type", "random", "sync", "persisted", "optimised", "corpus_seed"];
+    const fields = ["samples", "clients", "threads", "key_type", "random", "sync", "persisted", "optimised", "corpus_seed", "template_digest"];
     const mismatches = [];
     for (const f of fields) {
       const vals = new Map();
@@ -985,7 +985,13 @@
       for (const rr of okRuns) {
         const scans = Array.isArray(rr.data.scans) ? rr.data.scans : [];
         for (const sc of scans) {
-          const v = sc[f];
+          // Results written before the per-scan fields existed omit them, and
+          // those scans ran at the CLI concurrency. Dropping them here would
+          // leave a single value and so report no mismatch, which is how an
+          // old global-concurrency run and a new 1x1 override would still be
+          // presented as comparable.
+          const meta = rr.data.metadata;
+          const v = typeof sc[f] === "number" ? sc[f] : meta && typeof meta[f] === "number" ? meta[f] : undefined;
           if (typeof v !== "number") continue;
           const s = `${sc.id}=${v}`;
           if (!vals.has(s)) vals.set(s, []);

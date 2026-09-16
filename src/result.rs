@@ -48,6 +48,15 @@ pub(crate) struct BenchmarkMetadata {
 	/// on this value.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub(crate) corpus_seed: Option<u64>,
+	/// Digest of the `[value]` template the corpus was generated from.
+	///
+	/// The seed alone does not identify a corpus: the template decides what
+	/// each row contains, so the same seed against a changed embedding
+	/// generator or dimension produces different vectors and a different answer
+	/// key. `vectorgt::Request::fingerprint` already folds the template in for
+	/// exactly that reason, but a result file recorded only the seed, leaving
+	/// two such runs looking comparable.
+	pub(crate) template_digest: Option<String>,
 }
 
 /// Full benchmark output: timings per phase plus one representative generated [`BenchValue`].
