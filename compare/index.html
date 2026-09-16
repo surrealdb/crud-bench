@@ -1010,6 +1010,33 @@
       }
     }
 
+    // `recall` means nothing without the question it answered. `top_k`, the
+    // metric, the holdout the queries came from and the tie tolerance each
+    // decide what counts as correct, so two runs under one scan id but a
+    // different spec hold recall measured against different questions.
+    {
+      const byScan = new Map();
+      for (const rr of okRuns) {
+        const scans = Array.isArray(rr.data.scans) ? rr.data.scans : [];
+        for (const sc of scans) {
+          if (sc.vector_query == null) continue;
+          const spec = JSON.stringify(sc.vector_query);
+          if (!byScan.has(sc.id)) byScan.set(sc.id, new Map());
+          const m = byScan.get(sc.id);
+          if (!m.has(spec)) m.set(spec, []);
+          const lab = rr.displayLabel || rr.fileName;
+          if (!m.get(spec).includes(lab)) m.get(spec).push(lab);
+        }
+      }
+      for (const [id, specs] of byScan) {
+        if (specs.size < 2) continue;
+        mismatches.push({
+          field: `scan ${id} vector_query`,
+          values: [...specs.entries()].map(([spec, labs]) => `${spec} \u2190 ${labs.join(", ")}`),
+        });
+      }
+    }
+
     const detail = mismatches.map((m) => `** ${m.field} **\n${m.values.join("\n")}`).join("\n\n");
     return {
       missing: anyMissing,

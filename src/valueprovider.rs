@@ -609,7 +609,25 @@ impl ValueGenerator {
 					.unwrap_or_else(|| Utc.timestamp_opt(0, 0).unwrap());
 				BenchValue::DateTime(dt)
 			}
-			ValueGenerator::Uuid => BenchValue::Uuid(Uuid::new_v4()),
+			ValueGenerator::Uuid => {
+				// Drawn from the seeded RNG rather than `Uuid::new_v4`, which
+				// takes its own entropy. A `uuid` field in a seeded template -
+				// `config/vector.toml` has one - otherwise makes the corpus
+				// differ between runs and between engines, which is exactly
+				// what `seed` and the `corpus_seed` metadata promise it will
+				// not do.
+				let mut bytes = [0u8; 16];
+				for chunk in bytes.chunks_mut(8) {
+					let v: u64 = RandGen::random(&mut *rng);
+					let n = chunk.len();
+					chunk.copy_from_slice(&v.to_le_bytes()[..n]);
+				}
+				// RFC 4122: version 4 in the high nibble of byte 6, variant
+				// `10` in the top bits of byte 8.
+				bytes[6] = (bytes[6] & 0x0f) | 0x40;
+				bytes[8] = (bytes[8] & 0x3f) | 0x80;
+				BenchValue::Uuid(Uuid::from_bytes(bytes))
+			}
 			ValueGenerator::Decimal => {
 				// Generate a 4-fractional-digit decimal in [0, 1_000_000) so
 				// the value fits comfortably in `NUMERIC(38, 10)` and similar.
@@ -837,6 +855,35 @@ mod test {
 			.and_then(|v| v.as_float_vector())
 			.unwrap()
 			.to_vec()
+	}
+
+	/// A `uuid` field must come from the seeded RNG like every other field.
+	/// `Uuid::new_v4` draws its own entropy, so a seeded template containing
+	/// one produced a different corpus on every run and on every engine, which
+	/// is the opposite of what `seed` promises. `config/vector.toml` has such
+	/// a field.
+	#[test]
+	fn seeded_uuids_are_reproducible() {
+		let t = r#"{"id":"uuid","n":"int"}"#;
+		let mut a = ValueProvider::new(t).unwrap().with_seed(99);
+		let mut b = ValueProvider::new(t).unwrap().with_seed(99);
+		for n in [0u32, 1, 17, 999] {
+			let va = a.generate_value_for(ValueStream::Create, n);
+			let vb = b.generate_value_for(ValueStream::Create, n);
+			assert_eq!(va, vb, "sample {n} differed between providers");
+		}
+	}
+
+	/// A different seed must still give a different uuid, or the fix would have
+	/// traded entropy for a constant.
+	#[test]
+	fn seeded_uuids_vary_with_the_seed() {
+		let t = r#"{"id":"uuid"}"#;
+		let va =
+			ValueProvider::new(t).unwrap().with_seed(1).generate_value_for(ValueStream::Create, 0);
+		let vb =
+			ValueProvider::new(t).unwrap().with_seed(2).generate_value_for(ValueStream::Create, 0);
+		assert_ne!(va, vb);
 	}
 
 	#[test]

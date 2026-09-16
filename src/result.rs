@@ -175,6 +175,16 @@ pub(crate) struct ScanResult {
 	pub(crate) index_remove: Option<OperationResult>,
 	/// Timed scan legs in benchmark order (baseline → optional write-mix → indexed variants).
 	pub(crate) runs: Vec<ScanRun>,
+	/// The vector query this scan was scored against, when it is a KNN scan.
+	///
+	/// `recall` is a number whose meaning depends entirely on this: `top_k`,
+	/// the distance metric, the holdout the queries came from and the tie
+	/// tolerance all decide what counts as a correct answer. Two results under
+	/// the same scan id but a different spec hold recall figures measured
+	/// against different questions, and without this the file cannot say so -
+	/// nor reproduce what `recall@k` meant.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub(crate) vector_query: Option<crate::VectorQuerySpec>,
 	/// Clients this scan's timed legs actually ran at, after any per-scan
 	/// override and the cap at the pool size.
 	///

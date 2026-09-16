@@ -46,6 +46,14 @@ pub(crate) struct Neighbour {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct GroundTruth {
 	pub(crate) neighbours: Vec<Vec<Neighbour>>,
+	/// Rows the key was built from.
+	///
+	/// A key holds `min(storage_depth, corpus_len)` neighbours, so its length
+	/// alone cannot say whether anything was dropped: a key that is full
+	/// because it holds the entire corpus dropped nothing. `build_answers`
+	/// needs the difference to tell a genuinely truncated window from a
+	/// complete one.
+	pub(crate) corpus_len: usize,
 }
 
 /// How many neighbours to store for a given `top_k`.
@@ -119,9 +127,14 @@ pub(crate) fn build_answers(
 		// engine may legitimately return. Scoring here would count them as
 		// misses and report a recall gap that is an artefact of the key's
 		// depth rather than anything the index did.
-		let overruns = limit.is_some_and(|limit| {
-			row.len() >= depth && row.last().is_some_and(|n| (n.distance as f64) <= limit)
-		});
+		// Truncated only when the corpus holds rows the key does not. A key
+		// that is full because it *is* the corpus dropped nothing, so its
+		// window is complete however many entries fall inside it.
+		let truncated = gt.corpus_len > row.len();
+		let overruns = truncated
+			&& limit.is_some_and(|limit| {
+				row.len() >= depth && row.last().is_some_and(|n| (n.distance as f64) <= limit)
+			});
 		if overruns {
 			bail!(
 				"query {q}: every one of the {depth} neighbours stored for top_k={top_k} falls \
@@ -261,7 +274,7 @@ impl Request {
 		// Field-separated so no two distinct requests can render to the same
 		// string by shifting a boundary.
 		let key = format!(
-			"v1\u{1f}{field}\u{1f}{samples}\u{1f}{top_k}\u{1f}{metric:?}\u{1f}{corpus_seed}\u{1f}{query_seed}\u{1f}{query_count}\u{1f}{template}"
+			"v2\u{1f}{field}\u{1f}{samples}\u{1f}{top_k}\u{1f}{metric:?}\u{1f}{corpus_seed}\u{1f}{query_seed}\u{1f}{query_count}\u{1f}{template}"
 		);
 		XxHash64::oneshot(0, key.as_bytes())
 	}
@@ -396,6 +409,7 @@ pub(crate) fn compute(
 	}
 	Ok(GroundTruth {
 		neighbours: merged.into_iter().map(|t| t.best).collect(),
+		corpus_len: request.samples as usize,
 	})
 }
 
@@ -679,8 +693,17 @@ mod test {
 		}
 	}
 
+	/// A key that holds the entire corpus: nothing was dropped.
 	fn answer_key(rows: Vec<Vec<(u32, f32)>>) -> GroundTruth {
+		let widest = rows.iter().map(Vec::len).max().unwrap_or(0);
+		answer_key_of_corpus(rows, widest)
+	}
+
+	/// A key built from a corpus of `corpus_len` rows, which may be wider than
+	/// what the key stores.
+	fn answer_key_of_corpus(rows: Vec<Vec<(u32, f32)>>, corpus_len: usize) -> GroundTruth {
 		GroundTruth {
+			corpus_len,
 			neighbours: rows
 				.into_iter()
 				.map(|r| {
@@ -719,20 +742,32 @@ mod test {
 		assert_eq!(hit(&[9, 8, 7]), Some(0.0));
 	}
 
-	/// A key whose every stored neighbour sits inside the accepted window
-	/// cannot say whether the rows it dropped also qualify, so it must refuse
-	/// rather than score them as misses.
+	/// A key whose every stored neighbour sits inside the accepted window, and
+	/// which dropped rows the corpus still holds, cannot say whether those rows
+	/// also qualify. It must refuse rather than score them as misses.
 	///
 	/// `storage_depth` keeps `2 * top_k` neighbours, and the tolerance is a
 	/// distance rather than a count, so no value of `tie_epsilon` bounds how
 	/// many rows land inside it. Exact ties reach this at `0.0`.
 	#[test]
-	fn refuses_to_score_when_the_window_overruns_the_key() {
-		// top_k = 2 stores 4, and all four tie at the k-th distance.
-		let gt = answer_key(vec![vec![(1, 0.5), (2, 0.5), (3, 0.5), (4, 0.5)]]);
+	fn refuses_to_score_when_the_window_overruns_a_truncated_key() {
+		// top_k = 2 stores 4, all four tie, and the corpus holds 50 rows - so
+		// the 46 the key dropped may tie as well.
+		let gt = answer_key_of_corpus(vec![vec![(1, 0.5), (2, 0.5), (3, 0.5), (4, 0.5)]], 50);
 		let kp = integer_kp();
 		let err = build_answers(&gt, &kp, 2, 0.0).unwrap_err().to_string();
 		assert!(err.contains("more ties at the k-th distance"), "got: {err}");
+	}
+
+	/// The same shape must still score when the key *is* the corpus. Nothing
+	/// was dropped, so the window is complete however many entries fall inside
+	/// it, and refusing here would reject a small-corpus run for no reason.
+	#[test]
+	fn a_key_holding_the_whole_corpus_scores_even_when_every_row_ties() {
+		let gt = answer_key_of_corpus(vec![vec![(1, 0.5), (2, 0.5), (3, 0.5), (4, 0.5)]], 4);
+		let kp = integer_kp();
+		let answers = build_answers(&gt, &kp, 2, 0.0).unwrap();
+		assert_eq!(recall(&answers[0], &keys(&kp, &[3, 4])), Some(1.0));
 	}
 
 	/// The guard must not fire on an ordinary key, where the far entries sit

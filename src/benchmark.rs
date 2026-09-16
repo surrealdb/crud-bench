@@ -28,7 +28,7 @@ use hdrhistogram::Histogram;
 use indicatif::ProgressBar;
 use log::{debug, info};
 use tokio::task::JoinSet;
-use tokio::time::Instant;
+use tokio::time::{Instant, timeout};
 
 use std::collections::VecDeque;
 use std::fmt::{Display, Formatter};
@@ -221,13 +221,35 @@ impl Benchmark {
 				// single queries to the fastest so far does not — a uniformly
 				// slow cold index looks perfectly steady.
 				let window = Instant::now();
+				let mut budget_spent = false;
 				for _ in 0..VECTOR_WARMUP_WINDOW {
-					// An engine that cannot serve this scan fails the same way
-					// in the timed run, which is where it belongs in the output.
-					if client.scan_vector(scan, query_set.pick(q), kp, ctx).await.is_err() {
-						return Ok(());
+					// Bound each query by what is left of the budget. The loop
+					// condition above only runs between windows, so without
+					// this a single stalled call ignores
+					// `--vector-warmup-seconds` entirely and hangs the run
+					// before it ever reaches a timed operation, where
+					// `operation_timeout` would have caught it.
+					let left = self.vector_warmup_budget.saturating_sub(started.elapsed());
+					if left.is_zero() {
+						budget_spent = true;
+						break;
+					}
+					match timeout(left, client.scan_vector(scan, query_set.pick(q), kp, ctx)).await
+					{
+						// An engine that cannot serve this scan fails the same
+						// way in the timed run, which is where it belongs in
+						// the output.
+						Ok(Err(_)) => return Ok(()),
+						Err(_) => {
+							budget_spent = true;
+							break;
+						}
+						Ok(Ok(_)) => {}
 					}
 					q += 1;
+				}
+				if budget_spent {
+					break;
 				}
 				let window = window.elapsed();
 				// Stop once a window is no real improvement on the one a whole
@@ -599,6 +621,7 @@ impl Benchmark {
 					index_build: vec_index_build,
 					index_remove: vec_index_remove,
 					runs,
+					vector_query: Some(vq.clone()),
 					clients: leg_clients.len() as u32,
 					threads: leg_threads,
 				}
@@ -757,6 +780,7 @@ impl Benchmark {
 					index_build,
 					index_remove,
 					runs,
+					vector_query: None,
 					clients: leg_clients.len() as u32,
 					threads: leg_threads,
 				}
@@ -810,6 +834,7 @@ impl Benchmark {
 					index_build: None,
 					index_remove: None,
 					runs,
+					vector_query: None,
 					clients: leg_clients.len() as u32,
 					threads: leg_threads,
 				}
