@@ -950,7 +950,11 @@
     if (!okRuns.length) return { missing: false, mismatches: [], detail: "" };
     const normals = okRuns.map((r) => r.data.metadata);
     const anyMissing = normals.some((m) => m == null || typeof m !== "object");
-    const fields = ["samples", "clients", "threads", "key_type", "random", "sync", "persisted", "optimised"];
+    // `corpus_seed` decides the dataset. Two runs seeded differently hold
+    // recall figures measured against different corpora and different answer
+    // keys, so aligning their vector rows compares numbers that were never
+    // about the same data.
+    const fields = ["samples", "clients", "threads", "key_type", "random", "sync", "persisted", "optimised", "corpus_seed"];
     const mismatches = [];
     for (const f of fields) {
       const vals = new Map();
@@ -969,6 +973,43 @@
         });
       }
     }
+    // A scan may override the CLI concurrency, and `config/vector.toml` does:
+    // its vector legs run 1x1 because a warm KNN query answers in well under a
+    // millisecond, so at the default concurrency the timed leg measures
+    // queueing instead. The same query measured 0.4ms at one client and roughly
+    // 1500ms at sixty-four, so comparing a 1x1 leg against a 12x24 one reports
+    // a difference that is entirely the queue. `metadata` carries the CLI
+    // setting, which says nothing about what a given scan actually used.
+    for (const f of ["clients", "threads"]) {
+      const vals = new Map();
+      for (const rr of okRuns) {
+        const scans = Array.isArray(rr.data.scans) ? rr.data.scans : [];
+        for (const sc of scans) {
+          const v = sc[f];
+          if (typeof v !== "number") continue;
+          const s = `${sc.id}=${v}`;
+          if (!vals.has(s)) vals.set(s, []);
+          if (!vals.get(s).includes(rr.displayLabel || rr.fileName)) {
+            vals.get(s).push(rr.displayLabel || rr.fileName);
+          }
+        }
+      }
+      // Group by scan id: a mismatch is one id running at two settings.
+      const byScan = new Map();
+      for (const [k, labs] of vals) {
+        const id = k.slice(0, k.lastIndexOf("="));
+        if (!byScan.has(id)) byScan.set(id, []);
+        byScan.get(id).push([k.slice(k.lastIndexOf("=") + 1), labs]);
+      }
+      for (const [id, entries] of byScan) {
+        if (entries.length < 2) continue;
+        mismatches.push({
+          field: `scan ${id} ${f} (effective)`,
+          values: entries.map(([val, labs]) => `${val} \u2190 ${labs.join(", ")}`),
+        });
+      }
+    }
+
     const detail = mismatches.map((m) => `** ${m.field} **\n${m.values.join("\n")}`).join("\n\n");
     return {
       missing: anyMissing,

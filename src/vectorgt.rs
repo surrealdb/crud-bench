@@ -58,12 +58,18 @@ fn storage_depth(top_k: usize) -> usize {
 	top_k.saturating_mul(2)
 }
 
-/// Largest tolerance the stored answer key can honour.
+/// Largest tolerance accepted in configuration.
 ///
-/// The key holds [`storage_depth`] neighbours. A tolerance wide enough to admit
-/// candidates beyond that would silently score a legitimately-returned boundary
-/// neighbour as a miss, because `build_answers` can only accept rows the key
-/// actually stored.
+/// This keeps a typo like `tie_epsilon = 50` from turning recall into a
+/// formality, and nothing more. It is deliberately not a guarantee that the
+/// stored key can honour the window: the key holds a fixed *number* of
+/// neighbours while the tolerance is a *distance*, and no bound on a distance
+/// caps how many rows fall inside it. A corpus with many rows at the same
+/// distance overruns [`storage_depth`] at any tolerance, `tie_epsilon = 0`
+/// included, because exact ties at the k-th distance are admitted too.
+///
+/// `build_answers` detects that case and refuses to score, rather than counting
+/// a legitimately-returned neighbour as a miss.
 pub(crate) const MAX_TIE_EPSILON: f64 = 0.5;
 
 /// One query's accepted answers, resolved into the run's key shape.
@@ -94,34 +100,52 @@ pub(crate) fn build_answers(
 	kp: &KeyProvider,
 	top_k: usize,
 	tie_epsilon: f64,
-) -> Vec<VectorAnswer> {
-	gt.neighbours
-		.iter()
-		.map(|row| {
-			let truth_len = row.len().min(top_k);
-			// Everything at or inside the k-th distance, widened by the
-			// tolerance. `cut` is the k-th distance when one exists.
-			let limit = row.get(truth_len.saturating_sub(1)).map(|n| {
-				let cut = n.distance as f64;
-				// Relative on magnitude, with an absolute floor so a cut at or
-				// near zero still admits its neighbours.
-				cut + tie_epsilon * cut.abs().max(f64::EPSILON)
-			});
-			let keys = row
-				.iter()
-				.enumerate()
-				.filter(|(i, n)| match limit {
-					Some(limit) => *i < truth_len || (n.distance as f64) <= limit,
-					None => false,
-				})
-				.map(|(_, n)| key_for(kp, n.sample))
-				.collect();
-			VectorAnswer {
-				truth_len,
-				keys,
-			}
-		})
-		.collect()
+) -> Result<Vec<VectorAnswer>> {
+	let depth = storage_depth(top_k);
+	let mut out = Vec::with_capacity(gt.neighbours.len());
+	for (q, row) in gt.neighbours.iter().enumerate() {
+		let truth_len = row.len().min(top_k);
+		// Everything at or inside the k-th distance, widened by the tolerance.
+		// `cut` is the k-th distance when one exists.
+		let limit = row.get(truth_len.saturating_sub(1)).map(|n| {
+			let cut = n.distance as f64;
+			// Relative on magnitude, with an absolute floor so a cut at or
+			// near zero still admits its neighbours.
+			cut + tie_epsilon * cut.abs().max(f64::EPSILON)
+		});
+		// The key stores `depth` neighbours. If it is full and its last entry
+		// is still inside the window, the corpus holds more rows at that
+		// distance than the key kept, and the dropped ones are answers an
+		// engine may legitimately return. Scoring here would count them as
+		// misses and report a recall gap that is an artefact of the key's
+		// depth rather than anything the index did.
+		let overruns = limit.is_some_and(|limit| {
+			row.len() >= depth && row.last().is_some_and(|n| (n.distance as f64) <= limit)
+		});
+		if overruns {
+			bail!(
+				"query {q}: every one of the {depth} neighbours stored for top_k={top_k} falls \
+					 within the accepted distance, so rows beyond the key may also qualify and \
+					 would be scored as misses. This corpus has more ties at the k-th distance \
+					 than the key can hold: lower `tie_epsilon` (currently {tie_epsilon}), raise \
+				 `top_k`, or use a generator whose distances are less degenerate."
+			);
+		}
+		let keys = row
+			.iter()
+			.enumerate()
+			.filter(|(i, n)| match limit {
+				Some(limit) => *i < truth_len || (n.distance as f64) <= limit,
+				None => false,
+			})
+			.map(|(_, n)| key_for(kp, n.sample))
+			.collect();
+		out.push(VectorAnswer {
+			truth_len,
+			keys,
+		});
+	}
+	Ok(out)
 }
 
 /// Map a benchmark sample index into the run's key shape.
@@ -685,7 +709,7 @@ mod test {
 	fn recall_counts_only_true_neighbours() {
 		let gt = answer_key(vec![vec![(1, 0.1), (2, 0.2), (3, 0.3), (9, 0.9), (8, 1.0), (7, 1.1)]]);
 		let kp = integer_kp();
-		let answers = build_answers(&gt, &kp, 3, 0.0);
+		let answers = build_answers(&gt, &kp, 3, 0.0).unwrap();
 		let hit = |ids: &[u32]| -> Option<f64> { recall(&answers[0], &keys(&kp, ids)) };
 		assert_eq!(hit(&[1, 2, 3]), Some(1.0));
 		assert_eq!(hit(&[1, 2, 99]), Some(2.0 / 3.0));
@@ -693,6 +717,32 @@ mod test {
 		// Rows outside the true top-k earn nothing, even though the answer key
 		// stores them for the tie window.
 		assert_eq!(hit(&[9, 8, 7]), Some(0.0));
+	}
+
+	/// A key whose every stored neighbour sits inside the accepted window
+	/// cannot say whether the rows it dropped also qualify, so it must refuse
+	/// rather than score them as misses.
+	///
+	/// `storage_depth` keeps `2 * top_k` neighbours, and the tolerance is a
+	/// distance rather than a count, so no value of `tie_epsilon` bounds how
+	/// many rows land inside it. Exact ties reach this at `0.0`.
+	#[test]
+	fn refuses_to_score_when_the_window_overruns_the_key() {
+		// top_k = 2 stores 4, and all four tie at the k-th distance.
+		let gt = answer_key(vec![vec![(1, 0.5), (2, 0.5), (3, 0.5), (4, 0.5)]]);
+		let kp = integer_kp();
+		let err = build_answers(&gt, &kp, 2, 0.0).unwrap_err().to_string();
+		assert!(err.contains("more ties at the k-th distance"), "got: {err}");
+	}
+
+	/// The guard must not fire on an ordinary key, where the far entries sit
+	/// outside the window and the dropped rows are further still.
+	#[test]
+	fn a_full_key_whose_tail_is_outside_the_window_still_scores() {
+		let gt = answer_key(vec![vec![(1, 0.1), (2, 0.2), (3, 0.8), (4, 0.9)]]);
+		let kp = integer_kp();
+		let answers = build_answers(&gt, &kp, 2, 0.0).unwrap();
+		assert_eq!(recall(&answers[0], &keys(&kp, &[1, 2])), Some(1.0));
 	}
 
 	/// A near-tie at the k-th place should not read as a quality gap: engines
@@ -704,10 +754,10 @@ mod test {
 		let kp = integer_kp();
 		let returned = keys(&kp, &[1, 3]);
 
-		let strict = build_answers(&gt, &kp, 2, 0.0);
+		let strict = build_answers(&gt, &kp, 2, 0.0).unwrap();
 		assert_eq!(recall(&strict[0], &returned), Some(0.5));
 
-		let tolerant = build_answers(&gt, &kp, 2, 0.01);
+		let tolerant = build_answers(&gt, &kp, 2, 0.01).unwrap();
 		assert_eq!(recall(&tolerant[0], &returned), Some(1.0));
 
 		// The tolerance must stay narrow: a genuinely distant row is still wrong.
@@ -720,7 +770,7 @@ mod test {
 	fn short_answer_key_is_not_penalised() {
 		let gt = answer_key(vec![vec![(1, 0.1), (2, 0.2)]]);
 		let kp = integer_kp();
-		let answers = build_answers(&gt, &kp, 10, 0.0);
+		let answers = build_answers(&gt, &kp, 10, 0.0).unwrap();
 		assert_eq!(recall(&answers[0], &keys(&kp, &[1, 2])), Some(1.0));
 	}
 
@@ -736,7 +786,7 @@ mod test {
 			panic!("expected an unordered integer provider");
 		};
 		let expected: Vec<KnnKey> = [0u32, 1].iter().map(|n| KnnKey::Integer(p.key(*n))).collect();
-		let answers = build_answers(&gt, &kp, 2, 0.0);
+		let answers = build_answers(&gt, &kp, 2, 0.0).unwrap();
 		assert_eq!(recall(&answers[0], &expected), Some(1.0));
 
 		let mut string_kp = KeyProvider::new(crate::KeyType::String26, false);
@@ -744,7 +794,7 @@ mod test {
 			panic!("expected an ordered string provider");
 		};
 		let expected: Vec<KnnKey> = [0u32, 1].iter().map(|n| KnnKey::Text(sp.key(*n))).collect();
-		let answers = build_answers(&gt, &string_kp, 2, 0.0);
+		let answers = build_answers(&gt, &string_kp, 2, 0.0).unwrap();
 		assert_eq!(recall(&answers[0], &expected), Some(1.0));
 	}
 

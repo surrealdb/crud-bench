@@ -970,7 +970,7 @@ impl Benchmark {
 			));
 		}
 		query_set.accept =
-			Some(Arc::new(vectorgt::build_answers(&gt, kp, vq.top_k, vq.tie_epsilon)));
+			Some(Arc::new(vectorgt::build_answers(&gt, kp, vq.top_k, vq.tie_epsilon)?));
 		query_set.ground_truth = Some(Arc::new(gt));
 		Ok(())
 	}
