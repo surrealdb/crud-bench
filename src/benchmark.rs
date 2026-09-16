@@ -30,6 +30,7 @@ use log::{debug, info};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
+use std::collections::VecDeque;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -206,15 +207,18 @@ impl Benchmark {
 		// Set when a client stopped on a limit rather than on a settled rate.
 		let mut truncated = false;
 		for client in clients.iter() {
-			let mut previous: Option<Duration> = None;
+			// Recent window durations, oldest first, capped at the span. The
+			// plateau test compares against the far end of this, not the near
+			// one.
+			let mut recent: VecDeque<Duration> = VecDeque::with_capacity(VECTOR_WARMUP_PLATEAU_SPAN);
 			let mut q = 0u32;
 			let mut plateaued = false;
 			while started.elapsed() <= self.vector_warmup_budget && q < ceiling {
 				// Time a whole window rather than single queries: while an index
 				// is warming its latency is *falling*, and once warm it is flat.
-				// Comparing consecutive windows detects that transition, where
-				// comparing single queries to the fastest so far does not — a
-				// uniformly slow cold index looks perfectly steady.
+				// Comparing windows detects that transition, where comparing
+				// single queries to the fastest so far does not — a uniformly
+				// slow cold index looks perfectly steady.
 				let window = Instant::now();
 				for _ in 0..VECTOR_WARMUP_WINDOW {
 					// An engine that cannot serve this scan fails the same way
@@ -225,16 +229,19 @@ impl Benchmark {
 					q += 1;
 				}
 				let window = window.elapsed();
-				if let Some(previous) = previous {
-					// Stop once a window is no real improvement on the last —
-					// which is true immediately for an index that was already
-					// warm, so a later sweep leg pays only two windows.
-					if window * 100 >= previous * VECTOR_WARMUP_PLATEAU_PCT {
-						plateaued = true;
-						break;
-					}
+				// Stop once a window is no real improvement on the one a whole
+				// span back. An index that was already warm trips this as soon
+				// as the span fills, so a later sweep leg pays the span and no
+				// more; an index still draining a backlog keeps improving
+				// across the span and does not trip it.
+				if warmup_has_plateaued(&recent, window) {
+					plateaued = true;
+					break;
 				}
-				previous = Some(window);
+				if recent.len() == VECTOR_WARMUP_PLATEAU_SPAN {
+					recent.pop_front();
+				}
+				recent.push_back(window);
 			}
 			if !plateaued {
 				truncated = true;
@@ -247,9 +254,12 @@ impl Benchmark {
 			// accurate. Reporting that silently is how this went unnoticed for
 			// several runs, so say it loudly instead.
 			self.bench_ui.println_muted(&format!(
-				"Warm-up stopped on a limit after {} without the rate settling: the next leg's \
-				 latency may be understated and its recall overstated. Raise \
-				 --vector-warmup-seconds if this persists.",
+				"Warm-up stopped on a limit after {} while latency was still falling: the next \
+				 leg is timed against an index that is not finished settling, and the gap can be \
+				 large — a 1M-row HNSW index measured ~600ms per query in this state against \
+				 ~5ms once settled. Treat the next leg's latency as a lower bound on quality and \
+				 an upper bound on speed rather than a measurement, and raise \
+				 --vector-warmup-seconds until this line stops appearing.",
 				format_duration(waited)
 			));
 		} else if waited > Duration::from_millis(500) {
@@ -1301,9 +1311,41 @@ const VECTOR_WARMUP_MIN_QUERIES: u32 = 500;
 /// queries at 10k rows, 4000 at 200k.
 const VECTOR_WARMUP_ROWS_PER_QUERY: u32 = 50;
 
-/// A window this close to the one before it means warming has plateaued.
-/// Expressed as a percentage so the comparison stays in integer arithmetic.
+/// A window this close to the one `VECTOR_WARMUP_PLATEAU_SPAN` back means
+/// warming has plateaued. Expressed as a percentage so the comparison stays in
+/// integer arithmetic.
 const VECTOR_WARMUP_PLATEAU_PCT: u32 = 90;
+
+/// How many windows back the plateau check compares against.
+///
+/// Comparing against the *immediately preceding* window asks whether latency is
+/// locally flat, which is not the same question as whether the index is warm. A
+/// backlog draining steadily improves each window by less than the threshold
+/// while still falling steeply over any longer horizon, so a per-step check
+/// calls it settled and the leg is then timed against a half-materialised
+/// index. Measured against a 1M-row HNSW index: warm-up reported a plateau
+/// after ~2 minutes and the leg that followed ran at ~600ms per query, roughly
+/// 100x the same query on the same index once its backlog had drained.
+///
+/// Spanning several windows catches that: a decline too gradual to trip the
+/// per-step test still compounds across the span. Five windows is enough to see
+/// through it and costs an already-warm index ~125 extra queries, which at
+/// sub-millisecond latencies is noise.
+const VECTOR_WARMUP_PLATEAU_SPAN: usize = 4;
+
+/// Whether warm-up has settled: this window is no real improvement on the one a
+/// full span back.
+///
+/// Returns false until the span has filled, so the decision is never taken on
+/// less evidence than it needs.
+fn warmup_has_plateaued(recent: &VecDeque<Duration>, window: Duration) -> bool {
+	match recent.front() {
+		Some(&oldest) if recent.len() == VECTOR_WARMUP_PLATEAU_SPAN => {
+			window * 100 >= oldest * VECTOR_WARMUP_PLATEAU_PCT
+		}
+		_ => false,
+	}
+}
 
 /// Config name of a strategy's search-time knob, for labelling sweep legs.
 fn search_param_label(strategy: &VectorIndexStrategy) -> &'static str {
@@ -1450,5 +1492,65 @@ fn progress_short_label(operation: &BenchmarkOperation) -> String {
 		format!("{}…", &s[..MAX.saturating_sub(1)])
 	} else {
 		s
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::{VECTOR_WARMUP_PLATEAU_SPAN, warmup_has_plateaued};
+	use std::collections::VecDeque;
+	use std::time::Duration;
+
+	fn ms(v: u64) -> Duration {
+		Duration::from_millis(v)
+	}
+
+	fn recent(values: &[u64]) -> VecDeque<Duration> {
+		values.iter().map(|v| ms(*v)).collect()
+	}
+
+	/// No verdict before the span has filled — the whole point is to decide on
+	/// a horizon rather than on one step.
+	#[test]
+	fn holds_off_until_the_span_fills() {
+		for n in 0..VECTOR_WARMUP_PLATEAU_SPAN {
+			let window = recent(&vec![100; n]);
+			assert!(!warmup_has_plateaued(&window, ms(100)), "decided on {n} windows");
+		}
+	}
+
+	/// An index that was already warm settles as soon as it has the evidence,
+	/// so a later sweep leg pays the span and no more.
+	#[test]
+	fn flat_latency_plateaus_once_the_span_fills() {
+		assert!(warmup_has_plateaued(&recent(&[100, 100, 100, 100]), ms(100)));
+	}
+
+	/// The regression this exists for. Each step improves by ~7%, under the 10%
+	/// per-step threshold, so the old consecutive-window check called it
+	/// settled — while latency was still falling by a third across the span.
+	/// Measured against a 1M-row HNSW index, that mistake timed the next leg at
+	/// ~600ms per query against ~5ms once the index had actually settled.
+	#[test]
+	fn a_gradual_decline_does_not_read_as_settled() {
+		let window = recent(&[1500, 1395, 1297, 1206]);
+		assert!(
+			!warmup_has_plateaued(&window, ms(1122)),
+			"a run still improving 25% across the span is not warm"
+		);
+	}
+
+	/// A single lucky window inside a still-declining series must not end
+	/// warm-up either: the comparison is against the span, not the neighbour.
+	#[test]
+	fn one_fast_window_does_not_end_a_decline() {
+		let window = recent(&[2000, 1800, 1600, 1400]);
+		assert!(!warmup_has_plateaued(&window, ms(1350)));
+	}
+
+	/// Noise upward is settled, not a reason to keep warming.
+	#[test]
+	fn a_slower_window_counts_as_settled() {
+		assert!(warmup_has_plateaued(&recent(&[100, 102, 98, 101]), ms(140)));
 	}
 }
