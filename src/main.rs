@@ -221,9 +221,20 @@ pub(crate) type Batches = Vec<BatchOperation>;
 
 /// One row inside a multi-run scan entry (`runs` on [`ScanSpec`]).
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ScanRun {
 	/// Label for this run in results and CLI output.
 	name: String,
+	/// Timed iterations for this run, overriding the parent [`ScanSpec`]
+	/// `iterations` when set.
+	///
+	/// One count cannot serve a `runs` array that mixes leg kinds. A bruteforce
+	/// KNN leg is a full table scan — seconds per query at 100k rows — while the
+	/// graph-index legs beside it answer in under a millisecond; a count that
+	/// gives the graph legs a decent sample makes the exact leg take an hour.
+	/// Without this the only way out is splitting one scan into two `[[scans]]`
+	/// blocks with separate ids, which fragments the results for no real reason.
+	iterations: Option<usize>,
 	/// `ID`, `FULL`, or `COUNT`; overrides the parent [`ScanSpec`] `projection` when set.
 	projection: Option<String>,
 	/// Per-run vector-query override (e.g. each algorithm leg with its own strategy).
@@ -233,6 +244,7 @@ pub(crate) struct ScanRun {
 
 /// Deserialized scan file entry: either a single [`Scan`] (`name`) or several (`runs`), never both.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ScanSpec {
 	/// Stable identifier for grouping, results, and index job names when `with_index` is set.
 	id: String,
@@ -349,6 +361,7 @@ impl ScanSpec {
 					}
 					let run_projection = run.projection.or_else(|| default_projection.clone());
 					let run_vq = run.vector_query.or_else(|| vector_query.clone());
+					let run_iterations = run.iterations.or(iterations);
 					out.push(Scan {
 						id: id.clone(),
 						clients,
@@ -356,7 +369,7 @@ impl ScanSpec {
 						spec_group,
 						multi_run_spec,
 						name: run.name,
-						iterations,
+						iterations: run_iterations,
 						condition: condition.clone(),
 						order_by: order_by.clone(),
 						start,
@@ -500,6 +513,7 @@ fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 /// Physical or logical index attached to a scan (fulltext, field btree, etc.).
 pub(crate) struct Index {
 	/// When true, skip index create/drop but still run the query leg (table scan).
@@ -558,7 +572,7 @@ impl SearchParam {
 /// All knobs are required — benchmark results without explicit parameters
 /// are unreproducible and impossible to interpret.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub(crate) enum VectorIndexStrategy {
 	/// Exact KNN by sequential scan — no auxiliary index.
 	Bruteforce,
@@ -639,6 +653,7 @@ impl VectorIndexStrategy {
 /// neighbour. The count and seed make the same query set reproducible
 /// across runs and engines.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct VectorHoldout {
 	#[serde(default = "default_holdout_count")]
 	pub(crate) count: usize,
@@ -665,6 +680,7 @@ impl Default for VectorHoldout {
 /// One vector-search scan configuration attached to a [`Scan`]. The presence of
 /// this struct on a scan row is what makes the run a vector benchmark.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct VectorQuerySpec {
 	/// Column to compare against (must be a `vector:<dim>` field in the schema).
 	pub(crate) field: String,
@@ -747,6 +763,7 @@ pub(crate) struct Scan {
 /// Mixed read/write scan leg: scan iterations plus paired updates that touch indexed columns while
 /// keeping approximate match cardinality stable (see `workloads` module).
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ScanWithWrites {
 	/// Fraction of iterations that include compensating writes after the scan (0.0–1.0).
 	#[serde(default = "default_writes_ratio")]
@@ -820,6 +837,7 @@ pub(crate) enum Projection {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 /// Per-dialect `WHERE` fragments for a filtered scan.
 pub(crate) struct Condition {
 	/// Generic SQL predicate text (ANSI-ish; used where no dialect override exists).
@@ -842,6 +860,7 @@ pub(crate) struct Condition {
 
 /// Per-dialect `ORDER BY` fragments for scans (same shape as [`Condition`]).
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OrderByClause {
 	/// Generic SQL `ORDER BY` expression (minus the keyword).
 	pub(crate) sql: Option<String>,
@@ -858,6 +877,7 @@ pub(crate) struct OrderByClause {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 /// One batch throughput case (create/read/update/delete many rows per iteration).
 pub(crate) struct BatchOperation {
 	/// Display name in results.
@@ -1451,7 +1471,7 @@ mod test {
 	#[test]
 	fn scan_with_index_rejects_empty_fields_without_fieldless_type() {
 		let specs: Vec<super::ScanSpec> =
-			serde_json::from_str(r#"[{"id":"x","name":"y","samples":1,"with_index":{}}]"#).unwrap();
+			serde_json::from_str(r#"[{"id":"x","name":"y","iterations":1,"with_index":{}}]"#).unwrap();
 		let scans = super::expand_scan_specs(specs).unwrap();
 		let err = super::validate_scan_index_ids(&scans).unwrap_err();
 		assert!(err.to_string().contains("with_index.fields must be non-empty"));
@@ -1460,7 +1480,7 @@ mod test {
 	#[test]
 	fn scan_with_index_allows_empty_fields_for_count() {
 		let specs: Vec<super::ScanSpec> = serde_json::from_str(
-			r#"[{"id":"x","name":"y","samples":1,"with_index":{"index_type":"count"}}]"#,
+			r#"[{"id":"x","name":"y","iterations":1,"with_index":{"index_type":"count"}}]"#,
 		)
 		.unwrap();
 		let scans = super::expand_scan_specs(specs).unwrap();
@@ -1470,7 +1490,7 @@ mod test {
 	#[test]
 	fn scan_with_index_rejects_fields_for_count() {
 		let specs: Vec<super::ScanSpec> = serde_json::from_str(
-			r#"[{"id":"x","name":"y","samples":1,"with_index":{"index_type":"count","fields":["n"]}}]"#,
+			r#"[{"id":"x","name":"y","iterations":1,"with_index":{"index_type":"count","fields":["n"]}}]"#,
 		)
 		.unwrap();
 		let scans = super::expand_scan_specs(specs).unwrap();
@@ -1484,6 +1504,77 @@ mod test {
 			r#"[{"id":"w","name":"n","iterations":1,"with_writes":{"ratio":0.2}}]"#,
 		);
 		assert!(err.is_err());
+	}
+
+	/// A key at the wrong nesting level used to be dropped in silence, so the
+	/// run reported a number for a configuration nobody had written. `samples`
+	/// is the real case: it sat on `count_count_idx` in two shipped configs,
+	/// was ignored, and that leg ran `--samples` iterations while the `count`
+	/// leg it is meant to be compared against ran the configured 10 or 1000.
+	#[test]
+	fn scan_spec_rejects_an_unknown_key() {
+		let err = serde_json::from_str::<Vec<super::ScanSpec>>(
+			r#"[{"id":"x","name":"y","samples":1000}]"#,
+		)
+		.unwrap_err()
+		.to_string();
+		assert!(err.contains("samples"), "error should name the offending key, got: {err}");
+	}
+
+	/// The same guard one level down, where the original report came from.
+	#[test]
+	fn scan_run_rejects_an_unknown_key() {
+		let err = serde_json::from_str::<Vec<super::ScanSpec>>(
+			r#"[{"id":"x","runs":[{"name":"a","nonsense":1}]}]"#,
+		)
+		.unwrap_err()
+		.to_string();
+		assert!(err.contains("nonsense"), "error should name the offending key, got: {err}");
+	}
+
+	/// Vector specs are the ones whose knobs are easiest to misplace, and a
+	/// dropped knob there produces a plausible-looking recall/latency pair for
+	/// parameters that were never applied.
+	#[test]
+	fn vector_query_spec_rejects_an_unknown_key() {
+		let err = serde_json::from_str::<Vec<super::ScanSpec>>(
+			r#"[{"id":"v","name":"v","vector_query":{"field":"e","top_k":10,
+			   "distance":"cosine","index_strategy":{"kind":"bruteforce"},
+			   "tie_epsilion":0.01}}]"#,
+		)
+		.unwrap_err()
+		.to_string();
+		assert!(err.contains("tie_epsilion"), "error should name the typo, got: {err}");
+	}
+
+	/// A misspelled knob inside an index strategy must not fall back to the
+	/// default: `ef_construction` silently defaulting would make an HNSW build
+	/// unreproducible while still reporting numbers.
+	#[test]
+	fn index_strategy_rejects_an_unknown_key() {
+		let err = serde_json::from_str::<Vec<super::ScanSpec>>(
+			r#"[{"id":"v","name":"v","vector_query":{"field":"e","top_k":10,
+			   "distance":"cosine","index_strategy":{"kind":"hnsw","m":16,
+			   "ef_construction":200,"ef_search":64,"efc":200}}}]"#,
+		)
+		.unwrap_err()
+		.to_string();
+		assert!(err.contains("efc"), "error should name the offending key, got: {err}");
+	}
+
+	/// One iteration count cannot serve a `runs` array that mixes a full-scan
+	/// leg with graph-index legs, so a run may set its own.
+	#[test]
+	fn run_level_iterations_overrides_the_spec() {
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"s","iterations":1000,
+			   "runs":[{"name":"exact","iterations":50},{"name":"graph"}]}]"#,
+		)
+		.unwrap();
+		let scans = super::expand_scan_specs(specs).unwrap();
+		assert_eq!(scans.len(), 2);
+		assert_eq!(scans[0].iterations, Some(50), "run-level value should win");
+		assert_eq!(scans[1].iterations, Some(1000), "unset run should inherit the spec");
 	}
 
 	#[test]

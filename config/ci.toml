@@ -76,7 +76,7 @@ iterations = 10
 id = "count_count_idx"
 name = "count() with COUNT index"
 projection = "COUNT"
-samples = 10
+iterations = 10
 
 [scans.with_index]
 index_type = "count"
