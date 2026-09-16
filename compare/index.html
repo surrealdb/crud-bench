@@ -973,6 +973,37 @@
         });
       }
     }
+    // Compare per-scan settings row by row. A scan id is not a row: the
+    // shipped `config/vector.toml` puts bruteforce, HNSW and DiskANN legs
+    // under one `vector_knn` id, with deliberately different specs, so
+    // grouping by id alone reports a mismatch against a single file. The
+    // logical row is id plus name, and a mismatch is one row disagreeing
+    // across result files.
+    /** @param {(sc:any, rr:any) => string|undefined} valueOf */
+    function perScanMismatch(fieldLabel, valueOf) {
+      const byRow = new Map();
+      for (const rr of okRuns) {
+        const scans = Array.isArray(rr.data.scans) ? rr.data.scans : [];
+        for (const sc of scans) {
+          const v = valueOf(sc, rr);
+          if (v === undefined) continue;
+          const rowKey = `${sc.id} \u00b7 ${sc.name}`;
+          if (!byRow.has(rowKey)) byRow.set(rowKey, new Map());
+          const vals = byRow.get(rowKey);
+          if (!vals.has(v)) vals.set(v, []);
+          const lab = rr.displayLabel || rr.fileName;
+          if (!vals.get(v).includes(lab)) vals.get(v).push(lab);
+        }
+      }
+      for (const [rowKey, vals] of byRow) {
+        if (vals.size < 2) continue;
+        mismatches.push({
+          field: `${rowKey} ${fieldLabel}`,
+          values: [...vals.entries()].map(([v, labs]) => `${v} \u2190 ${labs.join(", ")}`),
+        });
+      }
+    }
+
     // A scan may override the CLI concurrency, and `config/vector.toml` does:
     // its vector legs run 1x1 because a warm KNN query answers in well under a
     // millisecond, so at the default concurrency the timed leg measures
@@ -981,67 +1012,25 @@
     // a difference that is entirely the queue. `metadata` carries the CLI
     // setting, which says nothing about what a given scan actually used.
     for (const f of ["clients", "threads"]) {
-      const vals = new Map();
-      for (const rr of okRuns) {
-        const scans = Array.isArray(rr.data.scans) ? rr.data.scans : [];
-        for (const sc of scans) {
-          // Results written before the per-scan fields existed omit them, and
-          // those scans ran at the CLI concurrency. Dropping them here would
-          // leave a single value and so report no mismatch, which is how an
-          // old global-concurrency run and a new 1x1 override would still be
-          // presented as comparable.
-          const meta = rr.data.metadata;
-          const v = typeof sc[f] === "number" ? sc[f] : meta && typeof meta[f] === "number" ? meta[f] : undefined;
-          if (typeof v !== "number") continue;
-          const s = `${sc.id}=${v}`;
-          if (!vals.has(s)) vals.set(s, []);
-          if (!vals.get(s).includes(rr.displayLabel || rr.fileName)) {
-            vals.get(s).push(rr.displayLabel || rr.fileName);
-          }
-        }
-      }
-      // Group by scan id: a mismatch is one id running at two settings.
-      const byScan = new Map();
-      for (const [k, labs] of vals) {
-        const id = k.slice(0, k.lastIndexOf("="));
-        if (!byScan.has(id)) byScan.set(id, []);
-        byScan.get(id).push([k.slice(k.lastIndexOf("=") + 1), labs]);
-      }
-      for (const [id, entries] of byScan) {
-        if (entries.length < 2) continue;
-        mismatches.push({
-          field: `scan ${id} ${f} (effective)`,
-          values: entries.map(([val, labs]) => `${val} \u2190 ${labs.join(", ")}`),
-        });
-      }
+      perScanMismatch(`${f} (effective)`, (sc, rr) => {
+        // Results written before the per-scan fields existed omit them, and
+        // those scans ran at the CLI concurrency. Dropping them here would
+        // leave a single value and so report no mismatch, which is how an old
+        // global-concurrency run and a new 1x1 override would still be
+        // presented as comparable.
+        const meta = rr.data.metadata;
+        if (typeof sc[f] === "number") return String(sc[f]);
+        if (meta && typeof meta[f] === "number") return String(meta[f]);
+        return undefined;
+      });
     }
 
     // `recall` means nothing without the question it answered. `top_k`, the
     // metric, the holdout the queries came from and the tie tolerance each
-    // decide what counts as correct, so two runs under one scan id but a
-    // different spec hold recall measured against different questions.
-    {
-      const byScan = new Map();
-      for (const rr of okRuns) {
-        const scans = Array.isArray(rr.data.scans) ? rr.data.scans : [];
-        for (const sc of scans) {
-          if (sc.vector_query == null) continue;
-          const spec = JSON.stringify(sc.vector_query);
-          if (!byScan.has(sc.id)) byScan.set(sc.id, new Map());
-          const m = byScan.get(sc.id);
-          if (!m.has(spec)) m.set(spec, []);
-          const lab = rr.displayLabel || rr.fileName;
-          if (!m.get(spec).includes(lab)) m.get(spec).push(lab);
-        }
-      }
-      for (const [id, specs] of byScan) {
-        if (specs.size < 2) continue;
-        mismatches.push({
-          field: `scan ${id} vector_query`,
-          values: [...specs.entries()].map(([spec, labs]) => `${spec} \u2190 ${labs.join(", ")}`),
-        });
-      }
-    }
+    // decide what counts as correct, so two runs of one row but a different
+    // spec hold recall measured against different questions.
+    perScanMismatch("vector_query", (sc) =>
+      sc.vector_query == null ? undefined : JSON.stringify(sc.vector_query));
 
     const detail = mismatches.map((m) => `** ${m.field} **\n${m.values.join("\n")}`).join("\n\n");
     return {
