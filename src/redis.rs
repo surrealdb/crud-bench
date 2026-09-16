@@ -2,7 +2,7 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::{
@@ -12,11 +12,53 @@ use crate::{
 use anyhow::{Result, anyhow, bail};
 use futures::StreamExt;
 use redis::aio::MultiplexedConnection;
-use redis::{AsyncCommands, Client, ScanOptions};
+use redis::{AsyncCommands, Client, FromRedisValue, ScanOptions};
 use std::hint::black_box;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+use tokio::time::sleep;
 
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
+
+/// How long to wait for RediSearch to finish populating an index before giving
+/// up. Generous: the point is to fail loudly on a stuck build rather than to
+/// bound a healthy one.
+const INDEX_BUILD_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Pull `(indexing, percent_indexed, hash_indexing_failures)` out of an
+/// `FT.INFO` reply.
+///
+/// The reply is a flat alternating key/value array under RESP2 and a map under
+/// RESP3, and its values mix scalars with nested arrays (`attributes`,
+/// `gc_stats`), so walk the pairs rather than converting the whole reply into
+/// a map. Absent keys keep their "ready" defaults: an older server that does
+/// not report progress should not hang the run.
+fn parse_ft_info(v: &redis::Value) -> (i64, f64, i64) {
+	let pairs: Vec<(&redis::Value, &redis::Value)> = match v {
+		redis::Value::Map(m) => m.iter().map(|(k, v)| (k, v)).collect(),
+		redis::Value::Array(a) => a
+			.chunks(2)
+			.filter_map(|c| match c {
+				[k, v] => Some((k, v)),
+				_ => None,
+			})
+			.collect(),
+		_ => Vec::new(),
+	};
+	let (mut indexing, mut fraction, mut failures) = (0i64, 1.0f64, 0i64);
+	for (k, val) in pairs {
+		let Ok(k) = String::from_redis_value(k) else {
+			continue;
+		};
+		match k.as_str() {
+			"indexing" => indexing = i64::from_redis_value(val).unwrap_or(0),
+			"percent_indexed" => fraction = f64::from_redis_value(val).unwrap_or(1.0),
+			"hash_indexing_failures" => failures = i64::from_redis_value(val).unwrap_or(0),
+			_ => {}
+		}
+	}
+	(indexing, fraction, failures)
+}
 
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Redis 6+ supports `io-threads` for network I/O parallelism (command
@@ -201,12 +243,11 @@ impl BenchmarkClient for RedisClient {
 			VectorIndexStrategy::Hnsw {
 				m,
 				ef_construction,
-				ef_search,
 				..
 			} => (
 				"HNSW",
 				vec![
-					"12".into(),
+					"10".into(),
 					"TYPE".into(),
 					"FLOAT32".into(),
 					"DIM".into(),
@@ -217,8 +258,10 @@ impl BenchmarkClient for RedisClient {
 					m.to_string(),
 					"EF_CONSTRUCTION".into(),
 					ef_construction.to_string(),
-					"EF_RUNTIME".into(),
-					ef_search.to_string(),
+					// EF_RUNTIME is deliberately not set here: as an index
+					// attribute it would pin the search budget to the build, so
+					// a sweep would need one index per point. The KNN query
+					// carries it instead.
 				],
 			),
 			VectorIndexStrategy::DiskAnn {
@@ -248,13 +291,66 @@ impl BenchmarkClient for RedisClient {
 		Ok(())
 	}
 
+	/// RediSearch populates an index in the background: `FT.CREATE` returns as
+	/// soon as the definition is accepted and documents stream in afterwards.
+	/// Querying before that finishes searches a partial index, and — because
+	/// the answers come back fast and well-formed — it reads as a *quality*
+	/// result rather than an unfinished one.
+	///
+	/// Measured, before this existed: a KNN sweep over 100k rows scored recall
+	/// 0.047, 0.625, 0.993, 0.999, 1.000 across successive legs, climbing with
+	/// wall-clock as the indexer caught up rather than with `ef_search`, while
+	/// the exact (FLAT) leg scored 0.268 where exact search must score 1.000.
+	/// Latency fell as the search budget rose, which is backwards. None of it
+	/// was a property of Redis.
+	async fn await_index_queryable(&self, name: &str) -> Result<()> {
+		let started = Instant::now();
+		let mut conn = self.conn_record.lock().await;
+		loop {
+			let info: redis::Value =
+				redis::cmd("FT.INFO").arg(name).query_async(&mut *conn).await?;
+			let (indexing, fraction, failures) = parse_ft_info(&info);
+			// A document the index rejected is one the ground truth still
+			// expects, so recall would be scored against a corpus the index
+			// never saw. Fail rather than report that as a quality gap.
+			if failures > 0 {
+				bail!(
+					"index {name}: {failures} documents failed to index; \
+					 KNN recall would be scored against rows the index never saw"
+				);
+			}
+			// Both conditions: `indexing` can still read 0 in the moment
+			// between `FT.CREATE` returning and the backgroundered build
+			// starting, and `percent_indexed` alone does not cover the tail.
+			if indexing == 0 && fraction >= 1.0 {
+				return Ok(());
+			}
+			if started.elapsed() > INDEX_BUILD_TIMEOUT {
+				bail!(
+					"index {name}: still building after {:?} ({:.1}% indexed); \
+					 a KNN scan now would query a partial index",
+					started.elapsed(),
+					fraction * 100.0,
+				);
+			}
+			sleep(Duration::from_millis(100)).await;
+		}
+	}
+
 	async fn scan_vector_u32(
 		&self,
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
-		self.knn_scan(scan, query).await
+	) -> Result<Vec<KnnKey>> {
+		let hits = self.knn_scan(scan, query).await?;
+		hits.into_iter()
+			.map(|k| {
+				k.parse::<u32>()
+					.map(KnnKey::Integer)
+					.map_err(|e| anyhow!("redis: knn hit {k:?} is not a numeric key: {e}"))
+			})
+			.collect()
 	}
 
 	async fn scan_vector_string(
@@ -262,8 +358,8 @@ impl BenchmarkClient for RedisClient {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
-		self.knn_scan(scan, query).await
+	) -> Result<Vec<KnnKey>> {
+		Ok(self.knn_scan(scan, query).await?.into_iter().map(KnnKey::Text).collect())
 	}
 
 	async fn batch_create_u32(
@@ -442,7 +538,8 @@ impl RedisClient {
 		Ok(())
 	}
 
-	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+	/// Run the KNN query and return the raw document keys, best-first.
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<Vec<String>> {
 		let vq = scan
 			.vector_query
 			.as_ref()
@@ -452,7 +549,15 @@ impl RedisClient {
 		let mut conn = self.conn_record.lock().await;
 		let res: redis::Value = redis::cmd("FT.SEARCH")
 			.arg(&scan.id)
-			.arg(format!("*=>[KNN {k} @v $q AS score]"))
+			.arg(match vq.index_strategy {
+				// Bruteforce is a FLAT index — an exact scan with no search
+				// budget to set.
+				VectorIndexStrategy::Bruteforce => format!("*=>[KNN {k} @v $q AS score]"),
+				_ => {
+					let ef = vq.index_strategy.search_value();
+					format!("*=>[KNN {k} @v $q EF_RUNTIME {ef} AS score]")
+				}
+			})
 			.arg("PARAMS")
 			.arg(2)
 			.arg("q")
@@ -466,14 +571,29 @@ impl RedisClient {
 			.arg(0)
 			.query_async(&mut *conn)
 			.await?;
-		// FT.SEARCH returns `[total, key1, key2, ...]` (with RETURN 0). Use the
-		// reported `total` capped at `k` for the row-count return.
+		// FT.SEARCH returns `[total, key1, key2, ...]` (with RETURN 0). The keys
+		// after the count are the hits, in rank order; recall scores by
+		// identity so they are what we return.
 		if let redis::Value::Array(items) = &res
-			&& let Some(redis::Value::Int(total)) = items.first()
+			&& matches!(items.first(), Some(redis::Value::Int(_)))
 		{
-			return Ok((*total as usize).min(k));
+			let mut hits = Vec::with_capacity(k);
+			for item in items.iter().skip(1) {
+				let raw = match item {
+					redis::Value::BulkString(b) => String::from_utf8_lossy(b).into_owned(),
+					redis::Value::SimpleString(t) => t.clone(),
+					// Anything else at this position is a field payload, not a
+					// document key — `RETURN 0` should prevent it.
+					_ => continue,
+				};
+				// Documents live in the `vec:{key}` mirror the CRUD paths
+				// dual-write, so strip that prefix back off.
+				hits.push(raw.strip_prefix("vec:").unwrap_or(&raw).to_string());
+			}
+			hits.truncate(k);
+			return Ok(hits);
 		}
-		Ok(k)
+		bail!("knn scan: unexpected FT.SEARCH response shape: {res:?}")
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
@@ -538,5 +658,83 @@ impl RedisClient {
 				Some(l) => Ok(iter.take(l).count().await),
 			},
 		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::parse_ft_info;
+	use redis::Value;
+
+	fn bulk(s: &str) -> Value {
+		Value::BulkString(s.as_bytes().to_vec())
+	}
+
+	/// RESP2: `FT.INFO` answers as one flat alternating key/value array.
+	#[test]
+	fn reads_progress_from_a_resp2_array() {
+		let v = Value::Array(vec![
+			bulk("index_name"),
+			bulk("vector_ann"),
+			bulk("indexing"),
+			Value::Int(1),
+			bulk("percent_indexed"),
+			bulk("0.42"),
+			bulk("hash_indexing_failures"),
+			Value::Int(0),
+		]);
+		assert_eq!(parse_ft_info(&v), (1, 0.42, 0));
+	}
+
+	/// RESP3 hands the same content back as a map.
+	#[test]
+	fn reads_progress_from_a_resp3_map() {
+		let v = Value::Map(vec![
+			(bulk("indexing"), Value::Int(0)),
+			(bulk("percent_indexed"), Value::Double(1.0)),
+			(bulk("hash_indexing_failures"), Value::Int(0)),
+		]);
+		assert_eq!(parse_ft_info(&v), (0, 1.0, 0));
+	}
+
+	/// Nested values (`attributes`, `gc_stats`) sit in the same reply and must
+	/// not derail the walk — this is why the reply is not simply converted
+	/// into a map of strings.
+	#[test]
+	fn tolerates_nested_values_between_the_keys() {
+		let v = Value::Array(vec![
+			bulk("attributes"),
+			Value::Array(vec![bulk("identifier"), bulk("v")]),
+			bulk("indexing"),
+			Value::Int(1),
+			bulk("gc_stats"),
+			Value::Array(vec![bulk("bytes_collected"), Value::Int(0)]),
+			bulk("percent_indexed"),
+			bulk("0.9"),
+		]);
+		assert_eq!(parse_ft_info(&v), (1, 0.9, 0));
+	}
+
+	/// A server that does not report progress must not hang the run: absent
+	/// keys mean "ready", not "wait forever".
+	#[test]
+	fn absent_keys_default_to_ready() {
+		let v = Value::Array(vec![bulk("index_name"), bulk("vector_ann")]);
+		assert_eq!(parse_ft_info(&v), (0, 1.0, 0));
+	}
+
+	/// Documents the index rejected are rows ground truth still expects, so
+	/// the count has to survive parsing for the caller to fail on it.
+	#[test]
+	fn surfaces_indexing_failures() {
+		let v = Value::Array(vec![
+			bulk("indexing"),
+			Value::Int(0),
+			bulk("percent_indexed"),
+			bulk("1"),
+			bulk("hash_indexing_failures"),
+			Value::Int(17),
+		]);
+		assert_eq!(parse_ft_info(&v), (0, 1.0, 17));
 	}
 }

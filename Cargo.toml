@@ -130,7 +130,27 @@ serde = { version = "1.0.228", features = ["derive"] }
 slatedb = { version = "0.15.0", features = ["foyer"], optional = true }
 serde_json = "1.0.150"
 serial_test = "3.4.0"
-surrealdb = { version = "3.0.5", default-features = false, optional = true }
+# Track the published version closest to surrealdb's main branch, prereleases
+# included, rather than the latest stable. crud-bench exists to monitor SurrealDB
+# as it is developed, so the embedded engine should sit where the development is
+# — and this matches what server mode already does, which pulls the `nightly`
+# image.
+#
+# Held at 3.2.4 because no newer published version is usable yet:
+#
+#   3.3.0-beta.3 answers HNSW queries with recall 0.002 against 1.000
+#   elsewhere, and the broken leg runs *faster* than a correct one, so latency
+#   alone would rank it best. Only the recall axis catches it.
+#
+#   3.3.0-beta.4 fixes that recall bug, but was published 2026-09-09 22:52,
+#   about eighty minutes before surrealdb-private#1225 ("keep the transaction
+#   alive while its snapshot is read") merged. Without that fix a snapshot can
+#   outlive its transaction, and the string90 benchmark segfaults on embedded
+#   RocksDB in CI — intermittently, which is what a use-after-free looks like.
+#
+# 3.3.0-beta.5 should carry both: the recall fix by inheritance and the RocksDB
+# fix via the backport in surrealdb-private#1269. Take it once published.
+surrealdb = { version = "3.2.4", default-features = false, optional = true }
 surrealdb2 = { package = "surrealdb", version = "2.6", default-features = false, optional = true }
 surrealkv = { version = "0.21.2", optional = true }
 surrealmx = { version = "0.18.0", optional = true }
