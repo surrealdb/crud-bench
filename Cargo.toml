@@ -134,10 +134,18 @@ serial_test = "3.4.0"
 # included, rather than the latest stable. crud-bench exists to monitor SurrealDB
 # as it is developed, so the embedded engine should sit where the development is
 # — and this matches what server mode already does, which pulls the `nightly`
-# image. Pinning stable also means inheriting whatever a stable release carries:
-# 3.2.4 regressed full-table COUNT scans on embedded RocksDB by ~11x (#286),
-# which 3.3.0-beta.3 does not.
-surrealdb = { version = "3.2.4", default-features = false, optional = true }
+# image.
+#
+# The history here is why the policy is written down. 3.2.4 was pinned because
+# 3.3.0-beta.3 answered HNSW queries with recall 0.002 against 1.000 elsewhere,
+# and that leg ran *faster* than a correct one, so latency alone would have
+# ranked it best; only the recall axis caught it. beta.4 carries the fix, and
+# measuring it settled the other half too: the slow COUNT leg that forced the
+# CI timeouts up (#286) is a broken COUNT *index* path in 3.2.4, not the
+# full-table scan its title describes. Indexed COUNT costs 8.23ms on 3.2.4
+# against an unindexed scan's 9.51ms — the index buys nothing — and 0.38ms on
+# beta.4. The scan legs themselves differ by 1.2x, which is run-to-run spread.
+surrealdb = { version = "3.3.0-beta.4", default-features = false, optional = true }
 surrealdb2 = { package = "surrealdb", version = "2.6", default-features = false, optional = true }
 surrealkv = { version = "0.21.2", optional = true }
 surrealmx = { version = "0.18.0", optional = true }
