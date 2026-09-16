@@ -136,16 +136,21 @@ serial_test = "3.4.0"
 # — and this matches what server mode already does, which pulls the `nightly`
 # image.
 #
-# The history here is why the policy is written down. 3.2.4 was pinned because
-# 3.3.0-beta.3 answered HNSW queries with recall 0.002 against 1.000 elsewhere,
-# and that leg ran *faster* than a correct one, so latency alone would have
-# ranked it best; only the recall axis caught it. beta.4 carries the fix, and
-# measuring it settled the other half too: the slow COUNT leg that forced the
-# CI timeouts up (#286) is a broken COUNT *index* path in 3.2.4, not the
-# full-table scan its title describes. Indexed COUNT costs 8.23ms on 3.2.4
-# against an unindexed scan's 9.51ms — the index buys nothing — and 0.38ms on
-# beta.4. The scan legs themselves differ by 1.2x, which is run-to-run spread.
-surrealdb = { version = "3.3.0-beta.4", default-features = false, optional = true }
+# Held at 3.2.4 because no newer published version is usable yet:
+#
+#   3.3.0-beta.3 answers HNSW queries with recall 0.002 against 1.000
+#   elsewhere, and the broken leg runs *faster* than a correct one, so latency
+#   alone would rank it best. Only the recall axis catches it.
+#
+#   3.3.0-beta.4 fixes that recall bug, but was published 2026-09-09 22:52,
+#   about eighty minutes before surrealdb-private#1225 ("keep the transaction
+#   alive while its snapshot is read") merged. Without that fix a snapshot can
+#   outlive its transaction, and the string90 benchmark segfaults on embedded
+#   RocksDB in CI — intermittently, which is what a use-after-free looks like.
+#
+# 3.3.0-beta.5 should carry both: the recall fix by inheritance and the RocksDB
+# fix via the backport in surrealdb-private#1269. Take it once published.
+surrealdb = { version = "3.2.4", default-features = false, optional = true }
 surrealdb2 = { package = "surrealdb", version = "2.6", default-features = false, optional = true }
 surrealkv = { version = "0.21.2", optional = true }
 surrealmx = { version = "0.18.0", optional = true }
