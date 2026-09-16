@@ -45,7 +45,8 @@ mod test {
 				continue;
 			}
 			let name = path.display().to_string();
-			super::load_bench_toml(&name).unwrap_or_else(|e| panic!("{name} failed to parse: {e:#}"));
+			super::load_bench_toml(&name)
+				.unwrap_or_else(|e| panic!("{name} failed to parse: {e:#}"));
 			checked += 1;
 		}
 		assert!(checked >= 4, "expected the shipped configs, found {checked}");

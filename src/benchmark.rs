@@ -210,7 +210,8 @@ impl Benchmark {
 			// Recent window durations, oldest first, capped at the span. The
 			// plateau test compares against the far end of this, not the near
 			// one.
-			let mut recent: VecDeque<Duration> = VecDeque::with_capacity(VECTOR_WARMUP_PLATEAU_SPAN);
+			let mut recent: VecDeque<Duration> =
+				VecDeque::with_capacity(VECTOR_WARMUP_PLATEAU_SPAN);
 			let mut q = 0u32;
 			let mut plateaued = false;
 			while started.elapsed() <= self.vector_warmup_budget && q < ceiling {

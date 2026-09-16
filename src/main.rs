@@ -1471,7 +1471,8 @@ mod test {
 	#[test]
 	fn scan_with_index_rejects_empty_fields_without_fieldless_type() {
 		let specs: Vec<super::ScanSpec> =
-			serde_json::from_str(r#"[{"id":"x","name":"y","iterations":1,"with_index":{}}]"#).unwrap();
+			serde_json::from_str(r#"[{"id":"x","name":"y","iterations":1,"with_index":{}}]"#)
+				.unwrap();
 		let scans = super::expand_scan_specs(specs).unwrap();
 		let err = super::validate_scan_index_ids(&scans).unwrap_err();
 		assert!(err.to_string().contains("with_index.fields must be non-empty"));
