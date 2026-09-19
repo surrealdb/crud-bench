@@ -19,7 +19,7 @@ use crate::vectorgt::{self, GroundTruth, RecallTally, VectorAnswer};
 use crate::workloads;
 use crate::{
 	Args, BatchOperation, Batches, Index, Scan, ScanWithWrites, Scans, VectorHoldout,
-	VectorIndexStrategy, VectorQuerySpec,
+	VectorQuerySpec,
 };
 
 use anyhow::{Context, Result, bail};
@@ -484,10 +484,7 @@ impl Benchmark {
 							vq.field
 						)
 					})?;
-				let strategy_needs_index = matches!(
-					vq.index_strategy,
-					VectorIndexStrategy::Hnsw { .. } | VectorIndexStrategy::DiskAnn { .. }
-				);
+				let strategy_needs_index = vq.index_strategy.requires_index();
 				let mut query_set = self.build_vector_query_set(&scan, &vq, &vp)?;
 				let mut runs = Vec::with_capacity(1);
 				// Derive the index spec from `vector_query.field` so the user
