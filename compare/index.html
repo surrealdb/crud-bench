@@ -694,6 +694,8 @@
             <option value="ops">Throughput (OPS)</option>
             <option value="mean">Mean latency (µs)</option>
             <option value="q99">p99 latency (µs)</option>
+            <option value="recall">Recall@k (mean)</option>
+            <option value="recall_p5">Recall@k (5th pct)</option>
           </select>
         </div>
         <div class="control-group">
@@ -762,6 +764,8 @@
   /** @typedef {{
    * mean: number, min?: number, max?: number, q99: number, q95?: number,
    * q75?: number, q50?: number, ops: number,
+   * recall?: { mean: number, p5: number, min: number, queries: number },
+   * label?: string,
    * elapsed?: ElapsedSerde
    * }} OperationResultLike */
 
@@ -844,7 +848,13 @@
     } else {
       mid = `reads - ${indexSlug}`;
     }
-    return `[S]can · ${id} · ${scanName} - ${mid} (${samples})`;
+    // Sweep legs share id, name and index state, differing only by `label`.
+    // Leaving it out makes every leg hash to the same key, so `flattenBenchmark`
+    // keeps only the last one and the rest of the curve is silently dropped.
+    // Mirrors `scan_run_row_label` in src/result.rs.
+    return run.label
+      ? `[S]can · ${id} · ${scanName} · ${run.label} - ${mid} (${samples})`
+      : `[S]can · ${id} · ${scanName} - ${mid} (${samples})`;
   }
 
   /**
@@ -940,7 +950,11 @@
     if (!okRuns.length) return { missing: false, mismatches: [], detail: "" };
     const normals = okRuns.map((r) => r.data.metadata);
     const anyMissing = normals.some((m) => m == null || typeof m !== "object");
-    const fields = ["samples", "clients", "threads", "key_type", "random", "sync", "persisted", "optimised"];
+    // `corpus_seed` decides the dataset. Two runs seeded differently hold
+    // recall figures measured against different corpora and different answer
+    // keys, so aligning their vector rows compares numbers that were never
+    // about the same data.
+    const fields = ["samples", "clients", "threads", "key_type", "random", "sync", "persisted", "optimised", "corpus_seed", "template_digest"];
     const mismatches = [];
     for (const f of fields) {
       const vals = new Map();
@@ -959,6 +973,65 @@
         });
       }
     }
+    // Compare per-scan settings row by row. A scan id is not a row: the
+    // shipped `config/vector.toml` puts bruteforce, HNSW and DiskANN legs
+    // under one `vector_knn` id, with deliberately different specs, so
+    // grouping by id alone reports a mismatch against a single file. The
+    // logical row is id plus name, and a mismatch is one row disagreeing
+    // across result files.
+    /** @param {(sc:any, rr:any) => string|undefined} valueOf */
+    function perScanMismatch(fieldLabel, valueOf) {
+      const byRow = new Map();
+      for (const rr of okRuns) {
+        const scans = Array.isArray(rr.data.scans) ? rr.data.scans : [];
+        for (const sc of scans) {
+          const v = valueOf(sc, rr);
+          if (v === undefined) continue;
+          const rowKey = `${sc.id} \u00b7 ${sc.name}`;
+          if (!byRow.has(rowKey)) byRow.set(rowKey, new Map());
+          const vals = byRow.get(rowKey);
+          if (!vals.has(v)) vals.set(v, []);
+          const lab = rr.displayLabel || rr.fileName;
+          if (!vals.get(v).includes(lab)) vals.get(v).push(lab);
+        }
+      }
+      for (const [rowKey, vals] of byRow) {
+        if (vals.size < 2) continue;
+        mismatches.push({
+          field: `${rowKey} ${fieldLabel}`,
+          values: [...vals.entries()].map(([v, labs]) => `${v} \u2190 ${labs.join(", ")}`),
+        });
+      }
+    }
+
+    // A scan may override the CLI concurrency, and `config/vector.toml` does:
+    // its vector legs run 1x1 because a warm KNN query answers in well under a
+    // millisecond, so at the default concurrency the timed leg measures
+    // queueing instead. The same query measured 0.4ms at one client and roughly
+    // 1500ms at sixty-four, so comparing a 1x1 leg against a 12x24 one reports
+    // a difference that is entirely the queue. `metadata` carries the CLI
+    // setting, which says nothing about what a given scan actually used.
+    for (const f of ["clients", "threads"]) {
+      perScanMismatch(`${f} (effective)`, (sc, rr) => {
+        // Results written before the per-scan fields existed omit them, and
+        // those scans ran at the CLI concurrency. Dropping them here would
+        // leave a single value and so report no mismatch, which is how an old
+        // global-concurrency run and a new 1x1 override would still be
+        // presented as comparable.
+        const meta = rr.data.metadata;
+        if (typeof sc[f] === "number") return String(sc[f]);
+        if (meta && typeof meta[f] === "number") return String(meta[f]);
+        return undefined;
+      });
+    }
+
+    // `recall` means nothing without the question it answered. `top_k`, the
+    // metric, the holdout the queries came from and the tie tolerance each
+    // decide what counts as correct, so two runs of one row but a different
+    // spec hold recall measured against different questions.
+    perScanMismatch("vector_query", (sc) =>
+      sc.vector_query == null ? undefined : JSON.stringify(sc.vector_query));
+
     const detail = mismatches.map((m) => `** ${m.field} **\n${m.values.join("\n")}`).join("\n\n");
     return {
       missing: anyMissing,
@@ -973,7 +1046,17 @@
     if (metric === "ops") return typeof op.ops === "number" ? op.ops : null;
     if (metric === "mean") return typeof op.mean === "number" ? op.mean : null;
     if (metric === "q99") return typeof op.q99 === "number" ? op.q99 : Number(op.q99);
+    // Recall is present only on vector scans, and only when the run had a
+    // corpus seed to score against. Everything else reports null and renders
+    // as an empty cell rather than a zero, which would read as "recall 0".
+    if (metric === "recall") return typeof op.recall?.mean === "number" ? op.recall.mean : null;
+    if (metric === "recall_p5") return typeof op.recall?.p5 === "number" ? op.recall.p5 : null;
     return null;
+  }
+
+  /** Metrics where a bigger number is a better result. */
+  function higherIsBetter(metric) {
+    return metric === "ops" || metric === "recall" || metric === "recall_p5";
   }
 
   /** Five-number summary for box plot (µs), matches crud-bench `scan_boxplot_json`. */
@@ -1226,7 +1309,14 @@
     trh.appendChild(document.createElement("th")).textContent = "Test";
     okRuns.forEach((r) => {
       const th = document.createElement("th");
-      th.textContent = r.displayLabel + (metric === "ops" ? "\nOPS" : metric === "mean" ? "\nµs mean" : "\nµs p99");
+      const metricLabel = {
+        ops: "\nOPS",
+        mean: "\nµs mean",
+        q99: "\nµs p99",
+        recall: "\nrecall",
+        recall_p5: "\nrecall p5",
+      }[metric] ?? "";
+      th.textContent = r.displayLabel + metricLabel;
       trh.appendChild(th);
       if (r.id !== baseline) {
         const th2 = document.createElement("th");
@@ -1258,7 +1348,9 @@
           if (r.id !== baseline) tr.appendChild(document.createElement("td")).textContent = "-";
           return;
         }
-        td.textContent = metric === "ops" ? Number(v.toFixed(2)) : Number(v.toFixed(2));
+        // Recall lives in [0, 1], where the interesting differences are in the
+        // third decimal; latency and throughput read better at two.
+        td.textContent = Number(v.toFixed(metric.startsWith("recall") ? 4 : 2));
 
         const okey = outlierCellKey(r.id, k);
         if (outliers.outOps.has(okey) || outliers.outLatMean.has(okey) || outliers.outLatP99.has(okey)) td.classList.add("out-cell");
@@ -1278,10 +1370,7 @@
             tdd.textContent = "-";
           } else {
             const pct = ((v - bv) / Math.abs(bv)) * 100;
-            const good =
-              metric === "ops"
-                ? v >= bv
-                : v <= bv;
+            const good = higherIsBetter(metric) ? v >= bv : v <= bv;
             tdd.textContent = (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
             tdd.className = good ? "delta-pos" : "delta-neg";
           }
@@ -1871,14 +1960,22 @@
           formatter(val, tooltipOpts) {
             const idx = tooltipOpts.dataPointIndex;
             const full = catKeys[idx] || "";
-            const unit = metric === "ops" ? " ops" : " µs";
+            const unit = metric === "ops" ? " ops" : metric.startsWith("recall") ? "" : " µs";
             const show = val != null && typeof val === "number" ? val + unit : "—";
             return `${show}\n\n${full}`;
           },
         },
       },
       title: {
-        text: `${metric === "ops" ? "Throughput (OPS)" : metric === "mean" ? "Mean latency (µs)" : "p99 latency (µs)"}${capApplied}`,
+        text: `${
+          {
+            ops: "Throughput (OPS)",
+            mean: "Mean latency (µs)",
+            q99: "p99 latency (µs)",
+            recall: "Recall@k (mean)",
+            recall_p5: "Recall@k (5th percentile)",
+          }[metric] ?? metric
+        }${capApplied}`,
         align: "left",
         style: {
           fontSize: "15px",

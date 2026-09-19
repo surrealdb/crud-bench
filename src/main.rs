@@ -36,6 +36,7 @@ mod terminal;
 mod util;
 mod value;
 mod valueprovider;
+mod vectorgt;
 mod workloads;
 
 // Datastore modules
@@ -171,6 +172,28 @@ pub(crate) struct Args {
 	/// Emit debug phase markers for log-based tooling
 	#[arg(long, default_value_t = false)]
 	pub(crate) emit_phase_markers: bool,
+
+	/// Seed for generated row content, overriding `seed` in the benchmark TOML.
+	/// With a seed the corpus is a pure function of `(seed, sample)`, which
+	/// makes a run reproducible and lets vector-search ground truth reconstruct
+	/// the corpus instead of reading it back. Without one, values come from
+	/// entropy as before.
+	#[arg(long)]
+	pub(crate) corpus_seed: Option<u64>,
+
+	/// Seconds a vector index may be warmed before a timed leg, per scan.
+	///
+	/// Warming stops on its own once latency plateaus; this is only a safety
+	/// cap. Raise it for large corpora — a truncated warm-up leaves the index
+	/// cold and understates its speed, and the run says so when it happens.
+	#[arg(long, default_value_t = 30)]
+	pub(crate) vector_warmup_seconds: u64,
+
+	/// Directory holding cached vector-search ground truth. The answer key is a
+	/// pure function of the corpus and query seeds, so it is computed once and
+	/// reused across engines and runs.
+	#[arg(long, env = "CRUD_BENCH_GROUND_TRUTH_CACHE", default_value = ".crud-bench-gt")]
+	pub(crate) ground_truth_cache: String,
 }
 
 /// Primary key shape and size for generated record ids.
@@ -198,9 +221,20 @@ pub(crate) type Batches = Vec<BatchOperation>;
 
 /// One row inside a multi-run scan entry (`runs` on [`ScanSpec`]).
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ScanRun {
 	/// Label for this run in results and CLI output.
 	name: String,
+	/// Timed iterations for this run, overriding the parent [`ScanSpec`]
+	/// `iterations` when set.
+	///
+	/// One count cannot serve a `runs` array that mixes leg kinds. A bruteforce
+	/// KNN leg is a full table scan — seconds per query at 100k rows — while the
+	/// graph-index legs beside it answer in under a millisecond; a count that
+	/// gives the graph legs a decent sample makes the exact leg take an hour.
+	/// Without this the only way out is splitting one scan into two `[[scans]]`
+	/// blocks with separate ids, which fragments the results for no real reason.
+	iterations: Option<usize>,
 	/// `ID`, `FULL`, or `COUNT`; overrides the parent [`ScanSpec`] `projection` when set.
 	projection: Option<String>,
 	/// Per-run vector-query override (e.g. each algorithm leg with its own strategy).
@@ -210,9 +244,26 @@ pub(crate) struct ScanRun {
 
 /// Deserialized scan file entry: either a single [`Scan`] (`name`) or several (`runs`), never both.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ScanSpec {
 	/// Stable identifier for grouping, results, and index job names when `with_index` is set.
 	id: String,
+	/// Concurrent clients for this scan's timed legs, capped at `--clients`.
+	/// Defaults to `--clients`.
+	///
+	/// A query that answers in well under a millisecond spends its time
+	/// queueing rather than working at the default concurrency — a KNN scan
+	/// measured 0.4ms at one client and ~1500ms at sixty-four, which is the
+	/// queue, not the index. Latency for such a scan only means something at a
+	/// low setting.
+	#[serde(default)]
+	pub(crate) clients: Option<u32>,
+	/// Threads per client for this scan's timed legs. Defaults to `--threads`.
+	/// Must be at least 1: zero spawns no workers, and the phase would still
+	/// report a result for iterations that never ran.
+	#[serde(default)]
+	pub(crate) threads: Option<u32>,
+
 	/// Display name for a single-run scan; omit when using `runs` instead (mutually exclusive).
 	name: Option<String>,
 	/// Multiple named projections sharing the same parameters; omit when using `name` instead.
@@ -247,6 +298,8 @@ impl ScanSpec {
 	fn into_scans(self, spec_group: u32) -> Result<Vec<Scan>> {
 		let ScanSpec {
 			id,
+			clients,
+			threads,
 			name,
 			runs,
 			iterations,
@@ -281,6 +334,8 @@ impl ScanSpec {
 				}
 				Ok(vec![Scan {
 					id: id.clone(),
+					clients,
+					threads,
 					spec_group,
 					multi_run_spec: false,
 					name: n,
@@ -306,12 +361,15 @@ impl ScanSpec {
 					}
 					let run_projection = run.projection.or_else(|| default_projection.clone());
 					let run_vq = run.vector_query.or_else(|| vector_query.clone());
+					let run_iterations = run.iterations.or(iterations);
 					out.push(Scan {
 						id: id.clone(),
+						clients,
+						threads,
 						spec_group,
 						multi_run_spec,
 						name: run.name,
-						iterations,
+						iterations: run_iterations,
 						condition: condition.clone(),
 						order_by: order_by.clone(),
 						start,
@@ -367,6 +425,16 @@ fn is_fieldless_index_type(kind: Option<&str>) -> bool {
 /// otherwise the per-backend DDL builders emit broken `FIELDS ` clauses and fail at runtime.
 fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 	for scan in scans {
+		// Zero workers spawns no tasks, but the phase still builds an
+		// `OperationResult` from the requested iteration count — zero latency
+		// and unbounded throughput for work that never happened. `clients` is
+		// additionally clamped to the pool at run time; neither may be zero.
+		if scan.threads == Some(0) {
+			bail!("scan `{}`: threads must be >= 1", scan.name);
+		}
+		if scan.clients == Some(0) {
+			bail!("scan `{}`: clients must be >= 1", scan.name);
+		}
 		if let Some(ref idx) = scan.with_index
 			&& !idx.skip
 		{
@@ -393,6 +461,38 @@ fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 			}
 			if vq.field.trim().is_empty() {
 				bail!("scan `{}`: vector_query.field must be non-empty", scan.name);
+			}
+			// The answer key stores a fixed depth beyond `top_k`, so a tolerance
+			// wider than that depth can admit would score legitimately-returned
+			// boundary neighbours as misses.
+			if !(0.0..=crate::vectorgt::MAX_TIE_EPSILON).contains(&vq.tie_epsilon) {
+				bail!(
+					"scan `{}`: vector_query.tie_epsilon must be between 0.0 and {}",
+					scan.name,
+					crate::vectorgt::MAX_TIE_EPSILON
+				);
+			}
+			// A sweep expands into one timed leg per value, so an empty list
+			// would silently produce no legs at all rather than an error.
+			let sweep = vq.index_strategy.search_values();
+			if !matches!(vq.index_strategy, VectorIndexStrategy::Bruteforce) {
+				if sweep.is_empty() {
+					bail!("scan `{}`: the search parameter list must not be empty", scan.name);
+				}
+				if let Some(bad) = sweep.iter().position(|v| *v == 0) {
+					bail!(
+						"scan `{}`: search parameter values must be > 0 (index {bad} is 0)",
+						scan.name
+					);
+				}
+				if sweep.iter().any(|v| (*v as usize) < vq.top_k) {
+					bail!(
+						"scan `{}`: search parameter values must be >= top_k ({}); a budget \
+						 narrower than k cannot return k neighbours",
+						scan.name,
+						vq.top_k
+					);
+				}
 			}
 			if scan.with_index.is_some() {
 				bail!(
@@ -427,6 +527,7 @@ fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 /// Physical or logical index attached to a scan (fulltext, field btree, etc.).
 pub(crate) struct Index {
 	/// When true, skip index create/drop but still run the query leg (table scan).
@@ -455,12 +556,37 @@ pub(crate) enum VectorDistance {
 	Manhattan,
 }
 
+/// A search-time knob, given either as one value or as a list to sweep.
+///
+/// A single `ef_search` is one arbitrary point on a curve; the comparison worth
+/// making is the curve itself — what recall an index reaches at a given latency.
+/// A list is expanded into one timed leg per value over a **single** index
+/// build, so tracing the frontier costs one build rather than one per point.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub(crate) enum SearchParam {
+	/// One value: a single timed leg, as before.
+	One(u32),
+	/// Several values: one timed leg each, sharing one index build.
+	Sweep(Vec<u32>),
+}
+
+impl SearchParam {
+	/// The values to sweep, in config order.
+	pub(crate) fn values(&self) -> Vec<u32> {
+		match self {
+			SearchParam::One(v) => vec![*v],
+			SearchParam::Sweep(v) => v.clone(),
+		}
+	}
+}
+
 /// Algorithm choice for a vector-search scan. Carries the algorithm-specific
 /// build/search knobs inline so the config has one place to look for tuning.
 /// All knobs are required — benchmark results without explicit parameters
 /// are unreproducible and impossible to interpret.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub(crate) enum VectorIndexStrategy {
 	/// Exact KNN by sequential scan — no auxiliary index.
 	Bruteforce,
@@ -468,7 +594,7 @@ pub(crate) enum VectorIndexStrategy {
 	Hnsw {
 		m: u32,
 		ef_construction: u32,
-		ef_search: u32,
+		ef_search: SearchParam,
 	},
 	/// DiskANN (Vamana) graph; engines that have not yet wired it return NotSupported.
 	#[serde(rename = "diskann")]
@@ -476,7 +602,7 @@ pub(crate) enum VectorIndexStrategy {
 		degree: u32,
 		l_build: u32,
 		alpha: f32,
-		l_search: u32,
+		l_search: SearchParam,
 	},
 }
 
@@ -484,12 +610,68 @@ impl VectorIndexStrategy {
 	pub(crate) fn requires_index(&self) -> bool {
 		matches!(self, Self::Hnsw { .. } | Self::DiskAnn { .. })
 	}
+
+	/// Search-time values this strategy sweeps. Empty for bruteforce, which has
+	/// no search knob to vary.
+	pub(crate) fn search_values(&self) -> Vec<u32> {
+		match self {
+			VectorIndexStrategy::Bruteforce => Vec::new(),
+			VectorIndexStrategy::Hnsw {
+				ef_search,
+				..
+			} => ef_search.values(),
+			VectorIndexStrategy::DiskAnn {
+				l_search,
+				..
+			} => l_search.values(),
+		}
+	}
+
+	/// This strategy pinned to one search value, which is the form an adapter
+	/// sees: sweeps are resolved before the spec reaches an engine.
+	pub(crate) fn with_search_value(&self, value: u32) -> Self {
+		match self {
+			VectorIndexStrategy::Bruteforce => VectorIndexStrategy::Bruteforce,
+			VectorIndexStrategy::Hnsw {
+				m,
+				ef_construction,
+				..
+			} => VectorIndexStrategy::Hnsw {
+				m: *m,
+				ef_construction: *ef_construction,
+				ef_search: SearchParam::One(value),
+			},
+			VectorIndexStrategy::DiskAnn {
+				degree,
+				l_build,
+				alpha,
+				..
+			} => VectorIndexStrategy::DiskAnn {
+				degree: *degree,
+				l_build: *l_build,
+				alpha: *alpha,
+				l_search: SearchParam::One(value),
+			},
+		}
+	}
+
+	/// The single search value for a resolved leg.
+	///
+	/// Adapters only ever see a resolved strategy, so a sweep reaching here is a
+	/// bug in the expansion rather than a config error; fall back to the first
+	/// value rather than panicking mid-benchmark.
+	pub(crate) fn search_value(&self) -> u32 {
+		self.search_values().first().copied().unwrap_or(0)
+	}
 }
 
-/// Query-vector source: a deterministic id sample drawn from the inserted
-/// records. The id range and seed make the same query set reproducible
+/// Query-vector source: vectors generated from `seed` using the schema's own
+/// vector generator, so they follow the corpus distribution but are never
+/// inserted. Keeping them out of the corpus means no query is its own nearest
+/// neighbour. The count and seed make the same query set reproducible
 /// across runs and engines.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct VectorHoldout {
 	#[serde(default = "default_holdout_count")]
 	pub(crate) count: usize,
@@ -516,6 +698,7 @@ impl Default for VectorHoldout {
 /// One vector-search scan configuration attached to a [`Scan`]. The presence of
 /// this struct on a scan row is what makes the run a vector benchmark.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct VectorQuerySpec {
 	/// Column to compare against (must be a `vector:<dim>` field in the schema).
 	pub(crate) field: String,
@@ -528,6 +711,17 @@ pub(crate) struct VectorQuerySpec {
 	/// Holdout sampling for the query set. Defaults to a 1000-id deterministic holdout.
 	#[serde(default)]
 	pub(crate) holdout: VectorHoldout,
+	/// Relative tolerance when deciding whether a returned neighbour counts as
+	/// correct: a hit is accepted when its true distance is within this
+	/// fraction of the k-th true distance.
+	///
+	/// Engines compute distances at different precisions, so rows straddling
+	/// the k-th boundary can swap without any real quality difference. The
+	/// default of 0.0 is strict recall@k; raise it to stop that showing up as
+	/// a recall gap that is not really there. Scoring-time only — changing it
+	/// never invalidates a cached answer key.
+	#[serde(default)]
+	pub(crate) tie_epsilon: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -535,6 +729,22 @@ pub(crate) struct VectorQuerySpec {
 pub(crate) struct Scan {
 	/// Stable id from the scan spec (grouping, results, index names when indexed).
 	pub(crate) id: String,
+	/// Concurrent clients for this scan's timed legs, capped at `--clients`.
+	/// Defaults to `--clients`.
+	///
+	/// A query that answers in well under a millisecond spends its time
+	/// queueing rather than working at the default concurrency — a KNN scan
+	/// measured 0.4ms at one client and ~1500ms at sixty-four, which is the
+	/// queue, not the index. Latency for such a scan only means something at a
+	/// low setting.
+	#[serde(default)]
+	pub(crate) clients: Option<u32>,
+	/// Threads per client for this scan's timed legs. Defaults to `--threads`.
+	/// Must be at least 1: zero spawns no workers, and the phase would still
+	/// report a result for iterations that never ran.
+	#[serde(default)]
+	pub(crate) threads: Option<u32>,
+
 	/// Which top-level scan JSON object this row came from (CLI grouping only).
 	#[serde(skip)]
 	pub(crate) spec_group: u32,
@@ -571,6 +781,7 @@ pub(crate) struct Scan {
 /// Mixed read/write scan leg: scan iterations plus paired updates that touch indexed columns while
 /// keeping approximate match cardinality stable (see `workloads` module).
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ScanWithWrites {
 	/// Fraction of iterations that include compensating writes after the scan (0.0–1.0).
 	#[serde(default = "default_writes_ratio")]
@@ -644,6 +855,7 @@ pub(crate) enum Projection {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 /// Per-dialect `WHERE` fragments for a filtered scan.
 pub(crate) struct Condition {
 	/// Generic SQL predicate text (ANSI-ish; used where no dialect override exists).
@@ -666,6 +878,7 @@ pub(crate) struct Condition {
 
 /// Per-dialect `ORDER BY` fragments for scans (same shape as [`Condition`]).
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OrderByClause {
 	/// Generic SQL `ORDER BY` expression (minus the keyword).
 	pub(crate) sql: Option<String>,
@@ -682,6 +895,7 @@ pub(crate) struct OrderByClause {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 /// One batch throughput case (create/read/update/delete many rows per iteration).
 pub(crate) struct BatchOperation {
 	/// Display name in results.
@@ -767,14 +981,30 @@ fn run(args: Args) -> Result<()> {
 		sync: args.sync,
 		persisted: args.persisted,
 		optimised: args.optimised,
+		// Both filled in below, once the benchmark TOML has been read: the
+		// seed may come from the config as well as the CLI, and the template
+		// comes from the config alone.
+		corpus_seed: None,
+		template_digest: None,
 	};
+	let mut metadata = metadata;
 	// Get database display name
 	let name = args.database.name().to_string();
 	// Build the key provider
 	let kp = KeyProvider::new(args.key, args.random);
 	let bench_toml = load_bench_toml(&args.config)?;
 	let value_json = serde_json::to_string(&bench_toml.value)?;
-	let vp = ValueProvider::new(&value_json)?;
+	// A CLI seed overrides the config's, so a sweep can vary the corpus without
+	// editing the workload file.
+	let corpus_seed = args.corpus_seed.or(bench_toml.seed);
+	metadata.corpus_seed = corpus_seed;
+	metadata.template_digest =
+		Some(format!("{:016x}", twox_hash::XxHash64::oneshot(0, value_json.as_bytes())));
+	let vp = match corpus_seed {
+		Some(seed) => ValueProvider::new(&value_json)?.with_seed(seed),
+		None => ValueProvider::new(&value_json)?,
+	};
+	benchmark.set_value_template(value_json.clone());
 	let mut batches = bench_toml.batches;
 	if args.skip_batches {
 		batches.clear();
@@ -914,12 +1144,155 @@ fn run(args: Args) -> Result<()> {
 /// Unit and integration-style tests for scan expansion and CLI wiring.
 mod test {
 	use crate::terminal::ColorChoice;
-	use crate::{Args, Database, KeyType, run};
+	use crate::{
+		Args, Database, KeyType, Scans, VectorIndexStrategy, expand_scan_specs, run,
+		validate_scan_index_ids,
+	};
 	use anyhow::Result;
 	use serial_test::serial;
 
+	fn vector_scan_spec(strategy: &str) -> Result<Scans> {
+		let json = format!(
+			r#"[{{ "id": "v", "name": "v", "iterations": 1,
+			   "vector_query": {{ "field": "e", "top_k": 10, "distance": "cosine",
+			   "index_strategy": {strategy} }} }}]"#
+		);
+		// Mirror `run`: expansion and validation are separate steps, and the
+		// vector checks live in the second.
+		let scans = expand_scan_specs(serde_json::from_str(&json)?)?;
+		validate_scan_index_ids(&scans)?;
+		Ok(scans)
+	}
+
+	/// A scalar keeps its old meaning: one timed leg.
+	#[test]
+	fn search_param_accepts_a_scalar() {
+		let scans = vector_scan_spec(
+			r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": 64 }"#,
+		)
+		.unwrap();
+		let vq = scans[0].vector_query.as_ref().unwrap();
+		assert_eq!(vq.index_strategy.search_values(), vec![64]);
+		assert_eq!(vq.index_strategy.search_value(), 64);
+	}
+
+	/// A list is the sweep: several legs over one index build.
+	#[test]
+	fn search_param_accepts_a_sweep() {
+		let scans = vector_scan_spec(
+			r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": [16, 32, 64] }"#,
+		)
+		.unwrap();
+		let vq = scans[0].vector_query.as_ref().unwrap();
+		assert_eq!(vq.index_strategy.search_values(), vec![16, 32, 64]);
+	}
+
+	/// Adapters must only ever see a resolved strategy, and pinning a value must
+	/// leave the build parameters alone — the whole point is one shared build.
+	#[test]
+	fn pinning_a_sweep_value_preserves_build_parameters() {
+		let scans = vector_scan_spec(
+			r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": [16, 64] }"#,
+		)
+		.unwrap();
+		let strategy = &scans[0].vector_query.as_ref().unwrap().index_strategy;
+		let pinned = strategy.with_search_value(64);
+		assert_eq!(pinned.search_values(), vec![64]);
+		let VectorIndexStrategy::Hnsw {
+			m,
+			ef_construction,
+			..
+		} = pinned
+		else {
+			panic!("expected an HNSW strategy");
+		};
+		assert_eq!((m, ef_construction), (16, 200));
+	}
+
+	#[test]
+	fn diskann_sweeps_l_search() {
+		let scans = vector_scan_spec(
+			r#"{ "kind": "diskann", "degree": 64, "l_build": 100, "alpha": 1.2,
+			   "l_search": [50, 100] }"#,
+		)
+		.unwrap();
+		let vq = scans[0].vector_query.as_ref().unwrap();
+		assert_eq!(vq.index_strategy.search_values(), vec![50, 100]);
+	}
+
+	#[test]
+	fn bruteforce_has_no_search_parameter() {
+		let scans = vector_scan_spec(r#"{ "kind": "bruteforce" }"#).unwrap();
+		let vq = scans[0].vector_query.as_ref().unwrap();
+		assert!(vq.index_strategy.search_values().is_empty());
+	}
+
+	#[test]
+	fn search_param_rejects_unusable_values() {
+		// Empty list: would expand to no legs at all.
+		assert!(
+			vector_scan_spec(
+				r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": [] }"#
+			)
+			.is_err()
+		);
+		// Zero is not a search budget.
+		assert!(
+			vector_scan_spec(
+				r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": [64, 0] }"#
+			)
+			.is_err()
+		);
+		// Narrower than k cannot return k neighbours.
+		assert!(
+			vector_scan_spec(
+				r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": [4] }"#
+			)
+			.is_err()
+		);
+	}
+
+	/// The override has to survive `runs` expansion, or a multi-run scan would
+	/// silently fall back to the CLI concurrency on every leg but the first.
+	#[test]
+	fn scan_concurrency_override_expands_to_every_run() {
+		let json = r#"[{ "id": "s", "clients": 1, "threads": 2,
+		   "runs": [{ "name": "a" }, { "name": "b" }] }]"#;
+		let scans = expand_scan_specs(serde_json::from_str(json).unwrap()).unwrap();
+		assert_eq!(scans.len(), 2);
+		for scan in &scans {
+			assert_eq!(scan.clients, Some(1));
+			assert_eq!(scan.threads, Some(2));
+		}
+	}
+
+	/// Omitting it means "use the CLI settings", which is what every existing
+	/// config does.
+	/// Zero workers would report a result for iterations that never ran.
+	#[test]
+	fn scan_concurrency_override_rejects_zero() {
+		for bad in [
+			r#"[{ "id": "s", "name": "a", "threads": 0 }]"#,
+			r#"[{ "id": "s", "name": "a", "clients": 0 }]"#,
+		] {
+			let scans = expand_scan_specs(serde_json::from_str(bad).unwrap()).unwrap();
+			assert!(validate_scan_index_ids(&scans).is_err(), "should have rejected {bad}");
+		}
+	}
+
+	#[test]
+	fn scan_concurrency_override_defaults_to_unset() {
+		let json = r#"[{ "id": "s", "name": "a" }]"#;
+		let scans = expand_scan_specs(serde_json::from_str(json).unwrap()).unwrap();
+		assert_eq!(scans[0].clients, None);
+		assert_eq!(scans[0].threads, None);
+	}
+
 	fn test(database: Database, key: KeyType, random: bool) -> Result<()> {
 		run(Args {
+			corpus_seed: None,
+			ground_truth_cache: ".crud-bench-gt".to_string(),
+			vector_warmup_seconds: 30,
 			image: None,
 			name: None,
 			database,
@@ -1116,7 +1489,8 @@ mod test {
 	#[test]
 	fn scan_with_index_rejects_empty_fields_without_fieldless_type() {
 		let specs: Vec<super::ScanSpec> =
-			serde_json::from_str(r#"[{"id":"x","name":"y","samples":1,"with_index":{}}]"#).unwrap();
+			serde_json::from_str(r#"[{"id":"x","name":"y","iterations":1,"with_index":{}}]"#)
+				.unwrap();
 		let scans = super::expand_scan_specs(specs).unwrap();
 		let err = super::validate_scan_index_ids(&scans).unwrap_err();
 		assert!(err.to_string().contains("with_index.fields must be non-empty"));
@@ -1125,7 +1499,7 @@ mod test {
 	#[test]
 	fn scan_with_index_allows_empty_fields_for_count() {
 		let specs: Vec<super::ScanSpec> = serde_json::from_str(
-			r#"[{"id":"x","name":"y","samples":1,"with_index":{"index_type":"count"}}]"#,
+			r#"[{"id":"x","name":"y","iterations":1,"with_index":{"index_type":"count"}}]"#,
 		)
 		.unwrap();
 		let scans = super::expand_scan_specs(specs).unwrap();
@@ -1135,7 +1509,7 @@ mod test {
 	#[test]
 	fn scan_with_index_rejects_fields_for_count() {
 		let specs: Vec<super::ScanSpec> = serde_json::from_str(
-			r#"[{"id":"x","name":"y","samples":1,"with_index":{"index_type":"count","fields":["n"]}}]"#,
+			r#"[{"id":"x","name":"y","iterations":1,"with_index":{"index_type":"count","fields":["n"]}}]"#,
 		)
 		.unwrap();
 		let scans = super::expand_scan_specs(specs).unwrap();
@@ -1149,6 +1523,77 @@ mod test {
 			r#"[{"id":"w","name":"n","iterations":1,"with_writes":{"ratio":0.2}}]"#,
 		);
 		assert!(err.is_err());
+	}
+
+	/// A key at the wrong nesting level used to be dropped in silence, so the
+	/// run reported a number for a configuration nobody had written. `samples`
+	/// is the real case: it sat on `count_count_idx` in two shipped configs,
+	/// was ignored, and that leg ran `--samples` iterations while the `count`
+	/// leg it is meant to be compared against ran the configured 10 or 1000.
+	#[test]
+	fn scan_spec_rejects_an_unknown_key() {
+		let err = serde_json::from_str::<Vec<super::ScanSpec>>(
+			r#"[{"id":"x","name":"y","samples":1000}]"#,
+		)
+		.unwrap_err()
+		.to_string();
+		assert!(err.contains("samples"), "error should name the offending key, got: {err}");
+	}
+
+	/// The same guard one level down, where the original report came from.
+	#[test]
+	fn scan_run_rejects_an_unknown_key() {
+		let err = serde_json::from_str::<Vec<super::ScanSpec>>(
+			r#"[{"id":"x","runs":[{"name":"a","nonsense":1}]}]"#,
+		)
+		.unwrap_err()
+		.to_string();
+		assert!(err.contains("nonsense"), "error should name the offending key, got: {err}");
+	}
+
+	/// Vector specs are the ones whose knobs are easiest to misplace, and a
+	/// dropped knob there produces a plausible-looking recall/latency pair for
+	/// parameters that were never applied.
+	#[test]
+	fn vector_query_spec_rejects_an_unknown_key() {
+		let err = serde_json::from_str::<Vec<super::ScanSpec>>(
+			r#"[{"id":"v","name":"v","vector_query":{"field":"e","top_k":10,
+			   "distance":"cosine","index_strategy":{"kind":"bruteforce"},
+			   "tie_epsilion":0.01}}]"#,
+		)
+		.unwrap_err()
+		.to_string();
+		assert!(err.contains("tie_epsilion"), "error should name the typo, got: {err}");
+	}
+
+	/// A misspelled knob inside an index strategy must not fall back to the
+	/// default: `ef_construction` silently defaulting would make an HNSW build
+	/// unreproducible while still reporting numbers.
+	#[test]
+	fn index_strategy_rejects_an_unknown_key() {
+		let err = serde_json::from_str::<Vec<super::ScanSpec>>(
+			r#"[{"id":"v","name":"v","vector_query":{"field":"e","top_k":10,
+			   "distance":"cosine","index_strategy":{"kind":"hnsw","m":16,
+			   "ef_construction":200,"ef_search":64,"efc":200}}}]"#,
+		)
+		.unwrap_err()
+		.to_string();
+		assert!(err.contains("efc"), "error should name the offending key, got: {err}");
+	}
+
+	/// One iteration count cannot serve a `runs` array that mixes a full-scan
+	/// leg with graph-index legs, so a run may set its own.
+	#[test]
+	fn run_level_iterations_overrides_the_spec() {
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"s","iterations":1000,
+			   "runs":[{"name":"exact","iterations":50},{"name":"graph"}]}]"#,
+		)
+		.unwrap();
+		let scans = super::expand_scan_specs(specs).unwrap();
+		assert_eq!(scans.len(), 2);
+		assert_eq!(scans[0].iterations, Some(50), "run-level value should win");
+		assert_eq!(scans[1].iterations, Some(1000), "unset run should inherit the spec");
 	}
 
 	#[test]

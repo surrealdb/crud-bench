@@ -3,7 +3,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
@@ -15,7 +15,7 @@ use anyhow::{Result, bail};
 use log::{error, warn};
 use std::env;
 use std::hint::black_box;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
@@ -120,6 +120,24 @@ fn surreal_distance_function(d: VectorDistance) -> &'static str {
 		VectorDistance::InnerProduct => "vector::dot",
 		VectorDistance::Manhattan => "vector::distance::manhattan",
 	}
+}
+
+/// How long to wait for an index's pending queue to drain before giving up. The
+/// background task runs every `index_compaction_interval` (5s by default), so
+/// this allows for a slow drain without hanging a run forever.
+const INDEX_COMPACTION_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Pull the record key out of one `SELECT id` KNN row.
+fn surreal_knn_key(row: &Value) -> Result<KnnKey> {
+	let Value::RecordId(rid) = row.get("id") else {
+		bail!("knn scan: row is missing a record id: {}", row.to_sql());
+	};
+	Ok(match &rid.key {
+		RecordIdKey::Number(n) => KnnKey::Integer(*n as u32),
+		RecordIdKey::String(t) => KnnKey::Text(t.clone()),
+		RecordIdKey::Uuid(u) => KnnKey::Text(u.to_string()),
+		other => bail!("knn scan: unsupported record key: {other:?}"),
+	})
 }
 
 /// ORDER BY direction so the nearest neighbours sort to the top of the result set.
@@ -801,12 +819,63 @@ impl BenchmarkClient for SurrealDBClient {
 		Ok(())
 	}
 
+	/// Wait for an index's pending queue to drain.
+	///
+	/// `INFO FOR INDEX` reports `building.status = "ready"` as soon as the
+	/// initial build finishes, but rows indexed after that sit in a pending
+	/// queue that queries answer by scanning it linearly. A background task
+	/// drains it every `index_compaction_interval` (5s by default), and only
+	/// then does the index itself serve the query. In SurrealDB 3.x this
+	/// applies to fulltext, count and HNSW indexes alike; for a KNN scan it is
+	/// especially misleading, since a queue scan is exact and so reports a
+	/// perfect recall of 1.0 for entirely the wrong reason.
+	///
+	/// `building.pending` carries the queue depth, so poll until it clears.
+	/// Note this is unrelated to `ALTER SYSTEM COMPACT` (see [`Self::compact`]),
+	/// which compacts the RocksDB keyspace and does nothing for this queue.
+	async fn await_index_queryable(&self, name: &str) -> Result<()> {
+		let started = Instant::now();
+		loop {
+			let q = format!("INFO FOR INDEX {name} ON record");
+			let r: surrealdb::types::Value = self
+				.db
+				.query(&q)
+				.await
+				.map_err(log_sql_err(&q))?
+				.take(0)
+				.map_err(log_sql_err(&q))?;
+			let j = r.to_sql();
+			let building = r.get("building");
+			let status = building.get("status").as_string().expect(&j);
+			// Absent means the engine does not track a queue for this index
+			// kind, which is the same as an empty one.
+			let pending = match building.get("pending") {
+				Value::Number(n) => n.to_int().unwrap_or(0),
+				_ => 0,
+			};
+			// `pending` sits at 0 while the initial build is still running, so
+			// it only means "drained" once the build itself reports ready.
+			match status.as_str() {
+				"ready" if pending == 0 => return Ok(()),
+				"ready" | "indexing" | "cleaning" | "started" => {}
+				_ => bail!("Unexpected index status: {j}"),
+			}
+			if started.elapsed() > INDEX_COMPACTION_TIMEOUT {
+				bail!(
+					"index {name}: {pending} entries still pending after {:?}; 					 a KNN scan now would measure a brute-force scan over the queue",
+					started.elapsed()
+				);
+			}
+			sleep(Duration::from_millis(250)).await;
+		}
+	}
+
 	async fn scan_vector_u32(
 		&self,
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
+	) -> Result<Vec<KnnKey>> {
 		self.knn_scan(scan, query).await
 	}
 
@@ -815,7 +884,7 @@ impl BenchmarkClient for SurrealDBClient {
 		scan: &Scan,
 		query: &[f32],
 		_ctx: ScanContext,
-	) -> Result<usize> {
+	) -> Result<Vec<KnnKey>> {
 		self.knn_scan(scan, query).await
 	}
 
@@ -948,7 +1017,7 @@ impl SurrealDBClient {
 		.await
 	}
 
-	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<usize> {
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<Vec<KnnKey>> {
 		let vq = scan.vector_query.as_ref().ok_or_else(|| {
 			anyhow::anyhow!("knn_scan called without a vector_query on scan `{}`", scan.name)
 		})?;
@@ -966,15 +1035,15 @@ impl SurrealDBClient {
 				)
 			}
 			VectorIndexStrategy::Hnsw {
-				ef_search,
 				..
 			} => {
+				let ef_search = vq.index_strategy.search_value();
 				format!("SELECT id FROM record WHERE {field} <|{k},{ef_search}|> $q")
 			}
 			VectorIndexStrategy::DiskAnn {
-				l_search,
 				..
 			} => {
+				let l_search = vq.index_strategy.search_value();
 				format!("SELECT id FROM record WHERE {field} <|{k},{l_search}|> $q")
 			}
 		};
@@ -1005,7 +1074,10 @@ impl SurrealDBClient {
 		let Some(arr) = res.as_array() else {
 			bail!("knn scan: unexpected response shape: {}", res.to_sql());
 		};
-		Ok(arr.len())
+		// Recall is scored by identity, so return the record keys rather than a
+		// count. `SELECT id` yields the record id; the table half is constant
+		// so only the key half is kept.
+		arr.iter().map(surreal_knn_key).collect()
 	}
 
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
