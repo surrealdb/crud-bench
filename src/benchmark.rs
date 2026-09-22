@@ -1405,11 +1405,12 @@ impl Benchmark {
 						)
 						.await
 					}
-					// A build is timed until the index serves at index speed, not
-					// until the build call returns. The two coincide for an engine
-					// whose build call does all the work, and are minutes to hours
-					// apart for one that finishes in the background — so only the
-					// first definition lets their builds share a column.
+					// A build is timed until the index serves at index speed, which
+					// for some engines is long after the build call returns. The two
+					// coincide for an engine whose build call does all the work, and
+					// are minutes to hours apart for one that finishes in the
+					// background — only the later one lets their builds share a
+					// column.
 					BenchmarkOperation::BuildIndex(spec, id, _) => {
 						client.build_index(spec, id.as_str()).await?;
 						build_returned = Some(time.elapsed());

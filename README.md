@@ -304,11 +304,12 @@ Multiple benchmarks that share the same filter, index, and write settings can us
 
 #### Index build time
 
-An `[I]ndex · … · build` row is timed from the build call until the index **serves at index speed**
-— not until the build call returns. The two coincide for an engine whose build call does all the
-work, and can be minutes to hours apart for one that finishes the index in the background. Only the
-first definition lets them share a column. At 100k rows × 768-d, HNSW `M 16` / `EFC 200` — one run
-per engine on a shared machine, so the absolute times are only indicative; the split is the point:
+An `[I]ndex · … · build` row is timed from the build call until the index **serves at index speed**,
+which for some engines is long after the build call returns. The two moments coincide for an engine
+whose build call does all the work, and can be minutes to hours apart for one that finishes the index
+in the background; only the later one means the same thing for both. At 100k rows × 768-d, HNSW
+`M 16` / `EFC 200` — one run per engine on a shared machine, so the absolute times are only
+indicative; the split is the point:
 
 | engine | build call returned | index queryable | why |
 |---|---|---|---|
