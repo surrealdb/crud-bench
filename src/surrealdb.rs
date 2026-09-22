@@ -123,10 +123,17 @@ fn surreal_distance_function(d: VectorDistance) -> &'static str {
 	}
 }
 
-/// How long to wait for an index's pending queue to drain before giving up. The
-/// background task runs every `index_compaction_interval` (5s by default), so
-/// this allows for a slow drain without hanging a run forever.
-const INDEX_COMPACTION_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long to wait for an index to become genuinely queryable before giving
+/// up — both the pending queue drained and materialisation finished.
+///
+/// The background task runs every `index_compaction_interval` (5s by default),
+/// but the wait now covers materialising a whole index rather than draining a
+/// short queue, and that scales with the corpus: a 1M-row 768-d HNSW index was
+/// still compacting 35 minutes after reporting `ready`. The old 300s cap was
+/// sized for the queue alone and would now abort a legitimate wait, so this is
+/// deliberately generous — it exists to stop a run hanging forever, not to
+/// bound honest work.
+const INDEX_COMPACTION_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// Build the KNN statement for a resolved vector query.
 ///
@@ -873,7 +880,22 @@ impl BenchmarkClient for SurrealDBClient {
 	/// especially misleading, since a queue scan is exact and so reports a
 	/// perfect recall of 1.0 for entirely the wrong reason.
 	///
-	/// `building.pending` carries the queue depth, so poll until it clears.
+	/// `building.pending` carries the queue depth, and `building.compacting`
+	/// says whether the materialisation task is still running. **Both** have to
+	/// clear: at 1M rows an index reports `status = "ready"` with `pending = 0`
+	/// while `compacting` is still true, and a KNN query against it costs ~2.9s
+	/// against single-digit ms once materialised — one core pegged, scanning
+	/// state the index has not absorbed yet.
+	///
+	/// Waiting on `pending` alone is what made that measurable: a 1M-row
+	/// calibration timed 24 minutes for a single 500-iteration leg, and the
+	/// compaction never finished *because* the query load starved it. Waiting
+	/// here, before any timed leg, gives the materialisation task the machine to
+	/// itself.
+	///
+	/// `compacting` is absent on older servers, where its absence reads as
+	/// "not compacting" and behaviour is exactly as before.
+	///
 	/// Note this is unrelated to `ALTER SYSTEM COMPACT` (see [`Self::compact`]),
 	/// which compacts the RocksDB keyspace and does nothing for this queue.
 	async fn await_index_queryable(&self, name: &str) -> Result<()> {
@@ -896,16 +918,21 @@ impl BenchmarkClient for SurrealDBClient {
 				Value::Number(n) => n.to_int().unwrap_or(0),
 				_ => 0,
 			};
+			// Absent on servers that predate the field, where "not compacting"
+			// is the right reading and the behaviour is unchanged.
+			let compacting = matches!(building.get("compacting"), Value::Bool(true));
 			// `pending` sits at 0 while the initial build is still running, so
 			// it only means "drained" once the build itself reports ready.
 			match status.as_str() {
-				"ready" if pending == 0 => return Ok(()),
+				"ready" if pending == 0 && !compacting => return Ok(()),
 				"ready" | "indexing" | "cleaning" | "started" => {}
 				_ => bail!("Unexpected index status: {j}"),
 			}
 			if started.elapsed() > INDEX_COMPACTION_TIMEOUT {
 				bail!(
-					"index {name}: {pending} entries still pending after {:?}; 					 a KNN scan now would measure a brute-force scan over the queue",
+					"index {name}: {pending} entries pending, compacting={compacting}, after \
+					 {:?}; a KNN scan now would measure a scan over unmaterialised state rather \
+					 than the index",
 					started.elapsed()
 				);
 			}
