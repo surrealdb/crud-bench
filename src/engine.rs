@@ -8,6 +8,31 @@ use anyhow::{Result, bail};
 use std::future::Future;
 use std::time::Duration;
 
+/// Shortest sleep between two readiness checks on an index.
+const INDEX_POLL_MIN: Duration = Duration::from_millis(10);
+
+/// Longest sleep between two readiness checks on an index.
+const INDEX_POLL_MAX: Duration = Duration::from_millis(250);
+
+/// How long to sleep before re-checking whether an index is ready, given how
+/// long the caller has already been waiting.
+///
+/// A readiness poll quantises what it measures: the index becomes ready at some
+/// instant and the caller notices at its next check, up to one interval later.
+/// Where the wait is part of a timed build, that interval lands in the reported
+/// number. A fixed interval is wrong at both ends — coarse enough for an
+/// hour-long materialisation, it rounds a 50ms build up to half a second; fine
+/// enough for the 50ms build, it hammers the engine with status queries for the
+/// whole hour.
+///
+/// Sleeping a tenth of the time already waited keeps the overshoot under ~10%
+/// of the true figure. The floor stops a fresh wait from spinning, and the cap
+/// means a long one is still noticed within a quarter of a second, so the
+/// reported time is never more than `max(10ms, min(10%, 250ms))` late.
+pub(crate) fn index_poll_interval(waited: Duration) -> Duration {
+	(waited / 10).clamp(INDEX_POLL_MIN, INDEX_POLL_MAX)
+}
+
 /// One hit returned by a KNN query, in whatever key shape the run is using.
 ///
 /// Recall is scored by identity, so adapters return the row's key rather than a
@@ -318,16 +343,33 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 
 	/// Block until an index is fully queryable, not merely built.
 	///
-	/// Some engines report an index ready while newly indexed rows still sit in
-	/// a pending queue that searches answer by scanning it linearly. Timing a
-	/// KNN scan in that state measures a brute-force scan wearing the index's
-	/// name — the latency is wrong and the recall is a perfect 1.0 for the wrong
-	/// reason. Engines that drain such a queue in the background override this
-	/// to wait for it.
+	/// Some engines report an index built while newly indexed rows still sit in
+	/// a pending queue, or before the index structure itself has been
+	/// materialised, and answer searches by scanning whatever they have not yet
+	/// absorbed. Timing a scan in that state measures a brute-force scan wearing
+	/// the index's name — the latency is wrong and, for KNN, the recall is a
+	/// perfect 1.0 for the wrong reason. Engines that finish an index in the
+	/// background override this to wait for it. The default is a no-op, which is
+	/// right for an engine whose build call returns only once the index is
+	/// complete.
 	///
-	/// Called outside the timed build so a background task's polling interval
-	/// does not land in the reported build time. The default is a no-op.
-	fn await_index_queryable(&self, _name: &str) -> impl Future<Output = Result<()>> + Send {
+	/// The harness calls this **inside** the timed build, straight after the
+	/// build call, so a build is reported as the time until the index serves at
+	/// index speed. That is the only definition under which a synchronous build
+	/// and a background one can share a column: timing the build call alone made
+	/// a 1M-row SurrealDB HNSW index look 28× faster to build than pgvector's
+	/// while it was the slower of the two. The harness calls it again, untimed,
+	/// before each indexed leg, since a leg that writes can leave work behind.
+	///
+	/// `timeout` is what the caller has left of its budget: every wait is bounded
+	/// by `--operation-timeout` rather than by a cap each adapter picks for
+	/// itself. Sleep between checks with [`index_poll_interval`], so the time
+	/// reported is not rounded up to a whole poll interval.
+	fn await_index_queryable(
+		&self,
+		_name: &str,
+		_timeout: Duration,
+	) -> impl Future<Output = Result<()>> + Send {
 		async { Ok(()) }
 	}
 
@@ -713,5 +755,51 @@ fn generate_string_key_values_iter<'a>(
 		kp,
 		vp,
 		stream,
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::{INDEX_POLL_MAX, INDEX_POLL_MIN, index_poll_interval};
+	use std::time::Duration;
+
+	fn ms(v: u64) -> Duration {
+		Duration::from_millis(v)
+	}
+
+	/// A fresh wait is polled finely but never in a busy loop.
+	#[test]
+	fn a_fresh_wait_polls_at_the_floor() {
+		assert_eq!(index_poll_interval(Duration::ZERO), INDEX_POLL_MIN);
+		assert_eq!(index_poll_interval(ms(50)), INDEX_POLL_MIN);
+	}
+
+	/// In the middle band the sleep tracks a tenth of the wait.
+	#[test]
+	fn the_sleep_scales_with_the_wait() {
+		assert_eq!(index_poll_interval(ms(1000)), ms(100));
+		assert_eq!(index_poll_interval(ms(2000)), ms(200));
+	}
+
+	/// An hour-long materialisation is still noticed within the cap.
+	#[test]
+	fn a_long_wait_is_capped() {
+		assert_eq!(index_poll_interval(ms(3_600_000)), INDEX_POLL_MAX);
+	}
+
+	/// The property the design rests on: whenever the index becomes ready, the
+	/// check that notices it lands at most `max(floor, min(10%, cap))` late.
+	#[test]
+	fn overshoot_stays_within_the_documented_bound() {
+		for ready_at_ms in [1u64, 7, 35, 99, 180, 640, 1_500, 9_000, 60_000, 400_000] {
+			let ready_at = ms(ready_at_ms);
+			let mut t = Duration::ZERO;
+			while t < ready_at {
+				t += index_poll_interval(t);
+			}
+			let late = t - ready_at;
+			let bound = (ready_at / 10).clamp(INDEX_POLL_MIN, INDEX_POLL_MAX);
+			assert!(late <= bound, "ready at {ready_at:?}: noticed {late:?} late, bound {bound:?}");
+		}
 	}
 }

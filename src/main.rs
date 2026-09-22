@@ -1058,6 +1058,9 @@ fn run(args: Args) -> Result<()> {
 		// comes from the config alone.
 		corpus_seed: None,
 		template_digest: None,
+		// Recorded so a result file says which definition its build rows use;
+		// see `BenchmarkMetadata::index_build_timing`.
+		index_build_timing: result::INDEX_BUILD_TIMING,
 	};
 	let mut metadata = metadata;
 	// Get database display name

@@ -3,7 +3,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext, index_poll_interval};
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
@@ -122,18 +122,6 @@ fn surreal_distance_function(d: VectorDistance) -> &'static str {
 		VectorDistance::Manhattan => "vector::distance::manhattan",
 	}
 }
-
-/// How long to wait for an index to become genuinely queryable before giving
-/// up — both the pending queue drained and materialisation finished.
-///
-/// The background task runs every `index_compaction_interval` (5s by default),
-/// but the wait now covers materialising a whole index rather than draining a
-/// short queue, and that scales with the corpus: a 1M-row 768-d HNSW index was
-/// still compacting 35 minutes after reporting `ready`. The old 300s cap was
-/// sized for the queue alone and would now abort a legitimate wait, so this is
-/// deliberately generous — it exists to stop a run hanging forever, not to
-/// bound honest work.
-const INDEX_COMPACTION_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// Build the KNN statement for a resolved vector query.
 ///
@@ -682,7 +670,9 @@ impl BenchmarkClient for SurrealDBClient {
 		};
 		// Create the index
 		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
-		// Wait until the index is ready
+		// Wait until the index is ready. This poll is inside the timed build, so
+		// its cadence adapts rather than rounding the build up to a fixed step.
+		let started = Instant::now();
 		loop {
 			let sql = format!("INFO FOR INDEX {name} ON record");
 			let r: surrealdb::types::Value = self
@@ -700,7 +690,7 @@ impl BenchmarkClient for SurrealDBClient {
 				"indexing" | "cleaning" | "started" => {}
 				_ => bail!("Unexpected status: {}", r.into_json_value()),
 			}
-			sleep(Duration::from_millis(500)).await;
+			sleep(index_poll_interval(started.elapsed())).await;
 		}
 		// All ok
 		Ok(())
@@ -847,6 +837,7 @@ impl BenchmarkClient for SurrealDBClient {
 			return Err(log_sql_err(&sql)(e));
 		}
 		// Wait until the index is ready (same poll loop as `build_index`).
+		let started = Instant::now();
 		loop {
 			let q = format!("INFO FOR INDEX {name} ON record");
 			let r: surrealdb::types::Value = self
@@ -864,7 +855,7 @@ impl BenchmarkClient for SurrealDBClient {
 				"indexing" | "cleaning" | "started" => {}
 				_ => bail!("Unexpected status: {}", r.into_json_value()),
 			}
-			sleep(Duration::from_millis(500)).await;
+			sleep(index_poll_interval(started.elapsed())).await;
 		}
 		Ok(())
 	}
@@ -896,9 +887,15 @@ impl BenchmarkClient for SurrealDBClient {
 	/// `compacting` is absent on older servers, where its absence reads as
 	/// "not compacting" and behaviour is exactly as before.
 	///
+	/// Called inside the timed build, so it is what makes SurrealDB's build time
+	/// comparable with an engine whose build call returns only when the index is
+	/// complete: `status = "ready"` arrives after row enumeration, and at 1M rows
+	/// the graph construction that follows is over an hour of the real build.
+	/// `timeout` is the caller's remaining budget from `--operation-timeout`.
+	///
 	/// Note this is unrelated to `ALTER SYSTEM COMPACT` (see [`Self::compact`]),
 	/// which compacts the RocksDB keyspace and does nothing for this queue.
-	async fn await_index_queryable(&self, name: &str) -> Result<()> {
+	async fn await_index_queryable(&self, name: &str, timeout: Duration) -> Result<()> {
 		let started = Instant::now();
 		loop {
 			let q = format!("INFO FOR INDEX {name} ON record");
@@ -928,15 +925,15 @@ impl BenchmarkClient for SurrealDBClient {
 				"ready" | "indexing" | "cleaning" | "started" => {}
 				_ => bail!("Unexpected index status: {j}"),
 			}
-			if started.elapsed() > INDEX_COMPACTION_TIMEOUT {
+			if started.elapsed() > timeout {
 				bail!(
 					"index {name}: {pending} entries pending, compacting={compacting}, after \
-					 {:?}; a KNN scan now would measure a scan over unmaterialised state rather \
-					 than the index",
+					 {:?}; a scan now would measure a scan over unmaterialised state rather than \
+					 the index. Raise --operation-timeout to wait longer",
 					started.elapsed()
 				);
 			}
-			sleep(Duration::from_millis(250)).await;
+			sleep(index_poll_interval(started.elapsed())).await;
 		}
 	}
 

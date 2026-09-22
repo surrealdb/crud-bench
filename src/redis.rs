@@ -2,7 +2,7 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext, index_poll_interval};
 use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::vectorfilter::{FilterField, FilterFieldKind, redis_field_name};
@@ -20,11 +20,6 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
-
-/// How long to wait for RediSearch to finish populating an index before giving
-/// up. Generous: the point is to fail loudly on a stuck build rather than to
-/// bound a healthy one.
-const INDEX_BUILD_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Pull `(indexing, percent_indexed, hash_indexing_failures)` out of an
 /// `FT.INFO` reply.
@@ -339,7 +334,13 @@ impl BenchmarkClient for RedisClient {
 	/// the exact (FLAT) leg scored 0.268 where exact search must score 1.000.
 	/// Latency fell as the search budget rose, which is backwards. None of it
 	/// was a property of Redis.
-	async fn await_index_queryable(&self, name: &str) -> Result<()> {
+	///
+	/// Called inside the timed build. `FT.CREATE` returns before a single
+	/// document is indexed, so without this wait Redis's build time is the
+	/// time to accept a schema — 1 ms at 1M rows — and cannot sit in a column
+	/// beside an engine whose build call does the indexing. `timeout` is the
+	/// caller's remaining budget from `--operation-timeout`.
+	async fn await_index_queryable(&self, name: &str, timeout: Duration) -> Result<()> {
 		let started = Instant::now();
 		let mut conn = self.conn_record.lock().await;
 		loop {
@@ -361,15 +362,16 @@ impl BenchmarkClient for RedisClient {
 			if indexing == 0 && fraction >= 1.0 {
 				return Ok(());
 			}
-			if started.elapsed() > INDEX_BUILD_TIMEOUT {
+			if started.elapsed() > timeout {
 				bail!(
 					"index {name}: still building after {:?} ({:.1}% indexed); \
-					 a KNN scan now would query a partial index",
+					 a KNN scan now would query a partial index. Raise --operation-timeout \
+					 to wait longer",
 					started.elapsed(),
 					fraction * 100.0,
 				);
 			}
-			sleep(Duration::from_millis(100)).await;
+			sleep(index_poll_interval(started.elapsed())).await;
 		}
 	}
 

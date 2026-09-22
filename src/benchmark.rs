@@ -320,10 +320,12 @@ impl Benchmark {
 	/// its own interval. A leg timed against an undrained queue measures that
 	/// scan wearing the index's name.
 	///
-	/// Called between timed operations so the wait lands in no measurement, and
-	/// before every indexed leg rather than only after the build: a leg that
-	/// writes leaves a queue behind, and the next leg would otherwise inherit
-	/// it and report a number that depends on what ran before it.
+	/// The wait that matters is inside the timed build, which runs until the
+	/// index is queryable. This untimed re-check runs before every indexed leg:
+	/// a leg that writes leaves a queue behind, and the next leg would otherwise
+	/// inherit it and report a number that depends on what ran before it. Right
+	/// after a build there is normally nothing left, and it returns after one
+	/// status check.
 	///
 	/// Unrelated to `COMPACTION` / `ALTER SYSTEM COMPACT`, which compacts the
 	/// storage keyspace and does nothing for this queue. Engines without such a
@@ -333,7 +335,7 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 	{
 		let started = Instant::now();
-		client.await_index_queryable(index).await?;
+		client.await_index_queryable(index, self.operation_timeout).await?;
 		let waited = started.elapsed();
 		if waited > Duration::from_millis(200) {
 			self.bench_ui.println_muted(&format!(
@@ -531,6 +533,8 @@ impl Benchmark {
 					)
 					.await?;
 				if vec_index_build.is_some() {
+					// The timed build already waited until the index was
+					// queryable; this re-check is untimed and normally instant.
 					self.await_index_queryable(&clients[0], &id).await?;
 					self.maybe_compact_datastore::<C, E>(&engine).await?;
 				}
@@ -776,6 +780,9 @@ impl Benchmark {
 				let (with_index, index_remove, indexed_write_results) = if index_build.is_some() {
 					// Compact the datastore so the indexed-scan phases benchmark a compacted index.
 					self.maybe_compact_datastore::<C, E>(&engine).await?;
+					// The timed build already waited until the index was
+					// queryable; this is the untimed re-check every indexed leg
+					// gets, and here it normally returns after one status check.
 					self.await_index_queryable(&clients[0], &id).await?;
 					// Same query shape using the new index
 					let with_index = self
@@ -1223,11 +1230,15 @@ impl Benchmark {
 		// Wait for the threads to complete, aborting the remaining tasks on the first failure.
 		let mut global_histogram = Histogram::new(3)?;
 		let mut global_recall = RecallTally::default();
+		let mut global_build_returned: Option<Duration> = None;
 		while let Some(result) = tasks.join_next().await {
 			match result {
-				Ok(Ok(Some((histogram, recall)))) => {
+				Ok(Ok(Some((histogram, recall, build_returned)))) => {
 					global_histogram.add(histogram)?;
 					global_recall.merge(recall);
+					// Only a build sets this, as one sample on one worker, so
+					// taking the larger just picks the one that exists.
+					global_build_returned = global_build_returned.max(build_returned);
 				}
 				Ok(Ok(None)) => {}
 				Ok(Err(e)) => {
@@ -1259,8 +1270,9 @@ impl Benchmark {
 			bail!("Task failure");
 		}
 		// Histogram + sysinfo snapshots → OperationResult; then print phase timing line
-		let result =
-			OperationResult::new(metric, global_histogram).with_recall(global_recall.summarise());
+		let result = OperationResult::new(metric, global_histogram)
+			.with_recall(global_recall.summarise())
+			.with_build_returned(global_build_returned);
 		let took = result.total_time();
 		match &operation {
 			BenchmarkOperation::Scan(_, ctx) => {
@@ -1279,6 +1291,19 @@ impl Benchmark {
 			_ => {
 				// Create/Read/Update/Delete, index DDL, and batch ops share the default line format
 				self.bench_ui.println_took_head(&operation.to_string(), &took);
+				// Say how a build split, when it split at all: for an engine that
+				// finishes in the background, the gap is most of the build and the
+				// reason the figure above is not the build call's own time.
+				if let Some(returned) = result.build_returned() {
+					let queryable = result.slowest().saturating_sub(returned);
+					if queryable > Duration::from_millis(200) {
+						self.bench_ui.println_muted(&format!(
+							"  build call returned after {}, then {} until the index was queryable",
+							format_duration(returned),
+							format_duration(queryable)
+						));
+					}
+				}
 			}
 		}
 		// Grep-friendly took marker for ops whose UI line collapses multiple
@@ -1323,13 +1348,18 @@ impl Benchmark {
 		operation: BenchmarkOperation,
 		operation_timeout: Duration,
 		(mut kp, mut vp, progress): (KeyProvider, ValueProvider, Option<Arc<ProgressBar>>),
-	) -> Result<(Histogram<u64>, RecallTally)>
+	) -> Result<(Histogram<u64>, RecallTally, Option<Duration>)>
 	where
 		C: BenchmarkClient,
 		D: Dialect,
 	{
 		let mut histogram = Histogram::new(3)?;
 		let mut tally = RecallTally::default();
+		// When an index build's own call returned, measured from the start of
+		// the timed build. The build is timed until the index is queryable, so
+		// this is the only place the split survives. Set by build operations
+		// alone, and a build runs as a single sample.
+		let mut build_returned: Option<Duration> = None;
 		// Check if we have encountered an error
 		while !error.load(Ordering::Relaxed) {
 			// Get the current sample number
@@ -1375,11 +1405,22 @@ impl Benchmark {
 						)
 						.await
 					}
+					// A build is timed until the index serves at index speed, not
+					// until the build call returns. The two coincide for an engine
+					// whose build call does all the work, and are minutes to hours
+					// apart for one that finishes in the background — so only the
+					// first definition lets their builds share a column.
 					BenchmarkOperation::BuildIndex(spec, id, _) => {
-						client.build_index(spec, id.as_str()).await
+						client.build_index(spec, id.as_str()).await?;
+						build_returned = Some(time.elapsed());
+						let budget = queryable_budget(operation_timeout, time.elapsed());
+						client.await_index_queryable(id.as_str(), budget).await
 					}
 					BenchmarkOperation::BuildVectorIndex(spec, vq, dim, name) => {
-						client.build_vector_index(spec, vq, *dim, name.as_str()).await
+						client.build_vector_index(spec, vq, *dim, name.as_str()).await?;
+						build_returned = Some(time.elapsed());
+						let budget = queryable_budget(operation_timeout, time.elapsed());
+						client.await_index_queryable(name.as_str(), budget).await
 					}
 					BenchmarkOperation::RemoveIndex(id, _) => client.drop_index(id.as_str()).await,
 					BenchmarkOperation::Delete => client.delete(sample, &mut kp).await,
@@ -1399,7 +1440,10 @@ impl Benchmark {
 			})
 			.await
 			.with_context(|| {
-				format!("{operation} did not complete within {operation_timeout:?}")
+				format!(
+					"{operation} did not complete within {operation_timeout:?}{}",
+					timeout_hint(&operation)
+				)
 			})??;
 			// Get the completed sample number
 			let sample = complete.fetch_add(1, Ordering::Relaxed);
@@ -1419,7 +1463,41 @@ impl Benchmark {
 				tally.record(value);
 			}
 		}
-		Ok((histogram, tally))
+		Ok((histogram, tally, build_returned))
+	}
+}
+
+/// How far inside the operation's deadline the queryable wait's own deadline
+/// is set.
+///
+/// Both bound the same wait. The operation timeout cancels the future and can
+/// only say that the build did not finish; the adapter's deadline fails with
+/// what it last saw — entries pending, still compacting, percent indexed — which
+/// is the part worth reading. Setting the adapter's slightly earlier makes its
+/// error the one that surfaces. The margin only has to exceed one poll interval
+/// (at most 250ms) plus one status round trip.
+const QUERYABLE_DEADLINE_MARGIN: Duration = Duration::from_secs(1);
+
+/// Budget for the queryable wait inside a timed build: what is left of the
+/// operation timeout after the build call, less [`QUERYABLE_DEADLINE_MARGIN`].
+fn queryable_budget(operation_timeout: Duration, spent: Duration) -> Duration {
+	operation_timeout.saturating_sub(spent).saturating_sub(QUERYABLE_DEADLINE_MARGIN)
+}
+
+/// Extra context for a timeout error, naming the knob that resolves it.
+///
+/// An index build now includes the wait until the index is queryable, which
+/// for a large index finished in the background can take far longer than the
+/// build call itself — over an hour for a 1M-row SurrealDB HNSW index — so a
+/// build that used to fit inside the default can stop fitting.
+fn timeout_hint(operation: &BenchmarkOperation) -> &'static str {
+	match operation {
+		BenchmarkOperation::BuildIndex(..) | BenchmarkOperation::BuildVectorIndex(..) => {
+			"; an index build includes the wait until the index is queryable, which for a \
+			 large index finished in the background can far exceed the build call. Raise \
+			 --operation-timeout to allow for it"
+		}
+		_ => "",
 	}
 }
 
@@ -1677,8 +1755,20 @@ fn progress_short_label(operation: &BenchmarkOperation) -> String {
 
 #[cfg(test)]
 mod test {
-	use super::{VECTOR_WARMUP_PLATEAU_SPAN, warmup_has_plateaued};
+	use super::{
+		Benchmark, BenchmarkOperation, QUERYABLE_DEADLINE_MARGIN, VECTOR_WARMUP_PLATEAU_SPAN,
+		warmup_has_plateaued,
+	};
+	use crate::dialect::DefaultDialect;
+	use crate::engine::BenchmarkClient;
+	use crate::keyprovider::KeyProvider;
+	use crate::value::BenchValue;
+	use crate::valueprovider::ValueProvider;
+	use crate::{Args, Index, KeyType, VectorQuerySpec};
+	use anyhow::Result;
+	use clap::Parser;
 	use std::collections::VecDeque;
+	use std::sync::{Arc, Mutex};
 	use std::time::Duration;
 
 	fn ms(v: u64) -> Duration {
@@ -1732,5 +1822,205 @@ mod test {
 	#[test]
 	fn a_slower_window_counts_as_settled() {
 		assert!(warmup_has_plateaued(&recent(&[100, 102, 98, 101]), ms(140)));
+	}
+
+	// ------------------------------------------------------------------
+	// Index build accounting
+	// ------------------------------------------------------------------
+
+	/// An engine shaped like the ones this accounting exists for: its build
+	/// call returns after `build`, and the index needs a further `queryable`
+	/// before it serves at index speed. `queryable = 0` is a synchronous engine.
+	struct Builder {
+		build: Duration,
+		queryable: Duration,
+		/// The budget the harness handed to the queryable wait.
+		budget_seen: Mutex<Option<Duration>>,
+	}
+
+	impl Builder {
+		fn new(build: Duration, queryable: Duration) -> Arc<Self> {
+			Arc::new(Self {
+				build,
+				queryable,
+				budget_seen: Mutex::new(None),
+			})
+		}
+	}
+
+	impl BenchmarkClient for Builder {
+		type ReadRow = BenchValue;
+		async fn create_u32(&self, _: u32, _: BenchValue) -> Result<()> {
+			Ok(())
+		}
+		async fn create_string(&self, _: String, _: BenchValue) -> Result<()> {
+			Ok(())
+		}
+		async fn read_u32(&self, _: u32) -> Result<BenchValue> {
+			Ok(BenchValue::Null)
+		}
+		async fn read_string(&self, _: String) -> Result<BenchValue> {
+			Ok(BenchValue::Null)
+		}
+		async fn update_u32(&self, _: u32, _: BenchValue) -> Result<()> {
+			Ok(())
+		}
+		async fn update_string(&self, _: String, _: BenchValue) -> Result<()> {
+			Ok(())
+		}
+		async fn delete_u32(&self, _: u32) -> Result<()> {
+			Ok(())
+		}
+		async fn delete_string(&self, _: String) -> Result<()> {
+			Ok(())
+		}
+		async fn build_index(&self, _: &Index, _: &str) -> Result<()> {
+			tokio::time::sleep(self.build).await;
+			Ok(())
+		}
+		async fn build_vector_index(
+			&self,
+			_: &Index,
+			_: &VectorQuerySpec,
+			_: usize,
+			_: &str,
+		) -> Result<()> {
+			tokio::time::sleep(self.build).await;
+			Ok(())
+		}
+		async fn await_index_queryable(&self, _: &str, timeout: Duration) -> Result<()> {
+			*self.budget_seen.lock().unwrap() = Some(timeout);
+			if !self.queryable.is_zero() {
+				tokio::time::sleep(self.queryable).await;
+			}
+			Ok(())
+		}
+	}
+
+	fn bench(operation_timeout_secs: u64) -> Benchmark {
+		let secs = operation_timeout_secs.to_string();
+		let args = Args::try_parse_from([
+			"crud-bench",
+			"-d",
+			"dry",
+			"-s",
+			"1",
+			"--operation-timeout",
+			&secs,
+		])
+		.expect("test args parse");
+		Benchmark::new(&args)
+	}
+
+	fn index() -> Index {
+		Index {
+			skip: false,
+			fields: vec!["e".to_string()],
+			unique: None,
+			index_type: None,
+		}
+	}
+
+	fn vector_build() -> BenchmarkOperation {
+		let vq: VectorQuerySpec = serde_json::from_str(
+			r#"{ "field": "e", "top_k": 10, "distance": "cosine",
+			   "index_strategy": { "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": 64 } }"#,
+		)
+		.expect("spec parses");
+		BenchmarkOperation::BuildVectorIndex(index(), vq, 8, "idx".to_string())
+	}
+
+	fn plain_build() -> BenchmarkOperation {
+		BenchmarkOperation::BuildIndex(index(), "idx".to_string(), "idx".to_string())
+	}
+
+	async fn run_build(
+		bench: &Benchmark,
+		client: &Arc<Builder>,
+		op: BenchmarkOperation,
+	) -> Result<Option<crate::result::OperationResult>> {
+		let kp = KeyProvider::new(KeyType::Integer, false);
+		let vp = ValueProvider::new(r#"{ "e": "vector:8" }"#).expect("template parses");
+		let clients = std::slice::from_ref(client);
+		bench.run_operation::<Builder, DefaultDialect>(clients, op, kp, vp, 1, 1).await
+	}
+
+	/// The accounting this exists for. An engine whose build call returns
+	/// quickly but whose index needs longer to become queryable is reported at
+	/// the full time — the wait lands inside the build — while the build call's
+	/// own time survives as the split.
+	///
+	/// Every bound here rests on one guarantee, that a sleep never returns
+	/// early, so machine load can only make them hold more easily.
+	#[tokio::test]
+	async fn a_build_is_timed_until_the_index_is_queryable() {
+		for op in [vector_build(), plain_build()] {
+			let name = op.to_string();
+			let client = Builder::new(ms(40), ms(300));
+			let result = run_build(&bench(60), &client, op).await.unwrap().expect("build ran");
+			assert!(
+				result.slowest() >= ms(340),
+				"{name}: build reported {:?}, but the index took 340ms to become queryable",
+				result.slowest()
+			);
+			let returned = result.build_returned().expect("a build records its split");
+			assert!(
+				returned >= ms(40),
+				"{name}: split {returned:?} is before the build call ended"
+			);
+			assert!(
+				result.slowest() - returned >= ms(300),
+				"{name}: split {returned:?} of {:?} swallowed the 300ms queryable wait",
+				result.slowest()
+			);
+		}
+	}
+
+	/// A synchronous engine is not penalised: with nothing left to wait for,
+	/// the harness adds no poll interval of its own, so the build is the build
+	/// call. The bound is set well under the 250ms poll interval a regression
+	/// would add, and well over scheduling noise, on the operation's own clock.
+	#[tokio::test]
+	async fn a_synchronous_build_is_not_inflated() {
+		let client = Builder::new(ms(60), Duration::ZERO);
+		let result = run_build(&bench(60), &client, vector_build()).await.unwrap().expect("ran");
+		let returned = result.build_returned().expect("a build records its split");
+		assert!(
+			result.slowest() - returned < ms(100),
+			"a synchronous build call returned after {returned:?} but was reported as {:?}",
+			result.slowest()
+		);
+	}
+
+	/// The wait is bounded by what the operation timeout has left, less the
+	/// margin that lets the adapter's own, more specific error surface first —
+	/// not by a cap each adapter picks for itself.
+	#[tokio::test]
+	async fn the_wait_gets_the_rest_of_the_operation_budget() {
+		let client = Builder::new(ms(40), Duration::ZERO);
+		run_build(&bench(60), &client, vector_build()).await.unwrap().expect("ran");
+		let budget = client.budget_seen.lock().unwrap().expect("the wait was called");
+		let ceiling = Duration::from_secs(60) - QUERYABLE_DEADLINE_MARGIN;
+		assert!(budget <= ceiling - ms(40), "budget {budget:?} ignores the 40ms already spent");
+		// Not an adapter's own cap (they were 600s and 3600s), nor a small fixed
+		// one: the remainder of the 60s operation budget.
+		assert!(
+			budget > ceiling - Duration::from_secs(5),
+			"budget {budget:?} is not the remainder"
+		);
+	}
+
+	/// A build that outlasts `--operation-timeout` fails, and says which knob
+	/// to turn: the wait being part of the build is what makes a build that
+	/// used to fit stop fitting.
+	#[tokio::test]
+	async fn a_build_past_the_timeout_names_the_knob() {
+		let client = Builder::new(ms(10), Duration::from_secs(30));
+		let Err(err) = run_build(&bench(1), &client, vector_build()).await else {
+			panic!("a build past the operation timeout must fail");
+		};
+		let msg = format!("{err:#}");
+		assert!(msg.contains("--operation-timeout"), "{msg}");
+		assert!(msg.contains("queryable"), "{msg}");
 	}
 }
