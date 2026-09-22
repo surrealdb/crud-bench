@@ -98,27 +98,38 @@ embedding = "vector:768:clustered:200"
 #
 # Legs are the cross product of the search sweep and the filter ladder, all over
 # a SINGLE index build: the index does not depend on the predicate, so tracing
-# several selectivities should not cost a rebuild apiece. The sweeps are kept
-# short here for that reason — five predicates times five search values would be
-# 25 timed legs on one build, which is a long run rather than a wrong one.
+# several selectivities should not cost a rebuild apiece. The HNSW sweep has four
+# points, so it is 20 timed legs on one build (five filter legs × four budgets);
+# at ≤ 5 ms per query at 1M rows, that is minutes.
 #
 # The low end of each search ladder is deliberately below saturation, and is not
 # a mis-set parameter to be raised. A ladder whose every point already reaches
 # exact prints a flat column of `1.000` and measures nothing; the deliverable is
-# the curve, and a curve needs points under the knee. Measured at 20k rows and
-# 128 dimensions, DiskANN at `l_search = 50` reaches 1.000 unfiltered and at 33%
-# selectivity but only 0.512 at 10%, recovering fully at 200 — the starved point
-# is what makes that visible, and the unfiltered leg beside it at the same budget
-# is what shows it to be a budget/selectivity interaction rather than a defect.
+# the curve, and a curve needs points under the knee.
 #
-# The ladders themselves are NOT calibrated: they were chosen before any
-# measurement existed, and the figures above come from a 20k x 128-d smoke run
-# while this config is 768-d and meant for 100k-1M rows. Budgets saturate at
-# different points as a corpus grows, so whether these straddle the interesting
-# region at the scale worth quoting is still open — tracked in #290.
-# `ef_search = [32, 128]` is the likelier problem of the two:
-# SurrealDB's HNSW held 1.000 at `ef_search = 64` under both predicates at 20k,
-# so both points may sit in the saturated regime and show nothing at all.
+# The HNSW ladder is calibrated at the scale this config is meant for (#290).
+# Unfiltered recall@10 at 1M rows × 768-d:
+#
+#   ef_search      16      64      128     256
+#   pgvector      0.516   0.821   0.937   0.975
+#   Redis         0.463   0.774   0.904   0.966
+#
+# so 16 sits clearly under the knee, 64 and 128 across it, and 256 near
+# saturation. The earlier guess that `[32, 128]` was already saturated came from
+# a 20k × 128-d smoke run and was wrong at 1M, where 32 reads 0.670 / 0.608.
+#
+# Selective predicates do not follow the budget at all: at 1% pgvector's
+# post-filter never passes 0.271 on this ladder, and Redis brute-forces the
+# matching rows at 1.000 throughout. The ladder is therefore chosen on the
+# unfiltered and 50% columns, and the 1% column reports strategy, not budget.
+#
+# The DiskANN ladder is NOT calibrated. DiskANN runs only on SurrealDB, whose 1M
+# arm is blocked: the index keeps materialising for over an hour after it
+# reports ready (#290). `[50, 200]` rests on a 20k × 128-d smoke run, where
+# `l_search = 50` reaches 1.000 unfiltered and at 33% but only 0.512 at 10%,
+# recovering fully at 200 — the starved point is what makes that visible, and
+# the unfiltered leg beside it at the same budget is what shows it to be a
+# budget/selectivity interaction rather than a defect.
 # ============================================================================
 
 [[scans]]
@@ -158,7 +169,7 @@ name = "hnsw knn(10) m=16 efc=200"
 field = "embedding"
 top_k = 10
 distance = "cosine"
-index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [32, 128] }
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 64, 128, 256] }
 holdout = { count = 200, seed = 42 }
 filters = [
     { name = "sel~1%", field = "number", op = "lte", value = 50 },

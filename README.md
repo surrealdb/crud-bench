@@ -389,7 +389,7 @@ asks the question production asks: *among the rows that match this predicate*.
 field = "embedding"
 top_k = 10
 distance = "cosine"
-index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [32, 128] }
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 64, 128, 256] }
 filters = [
     { name = "sel~1%", field = "number", op = "lte", value = 50 },
     { name = "sel~10%", field = "number", op = "lte", value = 500 },
@@ -464,13 +464,24 @@ the recall equivalent of reporting latency with no recall column. The starved po
 effect visible, and the unfiltered leg beside it at the same budget is what identifies it as a
 budget/selectivity interaction rather than a defect.
 
-The ladders themselves are **not calibrated**. They were chosen before any measurement existed, and
-the figures above are from 20k × 128-d while `config/vector-filtered.toml` is 768-d and meant for
-100k–1M rows. Budgets saturate at different points as a corpus grows, so whether these straddle the
-knee at the scale worth quoting is open — tracked in
-[#290](https://github.com/surrealdb/crud-bench/issues/290). `ef_search = [32, 128]` is the likelier
-problem: SurrealDB's HNSW held 1.000 at `ef_search = 64` under both predicates here, so both shipped
-points may sit in the saturated regime.
+The HNSW ladder, `ef_search = [16, 64, 128, 256]`, is calibrated at the scale the config is meant
+for ([#290](https://github.com/surrealdb/crud-bench/issues/290)). Unfiltered recall@10 at 1M × 768-d:
+
+| `ef_search` | 16 | 64 | 128 | 256 |
+|---|---|---|---|---|
+| pgvector | 0.516 | 0.821 | 0.937 | 0.975 |
+| Redis | 0.463 | 0.774 | 0.904 | 0.966 |
+
+16 sits clearly under the knee, 64 and 128 across it, 256 near saturation. The ladder it replaced,
+`[32, 128]`, was chosen on a 20k × 128-d smoke run on the guess that it was already saturated; at 1M
+it was not (32 reads 0.670 / 0.608). Budgets saturate at different points as a corpus grows, which is
+why the calibration had to happen at the target scale. Selective predicates do not follow the budget
+at all — at 1% pgvector's post-filter never passes 0.271 on this ladder, while Redis brute-forces the
+matching rows at 1.000 — so the ladder is chosen on the unfiltered and 50% columns.
+
+The DiskANN ladder, `[50, 200]`, is **not calibrated**. DiskANN runs only on SurrealDB, whose 1M arm
+is blocked: the index keeps materialising for over an hour after reporting ready, so there is nothing
+yet to calibrate against.
 
 Note every **exact** leg reads `1.000` under both predicates on all three engines. That is the check
 that the three renderings select the same rows the harness does: if SurrealQL, ANSI SQL and the
