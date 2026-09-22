@@ -458,6 +458,20 @@ This is why the filter list expands against the search sweep rather than beside 
 a filtered query needs depends on the selectivity, and any single point would have reported DiskANN
 as either broken or fine depending on an arbitrary choice.
 
+It is also why the low end of each shipped ladder sits **below** saturation and should stay there. A
+ladder whose every point already reaches exact prints a flat column of `1.000` and measures nothing —
+the recall equivalent of reporting latency with no recall column. The starved point is what makes the
+effect visible, and the unfiltered leg beside it at the same budget is what identifies it as a
+budget/selectivity interaction rather than a defect.
+
+The ladders themselves are **not calibrated**. They were chosen before any measurement existed, and
+the figures above are from 20k × 128-d while `config/vector-filtered.toml` is 768-d and meant for
+100k–1M rows. Budgets saturate at different points as a corpus grows, so whether these straddle the
+knee at the scale worth quoting is open — tracked in
+[#290](https://github.com/surrealdb/crud-bench/issues/290). `ef_search = [32, 128]` is the likelier
+problem: SurrealDB's HNSW held 1.000 at `ef_search = 64` under both predicates here, so both shipped
+points may sit in the saturated regime.
+
 Note every **exact** leg reads `1.000` under both predicates on all three engines. That is the check
 that the three renderings select the same rows the harness does: if SurrealQL, ANSI SQL and the
 RediSearch expression disagreed with the in-process predicate by even one row, exact search could not

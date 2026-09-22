@@ -101,6 +101,24 @@ embedding = "vector:768:clustered:200"
 # several selectivities should not cost a rebuild apiece. The sweeps are kept
 # short here for that reason — five predicates times five search values would be
 # 25 timed legs on one build, which is a long run rather than a wrong one.
+#
+# The low end of each search ladder is deliberately below saturation, and is not
+# a mis-set parameter to be raised. A ladder whose every point already reaches
+# exact prints a flat column of `1.000` and measures nothing; the deliverable is
+# the curve, and a curve needs points under the knee. Measured at 20k rows and
+# 128 dimensions, DiskANN at `l_search = 50` reaches 1.000 unfiltered and at 33%
+# selectivity but only 0.512 at 10%, recovering fully at 200 — the starved point
+# is what makes that visible, and the unfiltered leg beside it at the same budget
+# is what shows it to be a budget/selectivity interaction rather than a defect.
+#
+# The ladders themselves are NOT calibrated: they were chosen before any
+# measurement existed, and the figures above come from a 20k x 128-d smoke run
+# while this config is 768-d and meant for 100k-1M rows. Budgets saturate at
+# different points as a corpus grows, so whether these straddle the interesting
+# region at the scale worth quoting is still open — tracked in #290.
+# `ef_search = [32, 128]` is the likelier problem of the two:
+# SurrealDB's HNSW held 1.000 at `ef_search = 64` under both predicates at 20k,
+# so both points may sit in the saturated regime and show nothing at all.
 # ============================================================================
 
 [[scans]]
