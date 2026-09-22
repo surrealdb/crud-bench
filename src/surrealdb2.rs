@@ -820,6 +820,14 @@ impl SurrealDB2Client {
 		})?;
 		let field = &vq.field;
 		let k = vq.top_k;
+		// Filtered KNN is wired for SurrealDB 3.x only. Declining here is not a
+		// convenience: running the unfiltered query and scoring it against a
+		// filter-aware answer key would report a recall collapse that says
+		// nothing about the engine, and a skip is distinguishable from that
+		// where a wrong number is not.
+		if vq.filter().is_some() {
+			bail!(NOT_SUPPORTED_ERROR);
+		}
 		let sql = match vq.index_strategy {
 			VectorIndexStrategy::Bruteforce => {
 				let func_path = surreal_distance_function(vq.distance);

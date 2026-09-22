@@ -7,6 +7,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
+use crate::vectorfilter::ListSyntax;
 use crate::{
 	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
 	VectorQuerySpec,
@@ -126,6 +127,48 @@ fn surreal_distance_function(d: VectorDistance) -> &'static str {
 /// background task runs every `index_compaction_interval` (5s by default), so
 /// this allows for a slow drain without hanging a run forever.
 const INDEX_COMPACTION_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Build the KNN statement for a resolved vector query.
+///
+/// Pure, so the statement can be asserted without a server. That matters most
+/// for the filtered forms: a mis-rendered predicate does not fail, it answers a
+/// different question, and the recall gap that follows looks exactly like an
+/// index quality difference.
+///
+/// A filtered leg restricts the result to rows the predicate admits. On the
+/// bruteforce path that is a plain `WHERE`, evaluated before the ordering, so
+/// the answer stays exact. On the index paths the KNN operator stays leading
+/// and the predicate is `AND`-ed after it — how the engine then combines the
+/// two, narrowing the traversal or filtering the k rows it already chose, is
+/// exactly what a filtered benchmark is trying to observe, so it is left to the
+/// engine and read off the recall rather than forced here.
+fn surreal_knn_sql(vq: &VectorQuerySpec) -> String {
+	let field = &vq.field;
+	let k = vq.top_k;
+	let pred = vq.filter().map(|f| f.to_sql::<SurrealDBDialect>(ListSyntax::Brackets));
+	match vq.index_strategy {
+		VectorIndexStrategy::Bruteforce => {
+			let func_path = surreal_distance_function(vq.distance);
+			let dir = surreal_distance_order(vq.distance);
+			let where_clause = pred.as_ref().map(|p| format!("WHERE {p} ")).unwrap_or_default();
+			// Aliased distance so the parser's "ORDER BY idiom must appear
+			// in SELECT" rule is satisfied (surrealdb-private 0df9e38c era).
+			format!(
+				"SELECT id, {func_path}({field}, $q) AS _d FROM record {where_clause}ORDER BY _d {dir} LIMIT {k}"
+			)
+		}
+		VectorIndexStrategy::Hnsw {
+			..
+		}
+		| VectorIndexStrategy::DiskAnn {
+			..
+		} => {
+			let search = vq.index_strategy.search_value();
+			let and_pred = pred.as_ref().map(|p| format!(" AND {p}")).unwrap_or_default();
+			format!("SELECT id FROM record WHERE {field} <|{k},{search}|> $q{and_pred}")
+		}
+	}
+}
 
 /// Pull the record key out of one `SELECT id` KNN row.
 fn surreal_knn_key(row: &Value) -> Result<KnnKey> {
@@ -1021,32 +1064,16 @@ impl SurrealDBClient {
 		let vq = scan.vector_query.as_ref().ok_or_else(|| {
 			anyhow::anyhow!("knn_scan called without a vector_query on scan `{}`", scan.name)
 		})?;
-		let field = &vq.field;
-		let k = vq.top_k;
 		let is_diskann = matches!(vq.index_strategy, VectorIndexStrategy::DiskAnn { .. });
-		let sql = match vq.index_strategy {
-			VectorIndexStrategy::Bruteforce => {
-				let func_path = surreal_distance_function(vq.distance);
-				let dir = surreal_distance_order(vq.distance);
-				// Aliased distance so the parser's "ORDER BY idiom must appear
-				// in SELECT" rule is satisfied (surrealdb-private 0df9e38c era).
-				format!(
-					"SELECT id, {func_path}({field}, $q) AS _d FROM record ORDER BY _d {dir} LIMIT {k}"
-				)
-			}
-			VectorIndexStrategy::Hnsw {
-				..
-			} => {
-				let ef_search = vq.index_strategy.search_value();
-				format!("SELECT id FROM record WHERE {field} <|{k},{ef_search}|> $q")
-			}
-			VectorIndexStrategy::DiskAnn {
-				..
-			} => {
-				let l_search = vq.index_strategy.search_value();
-				format!("SELECT id FROM record WHERE {field} <|{k},{l_search}|> $q")
-			}
-		};
+		// A build whose parser will not accept the KNN operator beside a
+		// `WHERE` predicate cannot answer a filtered leg at all, which is a
+		// capability gap and belongs in the output as a skip. Scoped to
+		// filtered legs: a parse error on an unfiltered query is crud-bench
+		// emitting bad SurrealQL, and hiding that would be hiding our own bug.
+		// Note this covers only *parse* failures — a filtered query the engine
+		// accepts and then fails on still aborts, as it should.
+		let is_filtered = vq.filter().is_some();
+		let sql = surreal_knn_sql(vq);
 		// Bind the query vector as a SurrealQL array so the server doesn't
 		// re-parse a multi-KB array literal on every iteration.
 		let q_value = Value::Array(Array::from(
@@ -1062,6 +1089,7 @@ impl SurrealDBClient {
 			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
 				bail!(NOT_SUPPORTED_ERROR)
 			}
+			Err(e) if is_filtered && is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
 			Err(e) => return Err(log_sql_err(&sql)(e)),
 		};
 		let res: surrealdb::types::Value = match resp.take(0) {
@@ -1069,6 +1097,7 @@ impl SurrealDBClient {
 			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
 				bail!(NOT_SUPPORTED_ERROR)
 			}
+			Err(e) if is_filtered && is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
 			Err(e) => return Err(log_sql_err(&sql)(e)),
 		};
 		let Some(arr) = res.as_array() else {
@@ -1241,5 +1270,70 @@ impl SurrealDBClient {
 			Ok(())
 		})
 		.await
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::surreal_knn_sql;
+	use crate::VectorQuerySpec;
+
+	/// Build a resolved [`VectorQuerySpec`] the way the leg expansion hands one
+	/// to an adapter: at most one search value and at most one predicate.
+	fn spec(strategy: &str, filters: &str) -> VectorQuerySpec {
+		let json = format!(
+			r#"{{ "field": "embedding", "top_k": 10, "distance": "cosine",
+			   "index_strategy": {strategy}, "filters": {filters} }}"#
+		);
+		serde_json::from_str(&json).expect("spec parses")
+	}
+
+	const HNSW: &str = r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": 64 }"#;
+	const DISKANN: &str =
+		r#"{ "kind": "diskann", "degree": 64, "l_build": 100, "alpha": 1.2, "l_search": 50 }"#;
+	const BRUTEFORCE: &str = r#"{ "kind": "bruteforce" }"#;
+	const NUMERIC: &str = r#"[{ "name": "sel", "field": "number", "op": "lte", "value": 50 }]"#;
+	const TAGS: &str =
+		r#"[{ "name": "live", "field": "status", "op": "in", "value": ["draft", "archived"] }]"#;
+
+	/// Unfiltered statements must not change shape when the filter machinery is
+	/// present but unused.
+	#[test]
+	fn unfiltered_statements_are_unchanged() {
+		assert_eq!(
+			surreal_knn_sql(&spec(BRUTEFORCE, "[]")),
+			"SELECT id, vector::similarity::cosine(embedding, $q) AS _d FROM record ORDER BY _d DESC LIMIT 10"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(HNSW, "[]")),
+			"SELECT id FROM record WHERE embedding <|10,64|> $q"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(DISKANN, "[]")),
+			"SELECT id FROM record WHERE embedding <|10,50|> $q"
+		);
+	}
+
+	/// Bruteforce filters before ordering, so the exact answer stays exact.
+	#[test]
+	fn a_filtered_bruteforce_scan_restricts_before_ordering() {
+		assert_eq!(
+			surreal_knn_sql(&spec(BRUTEFORCE, NUMERIC)),
+			"SELECT id, vector::similarity::cosine(embedding, $q) AS _d FROM record WHERE number <= 50 ORDER BY _d DESC LIMIT 10"
+		);
+	}
+
+	/// The KNN operator stays leading on the index paths; the predicate follows
+	/// it.
+	#[test]
+	fn a_filtered_index_scan_keeps_the_knn_operator_leading() {
+		assert_eq!(
+			surreal_knn_sql(&spec(HNSW, NUMERIC)),
+			"SELECT id FROM record WHERE embedding <|10,64|> $q AND number <= 50"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(DISKANN, TAGS)),
+			"SELECT id FROM record WHERE embedding <|10,50|> $q AND status IN ['draft', 'archived']"
+		);
 	}
 }

@@ -103,8 +103,8 @@ and lists those which are planned in the future.
 - [x] Recall@k against exact ground truth, scored identically for every engine
 - [x] Parameter sweeps tracing the recall/latency curve over a single index build
 - [x] Reproducible corpora, so engines and runs are compared on identical data
+- [x] Filtered KNN at several selectivities, with recall scored per predicate
 - [ ] Index size on disk and resident memory
-- [ ] Filtered KNN (`WHERE … ORDER BY <embedding> LIMIT k`)
 
 **Relationships**
 
@@ -317,6 +317,8 @@ block describes one KNN benchmark:
   `l_search`) also accepts a **list**, which is swept: see below.
 - `holdout`: `{ count, seed }` for the query set. Query vectors are generated from `seed` using the
   schema's own vector generator and are **never inserted**, so no query is its own nearest neighbour.
+- `filters`: a list of predicates the KNN result is restricted to, one timed leg each plus an
+  unfiltered baseline — see [Filtered KNN](#filtered-knn).
 - `tie_epsilon`: relative tolerance when deciding whether a returned neighbour counts as correct
   (default `0.0`, i.e. strict recall@k). Engines compute distances at different precisions, so rows
   straddling the k-th boundary can swap without any real quality difference; a small tolerance stops
@@ -324,13 +326,13 @@ block describes one KNN benchmark:
 
 #### Engine support
 
-| engine | bruteforce | HNSW | DiskANN | notes |
-|---|---|---|---|---|
-| SurrealDB (3.x) | ✓ | ✓ | ✓ | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL |
-| SurrealDB (2.x) | ✓ | ✓ | — | 2.6 has no DiskANN |
-| PostgreSQL | ✓ | ✓ | — | pgvector; DiskANN would need pgvectorscale |
-| Redis Stack | ✓ (FLAT) | ✓ | — | no native L1/Manhattan metric |
-| everything else | — | — | — | the run is skipped, not failed |
+| engine | bruteforce | HNSW | DiskANN | filtered | notes |
+|---|---|---|---|---|---|
+| SurrealDB (3.x) | ✓ | ✓ | ✓ | ✓ | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL |
+| SurrealDB (2.x) | ✓ | ✓ | — | — | 2.6 has no DiskANN; filtered legs are declined, not answered unfiltered |
+| PostgreSQL | ✓ | ✓ | — | ✓ | pgvector; DiskANN would need pgvectorscale |
+| Redis Stack | ✓ (FLAT) | ✓ | — | ✓ | no native L1/Manhattan metric |
+| everything else | — | — | — | — | the run is skipped, not failed |
 
 Engines without vector support skip these runs rather than failing, so a mixed run reports `-` for
 them rather than aborting. A leg whose strategy needs an index it cannot build is skipped the same
@@ -375,6 +377,135 @@ KNN operator, Redis passes `EF_RUNTIME` on the query rather than fixing it at `F
 pgvector takes it from the `hnsw.ef_search` session GUC, which is applied to every client before each
 leg — a setting made only on the client that built the index would reach one session out of
 `--clients`.
+
+#### Filtered KNN
+
+Filtered workloads live in [`config/vector-filtered.toml`](config/vector-filtered.toml). Where the
+unfiltered config asks how fast and how accurately an index finds the nearest neighbours, this one
+asks the question production asks: *among the rows that match this predicate*.
+
+```toml
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [32, 128] }
+filters = [
+    { name = "sel~1%", field = "number", op = "lte", value = 50 },
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
+```
+
+Each predicate becomes its own timed leg, and an **unfiltered leg runs first under the same index
+build and the same warm index** — "what does filtering cost?" is not answerable against a baseline
+measured somewhere else. Legs are the cross product of the search sweep and the filter list, all over
+a single build, since the index does not depend on the predicate.
+
+Why this is worth measuring separately: engines answer a filtered query in structurally different
+ways, and the differences do not show up in latency.
+
+| strategy | accuracy | latency | failure mode |
+|---|---|---|---|
+| pre-filter | exact | grows as the predicate widens | a wide predicate degenerates to a full scan |
+| post-filter | drops as the predicate narrows | fast, and fastest when worst | a top-10 query at 1% selectivity can return nothing |
+| filtered traversal | in between | in between | can stall when matching rows are scattered across the graph |
+
+Post-filtering — search the index for `k`, then discard the hits that do not match — is the *fastest*
+of the three and the least useful, because the `k` the index chose were chosen without knowing about
+the predicate. A latency column rewards it. Recall is what exposes it, which is why every filtered
+leg is scored against an answer key computed **per predicate**: exact top-k among the matching rows,
+computed in the harness from the seeded corpus.
+
+##### What this actually measures
+
+Measured on 20k rows of 128-d clustered vectors, `top_k = 10`, HNSW `m = 16 / efc = 200 /
+ef_search = 64`, one client — all three engines answering the identical questions against the
+identical answer key:
+
+| engine | exact leg | HNSW unfiltered | HNSW @ 10% | HNSW @ 33% | latency @ 10% vs unfiltered |
+|---|---|---|---|---|---|
+| SurrealDB 3.x | 1.000 | 1.000 | 1.000 | 1.000 | 3.6 ms → 16.8 ms (**4.6x**) |
+| Redis Stack | 1.000 | 0.996 | 1.000 | 1.000 | 0.50 ms → 0.54 ms (flat) |
+| PostgreSQL (pgvector) | 1.000 | 1.000 | **0.656** (p5 **0.30**) | 0.998 | 0.83 ms → 0.70 ms (flat) |
+
+Three structurally different answers to the same question, and **the latency columns rank pgvector
+first**. It is the only one of the three that loses a third of the true neighbours at 10%
+selectivity, and its worst 5% of queries lose 70% of theirs — while costing no more than the
+unfiltered query, because it never looked at the rows it skipped. SurrealDB pays 4.6x in latency and
+keeps every neighbour; Redis pays nothing measurable and keeps every neighbour.
+
+That is the entire argument for scoring filtered legs against a filter-aware answer key rather than
+timing them. No amount of latency measurement distinguishes the first row from the third.
+
+Note every **exact** leg reads `1.000` under both predicates on all three engines. That is the check
+that the three renderings select the same rows the harness does: if SurrealQL, ANSI SQL and the
+RediSearch expression disagreed with the in-process predicate by even one row, exact search could not
+score a perfect recall against it.
+
+##### Predicate grammar
+
+A filter is `{ name, field, op, value }`:
+
+- `name`: labels the leg in the results. Must be unique within a scan; it is not part of the
+  ground-truth cache key, so renaming a predicate does not invalidate a computed answer key.
+- `field`: an `integer`, `float`, `string` or `bool` column from the value template. Other column
+  types are rejected — a datetime or decimal filter would need per-engine literal formats and
+  collation rules, and getting either subtly wrong leaves two engines answering different questions.
+- `op`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, or `in`. The ordering operators require a numeric
+  column; `in` takes a list and is the natural way to dial selectivity on a categorical column.
+- `value`: a literal, or a list for `in`. Text literals are restricted to letters, digits, space and
+  `_-./+:@` — every engine here quotes strings differently, and a mis-escaped literal does not fail
+  loudly, it silently selects a different set of rows in one engine than in another.
+
+The predicate has to be something crud-bench can evaluate, not an opaque per-dialect string like
+`scan.condition`. That is what makes a filter-aware answer key possible at all: the harness
+reconstructs the seeded corpus, applies the same predicate, and computes exact top-k over the rows it
+admits.
+
+##### Selectivity is measured, not declared
+
+The ground-truth sweep regenerates every row anyway, so it counts matches while it is there. The
+share that actually matched is reported in the leg label and in the `Filter` column of the summary
+table (`Filter_selectivity` in CSV, `filter_selectivity` in JSON). Names like `sel~1%` are intentions;
+the reported figure is what the corpus did.
+
+This also makes the sweep *cheaper* rather than dearer: a non-matching row is skipped before any
+distance is computed, so a 1%-selective predicate pays for about 1% of the arithmetic.
+
+A predicate that matches no rows fails the run rather than reporting it. Every query would have an
+empty answer, recall would be undefined, and the timed leg would be measuring an engine returning
+nothing — a configuration mistake, not a result.
+
+##### How each engine is asked
+
+| engine | rendering |
+|---|---|
+| SurrealDB (3.x) | `WHERE <field> <\|k,ef\|> $q AND <pred>`, with the KNN operator leading; bruteforce gets a plain `WHERE` before the `ORDER BY` |
+| PostgreSQL | `SELECT id FROM record WHERE <pred> ORDER BY <field> <op> $1 LIMIT k` |
+| Redis Stack | `(<pred>)=>[KNN k @v $q …]`, a hybrid query; filter columns are mirrored into the `vec:{key}` HASH and declared `NUMERIC` / `TAG CASESENSITIVE` in `FT.CREATE` |
+
+`CASESENSITIVE` matters: RediSearch folds case on TAG fields by default, which would admit rows the
+answer key excludes and produce a systematic recall error that looks like an index fault.
+
+SurrealDB 2.x declines filtered legs and reports `-`. Running the unfiltered query and scoring it
+against a filter-aware answer key would report a recall collapse that says nothing about the engine,
+and a skip is distinguishable from that where a wrong number is not.
+
+Two caveats worth knowing when reading the numbers:
+
+- **No supporting index is built on the filter column.** pgvector was measured post-filtering its
+  HNSW scan, which is its documented default (`hnsw.iterative_scan = off`); it was not choosing
+  between that and a bitmap index scan, because there was no index to scan. That is a deliberate
+  scope choice for this first cut, not a claim about what pgvector does when the filter column is
+  indexed or iterative scan is enabled.
+- **Redis mirrors filter columns on every write.** They ride in the same `HSET` as the embedding, so
+  the cost is marginal, but the create and update phases of a filtered config are not byte-identical
+  in work to those of `config/vector.toml`.
+
+```bash
+cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 --config config/vector-filtered.toml
+```
 
 #### Concurrency
 

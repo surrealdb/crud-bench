@@ -7,6 +7,7 @@ use crate::memory::Config;
 use crate::util::sql::bench_to_postgres_param;
 use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
+use crate::vectorfilter::ListSyntax;
 use crate::{
 	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
 	VectorQuerySpec,
@@ -28,6 +29,32 @@ fn pgvector_ops_for(d: VectorDistance) -> &'static str {
 		VectorDistance::InnerProduct => "vector_ip_ops",
 		VectorDistance::Manhattan => "vector_l1_ops",
 	}
+}
+
+/// Build the KNN statement for a resolved vector query.
+///
+/// Pure, so the statement can be asserted without a server — see the note on
+/// SurrealDB's equivalent for why the filtered forms in particular need that.
+///
+/// The predicate is inlined rather than bound, so the query vector keeps `$1`
+/// whatever the filter looks like. Safe to inline because
+/// `VectorFilter::validate` restricts literals to a charset that needs no
+/// escaping; see the charset rationale in `vectorfilter`.
+///
+/// Which plan this produces is pgvector's choice and the thing being measured:
+/// it may pre-filter with a sequential scan, or search the HNSW index and
+/// discard the non-matching hits. The second is fast and returns fewer than k
+/// rows on a narrow predicate, which is exactly the collapse recall is here to
+/// expose.
+fn pgvector_knn_sql(vq: &VectorQuerySpec) -> String {
+	let op = pgvector_op_for(vq.distance);
+	let field = AnsiSqlDialect::escape_field(vq.field.clone());
+	let k = vq.top_k;
+	let where_clause = vq
+		.filter()
+		.map(|f| format!("WHERE {} ", f.to_sql::<AnsiSqlDialect>(ListSyntax::Parens)))
+		.unwrap_or_default();
+	format!("SELECT id FROM record {where_clause}ORDER BY {field} {op} $1 LIMIT {k}")
 }
 
 /// pgvector distance operator used in `ORDER BY` for a given [`VectorDistance`].
@@ -610,10 +637,7 @@ impl PostgresClient {
 			.vector_query
 			.as_ref()
 			.ok_or_else(|| anyhow!("knn_scan: scan `{}` missing vector_query", scan.name))?;
-		let op = pgvector_op_for(vq.distance);
-		let field = AnsiSqlDialect::escape_field(vq.field.clone());
-		let k = vq.top_k;
-		let stm = format!("SELECT id FROM record ORDER BY {field} {op} $1 LIMIT {k}");
+		let stm = pgvector_knn_sql(vq);
 		let q = pgvector::Vector::from(query.to_vec());
 		let res = self.client.query(&stm, &[&q]).await?;
 		let mut hits = Vec::with_capacity(res.len());
@@ -815,5 +839,52 @@ fn get_column_type(column_type: &ColumnType) -> &'static str {
 		ColumnType::Decimal => "NUMERIC",
 		ColumnType::Bytes => "BYTEA",
 		ColumnType::FloatVector(_) => "vector",
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::pgvector_knn_sql;
+	use crate::VectorQuerySpec;
+
+	/// Build a resolved [`VectorQuerySpec`] the way the leg expansion hands one
+	/// to an adapter: at most one search value and at most one predicate.
+	fn spec(strategy: &str, filters: &str) -> VectorQuerySpec {
+		let json = format!(
+			r#"{{ "field": "embedding", "top_k": 10, "distance": "cosine",
+			   "index_strategy": {strategy}, "filters": {filters} }}"#
+		);
+		serde_json::from_str(&json).expect("spec parses")
+	}
+
+	const HNSW: &str = r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": 64 }"#;
+
+	/// The query vector stays `$1` whatever the predicate looks like — the
+	/// filter is inlined precisely so the binding does not have to renumber.
+	#[test]
+	fn the_query_vector_keeps_its_placeholder() {
+		assert_eq!(
+			pgvector_knn_sql(&spec(HNSW, "[]")),
+			r#"SELECT id FROM record ORDER BY "embedding" <=> $1 LIMIT 10"#
+		);
+		assert_eq!(
+			pgvector_knn_sql(&spec(
+				HNSW,
+				r#"[{ "name": "sel", "field": "number", "op": "lte", "value": 50 }]"#
+			)),
+			r#"SELECT id FROM record WHERE "number" <= 50 ORDER BY "embedding" <=> $1 LIMIT 10"#
+		);
+	}
+
+	/// An `IN` list is parenthesised for ANSI SQL, not bracketed.
+	#[test]
+	fn an_in_list_uses_sql_brackets() {
+		assert_eq!(
+			pgvector_knn_sql(&spec(
+				HNSW,
+				r#"[{ "name": "live", "field": "status", "op": "in", "value": ["draft", "archived"] }]"#
+			)),
+			r#"SELECT id FROM record WHERE "status" IN ('draft', 'archived') ORDER BY "embedding" <=> $1 LIMIT 10"#
+		);
 	}
 }

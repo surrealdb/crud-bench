@@ -208,7 +208,7 @@ pub(crate) struct ScanResult {
 }
 
 /// Column titles for the ASCII summary table ([`BenchmarkResult`]'s [`Display`] impl).
-const HEADERS: [&str; 13] = [
+const HEADERS: [&str; 14] = [
 	"Test",
 	"Total time",
 	"Mean",
@@ -217,6 +217,7 @@ const HEADERS: [&str; 13] = [
 	"95th",
 	"Min",
 	"Recall",
+	"Filter",
 	"OPS",
 	"CPU",
 	"Memory",
@@ -225,7 +226,7 @@ const HEADERS: [&str; 13] = [
 ];
 
 /// Extended columns for CSV export (extra quantiles + load averages).
-const CSV_HEADERS: [&str; 25] = [
+const CSV_HEADERS: [&str; 26] = [
 	"Test",
 	"Total time",
 	"Mean",
@@ -241,6 +242,7 @@ const CSV_HEADERS: [&str; 25] = [
 	"Recall_mean",
 	"Recall_p5",
 	"Recall_min",
+	"Filter_selectivity",
 	"OPS",
 	"CPU_avg",
 	"CPU_min",
@@ -254,9 +256,9 @@ const CSV_HEADERS: [&str; 25] = [
 ];
 
 /// Placeholder cells when a phase was skipped or unsupported.
-const SKIP: [&str; 12] = ["-"; 12];
+const SKIP: [&str; 13] = ["-"; 13];
 /// Placeholder row for wide CSV rows.
-const CSV_SKIP: [&str; 24] = ["-"; 24];
+const CSV_SKIP: [&str; 25] = ["-"; 25];
 
 /// ASCII summary table matching [`HEADERS`] (used by CLI stdout).
 impl Display for BenchmarkResult {
@@ -680,6 +682,15 @@ pub(crate) struct OperationResult {
 	/// without a corpus seed (no reproducible corpus, so no answer key).
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub(crate) recall: Option<RecallSummary>,
+	/// Share of the corpus this leg's KNN filter admitted, measured while the
+	/// answer key was computed. `None` for every unfiltered leg.
+	///
+	/// Reported beside recall because the two are only meaningful together: an
+	/// engine that post-filters answers a 1%-selective query with a handful of
+	/// rows very quickly, and the latency alone reads as a win. Selectivity is
+	/// what turns that into a recall collapse anyone can see.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub(crate) filter_selectivity: Option<f64>,
 	/// Snapshot CPU at end of phase (normalised by core count).
 	cpu_usage: f32,
 	/// Min / max / avg from polled samples when available.
@@ -718,6 +729,20 @@ impl OperationResult {
 	pub(crate) fn with_recall(mut self, recall: Option<RecallSummary>) -> Self {
 		self.recall = recall;
 		self
+	}
+
+	/// Attach the measured selectivity of a filtered vector leg.
+	pub(crate) fn with_filter_selectivity(mut self, selectivity: Option<f64>) -> Self {
+		self.filter_selectivity = selectivity;
+		self
+	}
+
+	/// Selectivity cell for the summary table, or `-` for an unfiltered leg.
+	fn selectivity_display(&self) -> String {
+		match self.filter_selectivity {
+			Some(s) => crate::benchmark::format_selectivity(s),
+			None => "-".to_string(),
+		}
 	}
 
 	/// Finalises histogram + [`OperationMetric`] snapshots into serialisable stats.
@@ -786,6 +811,8 @@ impl OperationResult {
 			samples: metric.samples,
 			// Set by `with_recall` for vector scans only.
 			recall: None,
+			// Set by `with_filter_selectivity` for filtered vector legs only.
+			filter_selectivity: None,
 			mean: histogram.mean(),
 			min: histogram.min(),
 			max: histogram.max(),
@@ -841,6 +868,7 @@ impl OperationResult {
 			format!("{:.2} ms", self.q95 as f64 / 1000.0),
 			format!("{:.2} ms", self.min as f64 / 1000.0),
 			self.recall_display(),
+			self.selectivity_display(),
 			format!("{:.2}", self.ops),
 			cpu_display,
 			memory_display,
@@ -897,6 +925,7 @@ impl OperationResult {
 			self.recall.map_or_else(|| "-".to_string(), |r| format!("{:.4}", r.mean)),
 			self.recall.map_or_else(|| "-".to_string(), |r| format!("{:.4}", r.p5)),
 			self.recall.map_or_else(|| "-".to_string(), |r| format!("{:.4}", r.min)),
+			self.filter_selectivity.map_or_else(|| "-".to_string(), |s| format!("{s:.6}")),
 			format!("{:.2}", self.ops),
 			format!("{:.2}", cpu_avg),
 			format!("{:.2}", cpu_min),
