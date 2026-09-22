@@ -328,7 +328,7 @@ block describes one KNN benchmark:
 
 | engine | bruteforce | HNSW | DiskANN | filtered | notes |
 |---|---|---|---|---|---|
-| SurrealDB (3.x) | ✓ | ✓ | ✓ | ✓ | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL |
+| SurrealDB (3.x) | ✓ | ✓ | ✓ | ✓ (HNSW + DiskANN) | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL |
 | SurrealDB (2.x) | ✓ | ✓ | — | — | 2.6 has no DiskANN; filtered legs are declined, not answered unfiltered |
 | PostgreSQL | ✓ | ✓ | — | ✓ | pgvector; DiskANN would need pgvectorscale |
 | Redis Stack | ✓ (FLAT) | ✓ | — | ✓ | no native L1/Manhattan metric |
@@ -438,6 +438,26 @@ keeps every neighbour; Redis pays nothing measurable and keeps every neighbour.
 That is the entire argument for scoring filtered legs against a filter-aware answer key rather than
 timing them. No amount of latency measurement distinguishes the first row from the third.
 
+The divergence is not only between engines. DiskANN on the same SurrealDB build, same corpus, same
+predicates, sweeping `l_search`:
+
+| `l_search` | unfiltered | @ 10% | @ 33% |
+|---|---|---|---|
+| 50 | 1.000 (0.88 ms) | **0.512** (p5 0.20, 1.09 ms) | 1.000 (1.13 ms) |
+| 200 | 1.000 (0.90 ms) | 1.000 (2.46 ms) | 1.000 (1.33 ms) |
+| 400 | 1.000 (0.95 ms) | 1.000 (2.63 ms) | 1.000 (1.47 ms) |
+
+A traversal budget that is ample unfiltered — `l_search = 50` reaches exact at every budget with no
+predicate — finds barely half the true neighbours once a 10%-selective predicate is applied, and
+needs roughly 4x the budget to recover. Where SurrealDB's HNSW absorbed the same predicate by
+traversing harder at a fixed `ef_search` (4.6x latency, recall intact), DiskANN keeps its latency and
+loses recall instead. And at `l_search = 50` the *wrong* answer is the faster one — 1.09 ms against
+2.46 ms — so latency picks it again.
+
+This is why the filter list expands against the search sweep rather than beside it: the search budget
+a filtered query needs depends on the selectivity, and any single point would have reported DiskANN
+as either broken or fine depending on an arbitrary choice.
+
 Note every **exact** leg reads `1.000` under both predicates on all three engines. That is the check
 that the three renderings select the same rows the harness does: if SurrealQL, ANSI SQL and the
 RediSearch expression disagreed with the in-process predicate by even one row, exact search could not
@@ -481,7 +501,7 @@ nothing — a configuration mistake, not a result.
 
 | engine | rendering |
 |---|---|
-| SurrealDB (3.x) | `WHERE <field> <\|k,ef\|> $q AND <pred>`, with the KNN operator leading; bruteforce gets a plain `WHERE` before the `ORDER BY` |
+| SurrealDB (3.x) | `WHERE <field> <\|k,ef\|> $q AND <pred>`, with the KNN operator leading — HNSW and DiskANN share this path; bruteforce gets a plain `WHERE` before the `ORDER BY` |
 | PostgreSQL | `SELECT id FROM record WHERE <pred> ORDER BY <field> <op> $1 LIMIT k` |
 | Redis Stack | `(<pred>)=>[KNN k @v $q …]`, a hybrid query; filter columns are mirrored into the `vec:{key}` HASH and declared `NUMERIC` / `TAG CASESENSITIVE` in `FT.CREATE` |
 
@@ -491,6 +511,10 @@ answer key excludes and produce a systematic recall error that looks like an ind
 SurrealDB 2.x declines filtered legs and reports `-`. Running the unfiltered query and scoring it
 against a filter-aware answer key would report a recall collapse that says nothing about the engine,
 and a skip is distinguishable from that where a wrong number is not.
+
+DiskANN is filtered wherever it exists, which today is SurrealDB 3.x alone — it shares the index path
+above with HNSW. Neither pgvector nor Redis Stack ships a DiskANN index, so there is nowhere else to
+apply it; pgvectorscale's `diskann` would be a separate adapter and is tracked in #284.
 
 Two caveats worth knowing when reading the numbers:
 
