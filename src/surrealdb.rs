@@ -159,7 +159,7 @@ fn surreal_knn_sql(vq: &VectorQuerySpec) -> String {
 			let dir = surreal_distance_order(vq.distance);
 			let where_clause = pred.as_ref().map(|p| format!("WHERE {p} ")).unwrap_or_default();
 			// Aliased distance so the parser's "ORDER BY idiom must appear
-			// in SELECT" rule is satisfied (surrealdb-private 0df9e38c era).
+			// in SELECT" rule is satisfied.
 			format!(
 				"SELECT id, {func_path}({field}, $q) AS _d FROM record {where_clause}ORDER BY _d {dir} LIMIT {k}"
 			)
