@@ -838,7 +838,7 @@ impl BenchmarkClient for SurrealDBClient {
 		}
 		// Wait until the index is ready (same poll loop as `build_index`).
 		let started = Instant::now();
-		loop {
+		let reports_materialisation = loop {
 			let q = format!("INFO FOR INDEX {name} ON record");
 			let r: surrealdb::types::Value = self
 				.db
@@ -851,11 +851,40 @@ impl BenchmarkClient for SurrealDBClient {
 			let building = r.get("building");
 			let status = building.get("status").as_string().expect(&j);
 			match status.as_str() {
-				"ready" => break,
+				// The same reply that says the index is ready says whether this
+				// server reports materialisation at all.
+				"ready" => break matches!(building.get("compacting"), Value::Bool(_)),
 				"indexing" | "cleaning" | "started" => {}
 				_ => bail!("Unexpected status: {}", r.into_json_value()),
 			}
 			sleep(index_poll_interval(started.elapsed())).await;
+		};
+		// Refuse to time a vector index whose materialisation cannot be seen.
+		//
+		// `status = "ready"` arrives once existing rows are enumerated into
+		// per-record pending entries; the graph is built from them afterwards,
+		// and until it is, a kNN query scores the remainder by hand.
+		// `building.compacting` is the only signal for that, and servers that
+		// predate the field defer the same work without reporting it — including
+		// the 3.2.4 crate that embedded mode links, which has the per-record
+		// pending keys but no such field. On those, `await_index_queryable`
+		// would return while the index still scans, and every timed leg would
+		// measure that scan under the index's name. So skip instead: the leg
+		// reports `-`, which is honest, rather than a number that is not.
+		//
+		// The index was defined, and a skipped build is never dropped by the
+		// harness; remove it here, or the next leg building an index of the same
+		// name — `config/vector.toml` reuses one across HNSW and DiskANN — would
+		// collide with it.
+		if !reports_materialisation {
+			eprintln!(
+				"SurrealDB: skipping vector index `{name}`: this server does not report \
+				 `building.compacting`, so it cannot say when the index has finished \
+				 materialising, and a timed leg could measure a scan over the unmaterialised \
+				 remainder. Run against a server that reports it — the nightly Docker image does."
+			);
+			self.drop_index(name).await?;
+			bail!(NOT_SUPPORTED_ERROR);
 		}
 		Ok(())
 	}
@@ -885,7 +914,11 @@ impl BenchmarkClient for SurrealDBClient {
 	/// itself.
 	///
 	/// `compacting` is absent on older servers, where its absence reads as
-	/// "not compacting" and behaviour is exactly as before.
+	/// "not compacting" and the check is the pre-existing one. That is only
+	/// reachable for the kinds `build_index` defines — fulltext, count, standard
+	/// indexes. A vector index on such a server never gets here:
+	/// `build_vector_index` refuses it, because its deferred work is exactly what
+	/// the missing field would have reported.
 	///
 	/// Called inside the timed build, so it is what makes SurrealDB's build time
 	/// comparable with an engine whose build call returns only when the index is

@@ -328,6 +328,15 @@ same thing across engines. Result files written before this change lack `index_b
 their metadata, and the comparison viewer flags a mix of old and new files rather than setting one
 definition's number beside the other's.
 
+A search is only ever timed against an index that has finished. For SurrealDB that means waiting
+until `INFO FOR INDEX` reports `ready`, no `pending` entries, **and** `compacting: false` — `ready`
+alone arrives while a vector index is still being built from per-record pending entries, and a kNN
+query in that state scores the remainder by hand. A server that does not report `compacting` cannot
+say when that has finished, so crud-bench **skips** HNSW and DiskANN legs there, reporting `-`,
+rather than time a scan wearing the index's name. That includes the 3.2.4 crate embedded mode links
+(`-e memory`, `-e rocksdb:…`, `-e surrealkv:…`): it defers the same work without reporting it. The
+nightly Docker image, which server mode uses by default, reports it.
+
 The wait is bounded by `--operation-timeout`, like every timed operation. A build that used to fit
 in the 30-minute default can stop fitting once its materialisation counts — a large vector index is
 the usual case — and the error then says so; raise the timeout to allow for it. Readiness is polled
@@ -360,7 +369,7 @@ block describes one KNN benchmark:
 
 | engine | bruteforce | HNSW | DiskANN | filtered | notes |
 |---|---|---|---|---|---|
-| SurrealDB (3.x) | ✓ | ✓ | ✓ | ✓ (HNSW + DiskANN) | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL |
+| SurrealDB (3.x) | ✓ | ✓ | ✓ | ✓ (HNSW + DiskANN) | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL; HNSW and DiskANN legs need a server that reports `building.compacting` (see [Index build time](#index-build-time)) |
 | SurrealDB (2.x) | ✓ | ✓ | — | — | 2.6 has no DiskANN; filtered legs are declined, not answered unfiltered |
 | PostgreSQL | ✓ | ✓ | — | ✓ | pgvector; DiskANN would need pgvectorscale |
 | Redis Stack | ✓ (FLAT) | ✓ | — | ✓ | no native L1/Manhattan metric |
