@@ -57,7 +57,20 @@ pub(crate) struct BenchmarkMetadata {
 	/// exactly that reason, but a result file recorded only the seed, leaving
 	/// two such runs looking comparable.
 	pub(crate) template_digest: Option<String>,
+	/// What an index build row measures in this file.
+	///
+	/// Always [`INDEX_BUILD_TIMING`] now. Files written before build rows were
+	/// timed until the index is queryable lack the field, and their build rows
+	/// measured only the engine's build call — for an engine that finishes in
+	/// the background, a small and non-comparable fraction of the build. The
+	/// comparison viewer treats a mix of the two as a mismatch rather than
+	/// placing one definition's number beside the other's.
+	pub(crate) index_build_timing: &'static str,
 }
+
+/// Value of [`BenchmarkMetadata::index_build_timing`]: build rows run from the
+/// build call until the index serves at index speed.
+pub(crate) const INDEX_BUILD_TIMING: &str = "until_queryable";
 
 /// Full benchmark output: timings per phase plus one representative generated [`BenchValue`].
 #[derive(Serialize)]
@@ -226,7 +239,7 @@ const HEADERS: [&str; 14] = [
 ];
 
 /// Extended columns for CSV export (extra quantiles + load averages).
-const CSV_HEADERS: [&str; 26] = [
+const CSV_HEADERS: [&str; 27] = [
 	"Test",
 	"Total time",
 	"Mean",
@@ -253,12 +266,13 @@ const CSV_HEADERS: [&str; 26] = [
 	"Writes",
 	"System load",
 	"System load (1m/5m/15m)",
+	"Build_returned",
 ];
 
 /// Placeholder cells when a phase was skipped or unsupported.
 const SKIP: [&str; 13] = ["-"; 13];
 /// Placeholder row for wide CSV rows.
-const CSV_SKIP: [&str; 25] = ["-"; 25];
+const CSV_SKIP: [&str; 26] = ["-"; 26];
 
 /// ASCII summary table matching [`HEADERS`] (used by CLI stdout).
 impl Display for BenchmarkResult {
@@ -691,6 +705,19 @@ pub(crate) struct OperationResult {
 	/// what turns that into a recall collapse anyone can see.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub(crate) filter_selectivity: Option<f64>,
+	/// For an index build: when the engine's build call returned, measured from
+	/// the start of the build. `None` for every other operation.
+	///
+	/// A build row is timed until the index serves at index speed, because that
+	/// is the only definition under which a synchronous engine and one that
+	/// finishes in the background can share a column. This keeps the other half:
+	/// for pgvector it equals the full build, while for a 1M-row SurrealDB HNSW
+	/// index it was under a minute of a build that ran on for over an hour. It is
+	/// diagnostic, not comparable — the summary table deliberately does not show
+	/// it, so the column readers compare is the one that means the same thing
+	/// everywhere.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	build_returned: Option<Duration>,
 	/// Snapshot CPU at end of phase (normalised by core count).
 	cpu_usage: f32,
 	/// Min / max / avg from polled samples when available.
@@ -735,6 +762,25 @@ impl OperationResult {
 	pub(crate) fn with_filter_selectivity(mut self, selectivity: Option<f64>) -> Self {
 		self.filter_selectivity = selectivity;
 		self
+	}
+
+	/// Attach when an index build's own call returned.
+	pub(crate) fn with_build_returned(mut self, returned: Option<Duration>) -> Self {
+		self.build_returned = returned;
+		self
+	}
+
+	/// When an index build's own call returned, if this is a build.
+	pub(crate) fn build_returned(&self) -> Option<Duration> {
+		self.build_returned
+	}
+
+	/// The slowest sample. For a single-sample phase such as an index build,
+	/// that is the operation's own duration — measured on the same clock as
+	/// [`Self::build_returned`], which the phase's wall-clock total is not: that
+	/// also counts spawning the workers and stopping the resource monitor.
+	pub(crate) fn slowest(&self) -> Duration {
+		Duration::from_micros(self.max)
 	}
 
 	/// Selectivity cell for the summary table, or `-` for an unfiltered leg.
@@ -813,6 +859,8 @@ impl OperationResult {
 			recall: None,
 			// Set by `with_filter_selectivity` for filtered vector legs only.
 			filter_selectivity: None,
+			// Set by `with_build_returned` for index builds only.
+			build_returned: None,
 			mean: histogram.mean(),
 			min: histogram.min(),
 			max: histogram.max(),
@@ -939,6 +987,7 @@ impl OperationResult {
 				"{:.2}/{:.2}/{:.2}",
 				self.load_avg.one, self.load_avg.five, self.load_avg.fifteen
 			),
+			self.build_returned.map_or_else(|| "-".to_string(), format_duration),
 		]
 	}
 

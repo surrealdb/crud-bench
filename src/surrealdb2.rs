@@ -13,7 +13,7 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext, index_poll_interval};
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
@@ -28,7 +28,7 @@ use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::env;
 use std::hint::black_box;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::Config;
@@ -523,7 +523,9 @@ impl BenchmarkClient for SurrealDB2Client {
 		// Poll until the index reports ready. v2's `INFO FOR INDEX` returns
 		// `{ building: { status } }` — same shape as v3 — but the SDK has no
 		// `Value::get()` helper, so we hop through `into_json()` and walk the
-		// JSON instead.
+		// JSON instead. The poll sits inside the timed build, so its cadence
+		// adapts rather than rounding the build up to a fixed step.
+		let started = Instant::now();
 		loop {
 			let sql = format!("INFO FOR INDEX {name} ON record");
 			let r: surrealdb::Value = self
@@ -544,7 +546,7 @@ impl BenchmarkClient for SurrealDB2Client {
 				"indexing" | "cleaning" | "started" => {}
 				other => bail!("Unexpected index status `{other}`: {j}"),
 			}
-			sleep(Duration::from_millis(500)).await;
+			sleep(index_poll_interval(started.elapsed())).await;
 		}
 		Ok(())
 	}
@@ -629,6 +631,7 @@ impl BenchmarkClient for SurrealDB2Client {
 			}
 			return Err(log_sql_err(&sql)(e));
 		}
+		let started = Instant::now();
 		loop {
 			let q = format!("INFO FOR INDEX {name} ON record");
 			let r: surrealdb::Value = self
@@ -649,7 +652,7 @@ impl BenchmarkClient for SurrealDB2Client {
 				"indexing" | "cleaning" | "started" => {}
 				other => bail!("Unexpected index status `{other}`: {j}"),
 			}
-			sleep(Duration::from_millis(500)).await;
+			sleep(index_poll_interval(started.elapsed())).await;
 		}
 		Ok(())
 	}

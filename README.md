@@ -99,7 +99,7 @@ and lists those which are planned in the future.
 - [x] Bruteforce (exact) KNN query
 - [x] HNSW KNN query, with configurable `m` / `ef_construction` / `ef_search`
 - [x] DiskANN KNN query, with configurable `degree` / `l_build` / `alpha` / `l_search`
-- [x] Vector index build timing
+- [x] Vector index build timing, until the index serves at index speed
 - [x] Recall@k against exact ground truth, scored identically for every engine
 - [x] Parameter sweeps tracing the recall/latency curve over a single index build
 - [x] Reproducible corpora, so engines and runs are compared on identical data
@@ -302,6 +302,48 @@ Multiple benchmarks that share the same filter, index, and write settings can us
 ]
 ```
 
+#### Index build time
+
+An `[I]ndex · … · build` row is timed from the build call until the index **serves at index speed**,
+which for some engines is long after the build call returns. The two moments coincide for an engine
+whose build call does all the work, and can be minutes to hours apart for one that finishes the index
+in the background; only the later one means the same thing for both. At 100k rows × 768-d, HNSW
+`M 16` / `EFC 200` — one run per engine on a shared machine, so the absolute times are only
+indicative; the split is the point:
+
+| engine | build call returned | index queryable | why |
+|---|---|---|---|
+| pgvector | 2 m 19 s | 2 m 19 s | `CREATE INDEX` is synchronous |
+| Redis | 4.5 ms | 12.1 s | `FT.CREATE` accepts the schema; documents are indexed afterwards |
+| SurrealDB | 12.9 s | 2 m 50 s | `ready` follows row enumeration; the graph is built afterwards |
+
+Timing the build call alone reported the first column. At 1M rows that made SurrealDB look ~28×
+faster to build than pgvector — 56 s against 25 m 29 s — while its index was still being built an
+hour later. So each engine's wait for its index to become queryable — pending entries drained,
+materialisation finished, background indexing complete — is part of the timed build, and the CPU and
+memory sampled for the build row cover it too.
+
+The build call's own time is kept as a diagnostic, `build_returned` in the JSON and `Build_returned`
+in the CSV. It is deliberately not in the summary table: it is the figure that does **not** mean the
+same thing across engines. Result files written before this change lack `index_build_timing` in
+their metadata, and the comparison viewer flags a mix of old and new files rather than setting one
+definition's number beside the other's.
+
+A search is only ever timed against an index that has finished. For SurrealDB that means waiting
+until `INFO FOR INDEX` reports `ready`, no `pending` entries, **and** `compacting: false` — `ready`
+alone arrives while a vector index is still being built from per-record pending entries, and a kNN
+query in that state scores the remainder by hand. A server that does not report `compacting` cannot
+say when that has finished, so crud-bench **skips** HNSW and DiskANN legs there, reporting `-`,
+rather than time a scan wearing the index's name. That includes the 3.2.4 crate embedded mode links
+(`-e memory`, `-e rocksdb:…`, `-e surrealkv:…`): it defers the same work without reporting it. The
+nightly Docker image, which server mode uses by default, reports it.
+
+The wait is bounded by `--operation-timeout`, like every timed operation. A build that used to fit
+in the 30-minute default can stop fitting once its materialisation counts — a large vector index is
+the usual case — and the error then says so; raise the timeout to allow for it. Readiness is polled
+at a tenth of the time waited so far, between 10 ms and 250 ms, so a reported build is at most
+`max(10 ms, min(10%, 250 ms))` late: a sub-second build is not rounded up to a whole poll interval.
+
 ### Vector search
 
 Vector workloads live in [`config/vector.toml`](config/vector.toml). Each `[scans.runs.vector_query]`
@@ -328,7 +370,7 @@ block describes one KNN benchmark:
 
 | engine | bruteforce | HNSW | DiskANN | filtered | notes |
 |---|---|---|---|---|---|
-| SurrealDB (3.x) | ✓ | ✓ | ✓ | ✓ (HNSW + DiskANN) | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL |
+| SurrealDB (3.x) | ✓ | ✓ | ✓ | ✓ (HNSW + DiskANN) | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL; HNSW and DiskANN legs need a server that reports `building.compacting` (see [Index build time](#index-build-time)) |
 | SurrealDB (2.x) | ✓ | ✓ | — | — | 2.6 has no DiskANN; filtered legs are declined, not answered unfiltered |
 | PostgreSQL | ✓ | ✓ | — | ✓ | pgvector; DiskANN would need pgvectorscale |
 | Redis Stack | ✓ (FLAT) | ✓ | — | ✓ | no native L1/Manhattan metric |
