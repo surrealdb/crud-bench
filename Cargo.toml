@@ -143,13 +143,13 @@ serial_test = "3.4.0"
 #   alone would rank it best. Only the recall axis catches it.
 #
 #   3.3.0-beta.4 fixes that recall bug, but was published 2026-09-09 22:52,
-#   about eighty minutes before surrealdb-private#1225 ("keep the transaction
-#   alive while its snapshot is read") merged. Without that fix a snapshot can
-#   outlive its transaction, and the string90 benchmark segfaults on embedded
-#   RocksDB in CI — intermittently, which is what a use-after-free looks like.
+#   about eighty minutes before the engine fix that keeps a transaction alive
+#   while its snapshot is read landed. Without that fix a snapshot can outlive
+#   its transaction, and the string90 benchmark segfaults on embedded RocksDB
+#   in CI — intermittently, which is what a use-after-free looks like.
 #
 # 3.3.0-beta.5 should carry both: the recall fix by inheritance and the RocksDB
-# fix via the backport in surrealdb-private#1269. Take it once published.
+# fix by backport. Take it once published.
 surrealdb = { version = "3.2.4", default-features = false, optional = true }
 surrealdb2 = { package = "surrealdb", version = "2.6", default-features = false, optional = true }
 surrealkv = { version = "0.21.2", optional = true }
