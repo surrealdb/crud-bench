@@ -181,10 +181,8 @@ impl SurrealMXClient {
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<BenchValue> {
-		// Create a new transaction
-		let txn = self.db.transaction(false);
-		// Process the data using zero-copy borrowed value inspection
-		let res = txn.with_value(key, |bytes| BenchValue::decode(bytes))?;
+		// Process the data directly using zero-copy borrowed value inspection
+		let res = self.db.with_value(key, BenchValue::decode)?;
 		// Check the value exists
 		assert!(res.is_some());
 		let val = res.unwrap()?;

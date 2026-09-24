@@ -8387,6 +8387,7 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-queue",
  "crossbeam-skiplist",
+ "crossbeam-utils",
  "lz4",
  "papaya",
  "parking_lot",
