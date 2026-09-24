@@ -1015,6 +1015,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6bd91ee7b2422bcb158d90ef4d14f75ef67f340943fc4149891dcce8f8b972a3"
 
 [[package]]
+name = "byteslice"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "serde",
+]
+
+[[package]]
 name = "byteview"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1627,7 +1635,8 @@ dependencies = [
  "surrealdb-rocksdb",
  "surrealkv 0.21.3",
  "surrealkv 0.21.4",
- "surrealmx 0.18.0",
+ "surrealmx 0.27.0",
+ "surrealmx 0.27.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sysinfo 0.37.2",
  "tokio",
  "tokio-postgres",
@@ -8298,6 +8307,7 @@ dependencies = [
  "quick_cache 0.6.22",
  "rand 0.9.4",
  "snap",
+ "surrealkv-compat-rocksdb",
  "tokio",
  "xxhash-rust",
  "zstd",
@@ -8333,10 +8343,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "surrealkv-compat-rocksdb"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "log",
+ "lz4_flex 0.12.2",
+ "snap",
+ "thiserror 2.0.20",
+ "zstd",
+]
+
+[[package]]
 name = "surrealmx"
-version = "0.18.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6508449a7d1379a92a51ba49391b48ccab0b60dd11a4277c0dda965d8c99dbff"
+checksum = "9e8a87f050a4860832ccf4a53e43ea264e98d27618983602b5c575e6df296054"
 dependencies = [
  "arc-swap",
  "bincode 2.0.1",
@@ -8356,9 +8378,31 @@ dependencies = [
 
 [[package]]
 name = "surrealmx"
-version = "0.22.0"
+version = "0.27.0"
+dependencies = [
+ "arc-swap",
+ "bincode 2.0.1",
+ "bytes",
+ "byteslice",
+ "crossbeam-deque",
+ "crossbeam-queue",
+ "crossbeam-skiplist",
+ "lz4",
+ "papaya",
+ "parking_lot",
+ "serde",
+ "thin-vec",
+ "thiserror 2.0.20",
+ "tracing",
+ "web-time",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "surrealmx"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e8a87f050a4860832ccf4a53e43ea264e98d27618983602b5c575e6df296054"
+checksum = "1b5f1002984c1c3918014d924435a7280a6de620dadd51d4db59de4f56e7202c"
 dependencies = [
  "arc-swap",
  "bincode 2.0.1",
@@ -8584,6 +8628,12 @@ checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
 ]
+
+[[package]]
+name = "thin-vec"
+version = "0.2.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4568d7e143ec86d2021c338bae2afa88699e84b8e0af523626654fe6f03a1748"
 
 [[package]]
 name = "thiserror"

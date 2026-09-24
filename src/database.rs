@@ -68,6 +68,8 @@ pub(crate) enum Database {
 	Surrealkv1,
 	#[cfg(feature = "surrealmx")]
 	Surrealmx,
+	#[cfg(feature = "surrealmx1")]
+	Surrealmx1,
 	/// SurrealDS - Multi-instance distributed SurrealDB benchmarking.
 	///
 	/// This option enables benchmarking against multiple SurrealDB instances simultaneously
@@ -568,6 +570,27 @@ impl Database {
 					)
 					.await
 			}
+			#[cfg(feature = "surrealmx1")]
+			Database::Surrealmx1 => {
+				benchmark.persisted = false;
+				benchmark
+					.run::<_, DefaultDialect, _>(
+						crate::surrealmx1::SurrealMX1ClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
 		}
 	}
 
@@ -614,7 +637,9 @@ impl Database {
 			#[cfg(feature = "surrealkv1")]
 			Database::Surrealkv1 => "SurrealKV (v1)",
 			#[cfg(feature = "surrealmx")]
-			Database::Surrealmx => "SurrealMX",
+			Database::Surrealmx => "SurrealMX (next)",
+			#[cfg(feature = "surrealmx1")]
+			Database::Surrealmx1 => "SurrealMX (v1)",
 			#[cfg(feature = "surrealdb")]
 			Database::Surrealdb => "SurrealDB",
 			#[cfg(feature = "surrealdb2")]

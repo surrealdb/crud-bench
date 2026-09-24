@@ -346,7 +346,8 @@ surrealdb2-embedded-rocksdb|surrealdb2|embedded|SurrealDB 2.x embedded with Rock
 surrealdb2-embedded-surrealkv|surrealdb2|embedded|SurrealDB 2.x embedded with SurrealKV storage|-e surrealkv:DATA_DIR
 surrealkv|surrealkv|embedded|SurrealKV (v2)|
 surrealkv1|surrealkv1|embedded|SurrealKV (v1)|
-surrealmx|surrealmx|embedded|SurrealMX|
+surrealmx|surrealmx|embedded|SurrealMX (next)|
+surrealmx1|surrealmx1|embedded|SurrealMX (v1)|
 "
 
 # Retrieve a specific property for a database from the configuration matrix

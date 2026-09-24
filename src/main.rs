@@ -65,6 +65,7 @@ mod surrealds;
 mod surrealkv;
 mod surrealkv1;
 mod surrealmx;
+mod surrealmx1;
 
 /// Command-line interface for a single benchmark run.
 #[derive(Parser, Debug)]

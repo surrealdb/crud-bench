@@ -1,4 +1,4 @@
-#![cfg(feature = "surrealmx")]
+#![cfg(feature = "surrealmx1")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
@@ -9,15 +9,15 @@ use anyhow::{Result, bail};
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
-use surrealmx::Database;
-use surrealmx::{AolMode, FsyncMode, SnapshotMode};
-use surrealmx::{DatabaseOptions, PersistenceOptions};
+use surrealmx1::Database;
+use surrealmx1::{AolMode, FsyncMode, SnapshotMode};
+use surrealmx1::{DatabaseOptions, PersistenceOptions};
 
-const DATABASE_DIR: &str = "surrealmx";
+const DATABASE_DIR: &str = "surrealmx1";
 
-pub(crate) struct SurrealMXClientProvider(Arc<Database>);
+pub(crate) struct SurrealMX1ClientProvider(Arc<Database>);
 
-impl BenchmarkEngine<SurrealMXClient> for SurrealMXClientProvider {
+impl BenchmarkEngine<SurrealMX1Client> for SurrealMX1ClientProvider {
 	/// The number of seconds to wait before connecting
 	fn wait_timeout(&self) -> Option<Duration> {
 		None
@@ -48,18 +48,18 @@ impl BenchmarkEngine<SurrealMXClient> for SurrealMXClientProvider {
 		Ok(Self(Arc::new(Database::new())))
 	}
 	/// Creates a new client for this benchmarking engine
-	async fn create_client(&self) -> Result<SurrealMXClient> {
-		Ok(SurrealMXClient {
+	async fn create_client(&self) -> Result<SurrealMX1Client> {
+		Ok(SurrealMX1Client {
 			db: self.0.clone(),
 		})
 	}
 }
 
-pub(crate) struct SurrealMXClient {
+pub(crate) struct SurrealMX1Client {
 	db: Arc<Database>,
 }
 
-impl BenchmarkClient for SurrealMXClient {
+impl BenchmarkClient for SurrealMX1Client {
 	// The return type when reading a row
 	type ReadRow = BenchValue;
 
@@ -168,7 +168,7 @@ impl BenchmarkClient for SurrealMXClient {
 	}
 }
 
-impl SurrealMXClient {
+impl SurrealMX1Client {
 	async fn create_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Serialise the value
 		let val = val.encode()?;
@@ -183,11 +183,12 @@ impl SurrealMXClient {
 	async fn read_bytes(&self, key: &[u8]) -> Result<BenchValue> {
 		// Create a new transaction
 		let txn = self.db.transaction(false);
-		// Process the data using zero-copy borrowed value inspection
-		let res = txn.with_value(key, |bytes| BenchValue::decode(bytes))?;
+		// Process the data
+		let res = txn.get(key.to_vec())?;
 		// Check the value exists
 		assert!(res.is_some());
-		let val = res.unwrap()?;
+		// Deserialise the value
+		let val = BenchValue::decode(res.unwrap().as_ref())?;
 		// All ok
 		Ok(black_box(val))
 	}
@@ -231,11 +232,15 @@ impl SurrealMXClient {
 	async fn batch_read_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
 		// Create a new transaction
 		let txn = self.db.transaction(false);
-		// Process the data using zero-copy borrowed value inspection
+		// Process the data
 		for key in keys {
-			let res = txn.with_value(key.as_slice(), |bytes| BenchValue::decode(bytes))?;
+			// Get the current value
+			let res = txn.get(key)?;
+			// Check the value exists
 			assert!(res.is_some());
-			let val = res.unwrap()?;
+			// Deserialise the value
+			let val = BenchValue::decode(res.unwrap().as_ref())?;
+			// Use the value
 			black_box(val);
 		}
 		// All ok
