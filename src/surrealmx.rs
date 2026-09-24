@@ -172,11 +172,8 @@ impl SurrealMXClient {
 	async fn create_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Serialise the value
 		let val = val.encode()?;
-		// Create a new transaction
-		let mut txn = self.db.transaction(true);
-		// Process the data
-		txn.set(key, val)?;
-		txn.commit()?;
+		// Directly set the key in an auto-committed write
+		self.db.set(key, val)?;
 		Ok(())
 	}
 
@@ -193,20 +190,14 @@ impl SurrealMXClient {
 	async fn update_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Serialise the value
 		let val = val.encode()?;
-		// Create a new transaction
-		let mut txn = self.db.transaction(true);
-		// Process the data
-		txn.set(key, val)?;
-		txn.commit()?;
+		// Directly set the key in an auto-committed write
+		self.db.set(key, val)?;
 		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let mut txn = self.db.transaction(true);
-		// Process the data
-		txn.del(key)?;
-		txn.commit()?;
+		// Directly delete the key in an auto-committed write
+		self.db.del(key)?;
 		Ok(())
 	}
 
