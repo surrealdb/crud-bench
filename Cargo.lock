@@ -8298,17 +8298,24 @@ dependencies = [
  "affinitypool 0.8.0",
  "async-trait",
  "bytes",
+ "byteslice",
  "crc32fast",
  "fs2",
  "getrandom 0.3.4",
+ "js-sys",
  "log",
  "lz4_flex 0.12.2",
  "parking_lot",
  "quick_cache 0.6.22",
  "rand 0.9.4",
  "snap",
+ "surrealkv-compat-indxdb",
  "surrealkv-compat-rocksdb",
+ "surrealkv-compat-v1",
  "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "xxhash-rust",
  "zstd",
 ]
@@ -8343,7 +8350,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "surrealkv-compat-indxdb"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "log",
+ "thiserror 2.0.20",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "surrealkv-compat-rocksdb"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "log",
+ "lz4_flex 0.12.2",
+ "snap",
+ "thiserror 2.0.20",
+ "zstd",
+]
+
+[[package]]
+name = "surrealkv-compat-v1"
 version = "0.1.0"
 dependencies = [
  "crc32fast",

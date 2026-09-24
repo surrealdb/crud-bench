@@ -218,11 +218,9 @@ impl SurrealMXClient {
 	}
 
 	async fn batch_read_bytes(&self, keys: impl Iterator<Item = Vec<u8>>) -> Result<()> {
-		// Create a new transaction
-		let txn = self.db.transaction(false);
-		// Process the data using zero-copy borrowed value inspection
+		// Process the data using direct zero-copy borrowed value inspection
 		for key in keys {
-			let res = txn.with_value(key.as_slice(), |bytes| BenchValue::decode(bytes))?;
+			let res = self.db.with_value(key.as_slice(), BenchValue::decode)?;
 			assert!(res.is_some());
 			let val = res.unwrap()?;
 			black_box(val);
