@@ -77,6 +77,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "affinitypool"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a487a26c23775316bc010e9425fd7cf046c384ab37efbb2cfd4ba87a58f68c6d"
+dependencies = [
+ "arc-swap",
+ "async-task",
+ "crossbeam-deque",
+ "crossbeam-utils",
+ "num_cpus",
+ "parking_lot",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "ahash"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1610,6 +1625,7 @@ dependencies = [
  "surrealdb 2.6.5",
  "surrealdb 3.2.4",
  "surrealdb-rocksdb",
+ "surrealkv 0.21.3",
  "surrealkv 0.21.4",
  "surrealmx 0.18.0",
  "sysinfo 0.37.2",
@@ -8264,6 +8280,27 @@ dependencies = [
  "quick_cache 0.6.22",
  "revision 0.10.0",
  "vart 0.9.3",
+]
+
+[[package]]
+name = "surrealkv"
+version = "0.21.3"
+dependencies = [
+ "affinitypool 0.8.0",
+ "async-trait",
+ "bytes",
+ "crc32fast",
+ "fs2",
+ "getrandom 0.3.4",
+ "log",
+ "lz4_flex 0.12.2",
+ "parking_lot",
+ "quick_cache 0.6.22",
+ "rand 0.9.4",
+ "snap",
+ "tokio",
+ "xxhash-rust",
+ "zstd",
 ]
 
 [[package]]

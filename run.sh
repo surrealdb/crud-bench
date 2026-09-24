@@ -344,7 +344,8 @@ surrealdb2-surrealkv|surrealdb2|networked|SurrealDB 2.x (server: SurrealKV)|-e s
 surrealdb2-embedded-memory|surrealdb2|embedded|SurrealDB 2.x embedded with in-memory storage|-e memory
 surrealdb2-embedded-rocksdb|surrealdb2|embedded|SurrealDB 2.x embedded with RocksDB storage|-e rocksdb:DATA_DIR
 surrealdb2-embedded-surrealkv|surrealdb2|embedded|SurrealDB 2.x embedded with SurrealKV storage|-e surrealkv:DATA_DIR
-surrealkv|surrealkv|embedded|SurrealKV|
+surrealkv|surrealkv|embedded|SurrealKV (v2)|
+surrealkv1|surrealkv1|embedded|SurrealKV (v1)|
 surrealmx|surrealmx|embedded|SurrealMX|
 "
 

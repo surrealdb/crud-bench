@@ -63,6 +63,7 @@ mod surrealdb;
 mod surrealdb2;
 mod surrealds;
 mod surrealkv;
+mod surrealkv1;
 mod surrealmx;
 
 /// Command-line interface for a single benchmark run.
