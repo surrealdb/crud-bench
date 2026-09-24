@@ -258,51 +258,35 @@ impl SurrealMXClient {
 	}
 
 	async fn scan_bytes(&self, scan: &Scan) -> Result<usize> {
-		// Contional scans are not supported
+		// Conditional scans are not supported
 		if scan.condition.is_some() {
 			bail!(NOT_SUPPORTED_ERROR);
 		}
 		// Extract parameters
 		let p = scan.projection()?;
-		// Create a new transaction
-		let txn = self.db.transaction(false);
 		let beg = [0u8].to_vec();
 		let end = [255u8].to_vec();
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				// Scan the desired range of keys
-				let iter = txn.keys(beg..end, scan.start, scan.limit)?;
-				// Create an iterator starting at the beginning
-				let iter = iter.into_iter();
-				// We use a for loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				for v in iter {
-					black_box(v);
+				self.db.keys_for_each(beg..end, scan.start, scan.limit, |k| {
+					black_box(k);
 					count += 1;
-				}
+					true
+				})?;
 				Ok(count)
 			}
 			Projection::Full => {
-				// Scan the desired range of keys
-				let iter = txn.scan(beg..end, scan.start, scan.limit)?;
-				// Create an iterator starting at the beginning
-				let iter = iter.into_iter();
-				// We use a for loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				for v in iter {
-					black_box(v.1);
+				self.db.scan_with(beg..end, scan.start, scan.limit, |_k, v| {
+					black_box(v);
 					count += 1;
-				}
+					true
+				})?;
 				Ok(count)
 			}
-			Projection::Count => Ok(txn.total(beg..end, scan.start, scan.limit)?),
+			Projection::Count => Ok(self.db.total(beg..end, scan.start, scan.limit)?),
 		}
 	}
 }
