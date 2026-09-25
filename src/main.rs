@@ -40,31 +40,8 @@ mod valueprovider;
 mod vectorgt;
 mod workloads;
 
-// Datastore modules
-mod arangodb;
-mod dragonfly;
-mod dry;
-mod fjall;
-mod keydb;
-mod lmdb;
-mod map;
-mod mariadb;
-mod mdbx;
-mod mongodb;
-mod mysql;
-mod neo4j;
-mod postgres;
-mod redb;
-mod redis;
-mod rocksdb;
-mod scylladb;
-mod slatedb;
-mod sqlite;
-mod surrealdb;
-mod surrealdb2;
-mod surrealds;
-mod surrealkv;
-mod surrealmx;
+// Datastore adapters
+mod adapters;
 
 /// Command-line interface for a single benchmark run.
 #[derive(Parser, Debug)]
