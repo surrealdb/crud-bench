@@ -284,8 +284,8 @@ impl SurrealMXClient {
 		let p = scan.projection()?;
 		// Create a new transaction
 		let txn = self.db.transaction(false);
-		let beg = [0u8].to_vec();
-		let end = [255u8].to_vec();
+		let beg = Vec::new();
+		let end = vec![0xFF; 1024];
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {

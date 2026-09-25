@@ -199,7 +199,7 @@ impl BenchmarkClient for RocksDBClient {
 		opts.set_target_level(4);
 		opts.set_bottommost_level_compaction(BottommostLevelCompaction::Force);
 		// Compact the entire dataset
-		self.db.compact_range_opt(Some(&[0u8]), Some(&[255u8]), &opts);
+		self.db.compact_range_opt(None::<&[u8]>, None::<&[u8]>, &opts);
 		// Create new wait options
 		let mut opts = WaitForCompactOptions::default();
 		opts.set_flush(true);
@@ -502,8 +502,6 @@ impl RocksDBClient {
 		let mut ro = ReadOptions::default();
 		ro.set_snapshot(&txn.snapshot());
 		ro.set_readahead_size(2 * 1024 * 1024);
-		ro.set_iterate_lower_bound([0u8]);
-		ro.set_iterate_upper_bound([255u8]);
 		ro.set_verify_checksums(false);
 		ro.set_async_io(true);
 		ro.fill_cache(true);
