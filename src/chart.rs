@@ -669,16 +669,7 @@ fn generate_scan_percentile_table_html(rows: &[(String, &OperationResult)]) -> S
 <tbody>"#,
 	);
 	for (name, r) in rows {
-		let vals = [
-			r.min() as f64,
-			r.q01() as f64,
-			r.q25() as f64,
-			r.q50() as f64,
-			r.q75() as f64,
-			r.q95() as f64,
-			r.q99() as f64,
-			r.max() as f64,
-		];
+		let vals = [r.min(), r.q01(), r.q25(), r.q50(), r.q75(), r.q95(), r.q99(), r.max()];
 		let spark = percentile_sparkline_svg(&vals);
 		let mini = percentile_mini_distribution_svg(&vals);
 		let dist_title = scan_distribution_title_attr(r);
