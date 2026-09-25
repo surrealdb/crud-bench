@@ -459,8 +459,34 @@ impl MariadbClient {
 						None => BenchValue::Null,
 					}
 				}
-				c => {
-					todo!("Not yet implemented {c:?}")
+				consts::ColumnType::MYSQL_TYPE_NULL => BenchValue::Null,
+				consts::ColumnType::MYSQL_TYPE_BIT => {
+					let v: Option<u64> = row.take(i);
+					match v {
+						Some(b) => BenchValue::UInt(b),
+						None => BenchValue::Null,
+					}
+				}
+				consts::ColumnType::MYSQL_TYPE_YEAR => {
+					let v: Option<i16> = row.take(i);
+					match v {
+						Some(y) => BenchValue::Int(y as i64),
+						None => BenchValue::Null,
+					}
+				}
+				consts::ColumnType::MYSQL_TYPE_SET | consts::ColumnType::MYSQL_TYPE_ENUM => {
+					let v: Option<String> = row.take(i);
+					match v {
+						Some(s) => BenchValue::String(s),
+						None => BenchValue::Null,
+					}
+				}
+				_ => {
+					let v: Option<String> = row.take(i);
+					match v {
+						Some(s) => BenchValue::String(s),
+						None => BenchValue::Null,
+					}
 				}
 			};
 			val.push((name, bv));
