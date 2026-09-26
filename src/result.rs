@@ -763,8 +763,11 @@ impl OperationResult {
 			};
 
 		// Subtract the initial disk usage
-		disk_usage.total_written_bytes -= metric.initial_disk_usage.total_written_bytes;
-		disk_usage.total_read_bytes -= metric.initial_disk_usage.total_read_bytes;
+		disk_usage.total_written_bytes = disk_usage
+			.total_written_bytes
+			.saturating_sub(metric.initial_disk_usage.total_written_bytes);
+		disk_usage.total_read_bytes =
+			disk_usage.total_read_bytes.saturating_sub(metric.initial_disk_usage.total_read_bytes);
 
 		// Use monitored disk I/O if available and greater than final snapshot
 		if final_disk_writes > 0 {
