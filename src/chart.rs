@@ -635,11 +635,11 @@ fn percentile_mini_distribution_svg(values_us: &[f64]) -> String {
 fn scan_distribution_title_attr(r: &OperationResult) -> String {
 	let s = format!(
 		"Min: {:.3} ms | Q1: {:.3} ms | Median: {:.3} ms | Q3: {:.3} ms | Max: {:.3} ms",
-		r.min() as f64 / 1000.0,
-		r.q25() as f64 / 1000.0,
-		r.q50() as f64 / 1000.0,
-		r.q75() as f64 / 1000.0,
-		r.max() as f64 / 1000.0,
+		r.min() / 1000.0,
+		r.q25() / 1000.0,
+		r.q50() / 1000.0,
+		r.q75() / 1000.0,
+		r.max() / 1000.0,
 	);
 	html_escape(&s)
 }
