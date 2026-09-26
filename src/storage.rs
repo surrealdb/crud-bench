@@ -1,3 +1,5 @@
+#![cfg(feature = "surrealdb")]
+
 use crate::result::BenchmarkResult;
 use anyhow::Result;
 use surrealdb::Surreal;

@@ -2,10 +2,6 @@ use crate::BatchOperation;
 use crate::KeyType;
 use crate::Scan;
 use crate::benchmark::Benchmark;
-use crate::dialect::{
-	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MariaDBDialect, MongoDBDialect, MySqlDialect,
-	Neo4jDialect, SurrealDBDialect,
-};
 use crate::docker::{Container, DockerParams};
 use crate::dry::DryClientProvider;
 use crate::engine::BenchmarkEngine;
@@ -15,6 +11,12 @@ use crate::result::BenchmarkResult;
 use crate::valueprovider::ValueProvider;
 use anyhow::Result;
 use clap::ValueEnum;
+
+#[allow(unused_imports)]
+use crate::dialect::{
+	AnsiSqlDialect, ArangoDBDialect, DefaultDialect, MariaDBDialect, MongoDBDialect, MySqlDialect,
+	Neo4jDialect, SurrealDBDialect,
+};
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
 pub(crate) enum Database {
@@ -91,6 +93,7 @@ impl Database {
 	}
 
 	/// Start the Docker container if necessary
+	#[allow(unused_variables, unreachable_code)]
 	pub(crate) fn start_docker(&self, options: &Benchmark) -> Option<Container> {
 		// Get any pre-defined Docker configuration
 		let params: DockerParams = match self {
