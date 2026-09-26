@@ -1248,23 +1248,44 @@ impl Benchmark {
 			// KNN hits, kept so recall can be scored after the latency is
 			// recorded rather than inside the measured window.
 			let mut scored: Option<(usize, Vec<KnnKey>)> = None;
+			// Pre-generate payloads and query parameters outside the timed window
+			// so that client-side generation CPU and memory allocations are not
+			// attributed to the datastore's measured latency.
+			let pregen_value = match &operation {
+				BenchmarkOperation::Create => {
+					Some(vp.generate_value_for(ValueStream::Create, sample))
+				}
+				BenchmarkOperation::Update => {
+					Some(vp.generate_value_for(ValueStream::Update, sample))
+				}
+				_ => None,
+			};
+			let vec_query = match &operation {
+				BenchmarkOperation::VectorScan(_, _, qs) => {
+					Some((qs.pick(sample), qs.query_index(sample)))
+				}
+				_ => None,
+			};
+
 			let time = Instant::now();
 			tokio::time::timeout(operation_timeout, async {
 				match &operation {
 					BenchmarkOperation::Create => {
-						let value = vp.generate_value_for(ValueStream::Create, sample);
-						client.create(sample, value, &mut kp).await
+						client
+							.create(sample, pregen_value.expect("payload pre-generated"), &mut kp)
+							.await
 					}
 					BenchmarkOperation::Read => client.read(sample, &mut kp).await.map(|_| ()),
 					BenchmarkOperation::Update => {
-						let value = vp.generate_value_for(ValueStream::Update, sample);
-						client.update(sample, value, &mut kp).await
+						client
+							.update(sample, pregen_value.expect("payload pre-generated"), &mut kp)
+							.await
 					}
 					BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await,
-					BenchmarkOperation::VectorScan(s, ctx, qs) => {
-						let q = qs.pick(sample);
+					BenchmarkOperation::VectorScan(s, ctx, _) => {
+						let (q, q_idx) = vec_query.expect("vector query pre-picked");
 						let hits = client.scan_vector(s, q, &kp, *ctx).await?;
-						scored = Some((qs.query_index(sample), hits));
+						scored = Some((q_idx, hits));
 						Ok(())
 					}
 					BenchmarkOperation::ScanWithWrites(scan, ctx, spec) => {
