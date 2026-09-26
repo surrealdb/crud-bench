@@ -85,7 +85,25 @@ impl VectorQuerySet {
 	}
 }
 
-/// Shared benchmark settings and UI, built from CLI [`crate::Args`].
+/// Watchdog tracker for active worker operations.
+#[derive(Default)]
+struct WorkerWatchdog {
+	/// Milliseconds since `base_instant` when the current operation started, or 0 when idle.
+	active_start_ms: std::sync::atomic::AtomicU64,
+}
+
+impl WorkerWatchdog {
+	#[inline]
+	fn begin_op(&self, base: Instant) {
+		let ms = (base.elapsed().as_millis() as u64).max(1);
+		self.active_start_ms.store(ms, Ordering::Release);
+	}
+
+	#[inline]
+	fn end_op(&self) {
+		self.active_start_ms.store(0, Ordering::Release);
+	}
+}
 pub(crate) struct Benchmark {
 	/// Whether to run containers in privileged mode
 	pub(crate) privileged: bool,
@@ -1076,6 +1094,10 @@ impl Benchmark {
 		let complete = Arc::new(AtomicU32::new(0));
 		// Store the worker tasks in a join set so failures can stop the operation promptly.
 		let mut tasks = JoinSet::new();
+		let base_instant = Instant::now();
+		let watchdog_notify = Arc::new(tokio::sync::Notify::new());
+		let timeout_ms = self.operation_timeout.as_millis() as u64;
+		let mut watchdogs = Vec::new();
 		// Measure the starting time
 		let metric = OperationMetric::new(self.pid, samples);
 		// Loop over the clients
@@ -1090,7 +1112,8 @@ impl Benchmark {
 				let progress = progress.clone();
 				let vp = vp.clone();
 				let operation = operation.clone();
-				let operation_timeout = self.operation_timeout;
+				let watchdog = Arc::new(WorkerWatchdog::default());
+				watchdogs.push(watchdog.clone());
 				tasks.spawn(async move {
 					match Self::operation_loop::<C, D>(
 						client,
@@ -1099,7 +1122,8 @@ impl Benchmark {
 						&current,
 						&complete,
 						operation,
-						operation_timeout,
+						watchdog,
+						base_instant,
 						(kp, vp, progress),
 					)
 					.await
@@ -1118,35 +1142,80 @@ impl Benchmark {
 				});
 			}
 		}
+		// Background watchdog task to monitor for stuck worker operations without
+		// paying per-iteration timer creation overhead in the hot path.
+		let wd_notify = watchdog_notify.clone();
+		let wds = watchdogs.clone();
+		let error_flag = error.clone();
+		let watchdog_handle = tokio::spawn(async move {
+			let mut interval = tokio::time::interval(Duration::from_millis(500));
+			interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+			loop {
+				interval.tick().await;
+				if error_flag.load(Ordering::Relaxed) {
+					break;
+				}
+				let now_ms = base_instant.elapsed().as_millis() as u64;
+				for wd in &wds {
+					let start = wd.active_start_ms.load(Ordering::Acquire);
+					if start != 0 && now_ms.saturating_sub(start) >= timeout_ms {
+						wd_notify.notify_one();
+						return;
+					}
+				}
+			}
+		});
 		// Wait for the threads to complete, aborting the remaining tasks on the first failure.
 		let mut global_histogram = Histogram::new(3)?;
 		let mut global_recall = RecallTally::default();
-		while let Some(result) = tasks.join_next().await {
-			match result {
-				Ok(Ok(Some((histogram, recall)))) => {
-					global_histogram.add(histogram)?;
-					global_recall.merge(recall);
-				}
-				Ok(Ok(None)) => {}
-				Ok(Err(e)) => {
-					error.store(true, Ordering::Relaxed);
-					tasks.abort_all();
-					while tasks.join_next().await.is_some() {}
-					if let Some(ref pb) = progress {
-						pb.finish_and_clear();
+		let mut timed_out = false;
+		loop {
+			tokio::select! {
+				result = tasks.join_next() => {
+					match result {
+						Some(Ok(Ok(Some((histogram, recall))))) => {
+							global_histogram.add(histogram)?;
+							global_recall.merge(recall);
+						}
+						Some(Ok(Ok(None))) => {}
+						Some(Ok(Err(e))) => {
+							error.store(true, Ordering::Relaxed);
+							watchdog_handle.abort();
+							tasks.abort_all();
+							while tasks.join_next().await.is_some() {}
+							if let Some(ref pb) = progress {
+								pb.finish_and_clear();
+							}
+							return Err(e).with_context(|| format!("{operation} worker failed"));
+						}
+						Some(Err(e)) => {
+							error.store(true, Ordering::Relaxed);
+							watchdog_handle.abort();
+							tasks.abort_all();
+							while tasks.join_next().await.is_some() {}
+							if let Some(ref pb) = progress {
+								pb.finish_and_clear();
+							}
+							return Err(e).with_context(|| format!("{operation} task failed"));
+						}
+						None => break,
 					}
-					return Err(e).with_context(|| format!("{operation} worker failed"));
 				}
-				Err(e) => {
+				_ = watchdog_notify.notified() => {
+					timed_out = true;
 					error.store(true, Ordering::Relaxed);
-					tasks.abort_all();
-					while tasks.join_next().await.is_some() {}
-					if let Some(ref pb) = progress {
-						pb.finish_and_clear();
-					}
-					return Err(e).with_context(|| format!("{operation} task failed"));
+					break;
 				}
 			}
+		}
+		watchdog_handle.abort();
+		if timed_out {
+			tasks.abort_all();
+			while tasks.join_next().await.is_some() {}
+			if let Some(ref pb) = progress {
+				pb.finish_and_clear();
+			}
+			bail!("{operation} did not complete within {:?}", self.operation_timeout);
 		}
 		// Finish the progress bar at 100% before tearing it down
 		if let Some(ref pb) = progress {
@@ -1219,7 +1288,8 @@ impl Benchmark {
 		current: &AtomicU32,
 		complete: &AtomicU32,
 		operation: BenchmarkOperation,
-		operation_timeout: Duration,
+		watchdog: Arc<WorkerWatchdog>,
+		base_instant: Instant,
 		(mut kp, mut vp, progress): (KeyProvider, ValueProvider, Option<Arc<ProgressBar>>),
 	) -> Result<(Histogram<u64>, RecallTally)>
 	where
@@ -1237,14 +1307,6 @@ impl Benchmark {
 				// We are done
 				break;
 			}
-			// Perform the benchmark operation under a per-iteration
-			// timeout. A stuck `await` inside the underlying SDK
-			// (e.g. a WebSocket reply that never lands because the
-			// connection was torn down without completing the
-			// matching oneshot) returns an error here instead of
-			// parking the worker task forever; the operation `JoinSet` then
-			// short-circuits with the operation name in the error
-			// chain rather than hanging in `block_on`.
 			// KNN hits, kept so recall can be scored after the latency is
 			// recorded rather than inside the measured window.
 			let mut scored: Option<(usize, Vec<KnnKey>)> = None;
@@ -1268,58 +1330,55 @@ impl Benchmark {
 			};
 
 			let time = Instant::now();
-			tokio::time::timeout(operation_timeout, async {
-				match &operation {
-					BenchmarkOperation::Create => {
-						client
-							.create(sample, pregen_value.expect("payload pre-generated"), &mut kp)
-							.await
-					}
-					BenchmarkOperation::Read => client.read(sample, &mut kp).await.map(|_| ()),
-					BenchmarkOperation::Update => {
-						client
-							.update(sample, pregen_value.expect("payload pre-generated"), &mut kp)
-							.await
-					}
-					BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await,
-					BenchmarkOperation::VectorScan(s, ctx, _) => {
-						let (q, q_idx) = vec_query.expect("vector query pre-picked");
-						let hits = client.scan_vector(s, q, &kp, *ctx).await?;
-						scored = Some((q_idx, hits));
-						Ok(())
-					}
-					BenchmarkOperation::ScanWithWrites(scan, ctx, spec) => {
-						workloads::run_scan_with_writes(
-							&*client, scan, *ctx, spec, sample, samples, &mut kp,
-						)
+			watchdog.begin_op(base_instant);
+			let res = match &operation {
+				BenchmarkOperation::Create => {
+					client
+						.create(sample, pregen_value.expect("payload pre-generated"), &mut kp)
 						.await
-					}
-					BenchmarkOperation::BuildIndex(spec, id, _) => {
-						client.build_index(spec, id.as_str()).await
-					}
-					BenchmarkOperation::BuildVectorIndex(spec, vq, dim, name) => {
-						client.build_vector_index(spec, vq, *dim, name.as_str()).await
-					}
-					BenchmarkOperation::RemoveIndex(id, _) => client.drop_index(id.as_str()).await,
-					BenchmarkOperation::Delete => client.delete(sample, &mut kp).await,
-					BenchmarkOperation::BatchCreate(batch_op) => {
-						client.batch_create(sample, batch_op, &mut kp, &mut vp).await
-					}
-					BenchmarkOperation::BatchRead(batch_op) => {
-						client.batch_read(sample, batch_op, &mut kp).await
-					}
-					BenchmarkOperation::BatchUpdate(batch_op) => {
-						client.batch_update(sample, batch_op, &mut kp, &mut vp).await
-					}
-					BenchmarkOperation::BatchDelete(batch_op) => {
-						client.batch_delete(sample, batch_op, &mut kp).await
-					}
 				}
-			})
-			.await
-			.with_context(|| {
-				format!("{operation} did not complete within {operation_timeout:?}")
-			})??;
+				BenchmarkOperation::Read => client.read(sample, &mut kp).await.map(|_| ()),
+				BenchmarkOperation::Update => {
+					client
+						.update(sample, pregen_value.expect("payload pre-generated"), &mut kp)
+						.await
+				}
+				BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await,
+				BenchmarkOperation::VectorScan(s, ctx, _) => {
+					let (q, q_idx) = vec_query.expect("vector query pre-picked");
+					let hits = client.scan_vector(s, q, &kp, *ctx).await?;
+					scored = Some((q_idx, hits));
+					Ok(())
+				}
+				BenchmarkOperation::ScanWithWrites(scan, ctx, spec) => {
+					workloads::run_scan_with_writes(
+						&*client, scan, *ctx, spec, sample, samples, &mut kp,
+					)
+					.await
+				}
+				BenchmarkOperation::BuildIndex(spec, id, _) => {
+					client.build_index(spec, id.as_str()).await
+				}
+				BenchmarkOperation::BuildVectorIndex(spec, vq, dim, name) => {
+					client.build_vector_index(spec, vq, *dim, name.as_str()).await
+				}
+				BenchmarkOperation::RemoveIndex(id, _) => client.drop_index(id.as_str()).await,
+				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await,
+				BenchmarkOperation::BatchCreate(batch_op) => {
+					client.batch_create(sample, batch_op, &mut kp, &mut vp).await
+				}
+				BenchmarkOperation::BatchRead(batch_op) => {
+					client.batch_read(sample, batch_op, &mut kp).await
+				}
+				BenchmarkOperation::BatchUpdate(batch_op) => {
+					client.batch_update(sample, batch_op, &mut kp, &mut vp).await
+				}
+				BenchmarkOperation::BatchDelete(batch_op) => {
+					client.batch_delete(sample, batch_op, &mut kp).await
+				}
+			};
+			watchdog.end_op();
+			res?;
 			// Get the completed sample number
 			let sample = complete.fetch_add(1, Ordering::Relaxed);
 			if let Some(pb) = &progress {
