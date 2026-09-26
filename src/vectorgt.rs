@@ -20,6 +20,7 @@ use crate::VectorDistance;
 use crate::engine::KnnKey;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::valueprovider::{ValueProvider, ValueStream};
+use crate::vectorfilter::VectorFilter;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -46,14 +47,30 @@ pub(crate) struct Neighbour {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct GroundTruth {
 	pub(crate) neighbours: Vec<Vec<Neighbour>>,
-	/// Rows the key was built from.
+	/// Rows eligible to be neighbours — the whole corpus, or just the rows a
+	/// filter admitted.
 	///
 	/// A key holds `min(storage_depth, corpus_len)` neighbours, so its length
 	/// alone cannot say whether anything was dropped: a key that is full
-	/// because it holds the entire corpus dropped nothing. `build_answers`
+	/// because it holds every eligible row dropped nothing. `build_answers`
 	/// needs the difference to tell a genuinely truncated window from a
 	/// complete one.
 	pub(crate) corpus_len: usize,
+	/// Rows the sweep visited, filtered or not.
+	///
+	/// Equal to `corpus_len` for an unfiltered key. For a filtered one the two
+	/// differ, and their ratio is the predicate's *measured* selectivity —
+	/// which is how selectivity is reported, rather than as a number the config
+	/// claims and nothing checks.
+	pub(crate) scanned: usize,
+}
+
+impl GroundTruth {
+	/// Share of the corpus the filter admitted, in `0.0..=1.0`. `None` when
+	/// nothing was scanned, which cannot happen for a key that was accepted.
+	pub(crate) fn selectivity(&self) -> Option<f64> {
+		(self.scanned > 0).then(|| self.corpus_len as f64 / self.scanned as f64)
+	}
 }
 
 /// How many neighbours to store for a given `top_k`.
@@ -256,6 +273,13 @@ pub(crate) struct Request {
 	/// The value template itself: changing the schema changes the corpus, even
 	/// at an unchanged seed.
 	pub(crate) template: String,
+	/// Predicate restricting which rows may be neighbours, when the leg is a
+	/// filtered one.
+	///
+	/// A filtered key is a genuinely different answer key rather than a subset
+	/// of the unfiltered one — the k-th true distance moves outwards as the
+	/// predicate narrows — so it is cached under its own fingerprint.
+	pub(crate) filter: Option<VectorFilter>,
 }
 
 impl Request {
@@ -270,11 +294,15 @@ impl Request {
 			query_seed,
 			query_count,
 			template,
+			filter,
 		} = self;
+		let filter = filter.as_ref().map(VectorFilter::fingerprint).unwrap_or_default();
 		// Field-separated so no two distinct requests can render to the same
-		// string by shifting a boundary.
+		// string by shifting a boundary. The version prefix moved to v3 when
+		// the filter joined the key: a v2 file holds an unfiltered key under a
+		// name a filtered request could otherwise reuse.
 		let key = format!(
-			"v2\u{1f}{field}\u{1f}{samples}\u{1f}{top_k}\u{1f}{metric:?}\u{1f}{corpus_seed}\u{1f}{query_seed}\u{1f}{query_count}\u{1f}{template}"
+			"v3\u{1f}{field}\u{1f}{samples}\u{1f}{top_k}\u{1f}{metric:?}\u{1f}{corpus_seed}\u{1f}{query_seed}\u{1f}{query_count}\u{1f}{template}\u{1f}{filter}"
 		);
 		XxHash64::oneshot(0, key.as_bytes())
 	}
@@ -301,11 +329,16 @@ pub(crate) fn load_or_compute(
 		match serde_json::from_str::<GroundTruth>(&text) {
 			// Depth as well as width: a key stored before the tie window was
 			// widened would silently score against too few candidates.
+			// The window has to be full against the *eligible* population, which
+			// a filter shrinks: a key over 1% of the corpus legitimately holds
+			// far fewer neighbours than `samples` would demand.
 			Ok(gt)
 				if gt.neighbours.len() == queries.len()
-					&& gt.neighbours.iter().all(|n| {
-						n.len() >= storage_depth(request.top_k).min(request.samples as usize)
-					}) =>
+					&& gt.scanned == request.samples as usize
+					&& gt
+						.neighbours
+						.iter()
+						.all(|n| n.len() >= storage_depth(request.top_k).min(gt.corpus_len)) =>
 			{
 				return Ok((gt, true));
 			}
@@ -337,6 +370,12 @@ fn store(gt: &GroundTruth, path: &Path) -> Result<()> {
 /// slice and keeps only the running top-k. Workers partition the corpus rather
 /// than the queries, so every worker sees each of its rows exactly once and the
 /// per-query accumulators merge at the end.
+///
+/// A filtered request restricts the answer to rows the predicate admits. That
+/// makes the sweep *cheaper* rather than dearer — a non-matching row is skipped
+/// before any distance is computed, so a 1%-selective predicate pays for 1% of
+/// the arithmetic — and the same pass counts the matches, which is where the
+/// reported selectivity comes from.
 pub(crate) fn compute(
 	request: &Request,
 	vp: &ValueProvider,
@@ -364,52 +403,78 @@ pub(crate) fn compute(
 	);
 	let chunk = (request.samples as usize).div_ceil(workers.max(1)) as u32;
 
-	let partials: Vec<Vec<TopK>> = std::thread::scope(|scope| -> Result<Vec<Vec<TopK>>> {
-		let mut handles = Vec::with_capacity(workers);
-		for w in 0..workers {
-			let start = (w as u32) * chunk;
-			if start >= request.samples {
-				break;
-			}
-			let end = start.saturating_add(chunk).min(request.samples);
-			let mut worker_vp = vp.clone();
-			let field = request.field.as_str();
-			let (depth, metric) = (storage_depth(request.top_k), request.metric);
-			handles.push(scope.spawn(move || -> Result<Vec<TopK>> {
-				let mut acc: Vec<TopK> = (0..queries.len()).map(|_| TopK::new(depth)).collect();
-				for n in start..end {
-					// Scans run after the update phase, so the corpus a scan
-					// observes is the one the update phase left behind.
-					let row = worker_vp.generate_value_for(ValueStream::Update, n);
-					let Some(v) = row.get_field(field).and_then(|v| v.as_float_vector()) else {
-						bail!("ground truth: sample {n} has no vector at field {field:?}");
-					};
-					if v.len() != dim {
-						bail!(
-							"ground truth: sample {n} has {} dimensions, queries have {dim}",
-							v.len()
-						);
-					}
-					for (q, slot) in queries.iter().zip(acc.iter_mut()) {
-						slot.offer(n, distance(metric, q, v));
-					}
+	let partials: Vec<(Vec<TopK>, usize)> =
+		std::thread::scope(|scope| -> Result<Vec<(Vec<TopK>, usize)>> {
+			let mut handles = Vec::with_capacity(workers);
+			for w in 0..workers {
+				let start = (w as u32) * chunk;
+				if start >= request.samples {
+					break;
 				}
-				Ok(acc)
-			}));
-		}
-		handles.into_iter().map(|h| h.join().expect("ground-truth worker panicked")).collect()
-	})?;
+				let end = start.saturating_add(chunk).min(request.samples);
+				let mut worker_vp = vp.clone();
+				let field = request.field.as_str();
+				let (depth, metric) = (storage_depth(request.top_k), request.metric);
+				let filter = request.filter.as_ref();
+				handles.push(scope.spawn(move || -> Result<(Vec<TopK>, usize)> {
+					let mut acc: Vec<TopK> = (0..queries.len()).map(|_| TopK::new(depth)).collect();
+					let mut matched = 0usize;
+					for n in start..end {
+						// Scans run after the update phase, so the corpus a scan
+						// observes is the one the update phase left behind.
+						let row = worker_vp.generate_value_for(ValueStream::Update, n);
+						// Filtered before the distance, both because a row the
+						// predicate excludes can never be an answer and because
+						// skipping it is the whole reason a narrow filter is cheap.
+						if let Some(filter) = filter
+							&& !filter.matches(&row)?
+						{
+							continue;
+						}
+						matched += 1;
+						let Some(v) = row.get_field(field).and_then(|v| v.as_float_vector()) else {
+							bail!("ground truth: sample {n} has no vector at field {field:?}");
+						};
+						if v.len() != dim {
+							bail!(
+								"ground truth: sample {n} has {} dimensions, queries have {dim}",
+								v.len()
+							);
+						}
+						for (q, slot) in queries.iter().zip(acc.iter_mut()) {
+							slot.offer(n, distance(metric, q, v));
+						}
+					}
+					Ok((acc, matched))
+				}));
+			}
+			handles.into_iter().map(|h| h.join().expect("ground-truth worker panicked")).collect()
+		})?;
 
 	let mut merged: Vec<TopK> =
 		(0..queries.len()).map(|_| TopK::new(storage_depth(request.top_k))).collect();
-	for partial in &partials {
+	let mut matched = 0usize;
+	for (partial, part_matched) in &partials {
+		matched += part_matched;
 		for (slot, part) in merged.iter_mut().zip(partial.iter()) {
 			slot.merge(part);
 		}
 	}
+	if matched == 0 {
+		// Every query would have an empty answer, so recall would be undefined
+		// and the timed leg would measure an engine returning nothing. That is
+		// a configuration mistake rather than a result.
+		bail!(
+			"ground truth: the filter matched none of the {} rows, so there are no neighbours \
+			 to find. Widen the predicate, or point it at a column whose generated values it \
+			 can actually select.",
+			request.samples
+		);
+	}
 	Ok(GroundTruth {
 		neighbours: merged.into_iter().map(|t| t.best).collect(),
-		corpus_len: request.samples as usize,
+		corpus_len: matched,
+		scanned: request.samples as usize,
 	})
 }
 
@@ -524,6 +589,7 @@ mod test {
 			query_seed: 7,
 			query_count: 3,
 			template: TEMPLATE.to_string(),
+			filter: None,
 		}
 	}
 
@@ -685,6 +751,16 @@ mod test {
 				template: "{}".to_string(),
 				..base.clone()
 			},
+			// A filtered key answers a different question over the same corpus,
+			// so it must not be served from an unfiltered key's cache entry.
+			Request {
+				filter: Some(filter(r#"{"name":"a","field":"tier","op":"eq","value":0}"#)),
+				..base.clone()
+			},
+			Request {
+				filter: Some(filter(r#"{"name":"a","field":"tier","op":"eq","value":1}"#)),
+				..base.clone()
+			},
 		];
 		for v in variants.drain(..) {
 			let f = v.fingerprint();
@@ -704,6 +780,7 @@ mod test {
 	fn answer_key_of_corpus(rows: Vec<Vec<(u32, f32)>>, corpus_len: usize) -> GroundTruth {
 		GroundTruth {
 			corpus_len,
+			scanned: corpus_len,
 			neighbours: rows
 				.into_iter()
 				.map(|r| {
@@ -720,6 +797,191 @@ mod test {
 
 	fn integer_kp() -> KeyProvider {
 		KeyProvider::new(crate::KeyType::Integer, false)
+	}
+
+	// ----------------------------------------------------------------------
+	// Filtered ground truth
+	// ----------------------------------------------------------------------
+
+	/// A schema with columns worth filtering on: a wide integer range for
+	/// arbitrary selectivity, and an enum for the categorical shape.
+	const FILTER_TEMPLATE: &str = r#"{
+		"tier": "int_enum:0,1,2,3",
+		"number": "int:1..1000",
+		"status": "string_enum:draft,published,archived",
+		"embedding": "vector:16"
+	}"#;
+
+	fn filter(json: &str) -> VectorFilter {
+		serde_json::from_str(json).unwrap()
+	}
+
+	fn filter_provider() -> ValueProvider {
+		ValueProvider::new(FILTER_TEMPLATE).unwrap().with_seed(42)
+	}
+
+	fn filter_request(samples: u32, top_k: usize, f: Option<VectorFilter>) -> Request {
+		Request {
+			field: "embedding".to_string(),
+			samples,
+			top_k,
+			metric: VectorDistance::Cosine,
+			corpus_seed: 42,
+			query_seed: 7,
+			query_count: 3,
+			template: FILTER_TEMPLATE.to_string(),
+			filter: f,
+		}
+	}
+
+	/// The whole point of a filtered key: an answer may only contain rows the
+	/// predicate admits, and it must contain the *best* such rows — not the
+	/// best rows overall with the rest struck out, which is what post-filtering
+	/// an unfiltered key would give.
+	#[test]
+	fn filtered_key_holds_the_best_matching_rows() {
+		let vp = filter_provider();
+		let samples = 800u32;
+		let top_k = 5;
+		let f = filter(r#"{"name":"t0","field":"tier","op":"eq","value":0}"#);
+		let queries = vp.generate_vectors("embedding", 3, 7).unwrap();
+		let gt = compute(&filter_request(samples, top_k, Some(f.clone())), &vp, &queries).unwrap();
+
+		// Rebuild the eligible corpus the slow, obvious way.
+		let mut naive = vp.clone();
+		let corpus: Vec<(u32, Vec<f32>)> = (0..samples)
+			.filter_map(|n| {
+				let row = naive.generate_value_for(ValueStream::Update, n);
+				f.matches(&row).unwrap().then(|| {
+					(n, row.get_field("embedding").unwrap().as_float_vector().unwrap().to_vec())
+				})
+			})
+			.collect();
+		assert!(corpus.len() > top_k, "test needs more matching rows than k");
+		assert_eq!(gt.corpus_len, corpus.len(), "eligible row count");
+		assert_eq!(gt.scanned, samples as usize);
+
+		for (qi, q) in queries.iter().enumerate() {
+			let mut all: Vec<(u32, f32)> =
+				corpus.iter().map(|(n, v)| (*n, distance(VectorDistance::Cosine, q, v))).collect();
+			all.sort_by(|a, b| a.1.total_cmp(&b.1));
+			let expected: Vec<u32> = all[..top_k].iter().map(|(n, _)| *n).collect();
+			let got: Vec<u32> = gt.neighbours[qi].iter().take(top_k).map(|n| n.sample).collect();
+			assert_eq!(expected, got, "query {qi}");
+		}
+	}
+
+	/// A filtered key must genuinely differ from the unfiltered one, or the
+	/// filtered legs are being scored against the wrong question.
+	#[test]
+	fn filtering_moves_the_answer() {
+		let vp = filter_provider();
+		let queries = vp.generate_vectors("embedding", 3, 7).unwrap();
+		let unfiltered = compute(&filter_request(800, 5, None), &vp, &queries).unwrap();
+		let f = filter(r#"{"name":"t0","field":"tier","op":"eq","value":0}"#);
+		let filtered = compute(&filter_request(800, 5, Some(f)), &vp, &queries).unwrap();
+		let ids = |g: &GroundTruth, q: usize| -> Vec<u32> {
+			g.neighbours[q].iter().take(5).map(|n| n.sample).collect()
+		};
+		assert!(
+			(0..3).any(|q| ids(&unfiltered, q) != ids(&filtered, q)),
+			"a quarter-selective filter left every answer unchanged"
+		);
+	}
+
+	/// Selectivity is measured rather than declared, so it has to come out
+	/// close to the generator's actual share.
+	#[test]
+	fn selectivity_is_measured_from_the_corpus() {
+		let vp = filter_provider();
+		let queries = vp.generate_vectors("embedding", 2, 7).unwrap();
+
+		// One of four equally likely enum labels.
+		let f = filter(r#"{"name":"t0","field":"tier","op":"eq","value":0}"#);
+		let gt = compute(&filter_request(4000, 5, Some(f)), &vp, &queries).unwrap();
+		let s = gt.selectivity().unwrap();
+		assert!((0.20..0.30).contains(&s), "tier=0 selectivity was {s}");
+
+		// `number` is uniform over 1..1000, so `<= 100` keeps about a tenth.
+		let f = filter(r#"{"name":"n","field":"number","op":"lte","value":100}"#);
+		let gt = compute(&filter_request(4000, 5, Some(f)), &vp, &queries).unwrap();
+		let s = gt.selectivity().unwrap();
+		assert!((0.07..0.13).contains(&s), "number<=100 selectivity was {s}");
+
+		// Two of three labels.
+		let f = filter(r#"{"name":"s","field":"status","op":"in","value":["draft","archived"]}"#);
+		let gt = compute(&filter_request(4000, 5, Some(f)), &vp, &queries).unwrap();
+		let s = gt.selectivity().unwrap();
+		assert!((0.60..0.74).contains(&s), "status in (2 of 3) selectivity was {s}");
+
+		// An unfiltered key scanned everything it kept.
+		let gt = compute(&filter_request(4000, 5, None), &vp, &queries).unwrap();
+		assert_eq!(gt.selectivity(), Some(1.0));
+	}
+
+	/// A predicate that admits nothing would make every query's answer empty,
+	/// so recall would be undefined and the timed leg would measure an engine
+	/// returning nothing. That is a configuration mistake, not a result.
+	#[test]
+	fn a_filter_matching_nothing_is_refused() {
+		let vp = filter_provider();
+		let queries = vp.generate_vectors("embedding", 2, 7).unwrap();
+		let f = filter(r#"{"name":"none","field":"tier","op":"eq","value":99}"#);
+		let err = compute(&filter_request(200, 5, Some(f)), &vp, &queries).unwrap_err().to_string();
+		assert!(err.contains("matched none"), "{err}");
+	}
+
+	/// A corpus narrowed below `top_k` must not be scored as if the missing
+	/// neighbours were misses.
+	#[test]
+	fn a_filter_narrower_than_k_is_not_penalised() {
+		let vp = filter_provider();
+		let queries = vp.generate_vectors("embedding", 1, 7).unwrap();
+		// Four rows, of which only a handful can carry tier 0.
+		let f = filter(r#"{"name":"t0","field":"tier","op":"eq","value":0}"#);
+		let gt = compute(&filter_request(8, 5, Some(f)), &vp, &queries).unwrap();
+		assert!(gt.corpus_len < 5, "test needs fewer matches than k, got {}", gt.corpus_len);
+		let kp = integer_kp();
+		let answers = build_answers(&gt, &kp, 5, 0.0).unwrap();
+		// Returning every eligible row is perfect recall even though it is
+		// fewer than k rows.
+		let found: Vec<u32> = gt.neighbours[0].iter().map(|n| n.sample).collect();
+		assert_eq!(recall(&answers[0], &keys(&kp, &found)), Some(1.0));
+	}
+
+	/// Two filters over one corpus are two answer keys, and the cache has to
+	/// keep them apart.
+	#[test]
+	fn cache_keeps_filters_apart() {
+		let dir = std::env::temp_dir().join(format!("crud-bench-gt-filter-{}", std::process::id()));
+		let _ = fs::remove_dir_all(&dir);
+		let vp = filter_provider();
+		let queries = vp.generate_vectors("embedding", 2, 7).unwrap();
+		let a = filter_request(
+			400,
+			4,
+			Some(filter(r#"{"name":"t0","field":"tier","op":"eq","value":0}"#)),
+		);
+		let b = filter_request(
+			400,
+			4,
+			Some(filter(r#"{"name":"t1","field":"tier","op":"eq","value":1}"#)),
+		);
+
+		let (first, hit) = load_or_compute(&a, &vp, &queries, &dir).unwrap();
+		assert!(!hit);
+		// A different predicate must miss rather than be served `a`'s answers.
+		let (other, hit) = load_or_compute(&b, &vp, &queries, &dir).unwrap();
+		assert!(!hit, "a different filter was served from the cache");
+		let (again, hit) = load_or_compute(&a, &vp, &queries, &dir).unwrap();
+		assert!(hit, "the same filter should hit");
+
+		let ids = |g: &GroundTruth| -> Vec<Vec<u32>> {
+			g.neighbours.iter().map(|r| r.iter().map(|n| n.sample).collect()).collect()
+		};
+		assert_eq!(ids(&first), ids(&again));
+		assert_ne!(ids(&first), ids(&other));
+		let _ = fs::remove_dir_all(&dir);
 	}
 
 	/// Engines return keys, not sample indices, so tests have to address rows

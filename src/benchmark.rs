@@ -15,6 +15,7 @@ use crate::terminal::BenchUi;
 use crate::util::format_duration;
 use crate::valueprovider::ColumnType;
 use crate::valueprovider::{ValueProvider, ValueStream};
+use crate::vectorfilter::{FilterField, VectorFilter};
 use crate::vectorgt::{self, GroundTruth, RecallTally, VectorAnswer};
 use crate::workloads;
 use crate::{
@@ -70,6 +71,10 @@ pub(crate) struct VectorQuerySet {
 	/// The answer key resolved into this run's key shape, ready to score
 	/// against. Built once per scan so an iteration costs a set lookup.
 	pub(crate) accept: Option<Arc<Vec<VectorAnswer>>>,
+	/// Share of the corpus this leg's filter admitted, measured during the
+	/// ground-truth sweep. `None` for an unfiltered leg, and for a filtered one
+	/// on a run with no corpus seed, where there is no key to measure it from.
+	pub(crate) selectivity: Option<f64>,
 }
 
 impl VectorQuerySet {
@@ -116,6 +121,14 @@ pub(crate) struct Benchmark {
 	/// JSON form of the configured value template. Ground truth keys its cache
 	/// on it: a schema change alters the corpus even at an unchanged seed.
 	pub(crate) value_template: String,
+	/// Columns any vector scan filters on, resolved against the schema.
+	///
+	/// Engines whose vector index is built over a payload separate from the
+	/// primary record — Redis mirrors embeddings into a `vec:{key}` HASH — have
+	/// to mirror these columns alongside the embedding, and have to declare
+	/// them when the index is created. Both happen before any scan is looked
+	/// at, so the set cannot be discovered from the scan that needs it.
+	pub(crate) vector_filter_fields: Vec<FilterField>,
 	/// Terminal UI (tables, progress bars, phase markers).
 	pub(crate) bench_ui: BenchUi,
 	/// Grep-friendly `… starting` / `Benchmark starting` lines for profiling scripts
@@ -147,7 +160,14 @@ impl Benchmark {
 			ground_truth_cache: PathBuf::from(&args.ground_truth_cache),
 			vector_warmup_budget: Duration::from_secs(args.vector_warmup_seconds),
 			value_template: String::new(),
+			vector_filter_fields: Vec::new(),
 		}
+	}
+
+	/// Record the filter columns vector scans need indexed, for engines that
+	/// have to prepare them ahead of the write phase.
+	pub(crate) fn set_vector_filter_fields(&mut self, fields: Vec<FilterField>) {
+		self.vector_filter_fields = fields;
 	}
 
 	/// Record the value template this run was configured with, which is part of
@@ -488,7 +508,7 @@ impl Benchmark {
 					vq.index_strategy,
 					VectorIndexStrategy::Hnsw { .. } | VectorIndexStrategy::DiskAnn { .. }
 				);
-				let mut query_set = self.build_vector_query_set(&scan, &vq, &vp)?;
+				let query_set = self.build_vector_query_set(&scan, &vq, &vp)?;
 				let mut runs = Vec::with_capacity(1);
 				// Derive the index spec from `vector_query.field` so the user
 				// only declares the field once. Engines that don't need an
@@ -528,60 +548,120 @@ impl Benchmark {
 				// is the curve, and tracing it should not cost a rebuild per
 				// point.
 				let sweep = vq.index_strategy.search_values();
-				let mut sweep_results: Vec<(Option<u32>, Option<OperationResult>)> = Vec::new();
+				// A filtered scan runs one leg per predicate, plus an unfiltered
+				// one first. The baseline belongs under the *same* index build
+				// and the same warm index as the filtered legs: "what does
+				// filtering cost?" is the question, and answering it against a
+				// baseline measured on some other build answers a different one.
+				let filter_legs: Vec<Option<VectorFilter>> = if vq.filters.is_empty() {
+					vec![None]
+				} else {
+					std::iter::once(None).chain(vq.filters.iter().cloned().map(Some)).collect()
+				};
+				let mut sweep_results: Vec<VectorLeg> = Vec::new();
 				if !strategy_needs_index || vec_index_build.is_some() {
-					self.attach_ground_truth(&scan, &vq, &vp, &kp, &mut query_set)?;
 					// Bruteforce has no search budget, so it runs once with no
 					// value to report.
-					let legs: Vec<Option<u32>> = if sweep.len() > 1 {
+					let search_legs: Vec<Option<u32>> = if sweep.len() > 1 {
 						sweep.iter().map(|v| Some(*v)).collect()
 					} else {
 						vec![None]
 					};
-					for leg in legs {
-						// Pin the spec to this leg's value so adapters only ever
-						// see a resolved strategy.
-						let mut leg_scan = scan.clone();
-						if let (Some(value), Some(lvq)) = (leg, leg_scan.vector_query.as_mut()) {
-							lvq.index_strategy = vq.index_strategy.with_search_value(value);
+					// Set once a leg comes back skipped. An engine that cannot
+					// serve this scan shape will not start being able to at the
+					// next predicate, and every answer key costs a full corpus
+					// sweep — so the remaining filters are recorded as skipped
+					// rather than each buying a key nothing will score against.
+					let mut unsupported = false;
+					// Filters outermost: each has its own answer key, computed
+					// once and reused across that filter's search values.
+					for filter in &filter_legs {
+						if unsupported {
+							for leg in &search_legs {
+								sweep_results.push(VectorLeg {
+									label: leg_heading(&vq, *leg, filter.as_ref(), None),
+									selectivity: None,
+									result: None,
+								});
+							}
+							continue;
 						}
-						let leg_vq = leg_scan
-							.vector_query
-							.clone()
-							.expect("vector scan always carries a vector_query");
-						// Engines holding the budget in session state need it on
-						// every client, not just the one that built the index.
-						for client in clients.iter() {
-							client.prepare_vector_search(&leg_vq).await?;
-						}
-						if let Some(value) = leg {
-							self.bench_ui.println_scan_run(&format!(
-								"{name} · {} = {value}",
-								search_param_label(&vq.index_strategy)
-							));
-						}
-						// Only an index needs priming. A bruteforce leg has none,
-						// and every warm-up query there is a full linear scan —
-						// which is both pointless and the most expensive query
-						// the benchmark can issue.
-						if strategy_needs_index {
-							self.warm_vector_index(leg_clients, &leg_scan, &query_set, &kp, ctx)
+						let mut leg_query_set = query_set.clone();
+						self.attach_ground_truth(
+							&scan,
+							&vq,
+							&vp,
+							&kp,
+							&mut leg_query_set,
+							filter.as_ref(),
+						)?;
+						let selectivity = leg_query_set.selectivity;
+						for leg in &search_legs {
+							// Pin the spec to this leg's value and predicate so
+							// adapters only ever see a resolved strategy.
+							let mut leg_scan = scan.clone();
+							if let Some(lvq) = leg_scan.vector_query.as_mut() {
+								*lvq = lvq.with_filter(filter.as_ref());
+								if let Some(value) = leg {
+									lvq.index_strategy =
+										vq.index_strategy.with_search_value(*value);
+								}
+							}
+							let leg_vq = leg_scan
+								.vector_query
+								.clone()
+								.expect("vector scan always carries a vector_query");
+							// Engines holding the budget in session state need it on
+							// every client, not just the one that built the index.
+							for client in clients.iter() {
+								client.prepare_vector_search(&leg_vq).await?;
+							}
+							let heading = leg_heading(&vq, *leg, filter.as_ref(), selectivity);
+							if let Some(heading) = &heading {
+								self.bench_ui.println_scan_run(&format!("{name} · {heading}"));
+							}
+							// Only an index needs priming. A bruteforce leg has none,
+							// and every warm-up query there is a full linear scan —
+							// which is both pointless and the most expensive query
+							// the benchmark can issue.
+							if strategy_needs_index {
+								self.warm_vector_index(
+									leg_clients,
+									&leg_scan,
+									&leg_query_set,
+									&kp,
+									ctx,
+								)
 								.await?;
+							}
+							let result = self
+								.run_operation::<C, D>(
+									leg_clients,
+									BenchmarkOperation::VectorScan(
+										leg_scan,
+										ctx,
+										leg_query_set.clone(),
+									),
+									kp,
+									vp.clone(),
+									iterations,
+									leg_threads,
+								)
+								.await?;
+							unsupported |= result.is_none();
+							sweep_results.push(VectorLeg {
+								label: heading,
+								selectivity,
+								result,
+							});
 						}
-						let result = self
-							.run_operation::<C, D>(
-								leg_clients,
-								BenchmarkOperation::VectorScan(leg_scan, ctx, query_set.clone()),
-								kp,
-								vp.clone(),
-								iterations,
-								leg_threads,
-							)
-							.await?;
-						sweep_results.push((leg, result));
 					}
 				} else {
-					sweep_results.push((None, None));
+					sweep_results.push(VectorLeg {
+						label: None,
+						selectivity: None,
+						result: None,
+					});
 				}
 				// Drop the index *after* the scan finishes — strictly in this
 				// order so the timed scan sees the index.
@@ -598,24 +678,32 @@ impl Benchmark {
 				} else {
 					None
 				};
-				let swept = sweep_results.len() > 1;
-				for (value, result) in sweep_results {
+				// What varied has to be legible from the scan name: `(sweep)`
+				// has always meant the search parameter, and a filtered scan
+				// that borrowed the word would read as a budget sweep that
+				// never happened.
+				let varied = match (sweep.len() > 1, !vq.filters.is_empty()) {
+					(true, true) => Some("sweep × filtered"),
+					(true, false) => Some("sweep"),
+					(false, true) => Some("filtered"),
+					(false, false) => None,
+				};
+				for leg in sweep_results {
 					runs.push(ScanRun {
 						workload: ScanWorkload::Read,
 						indexed: strategy_needs_index,
-						result,
-						label: value
-							.map(|v| format!("{} = {v}", search_param_label(&vq.index_strategy))),
+						result: leg.result.map(|r| r.with_filter_selectivity(leg.selectivity)),
+						label: leg.label,
 					});
 				}
 				ScanResult {
 					id: id.clone(),
-					// A swept scan reports several legs under one build, so the
-					// value each leg used has to reach the row label.
-					name: if swept {
-						format!("{name} (sweep)")
-					} else {
-						name
+					// A scan with several legs under one build has to say so, and
+					// say which axis they differ along — the per-leg label
+					// carries the value, this carries the shape.
+					name: match varied {
+						Some(kind) => format!("{name} ({kind})"),
+						None => name,
 					},
 					iterations,
 					index_build: vec_index_build,
@@ -945,6 +1033,7 @@ impl Benchmark {
 			queries: Arc::new(queries),
 			ground_truth: None,
 			accept: None,
+			selectivity: None,
 		})
 	}
 
@@ -961,11 +1050,16 @@ impl Benchmark {
 		vp: &ValueProvider,
 		kp: &KeyProvider,
 		query_set: &mut VectorQuerySet,
+		filter: Option<&VectorFilter>,
 	) -> Result<()> {
 		let Some(corpus_seed) = vp.seed() else {
 			// Recall needs a reconstructible corpus. Without a seed the scan is
 			// still perfectly valid as a latency measurement, so say what is
 			// missing and carry on rather than failing the run.
+			//
+			// A filtered leg loses its selectivity for the same reason: the
+			// share of rows a predicate admits is a fact about a specific
+			// corpus, and without a seed there is no specific corpus to measure.
 			eprintln!(
 				"vector ground truth: scan `{}` will report latency only — set `seed` in the benchmark TOML or pass --corpus-seed to enable recall",
 				scan.name
@@ -981,6 +1075,7 @@ impl Benchmark {
 			query_seed: vq.holdout.seed,
 			query_count: query_set.queries.len(),
 			template: self.value_template.clone(),
+			filter: filter.cloned(),
 		};
 		let started = Instant::now();
 		let (gt, cached) =
@@ -988,14 +1083,21 @@ impl Benchmark {
 				.with_context(|| format!("scan `{}`: computing vector ground truth", scan.name))?;
 		if !cached {
 			self.bench_ui.println_muted(&format!(
-				"Computed exact ground truth for {} queries over {} rows in {}",
+				"Computed exact ground truth for {} queries over {} rows{} in {}",
 				query_set.queries.len(),
 				self.samples,
+				match filter {
+					Some(f) => format!(" matching filter `{}`", f.name),
+					None => String::new(),
+				},
 				format_duration(started.elapsed())
 			));
 		}
 		query_set.accept =
 			Some(Arc::new(vectorgt::build_answers(&gt, kp, vq.top_k, vq.tie_epsilon)?));
+		// Only a filtered leg has a selectivity worth reporting; an unfiltered
+		// one is 100% by construction and the column would say nothing.
+		query_set.selectivity = filter.and_then(|_| gt.selectivity());
 		query_set.ground_truth = Some(Arc::new(gt));
 		Ok(())
 	}
@@ -1374,6 +1476,58 @@ fn warmup_has_plateaued(recent: &VecDeque<Duration>, window: Duration) -> bool {
 }
 
 /// Config name of a strategy's search-time knob, for labelling sweep legs.
+/// One timed vector leg: the pinned search value and predicate it ran under,
+/// and what it measured.
+struct VectorLeg {
+	/// How this leg is told apart from its siblings in the results — the search
+	/// value, the filter name, or both. `None` for a scan that ran once.
+	label: Option<String>,
+	/// Measured share of the corpus this leg's filter admitted.
+	selectivity: Option<f64>,
+	/// `None` when the engine skipped the leg.
+	result: Option<OperationResult>,
+}
+
+/// Row label distinguishing one leg of a vector scan from its siblings.
+///
+/// The selectivity rides along with the filter name because the name alone is
+/// arbitrary — `tier0` says nothing about how much of the corpus it keeps, and
+/// that share is what every filtered number has to be read against.
+fn leg_heading(
+	vq: &VectorQuerySpec,
+	search: Option<u32>,
+	filter: Option<&VectorFilter>,
+	selectivity: Option<f64>,
+) -> Option<String> {
+	let mut parts = Vec::with_capacity(2);
+	if let Some(value) = search {
+		parts.push(format!("{} = {value}", search_param_label(&vq.index_strategy)));
+	}
+	if !vq.filters.is_empty() {
+		parts.push(match filter {
+			Some(f) => match selectivity {
+				Some(s) => format!("filter {} ({})", f.name, format_selectivity(s)),
+				None => format!("filter {}", f.name),
+			},
+			None => "unfiltered".to_string(),
+		});
+	}
+	(!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// Selectivity as a percentage, with enough precision to keep a 0.1%-selective
+/// predicate distinguishable from a 1% one.
+pub(crate) fn format_selectivity(selectivity: f64) -> String {
+	let pct = selectivity * 100.0;
+	if pct >= 10.0 {
+		format!("{pct:.0}%")
+	} else if pct >= 1.0 {
+		format!("{pct:.1}%")
+	} else {
+		format!("{pct:.2}%")
+	}
+}
+
 fn search_param_label(strategy: &VectorIndexStrategy) -> &'static str {
 	match strategy {
 		VectorIndexStrategy::Hnsw {

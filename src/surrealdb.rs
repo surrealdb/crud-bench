@@ -7,6 +7,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
+use crate::vectorfilter::ListSyntax;
 use crate::{
 	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
 	VectorQuerySpec,
@@ -122,10 +123,59 @@ fn surreal_distance_function(d: VectorDistance) -> &'static str {
 	}
 }
 
-/// How long to wait for an index's pending queue to drain before giving up. The
-/// background task runs every `index_compaction_interval` (5s by default), so
-/// this allows for a slow drain without hanging a run forever.
-const INDEX_COMPACTION_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long to wait for an index to become genuinely queryable before giving
+/// up — both the pending queue drained and materialisation finished.
+///
+/// The background task runs every `index_compaction_interval` (5s by default),
+/// but the wait now covers materialising a whole index rather than draining a
+/// short queue, and that scales with the corpus: a 1M-row 768-d HNSW index was
+/// still compacting 35 minutes after reporting `ready`. The old 300s cap was
+/// sized for the queue alone and would now abort a legitimate wait, so this is
+/// deliberately generous — it exists to stop a run hanging forever, not to
+/// bound honest work.
+const INDEX_COMPACTION_TIMEOUT: Duration = Duration::from_secs(3600);
+
+/// Build the KNN statement for a resolved vector query.
+///
+/// Pure, so the statement can be asserted without a server. That matters most
+/// for the filtered forms: a mis-rendered predicate does not fail, it answers a
+/// different question, and the recall gap that follows looks exactly like an
+/// index quality difference.
+///
+/// A filtered leg restricts the result to rows the predicate admits. On the
+/// bruteforce path that is a plain `WHERE`, evaluated before the ordering, so
+/// the answer stays exact. On the index paths the KNN operator stays leading
+/// and the predicate is `AND`-ed after it — how the engine then combines the
+/// two, narrowing the traversal or filtering the k rows it already chose, is
+/// exactly what a filtered benchmark is trying to observe, so it is left to the
+/// engine and read off the recall rather than forced here.
+fn surreal_knn_sql(vq: &VectorQuerySpec) -> String {
+	let field = &vq.field;
+	let k = vq.top_k;
+	let pred = vq.filter().map(|f| f.to_sql::<SurrealDBDialect>(ListSyntax::Brackets));
+	match vq.index_strategy {
+		VectorIndexStrategy::Bruteforce => {
+			let func_path = surreal_distance_function(vq.distance);
+			let dir = surreal_distance_order(vq.distance);
+			let where_clause = pred.as_ref().map(|p| format!("WHERE {p} ")).unwrap_or_default();
+			// Aliased distance so the parser's "ORDER BY idiom must appear
+			// in SELECT" rule is satisfied.
+			format!(
+				"SELECT id, {func_path}({field}, $q) AS _d FROM record {where_clause}ORDER BY _d {dir} LIMIT {k}"
+			)
+		}
+		VectorIndexStrategy::Hnsw {
+			..
+		}
+		| VectorIndexStrategy::DiskAnn {
+			..
+		} => {
+			let search = vq.index_strategy.search_value();
+			let and_pred = pred.as_ref().map(|p| format!(" AND {p}")).unwrap_or_default();
+			format!("SELECT id FROM record WHERE {field} <|{k},{search}|> $q{and_pred}")
+		}
+	}
+}
 
 /// Pull the record key out of one `SELECT id` KNN row.
 fn surreal_knn_key(row: &Value) -> Result<KnnKey> {
@@ -830,7 +880,22 @@ impl BenchmarkClient for SurrealDBClient {
 	/// especially misleading, since a queue scan is exact and so reports a
 	/// perfect recall of 1.0 for entirely the wrong reason.
 	///
-	/// `building.pending` carries the queue depth, so poll until it clears.
+	/// `building.pending` carries the queue depth, and `building.compacting`
+	/// says whether the materialisation task is still running. **Both** have to
+	/// clear: at 1M rows an index reports `status = "ready"` with `pending = 0`
+	/// while `compacting` is still true, and a KNN query against it costs ~2.9s
+	/// against single-digit ms once materialised — one core pegged, scanning
+	/// state the index has not absorbed yet.
+	///
+	/// Waiting on `pending` alone is what made that measurable: a 1M-row
+	/// calibration timed 24 minutes for a single 500-iteration leg, and the
+	/// compaction never finished *because* the query load starved it. Waiting
+	/// here, before any timed leg, gives the materialisation task the machine to
+	/// itself.
+	///
+	/// `compacting` is absent on older servers, where its absence reads as
+	/// "not compacting" and behaviour is exactly as before.
+	///
 	/// Note this is unrelated to `ALTER SYSTEM COMPACT` (see [`Self::compact`]),
 	/// which compacts the RocksDB keyspace and does nothing for this queue.
 	async fn await_index_queryable(&self, name: &str) -> Result<()> {
@@ -853,16 +918,21 @@ impl BenchmarkClient for SurrealDBClient {
 				Value::Number(n) => n.to_int().unwrap_or(0),
 				_ => 0,
 			};
+			// Absent on servers that predate the field, where "not compacting"
+			// is the right reading and the behaviour is unchanged.
+			let compacting = matches!(building.get("compacting"), Value::Bool(true));
 			// `pending` sits at 0 while the initial build is still running, so
 			// it only means "drained" once the build itself reports ready.
 			match status.as_str() {
-				"ready" if pending == 0 => return Ok(()),
+				"ready" if pending == 0 && !compacting => return Ok(()),
 				"ready" | "indexing" | "cleaning" | "started" => {}
 				_ => bail!("Unexpected index status: {j}"),
 			}
 			if started.elapsed() > INDEX_COMPACTION_TIMEOUT {
 				bail!(
-					"index {name}: {pending} entries still pending after {:?}; 					 a KNN scan now would measure a brute-force scan over the queue",
+					"index {name}: {pending} entries pending, compacting={compacting}, after \
+					 {:?}; a KNN scan now would measure a scan over unmaterialised state rather \
+					 than the index",
 					started.elapsed()
 				);
 			}
@@ -1021,32 +1091,16 @@ impl SurrealDBClient {
 		let vq = scan.vector_query.as_ref().ok_or_else(|| {
 			anyhow::anyhow!("knn_scan called without a vector_query on scan `{}`", scan.name)
 		})?;
-		let field = &vq.field;
-		let k = vq.top_k;
 		let is_diskann = matches!(vq.index_strategy, VectorIndexStrategy::DiskAnn { .. });
-		let sql = match vq.index_strategy {
-			VectorIndexStrategy::Bruteforce => {
-				let func_path = surreal_distance_function(vq.distance);
-				let dir = surreal_distance_order(vq.distance);
-				// Aliased distance so the parser's "ORDER BY idiom must appear
-				// in SELECT" rule is satisfied (surrealdb-private 0df9e38c era).
-				format!(
-					"SELECT id, {func_path}({field}, $q) AS _d FROM record ORDER BY _d {dir} LIMIT {k}"
-				)
-			}
-			VectorIndexStrategy::Hnsw {
-				..
-			} => {
-				let ef_search = vq.index_strategy.search_value();
-				format!("SELECT id FROM record WHERE {field} <|{k},{ef_search}|> $q")
-			}
-			VectorIndexStrategy::DiskAnn {
-				..
-			} => {
-				let l_search = vq.index_strategy.search_value();
-				format!("SELECT id FROM record WHERE {field} <|{k},{l_search}|> $q")
-			}
-		};
+		// A build whose parser will not accept the KNN operator beside a
+		// `WHERE` predicate cannot answer a filtered leg at all, which is a
+		// capability gap and belongs in the output as a skip. Scoped to
+		// filtered legs: a parse error on an unfiltered query is crud-bench
+		// emitting bad SurrealQL, and hiding that would be hiding our own bug.
+		// Note this covers only *parse* failures — a filtered query the engine
+		// accepts and then fails on still aborts, as it should.
+		let is_filtered = vq.filter().is_some();
+		let sql = surreal_knn_sql(vq);
 		// Bind the query vector as a SurrealQL array so the server doesn't
 		// re-parse a multi-KB array literal on every iteration.
 		let q_value = Value::Array(Array::from(
@@ -1062,6 +1116,7 @@ impl SurrealDBClient {
 			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
 				bail!(NOT_SUPPORTED_ERROR)
 			}
+			Err(e) if is_filtered && is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
 			Err(e) => return Err(log_sql_err(&sql)(e)),
 		};
 		let res: surrealdb::types::Value = match resp.take(0) {
@@ -1069,6 +1124,7 @@ impl SurrealDBClient {
 			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
 				bail!(NOT_SUPPORTED_ERROR)
 			}
+			Err(e) if is_filtered && is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
 			Err(e) => return Err(log_sql_err(&sql)(e)),
 		};
 		let Some(arr) = res.as_array() else {
@@ -1241,5 +1297,70 @@ impl SurrealDBClient {
 			Ok(())
 		})
 		.await
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::surreal_knn_sql;
+	use crate::VectorQuerySpec;
+
+	/// Build a resolved [`VectorQuerySpec`] the way the leg expansion hands one
+	/// to an adapter: at most one search value and at most one predicate.
+	fn spec(strategy: &str, filters: &str) -> VectorQuerySpec {
+		let json = format!(
+			r#"{{ "field": "embedding", "top_k": 10, "distance": "cosine",
+			   "index_strategy": {strategy}, "filters": {filters} }}"#
+		);
+		serde_json::from_str(&json).expect("spec parses")
+	}
+
+	const HNSW: &str = r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": 64 }"#;
+	const DISKANN: &str =
+		r#"{ "kind": "diskann", "degree": 64, "l_build": 100, "alpha": 1.2, "l_search": 50 }"#;
+	const BRUTEFORCE: &str = r#"{ "kind": "bruteforce" }"#;
+	const NUMERIC: &str = r#"[{ "name": "sel", "field": "number", "op": "lte", "value": 50 }]"#;
+	const TAGS: &str =
+		r#"[{ "name": "live", "field": "status", "op": "in", "value": ["draft", "archived"] }]"#;
+
+	/// Unfiltered statements must not change shape when the filter machinery is
+	/// present but unused.
+	#[test]
+	fn unfiltered_statements_are_unchanged() {
+		assert_eq!(
+			surreal_knn_sql(&spec(BRUTEFORCE, "[]")),
+			"SELECT id, vector::similarity::cosine(embedding, $q) AS _d FROM record ORDER BY _d DESC LIMIT 10"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(HNSW, "[]")),
+			"SELECT id FROM record WHERE embedding <|10,64|> $q"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(DISKANN, "[]")),
+			"SELECT id FROM record WHERE embedding <|10,50|> $q"
+		);
+	}
+
+	/// Bruteforce filters before ordering, so the exact answer stays exact.
+	#[test]
+	fn a_filtered_bruteforce_scan_restricts_before_ordering() {
+		assert_eq!(
+			surreal_knn_sql(&spec(BRUTEFORCE, NUMERIC)),
+			"SELECT id, vector::similarity::cosine(embedding, $q) AS _d FROM record WHERE number <= 50 ORDER BY _d DESC LIMIT 10"
+		);
+	}
+
+	/// The KNN operator stays leading on the index paths; the predicate follows
+	/// it.
+	#[test]
+	fn a_filtered_index_scan_keeps_the_knn_operator_leading() {
+		assert_eq!(
+			surreal_knn_sql(&spec(HNSW, NUMERIC)),
+			"SELECT id FROM record WHERE embedding <|10,64|> $q AND number <= 50"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(DISKANN, TAGS)),
+			"SELECT id FROM record WHERE embedding <|10,50|> $q AND status IN ['draft', 'archived']"
+		);
 	}
 }

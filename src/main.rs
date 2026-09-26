@@ -7,7 +7,8 @@ use crate::config::load_bench_toml;
 use crate::database::Database;
 use crate::keyprovider::KeyProvider;
 use crate::terminal::ColorChoice;
-use crate::valueprovider::ValueProvider;
+use crate::valueprovider::{Columns, ValueProvider};
+use crate::vectorfilter::{FilterField, VectorFilter};
 use anyhow::{Result, bail};
 use clap::{Parser, ValueEnum};
 use docker::Container;
@@ -36,6 +37,7 @@ mod terminal;
 mod util;
 mod value;
 mod valueprovider;
+mod vectorfilter;
 mod vectorgt;
 mod workloads;
 
@@ -512,6 +514,57 @@ fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 	Ok(())
 }
 
+/// Validate every vector scan's filters against the schema and collect the
+/// distinct columns they touch.
+///
+/// Both halves belong together: deciding whether a predicate is expressible
+/// means resolving its column, and the resolved column is exactly what the
+/// engines need. Redis in particular has to know the full set *before the first
+/// row is written*, because its vector index is built over a `vec:{key}` HASH
+/// that the CRUD path dual-writes — a filter column missing from that mirror is
+/// not a query error, it is a query that silently matches nothing.
+///
+/// Running at startup also means a misconfigured predicate stops the run before
+/// a container is started, rather than after a ground-truth sweep over a
+/// million rows.
+fn collect_vector_filter_fields(scans: &[Scan], columns: &Columns) -> Result<Vec<FilterField>> {
+	let mut fields: Vec<FilterField> = Vec::new();
+	for scan in scans {
+		let Some(vq) = scan.vector_query.as_ref() else {
+			continue;
+		};
+		for (i, filter) in vq.filters.iter().enumerate() {
+			filter.validate(columns).map_err(|e| anyhow::anyhow!("scan `{}`: {e}", scan.name))?;
+			// A duplicate name makes two legs indistinguishable in the results
+			// table, which is the one place the difference between them has to
+			// be legible.
+			if vq.filters[..i].iter().any(|f| f.name == filter.name) {
+				bail!(
+					"scan `{}`: two vector filters are both named `{}`; names label the legs in \
+					 the results, so they have to be distinct",
+					scan.name,
+					filter.name
+				);
+			}
+			let Some(kind) = filter.field_kind(columns) else {
+				// `validate` above accepts only the types `field_kind` maps.
+				bail!(
+					"scan `{}`: vector filter `{}` has no usable column kind",
+					scan.name,
+					filter.name
+				);
+			};
+			if !fields.iter().any(|f| f.name == filter.field) {
+				fields.push(FilterField {
+					name: filter.field.clone(),
+					kind,
+				});
+			}
+		}
+	}
+	Ok(fields)
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 /// Physical or logical index attached to a scan (fulltext, field btree, etc.).
@@ -693,6 +746,23 @@ pub(crate) struct VectorQuerySpec {
 	/// Holdout sampling for the query set. Defaults to a 1000-id deterministic holdout.
 	#[serde(default)]
 	pub(crate) holdout: VectorHoldout,
+	/// Predicates the KNN result set is restricted to, one timed leg each over
+	/// a **single** index build — the same economy the search-parameter sweep
+	/// buys, and for the same reason: an index does not depend on the filter,
+	/// so tracing several selectivities should not cost a rebuild apiece.
+	///
+	/// An unfiltered leg is always run alongside them, first and under the same
+	/// build, because the question a filtered benchmark is asked is "what does
+	/// filtering cost?" and that is unanswerable without the baseline measured
+	/// on the same warm index.
+	///
+	/// Empty (the default) means one unfiltered leg, exactly as before.
+	///
+	/// Adapters never see this list: a leg is pinned to its own predicate
+	/// before the spec reaches an engine, and read back through
+	/// [`Self::filter`] — the same resolution the search sweep goes through.
+	#[serde(default)]
+	pub(crate) filters: Vec<VectorFilter>,
 	/// Relative tolerance when deciding whether a returned neighbour counts as
 	/// correct: a hit is accepted when its true distance is within this
 	/// fraction of the k-th true distance.
@@ -704,6 +774,26 @@ pub(crate) struct VectorQuerySpec {
 	/// never invalidates a cached answer key.
 	#[serde(default)]
 	pub(crate) tie_epsilon: f64,
+}
+
+impl VectorQuerySpec {
+	/// The predicate for a resolved leg, or `None` for the unfiltered one.
+	///
+	/// Adapters only ever see a resolved spec, so a list reaching here would be
+	/// a bug in the leg expansion rather than a config error. Taking the first
+	/// entry keeps such a bug a wrong-but-coherent measurement instead of a
+	/// panic in the middle of a benchmark.
+	pub(crate) fn filter(&self) -> Option<&VectorFilter> {
+		self.filters.first()
+	}
+
+	/// This spec pinned to one predicate, which is the form an adapter sees.
+	pub(crate) fn with_filter(&self, filter: Option<&VectorFilter>) -> Self {
+		Self {
+			filters: filter.cloned().into_iter().collect(),
+			..self.clone()
+		}
+	}
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1003,6 +1093,10 @@ fn run(args: Args) -> Result<()> {
 			}
 		}
 		validate_scan_index_ids(&scans)?;
+		// Engines that mirror filter columns into a separate vector-index
+		// payload need the whole set before any row is written, which is before
+		// a scan is ever looked at.
+		benchmark.set_vector_filter_fields(collect_vector_filter_fields(&scans, &vp.columns())?);
 	}
 	// Run the benchmark
 	let res = runtime.block_on(async {
@@ -1130,9 +1224,11 @@ fn run(args: Args) -> Result<()> {
 /// Unit and integration-style tests for scan expansion and CLI wiring.
 mod test {
 	use crate::terminal::ColorChoice;
+	use crate::valueprovider::ValueProvider;
+	use crate::vectorfilter::FilterFieldKind;
 	use crate::{
-		Args, Database, KeyType, Scans, VectorIndexStrategy, expand_scan_specs, run,
-		validate_scan_index_ids,
+		Args, Database, KeyType, Scans, VectorIndexStrategy, collect_vector_filter_fields,
+		expand_scan_specs, run, validate_scan_index_ids,
 	};
 	use anyhow::Result;
 	use serial_test::serial;
@@ -1148,6 +1244,101 @@ mod test {
 		let scans = expand_scan_specs(serde_json::from_str(&json)?)?;
 		validate_scan_index_ids(&scans)?;
 		Ok(scans)
+	}
+
+	/// A schema with the column shapes a filter can target.
+	const FILTER_TEMPLATE: &str = r#"{
+		"tier": "int_enum:0,1,2,3",
+		"number": "int:1..5000",
+		"status": "string_enum:draft,published,archived",
+		"active": "bool",
+		"created_at": "datetime",
+		"e": "vector:8"
+	}"#;
+
+	/// Run a filtered vector scan through the same two steps `run` does, and
+	/// return the filter columns the engines would be told to prepare.
+	fn filtered_scan(filters: &str) -> Result<Vec<crate::vectorfilter::FilterField>> {
+		let json = format!(
+			r#"[{{ "id": "v", "name": "v", "iterations": 1,
+			   "vector_query": {{ "field": "e", "top_k": 10, "distance": "cosine",
+			   "index_strategy": {{ "kind": "bruteforce" }}, "filters": {filters} }} }}]"#
+		);
+		let scans = expand_scan_specs(serde_json::from_str(&json)?)?;
+		validate_scan_index_ids(&scans)?;
+		let columns = ValueProvider::new(FILTER_TEMPLATE)?.columns();
+		collect_vector_filter_fields(&scans, &columns)
+	}
+
+	#[test]
+	fn filters_resolve_to_the_columns_engines_must_prepare() {
+		let fields = filtered_scan(
+			r#"[{ "name": "tier0", "field": "tier", "op": "eq", "value": 0 },
+			    { "name": "narrow", "field": "number", "op": "lte", "value": 50 },
+			    { "name": "live", "field": "status", "op": "in", "value": ["draft", "archived"] },
+			    { "name": "on", "field": "active", "op": "eq", "value": true }]"#,
+		)
+		.unwrap();
+		let kinds: Vec<(&str, FilterFieldKind)> =
+			fields.iter().map(|f| (f.name.as_str(), f.kind)).collect();
+		assert_eq!(
+			kinds,
+			vec![
+				("tier", FilterFieldKind::Numeric),
+				("number", FilterFieldKind::Numeric),
+				("status", FilterFieldKind::Tag),
+				("active", FilterFieldKind::Tag),
+			]
+		);
+	}
+
+	/// Two predicates on one column need that column prepared once, not twice —
+	/// a duplicate would declare the same RediSearch attribute again and fail
+	/// the index build.
+	#[test]
+	fn a_column_filtered_twice_is_prepared_once() {
+		let fields = filtered_scan(
+			r#"[{ "name": "a", "field": "number", "op": "lte", "value": 50 },
+			    { "name": "b", "field": "number", "op": "lte", "value": 500 }]"#,
+		)
+		.unwrap();
+		assert_eq!(fields.len(), 1);
+		assert_eq!(fields[0].name, "number");
+	}
+
+	#[test]
+	fn no_filters_means_nothing_to_prepare() {
+		assert!(filtered_scan("[]").unwrap().is_empty());
+	}
+
+	#[test]
+	fn rejects_filters_that_cannot_be_measured() {
+		// A column the schema does not have.
+		assert!(
+			filtered_scan(r#"[{ "name": "a", "field": "nope", "op": "eq", "value": 1 }]"#).is_err()
+		);
+		// A column type with no agreed cross-engine comparison.
+		assert!(
+			filtered_scan(r#"[{ "name": "a", "field": "created_at", "op": "eq", "value": "x" }]"#)
+				.is_err()
+		);
+		// The vector column itself.
+		assert!(
+			filtered_scan(r#"[{ "name": "a", "field": "e", "op": "eq", "value": 1 }]"#).is_err()
+		);
+		// Ordering a label.
+		assert!(
+			filtered_scan(r#"[{ "name": "a", "field": "status", "op": "gt", "value": "d" }]"#)
+				.is_err()
+		);
+		// Two legs that would be indistinguishable in the results table.
+		assert!(
+			filtered_scan(
+				r#"[{ "name": "same", "field": "tier", "op": "eq", "value": 0 },
+				    { "name": "same", "field": "tier", "op": "eq", "value": 1 }]"#
+			)
+			.is_err()
+		);
 	}
 
 	/// A scalar keeps its old meaning: one timed leg.

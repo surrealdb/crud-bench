@@ -1,0 +1,195 @@
+# Filtered vector-search benchmark template. Where `config/vector.toml` asks
+# "how fast and how accurately does this index find the nearest neighbours?",
+# this one asks the question production actually asks: "…among the rows that
+# match this predicate?"
+#
+# That is a different question, and engines answer it in structurally different
+# ways:
+#
+#   * **Pre-filter** — narrow the candidate set, then search it exactly. Stays
+#     accurate; gets slower as the predicate widens, because the exact search
+#     grows with it.
+#   * **Post-filter** — search the index for k, then discard the hits that do
+#     not match. Stays fast; returns *fewer than k rows* as the predicate
+#     narrows, because the k the index chose were chosen without knowing about
+#     it. At 1% selectivity a top-10 query can come back with nothing.
+#   * **Filtered traversal** — walk the graph while skipping non-matching
+#     nodes. Degrades somewhere between the two, and can stall entirely when the
+#     matching rows are scattered across a graph built without reference to the
+#     predicate.
+#
+# Latency alone cannot tell these apart — post-filtering is the *fastest* of the
+# three and the least useful. What separates them is recall, which is why every
+# leg here is scored against an answer key computed per predicate: exact top-k
+# among the rows that match, computed in the harness from the seeded corpus, and
+# never taken from the engine under test.
+#
+# Each predicate also runs an **unfiltered leg first, under the same index
+# build and the same warm index**, because "what does filtering cost?" is not
+# answerable against a baseline measured somewhere else.
+#
+# Selectivity is measured, not declared. The ground-truth sweep regenerates
+# every row anyway, so it counts matches while it is there and reports the share
+# that actually matched — in the leg label and in the `Filter` column. The
+# `~N%` names below are intentions; the reported figure is what happened.
+#
+# Engines covered end-to-end: SurrealDB 3.x, PostgreSQL (pgvector) and Redis
+# Stack. SurrealDB 2.x declines filtered legs rather than answering the
+# unfiltered question, so it reports `-`. DiskANN remains SurrealDB 3.x only.
+#
+# The `[value]` block below is byte-identical to `config/vector.toml`, so the
+# two configs share a corpus and share the cached unfiltered answer key.
+
+# Corpus seed. Change it to benchmark a different (but still reproducible)
+# dataset; the ground-truth cache keys on it, so each seed is computed once.
+seed = 20260908
+
+# ============================================================================
+# value
+# ============================================================================
+
+[value]
+text = "string:50"
+name = "string:20"
+age = "int:1..100"
+city = "string_enum:London,Paris,Berlin,Tokyo,New York,Sydney,Madrid,Rome,Beijing,Tokyo"
+score = "float:0.0..100.0"
+number = "int:1..5000"
+integer = "int"
+active = "bool"
+created_at = "datetime"
+http_status = "int_enum:200,201,400,404,500"
+request_id = "uuid"
+status = "string_enum:draft,published,archived"
+description = "text:100..400"
+tier = "int_enum:0,1,2,3"
+words = "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
+tags = [
+    "string_enum:alpha,beta,gamma,delta,epsilon",
+    "string_enum:theta,iota,kappa,lambda,mu",
+    "string_enum:nu,xi,omicron,pi,rho"
+]
+geography.code = "string:3"
+geography.text = "string:15"
+geography.location = "string_enum:Africa,Antarctica,Asia,Europe,North America,South America,Oceania"
+geography.description = "words:100;hello,world,foo,bar,test,search,data,query,index,document,database,performance"
+embedding = "vector:768:clustered:200"
+
+# ============================================================================
+# vector_knn_filtered — Bruteforce / HNSW / DiskANN KNN under a predicate.
+#
+# Every run below shares one filter ladder, so the three strategies are asked
+# the same questions at the same selectivities:
+#
+#   (unfiltered)  the baseline, on the same build and the same warm index
+#   sel~1%        `number <= 50`        — the shape post-filtering collapses on
+#   sel~10%       `number <= 500`
+#   sel~50%       `number <= 2500`      — wide enough that pre-filtering is the
+#                                         expensive strategy rather than the
+#                                         cheap one
+#   tag~33%       `status = 'published'` — a categorical predicate, which some
+#                                         engines index by a different
+#                                         mechanism than a numeric range
+#                                         (RediSearch TAG vs NUMERIC)
+#
+# `number` is uniform over 1..5000, so the numeric cut points are roughly the
+# share they name. Nothing depends on that being exact — the measured figure is
+# what gets reported.
+#
+# Legs are the cross product of the search sweep and the filter ladder, all over
+# a SINGLE index build: the index does not depend on the predicate, so tracing
+# several selectivities should not cost a rebuild apiece. The HNSW sweep has four
+# points, so it is 20 timed legs on one build (five filter legs × four budgets);
+# at ≤ 5 ms per query at 1M rows, that is minutes.
+#
+# The low end of each search ladder is deliberately below saturation, and is not
+# a mis-set parameter to be raised. A ladder whose every point already reaches
+# exact prints a flat column of `1.000` and measures nothing; the deliverable is
+# the curve, and a curve needs points under the knee.
+#
+# The HNSW ladder is calibrated at the scale this config is meant for (#290).
+# Unfiltered recall@10 at 1M rows × 768-d:
+#
+#   ef_search      16      64      128     256
+#   pgvector      0.516   0.821   0.937   0.975
+#   Redis         0.463   0.774   0.904   0.966
+#
+# so 16 sits clearly under the knee, 64 and 128 across it, and 256 near
+# saturation. The earlier guess that `[32, 128]` was already saturated came from
+# a 20k × 128-d smoke run and was wrong at 1M, where 32 reads 0.670 / 0.608.
+#
+# Selective predicates do not follow the budget at all: at 1% pgvector's
+# post-filter never passes 0.271 on this ladder, and Redis brute-forces the
+# matching rows at 1.000 throughout. The ladder is therefore chosen on the
+# unfiltered and 50% columns, and the 1% column reports strategy, not budget.
+#
+# The DiskANN ladder is NOT calibrated. DiskANN runs only on SurrealDB, whose 1M
+# arm is blocked: the index keeps materialising for over an hour after it
+# reports ready (#290). `[50, 200]` rests on a 20k × 128-d smoke run, where
+# `l_search = 50` reaches 1.000 unfiltered and at 33% but only 0.512 at 10%,
+# recovering fully at 200 — the starved point is what makes that visible, and
+# the unfiltered leg beside it at the same budget is what shows it to be a
+# budget/selectivity interaction rather than a defect.
+# ============================================================================
+
+[[scans]]
+id = "vector_knn_filtered"
+iterations = 1000
+# KNN answers in well under a millisecond once the index is warm, so at the
+# default concurrency these legs measure queueing rather than search. Latency is
+# only interpretable at a low setting; raise these to measure throughput under
+# load instead, and read the numbers as such.
+clients = 1
+threads = 1
+
+[[scans.runs]]
+name = "bruteforce knn(10)"
+# A bruteforce leg is a full table scan per query, and the filter ladder
+# multiplies it by five. Exact search is the reference point rather than a
+# competitor, so it needs far fewer samples to be characterised.
+iterations = 50
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "bruteforce" }
+holdout = { count = 200, seed = 42 }
+filters = [
+    { name = "sel~1%", field = "number", op = "lte", value = 50 },
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "sel~50%", field = "number", op = "lte", value = 2500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
+
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 64, 128, 256] }
+holdout = { count = 200, seed = 42 }
+filters = [
+    { name = "sel~1%", field = "number", op = "lte", value = 50 },
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "sel~50%", field = "number", op = "lte", value = 2500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
+
+[[scans.runs]]
+name = "diskann knn(10) deg=64 L=100 alpha=1.2"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = [50, 200] }
+holdout = { count = 200, seed = 42 }
+filters = [
+    { name = "sel~1%", field = "number", op = "lte", value = 50 },
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "sel~50%", field = "number", op = "lte", value = 2500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
