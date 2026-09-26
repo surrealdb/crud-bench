@@ -374,6 +374,20 @@ fn expand_scan_specs(specs: Vec<ScanSpec>) -> Result<Scans> {
 	Ok(scans)
 }
 
+/// Applies `--skip-indexes` to both explicit indexes and vector scans that build physical indexes.
+fn skip_index_operations(scans: &mut Scans, database: Database) {
+	scans.retain_mut(|scan| {
+		if let Some(index) = scan.with_index.as_mut() {
+			index.skip = true;
+		}
+
+		!scan
+			.vector_query
+			.as_ref()
+			.is_some_and(|vq| database.vector_scan_builds_index(&vq.index_strategy))
+	});
+}
+
 /// Index types whose DDL applies to the whole table and accepts no `FIELDS` clause.
 /// Empty `Index.fields` is only valid when `index_type` is one of these.
 const FIELDLESS_INDEX_TYPES: &[&str] = &["count"];
@@ -571,6 +585,10 @@ pub(crate) enum VectorIndexStrategy {
 }
 
 impl VectorIndexStrategy {
+	pub(crate) fn requires_index(&self) -> bool {
+		matches!(self, Self::Hnsw { .. } | Self::DiskAnn { .. })
+	}
+
 	/// Search-time values this strategy sweeps. Empty for bruteforce, which has
 	/// no search knob to vary.
 	pub(crate) fn search_values(&self) -> Vec<u32> {
@@ -974,11 +992,7 @@ fn run(args: Args) -> Result<()> {
 		scans.clear();
 	} else {
 		if args.skip_indexes {
-			for scan in &mut scans {
-				if let Some(index) = scan.with_index.as_mut() {
-					index.skip = true;
-				}
-			}
+			skip_index_operations(&mut scans, args.database);
 		}
 		validate_scan_index_ids(&scans)?;
 	}
@@ -1578,5 +1592,46 @@ mod test {
 		assert_eq!(scans[0].with_writes.len(), 2);
 		assert!((scans[0].with_writes[0].ratio - 0.1).abs() < 1e-9);
 		assert!((scans[0].with_writes[1].ratio - 0.5).abs() < 1e-9);
+	}
+	#[test]
+	fn skip_indexes_keeps_only_index_free_bruteforce_vector_scans() {
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"vector","runs":[{"name":"bruteforce","vector_query":{"field":"embedding","top_k":10,"distance":"cosine","index_strategy":{"kind":"bruteforce"}}},{"name":"hnsw","vector_query":{"field":"embedding","top_k":10,"distance":"cosine","index_strategy":{"kind":"hnsw","m":16,"ef_construction":200,"ef_search":64}}},{"name":"diskann","vector_query":{"field":"embedding","top_k":10,"distance":"cosine","index_strategy":{"kind":"diskann","degree":64,"l_build":100,"alpha":1.2,"l_search":100}}}]}]"#,
+		)
+		.unwrap();
+		let mut scans = super::expand_scan_specs(specs).unwrap();
+
+		super::skip_index_operations(&mut scans, Database::Dry);
+
+		assert_eq!(scans.len(), 1);
+		assert_eq!(scans[0].name, "bruteforce");
+	}
+
+	#[cfg(feature = "redis")]
+	#[test]
+	fn skip_indexes_removes_redis_bruteforce_vector_scans() {
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"vector","name":"bruteforce","vector_query":{"field":"embedding","top_k":10,"distance":"cosine","index_strategy":{"kind":"bruteforce"}}}]"#,
+		)
+		.unwrap();
+		let mut scans = super::expand_scan_specs(specs).unwrap();
+
+		super::skip_index_operations(&mut scans, Database::Redis);
+
+		assert!(scans.is_empty());
+	}
+
+	#[test]
+	fn skip_indexes_marks_explicit_indexes_as_skipped() {
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"indexed","name":"indexed scan","with_index":{"fields":["number"]}}]"#,
+		)
+		.unwrap();
+		let mut scans = super::expand_scan_specs(specs).unwrap();
+
+		super::skip_index_operations(&mut scans, Database::Dry);
+
+		assert_eq!(scans.len(), 1);
+		assert!(scans[0].with_index.as_ref().unwrap().skip);
 	}
 }
