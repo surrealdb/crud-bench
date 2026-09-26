@@ -646,29 +646,40 @@ impl OperationMetric {
 	}
 }
 
+/// Format latency for display in tables (auto-scaling to ms, µs, or ns).
+fn format_latency_display(us: f64) -> String {
+	if us >= 1000.0 {
+		format!("{:.2} ms", us / 1000.0)
+	} else if us >= 1.0 {
+		format!("{:.2} µs", us)
+	} else {
+		format!("{:.0} ns", us * 1000.0)
+	}
+}
+
 #[derive(Serialize)]
 /// Histogram-backed latency stats plus resource usage for one benchmark phase.
 pub(crate) struct OperationResult {
 	/// Mean latency (microseconds, HDR histogram centroids).
 	mean: f64,
 	/// Minimum observed latency (µs).
-	min: u64,
+	min: f64,
 	/// Maximum observed latency (µs).
-	max: u64,
+	max: f64,
 	/// 99th percentile latency (µs).
-	q99: u64,
+	q99: f64,
 	/// 95th percentile latency (µs).
-	q95: u64,
+	q95: f64,
 	/// 75th percentile latency (µs).
-	q75: u64,
+	q75: f64,
 	/// Median latency (µs).
-	q50: u64,
+	q50: f64,
 	/// 25th percentile latency (µs).
-	q25: u64,
+	q25: f64,
 	/// 1st percentile latency (µs).
-	q01: u64,
+	q01: f64,
 	/// Inter-quartile range (`q75 - q25`).
-	iqr: u64,
+	iqr: f64,
 	/// Throughput: `samples / elapsed_seconds`.
 	ops: f64,
 	/// Wall-clock duration of the whole phase.
@@ -780,24 +791,24 @@ impl OperationResult {
 		// Divide the cpu usage by the number of cpus to get a normalized valued
 		cpu_usage /= num_cpus::get() as f32;
 
-		// Metrics
-		let q75 = histogram.value_at_quantile(0.75);
-		let q25 = histogram.value_at_quantile(0.25);
+		// Metrics (recorded in nanoseconds, converted to fractional microseconds)
+		let q75 = histogram.value_at_quantile(0.75) as f64 / 1_000.0;
+		let q25 = histogram.value_at_quantile(0.25) as f64 / 1_000.0;
 		let ops = metric.samples as f64 / (elapsed.as_nanos() as f64 / 1_000_000_000.0);
 
 		Self {
 			samples: metric.samples,
 			// Set by `with_recall` for vector scans only.
 			recall: None,
-			mean: histogram.mean(),
-			min: histogram.min(),
-			max: histogram.max(),
-			q99: histogram.value_at_quantile(0.99),
-			q95: histogram.value_at_quantile(0.95),
+			mean: histogram.mean() / 1_000.0,
+			min: histogram.min() as f64 / 1_000.0,
+			max: histogram.max() as f64 / 1_000.0,
+			q99: histogram.value_at_quantile(0.99) as f64 / 1_000.0,
+			q95: histogram.value_at_quantile(0.95) as f64 / 1_000.0,
 			q75,
-			q50: histogram.value_at_quantile(0.50),
+			q50: histogram.value_at_quantile(0.50) as f64 / 1_000.0,
 			q25,
-			q01: histogram.value_at_quantile(0.01),
+			q01: histogram.value_at_quantile(0.01) as f64 / 1_000.0,
 			iqr: q75 - q25,
 			ops,
 			elapsed,
@@ -838,11 +849,11 @@ impl OperationResult {
 		vec![
 			name.to_string(),
 			format_duration(self.elapsed),
-			format!("{:.2} ms", self.mean / 1000.0),
-			format!("{:.2} ms", self.max as f64 / 1000.0),
-			format!("{:.2} ms", self.q99 as f64 / 1000.0),
-			format!("{:.2} ms", self.q95 as f64 / 1000.0),
-			format!("{:.2} ms", self.min as f64 / 1000.0),
+			format_latency_display(self.mean),
+			format_latency_display(self.max),
+			format_latency_display(self.q99),
+			format_latency_display(self.q95),
+			format_latency_display(self.min),
 			self.recall_display(),
 			format!("{:.2}", self.ops),
 			cpu_display,
@@ -887,16 +898,16 @@ impl OperationResult {
 		vec![
 			name.to_string(),
 			format_duration(self.elapsed),
-			format!("{:.2} ms", self.mean / 1000.0),
-			format!("{:.2} ms", self.max as f64 / 1000.0),
-			format!("{:.2} ms", self.q99 as f64 / 1000.0),
-			format!("{:.2} ms", self.q95 as f64 / 1000.0),
-			format!("{:.2} ms", self.q75 as f64 / 1000.0),
-			format!("{:.2} ms", self.q50 as f64 / 1000.0),
-			format!("{:.2} ms", self.q25 as f64 / 1000.0),
-			format!("{:.2} ms", self.q01 as f64 / 1000.0),
-			format!("{:.2} ms", self.min as f64 / 1000.0),
-			format!("{:.2} ms", self.iqr as f64 / 1000.0),
+			format!("{:.4} ms", self.mean / 1000.0),
+			format!("{:.4} ms", self.max / 1000.0),
+			format!("{:.4} ms", self.q99 / 1000.0),
+			format!("{:.4} ms", self.q95 / 1000.0),
+			format!("{:.4} ms", self.q75 / 1000.0),
+			format!("{:.4} ms", self.q50 / 1000.0),
+			format!("{:.4} ms", self.q25 / 1000.0),
+			format!("{:.4} ms", self.q01 / 1000.0),
+			format!("{:.4} ms", self.min / 1000.0),
+			format!("{:.4} ms", self.iqr / 1000.0),
 			self.recall.map_or_else(|| "-".to_string(), |r| format!("{:.4}", r.mean)),
 			self.recall.map_or_else(|| "-".to_string(), |r| format!("{:.4}", r.p5)),
 			self.recall.map_or_else(|| "-".to_string(), |r| format!("{:.4}", r.min)),
@@ -927,42 +938,42 @@ impl OperationResult {
 	}
 
 	/// Get the minimum duration
-	pub(crate) fn min(&self) -> u64 {
+	pub(crate) fn min(&self) -> f64 {
 		self.min
 	}
 
 	/// Get the maximum duration
-	pub(crate) fn max(&self) -> u64 {
+	pub(crate) fn max(&self) -> f64 {
 		self.max
 	}
 
 	/// Get the 99th percentile duration
-	pub(crate) fn q99(&self) -> u64 {
+	pub(crate) fn q99(&self) -> f64 {
 		self.q99
 	}
 
 	/// Get the 95th percentile duration
-	pub(crate) fn q95(&self) -> u64 {
+	pub(crate) fn q95(&self) -> f64 {
 		self.q95
 	}
 
 	/// Get the 75th percentile duration
-	pub(crate) fn q75(&self) -> u64 {
+	pub(crate) fn q75(&self) -> f64 {
 		self.q75
 	}
 
 	/// Get the 50th percentile duration
-	pub(crate) fn q50(&self) -> u64 {
+	pub(crate) fn q50(&self) -> f64 {
 		self.q50
 	}
 
 	/// Get the 25th percentile duration
-	pub(crate) fn q25(&self) -> u64 {
+	pub(crate) fn q25(&self) -> f64 {
 		self.q25
 	}
 
 	/// Get the 1st percentile duration
-	pub(crate) fn q01(&self) -> u64 {
+	pub(crate) fn q01(&self) -> f64 {
 		self.q01
 	}
 

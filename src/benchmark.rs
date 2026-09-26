@@ -1166,7 +1166,7 @@ impl Benchmark {
 			}
 		});
 		// Wait for the threads to complete, aborting the remaining tasks on the first failure.
-		let mut global_histogram = Histogram::new(3)?;
+		let mut global_histogram = Histogram::new_with_bounds(1, 86_400_000_000_000, 3)?;
 		let mut global_recall = RecallTally::default();
 		let mut timed_out = false;
 		loop {
@@ -1296,7 +1296,7 @@ impl Benchmark {
 		C: BenchmarkClient,
 		D: Dialect,
 	{
-		let mut histogram = Histogram::new(3)?;
+		let mut histogram = Histogram::new_with_bounds(1, 86_400_000_000_000, 3)?;
 		let mut tally = RecallTally::default();
 		// Check if we have encountered an error
 		while !error.load(Ordering::Relaxed) {
@@ -1385,7 +1385,8 @@ impl Benchmark {
 				let done = ((sample + 1).min(samples)) as u64;
 				pb.set_position(done);
 			}
-			histogram.record(time.elapsed().as_micros() as u64)?;
+			let nanos = (time.elapsed().as_nanos() as u64).min(86_400_000_000_000);
+			histogram.record(nanos)?;
 			// Scoring happens strictly after the latency is banked, so recall
 			// never inflates the number it is reported beside.
 			if let Some((query, hits)) = scored
