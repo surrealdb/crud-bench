@@ -354,7 +354,6 @@ jobs:
             enabled: true
             endpoint: -e surrealkv:~/crud-bench
             description: SurrealDB embedded with SurrealKV storage
-            skipped: SurrealDB with SurrealKV storage benchmark awaiting fixes
           # SurrealDB 2.x + Memory
           - name: surrealdb2-memory
             database: surrealdb2
@@ -391,7 +390,6 @@ jobs:
             enabled: true
             endpoint: -e surrealkv:~/crud-bench
             description: SurrealDB 2.x embedded with SurrealKV storage
-            skipped: SurrealDB with SurrealKV storage benchmark awaiting fixes
           # SurrealKV
           - name: surrealkv
             database: surrealkv
@@ -474,6 +472,10 @@ jobs:
           # Prune stopped containers and volumes
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
+          # Clean up data directory
+          rm -rf ~/crud-bench
+          mkdir -p ~/crud-bench
+          chmod 777 ~/crud-bench
           # Run the benchmarks
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k integer -r -n integer-random
           # Kill and remove any existing crud-bench container
@@ -496,6 +498,10 @@ jobs:
           # Prune stopped containers and volumes
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
+          # Clean up data directory
+          rm -rf ~/crud-bench
+          mkdir -p ~/crud-bench
+          chmod 777 ~/crud-bench
           # Run the benchmarks
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k string26 -r -n string26-random
           # Kill and remove any existing crud-bench container
@@ -518,6 +524,10 @@ jobs:
           # Prune stopped containers and volumes
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
+          # Clean up data directory
+          rm -rf ~/crud-bench
+          mkdir -p ~/crud-bench
+          chmod 777 ~/crud-bench
           # Run the benchmarks
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k string90 -r -n string90-random
           # Kill and remove any existing crud-bench container
@@ -540,6 +550,10 @@ jobs:
           # Prune stopped containers and volumes
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
+          # Clean up data directory
+          rm -rf ~/crud-bench
+          mkdir -p ~/crud-bench
+          chmod 777 ~/crud-bench
           # Run the benchmarks
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k string250 -r -n string250-random
           # Kill and remove any existing crud-bench container
@@ -562,6 +576,10 @@ jobs:
           # Prune stopped containers and volumes
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
+          # Clean up data directory
+          rm -rf ~/crud-bench
+          mkdir -p ~/crud-bench
+          chmod 777 ~/crud-bench
           # Run the benchmarks
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k string506 -r -n string506-random
           # Kill and remove any existing crud-bench container
@@ -584,6 +602,10 @@ jobs:
           # Prune stopped containers and volumes
           docker container prune --force &>/dev/null || true
           docker volume prune --all --force &>/dev/null || true
+          # Clean up data directory
+          rm -rf ~/crud-bench
+          mkdir -p ~/crud-bench
+          chmod 777 ~/crud-bench
           # Run the benchmarks
           ${{ github.workspace }}/artifacts/crud-bench -d ${{ matrix.database }} ${{ matrix.endpoint || '' }} -s 10000 -c 12 -t 4 -k string26 -r -n string26-random-1k
           # Kill and remove any existing crud-bench container
