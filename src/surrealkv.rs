@@ -95,7 +95,7 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
-		self.create_bytes(&key.to_ne_bytes(), val).await
+		self.create_bytes(&key.to_be_bytes(), val).await
 	}
 
 	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
@@ -103,7 +103,7 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
-		self.read_bytes(&key.to_ne_bytes()).await
+		self.read_bytes(&key.to_be_bytes()).await
 	}
 
 	async fn read_string(&self, key: String) -> Result<BenchValue> {
@@ -111,7 +111,7 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
-		self.update_bytes(&key.to_ne_bytes(), val).await
+		self.update_bytes(&key.to_be_bytes(), val).await
 	}
 
 	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
@@ -119,7 +119,7 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.delete_bytes(&key.to_ne_bytes()).await
+		self.delete_bytes(&key.to_be_bytes()).await
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
@@ -140,7 +140,7 @@ impl BenchmarkClient for SurrealKVClient {
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
 			let val = val.encode()?;
-			Ok((key.to_ne_bytes().to_vec(), val))
+			Ok((key.to_be_bytes().to_vec(), val))
 		});
 		self.batch_create_bytes(pairs_iter).await
 	}
@@ -157,7 +157,7 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
-		let keys_iter = keys.map(|key| key.to_ne_bytes().to_vec());
+		let keys_iter = keys.map(|key| key.to_be_bytes().to_vec());
 		self.batch_read_bytes(keys_iter).await
 	}
 
@@ -172,7 +172,7 @@ impl BenchmarkClient for SurrealKVClient {
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
 			let val = val.encode()?;
-			Ok((key.to_ne_bytes().to_vec(), val))
+			Ok((key.to_be_bytes().to_vec(), val))
 		});
 		self.batch_update_bytes(pairs_iter).await
 	}
@@ -189,7 +189,7 @@ impl BenchmarkClient for SurrealKVClient {
 	}
 
 	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
-		let keys_iter = keys.map(|key| key.to_ne_bytes().to_vec());
+		let keys_iter = keys.map(|key| key.to_be_bytes().to_vec());
 		self.batch_delete_bytes(keys_iter).await
 	}
 
