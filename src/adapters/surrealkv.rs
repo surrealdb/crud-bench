@@ -353,11 +353,13 @@ impl SurrealKVClient {
 		let p = scan.projection()?;
 		// Create a new transaction
 		let txn = self.db.begin_with_mode(ReadOnly)?;
+		let beg: &[u8] = b"";
+		let end: &[u8] = &[0xFFu8; 1024];
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
 				// Create a cursor-based iterator over the key range
-				let mut iter = txn.range_with_options(&surrealkv::ReadOptions::default())?;
+				let mut iter = txn.range(beg, end)?;
 				iter.seek_first()?;
 				// Skip the first `s` entries
 				for _ in 0..s {
@@ -380,7 +382,7 @@ impl SurrealKVClient {
 			}
 			Projection::Full => {
 				// Create a cursor-based iterator over the key range
-				let mut iter = txn.range_with_options(&surrealkv::ReadOptions::default())?;
+				let mut iter = txn.range(beg, end)?;
 				iter.seek_first()?;
 				// Skip the first `s` entries
 				for _ in 0..s {
@@ -405,7 +407,7 @@ impl SurrealKVClient {
 				Some(_) => bail!(NOT_SUPPORTED_ERROR),
 				None => {
 					// Iterate over all entries to count them
-					let mut iter = txn.range_with_options(&surrealkv::ReadOptions::default())?;
+					let mut iter = txn.range(beg, end)?;
 					iter.seek_first()?;
 					let mut count = 0;
 					while iter.valid() {
