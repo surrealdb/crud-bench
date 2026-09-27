@@ -583,7 +583,7 @@ optimize_system() {
         sync
 
         log_info "Purging memory cache..."
-        sudo purge 2>/dev/null || log_warning "Could not purge memory"
+        sudo -n purge 2>/dev/null || log_warning "Could not purge memory"
     fi
 
     # Increase max limits (both platforms)
