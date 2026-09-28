@@ -29,8 +29,8 @@
 //! algorithm to select the next available endpoint, ensuring even distribution of connections
 //! across all configured SurrealDB instances.
 
+use super::surrealdb::{SurrealDBClient, initialise_db, surrealdb_password, surrealdb_username};
 use crate::engine::BenchmarkEngine;
-use crate::surrealdb::{SurrealDBClient, initialise_db, surrealdb_password, surrealdb_username};
 use crate::valueprovider::Columns;
 use crate::{Benchmark, KeyType};
 use anyhow::{Result, bail};

@@ -86,28 +86,28 @@ overflow-checks = false
 
 [dependencies]
 affinitypool = "0.4.0"
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 arangors = { version = "0.6.0", optional = true }
 async-trait = { version = "0.1", optional = true }
 http = { version = "1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["gzip", "http2"], optional = true }
 bincode = { version = "2.0.1", features = ["serde"] }
-bytesize = "2.3.1"
+bytesize = "2.7.0"
 comfy-table = "7.2.2"
-chrono = { version = "0.4.44", features = ["serde"] }
-clap = { version = "4.6.1", features = ["derive", "string", "env", "color"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.7", features = ["derive", "string", "env", "color"] }
 csv = "1.4.0"
 dashmap = "6.2.1"
-env_logger = "0.11.10"
-fjall = { version = "3.1.4", optional = true, features = ["lz4"] }
-futures = "0.3.32"
-hdrhistogram = "7.5.4"
-indicatif = "0.17.11"
+env_logger = "0.11.11"
+fjall = { version = "3.1.10", optional = true, features = ["lz4"] }
+futures = "0.3.34"
+hdrhistogram = "7.6.0"
+indicatif = "0.18.6"
 heed = { version = "0.22.1", optional = true }
 libmdbx = { version = "0.6.6", optional = true }
-log = "0.4.29"
+log = "0.4.34"
 mimalloc = "0.1.52"
-mongodb = { version = "3.7.0", optional = true }
+mongodb = { version = "3.9.1", optional = true }
 mysql_async = { version = "0.36.2", default-features = false, features = [
     "bigdecimal",
     "binlog",
@@ -120,16 +120,16 @@ mysql_async = { version = "0.36.2", default-features = false, features = [
 neo4rs = { version = "0.8.0", optional = true }
 num_cpus = "1.17.0"
 pprof = { version = "0.15.0", features = ["flamegraph", "prost-codec"] }
-rand = "0.10.1"
-redb = { version = "4.1.0", optional = true }
+rand = "0.10.3"
+redb = { version = "4.3.0", optional = true }
 redis = { version = "0.32.7", features = ["tokio-comp"], optional = true }
-rust_decimal = { version = "1.42", default-features = false, features = ["serde", "serde-with-str", "std", "db-tokio-postgres"] }
+rust_decimal = { version = "1.43", default-features = false, features = ["serde", "serde-with-str", "std", "db-tokio-postgres"] }
 rocksdb = { version = "0.24.0-surreal.5", package = "surrealdb-rocksdb", features = ["lz4", "snappy"], optional = true }
-scylla = { version = "1.6.0", optional = true }
-serde = { version = "1.0.228", features = ["derive"] }
+scylla = { version = "1.9.0", optional = true }
+serde = { version = "1.0.229", features = ["derive"] }
 slatedb = { version = "0.15.0", features = ["foyer"], optional = true }
-serde_json = "1.0.150"
-serial_test = "3.4.0"
+serde_json = "1.0.151"
+serial_test = "3.5.0"
 # Track the published version closest to surrealdb's main branch, prereleases
 # included, rather than the latest stable. crud-bench exists to monitor SurrealDB
 # as it is developed, so the embedded engine should sit where the development is
@@ -155,18 +155,18 @@ surrealdb2 = { package = "surrealdb", version = "2.6", default-features = false,
 surrealkv = { version = "0.21.2", optional = true }
 surrealmx = { version = "0.18.0", optional = true }
 sysinfo = { version = "0.37.2", features = ["serde"] }
-tokio = { version = "1.52.3", features = ["macros", "time", "rt-multi-thread"] }
+tokio = { version = "1.53.1", features = ["macros", "time", "rt-multi-thread"] }
 toml = "0.8"
-tokio-postgres = { version = "0.7.17", optional = true, features = [
+tokio-postgres = { version = "0.7.18", optional = true, features = [
     "with-chrono-0_4",
     "with-serde_json-1",
     "with-uuid-1",
 ] }
 pgvector = { version = "0.4", optional = true, features = ["postgres"] }
 bytemuck = { version = "1", features = ["derive"] }
-tokio-rusqlite = { version = "0.7.0", optional = true, features = ["bundled"] }
-twox-hash = "2.1.2"
-uuid = { version = "1.23.1", features = ["v4", "serde"] }
+tokio-rusqlite = { version = "0.8.0", optional = true, features = ["bundled"] }
+twox-hash = "2.1.4"
+uuid = { version = "1.26.1", features = ["v4", "serde"] }
 
 [profile.profiling]
 inherits = "release"  # start from the production settings
