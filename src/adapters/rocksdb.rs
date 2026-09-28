@@ -14,6 +14,7 @@ use rocksdb::{
 	OptimisticTransactionOptions, Options, ReadOptions, WaitForCompactOptions, WriteOptions,
 };
 use std::hint::black_box;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,7 +30,10 @@ fn calculate_rocksdb_memory() -> u64 {
 
 pub(crate) struct RocksDBClientProvider {
 	db: Arc<OptimisticTransactionDB>,
+	dir: PathBuf,
 	sync: bool,
+	in_memory: bool,
+	_env: Option<Arc<rocksdb::Env>>,
 }
 
 impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
@@ -39,12 +43,37 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 	}
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
+		// Determine directory, memory environment, and whether we're in pure in-memory mode
+		let (mem_env, dir, in_memory) = match options.endpoint.as_deref() {
+			Some("memory" | "in-memory" | "mem" | "mem://") => {
+				let env = Arc::new(rocksdb::Env::mem_env()?);
+				let path = std::env::temp_dir().join("crud-bench-rocksdb-mem");
+				(Some(env), path, true)
+			}
+			Some("tmpfs") => {
+				let path = if std::path::Path::new("/dev/shm").is_dir() {
+					PathBuf::from("/dev/shm/crud-bench-rocksdb")
+				} else {
+					std::env::temp_dir().join("crud-bench-rocksdb")
+				};
+				(None, path, false)
+			}
+			Some(p) => (None, PathBuf::from(p), false),
+			None => (None, PathBuf::from(DATABASE_DIR), false),
+		};
+
 		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		std::fs::remove_dir_all(&dir).ok();
+		// Recreate the database directory
+		std::fs::create_dir_all(&dir)?;
+
 		// Calculate memory allocation
 		let memory = calculate_rocksdb_memory();
 		// Configure custom options
 		let mut opts = Options::default();
+		if let Some(ref env) = mem_env {
+			opts.set_env(env);
+		}
 		// Ensure we use fdatasync
 		opts.set_use_fsync(false);
 		// Set the maximum number of open files
@@ -114,10 +143,12 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		opts.set_block_based_table_factory(&block_opts);
 		opts.set_blob_cache(&cache);
 		opts.set_row_cache(&cache);
-		// Allow memory-mapped reads
-		opts.set_allow_mmap_reads(true);
+		// Allow memory-mapped reads for disk mode
+		if !in_memory {
+			opts.set_allow_mmap_reads(true);
+		}
 		// Configure background WAL flush behaviour
-		let db = match std::env::var("ROCKSDB_BACKGROUND_FLUSH").is_ok() {
+		let db = match std::env::var("ROCKSDB_BACKGROUND_FLUSH").is_ok() && !in_memory {
 			// Beckground flush is disabled which
 			// means that the WAL will be flushed
 			// whenever a transaction is committed.
@@ -125,7 +156,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 				// Enable manual WAL flush
 				opts.set_manual_wal_flush(false);
 				// Create the optimistic datastore
-				Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?)
+				Arc::new(OptimisticTransactionDB::open(&opts, &dir)?)
 			}
 			// Background flush is enabled so we
 			// spawn a background worker thread to
@@ -134,7 +165,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 				// Enable manual WAL flush
 				opts.set_manual_wal_flush(true);
 				// Create the optimistic datastore
-				let db = Arc::new(OptimisticTransactionDB::open(&opts, DATABASE_DIR)?);
+				let db = Arc::new(OptimisticTransactionDB::open(&opts, &dir)?);
 				// Clone the database reference
 				let dbc = db.clone();
 				// Create a new background thread
@@ -155,21 +186,30 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		// Create the store
 		Ok(Self {
 			db,
+			dir,
 			sync: options.sync,
+			in_memory,
+			_env: mem_env,
 		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<RocksDBClient> {
 		Ok(RocksDBClient {
 			db: self.db.clone(),
+			dir: self.dir.clone(),
 			sync: self.sync,
+			in_memory: self.in_memory,
+			_env: self._env.clone(),
 		})
 	}
 }
 
 pub(crate) struct RocksDBClient {
 	db: Arc<OptimisticTransactionDB>,
+	dir: PathBuf,
 	sync: bool,
+	in_memory: bool,
+	_env: Option<Arc<rocksdb::Env>>,
 }
 
 impl BenchmarkClient for RocksDBClient {
@@ -180,7 +220,9 @@ impl BenchmarkClient for RocksDBClient {
 		// No need to run background jobs
 		self.db.cancel_all_background_work(true);
 		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		if !self.in_memory {
+			std::fs::remove_dir_all(&self.dir).ok();
+		}
 		// Ok
 		Ok(())
 	}
@@ -190,7 +232,9 @@ impl BenchmarkClient for RocksDBClient {
 		let mut opts = FlushOptions::default();
 		opts.set_wait(true);
 		// Flush the WAL to storage
-		let _ = self.db.flush_wal(true);
+		if !self.in_memory {
+			let _ = self.db.flush_wal(true);
+		}
 		// Flush the memtables to SST
 		let _ = self.db.flush_opt(&opts);
 		// Create new wait options
@@ -324,6 +368,9 @@ impl RocksDBClient {
 		// Set the write options
 		let mut wo = WriteOptions::default();
 		wo.set_sync(self.sync);
+		if self.in_memory {
+			wo.disable_wal(true);
+		}
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
@@ -339,13 +386,16 @@ impl RocksDBClient {
 		// Set the write options
 		let mut wo = WriteOptions::default();
 		wo.set_sync(self.sync);
+		if self.in_memory {
+			wo.disable_wal(true);
+		}
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Configure read options
 		let mut ro = ReadOptions::default();
 		ro.set_snapshot(&txn.snapshot());
 		ro.set_verify_checksums(false);
-		ro.set_async_io(true);
+		ro.set_async_io(!self.in_memory);
 		ro.fill_cache(true);
 		// Process the data
 		let res = txn.get_pinned_opt(key, &ro)?;
@@ -366,6 +416,9 @@ impl RocksDBClient {
 		// Set the write options
 		let mut wo = WriteOptions::default();
 		wo.set_sync(self.sync);
+		if self.in_memory {
+			wo.disable_wal(true);
+		}
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
@@ -381,6 +434,9 @@ impl RocksDBClient {
 		// Set the write options
 		let mut wo = WriteOptions::default();
 		wo.set_sync(self.sync);
+		if self.in_memory {
+			wo.disable_wal(true);
+		}
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
@@ -399,6 +455,9 @@ impl RocksDBClient {
 		// Set the write options
 		let mut wo = WriteOptions::default();
 		wo.set_sync(self.sync);
+		if self.in_memory {
+			wo.disable_wal(true);
+		}
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
@@ -418,13 +477,16 @@ impl RocksDBClient {
 		// Set the write options
 		let mut wo = WriteOptions::default();
 		wo.set_sync(self.sync);
+		if self.in_memory {
+			wo.disable_wal(true);
+		}
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Configure read options
 		let mut ro = ReadOptions::default();
 		ro.set_snapshot(&txn.snapshot());
 		ro.set_verify_checksums(false);
-		ro.set_async_io(true);
+		ro.set_async_io(!self.in_memory);
 		ro.fill_cache(true);
 		// Process the data
 		for key in keys {
@@ -451,6 +513,9 @@ impl RocksDBClient {
 		// Set the write options
 		let mut wo = WriteOptions::default();
 		wo.set_sync(self.sync);
+		if self.in_memory {
+			wo.disable_wal(true);
+		}
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
@@ -470,6 +535,9 @@ impl RocksDBClient {
 		// Set the write options
 		let mut wo = WriteOptions::default();
 		wo.set_sync(self.sync);
+		if self.in_memory {
+			wo.disable_wal(true);
+		}
 		// Create a new transaction
 		let txn = self.db.transaction_opt(&wo, &to);
 		// Process the data
