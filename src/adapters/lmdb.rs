@@ -78,7 +78,13 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 				flags |= EnvFlags::NO_SYNC | EnvFlags::NO_META_SYNC;
 			}
 			if options.optimised {
-				flags |= EnvFlags::WRITE_MAP | EnvFlags::MAP_ASYNC;
+				flags |= EnvFlags::WRITE_MAP;
+				// MAP_ASYNC defers flushes to the OS page-cache writeback, which
+				// silently defeats --sync durability even though NO_SYNC is not
+				// set -- only use it when sync durability was not requested.
+				if !options.sync {
+					flags |= EnvFlags::MAP_ASYNC;
+				}
 			}
 		}
 
