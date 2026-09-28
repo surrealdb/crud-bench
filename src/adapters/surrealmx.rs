@@ -76,7 +76,7 @@ impl BenchmarkClient for SurrealMXClient {
 	}
 
 	async fn read_string(&self, key: String) -> Result<BenchValue> {
-		self.read_bytes(&key.into_bytes()).await
+		self.read_bytes(key.as_bytes()).await
 	}
 
 	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
@@ -92,7 +92,7 @@ impl BenchmarkClient for SurrealMXClient {
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
-		self.delete_bytes(&key.into_bytes()).await
+		self.delete_bytes(key.as_bytes()).await
 	}
 
 	async fn scan_u32(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
@@ -172,44 +172,30 @@ impl SurrealMXClient {
 	async fn create_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Serialise the value
 		let val = val.encode()?;
-		// Create a new transaction
-		let mut txn = self.db.transaction(true);
-		// Process the data
-		txn.set(key, val)?;
-		txn.commit()?;
+		// Process the data directly
+		self.db.set(key, val)?;
 		Ok(())
 	}
 
 	async fn read_bytes(&self, key: &[u8]) -> Result<BenchValue> {
-		// Create a new transaction
-		let txn = self.db.transaction(false);
-		// Process the data
-		let res = txn.get(key.to_vec())?;
-		// Check the value exists
-		assert!(res.is_some());
-		// Deserialise the value
-		let val = BenchValue::decode(res.unwrap().as_ref())?;
-		// All ok
-		Ok(black_box(val))
+		let res = self.db.with_value(key, BenchValue::decode)?;
+		match res {
+			Some(val) => Ok(black_box(val?)),
+			None => bail!("missing key"),
+		}
 	}
 
 	async fn update_bytes(&self, key: &[u8], val: BenchValue) -> Result<()> {
 		// Serialise the value
 		let val = val.encode()?;
-		// Create a new transaction
-		let mut txn = self.db.transaction(true);
-		// Process the data
-		txn.set(key, val)?;
-		txn.commit()?;
+		// Process the data directly
+		self.db.set(key, val)?;
 		Ok(())
 	}
 
 	async fn delete_bytes(&self, key: &[u8]) -> Result<()> {
-		// Create a new transaction
-		let mut txn = self.db.transaction(true);
-		// Process the data
-		txn.del(key)?;
-		txn.commit()?;
+		// Process the data directly
+		self.db.del(key)?;
 		Ok(())
 	}
 
@@ -235,11 +221,9 @@ impl SurrealMXClient {
 		// Process the data
 		for key in keys {
 			// Get the current value
-			let res = txn.get(key)?;
+			let res = txn.with_value(&key, BenchValue::decode)?;
 			// Check the value exists
-			assert!(res.is_some());
-			// Deserialise the value
-			let val = BenchValue::decode(res.unwrap().as_ref())?;
+			let val = res.ok_or_else(|| anyhow::anyhow!("missing key"))??;
 			// Use the value
 			black_box(val);
 		}
@@ -282,45 +266,29 @@ impl SurrealMXClient {
 		}
 		// Extract parameters
 		let p = scan.projection()?;
-		// Create a new transaction
-		let txn = self.db.transaction(false);
 		let beg = Vec::new();
 		let end = vec![0xFF; 1024];
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				// Scan the desired range of keys
-				let iter = txn.keys(beg..end, scan.start, scan.limit)?;
-				// Create an iterator starting at the beginning
-				let iter = iter.into_iter();
-				// We use a for loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				for v in iter {
-					black_box(v);
+				self.db.keys_for_each(beg..end, scan.start, scan.limit, |k| {
+					black_box(k);
 					count += 1;
-				}
+					true
+				})?;
 				Ok(count)
 			}
 			Projection::Full => {
-				// Scan the desired range of keys
-				let iter = txn.scan(beg..end, scan.start, scan.limit)?;
-				// Create an iterator starting at the beginning
-				let iter = iter.into_iter();
-				// We use a for loop to iterate over the results, while
-				// calling black_box internally. This is necessary as
-				// an iterator with `filter_map` or `map` is optimised
-				// out by the compiler when calling `count` at the end.
 				let mut count = 0;
-				for v in iter {
-					black_box(v.1);
+				self.db.scan_with(beg..end, scan.start, scan.limit, |_k, v| {
+					black_box(v);
 					count += 1;
-				}
+					true
+				})?;
 				Ok(count)
 			}
-			Projection::Count => Ok(txn.total(beg..end, scan.start, scan.limit)?),
+			Projection::Count => Ok(self.db.total(beg..end, scan.start, scan.limit)?),
 		}
 	}
 }

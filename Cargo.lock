@@ -276,6 +276,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "artmap"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe46d27a14a8d4d56db522f0342c1a2b42ddadaae537164f7e1cad3fc3dffb7f"
+dependencies = [
+ "byteslice",
+ "crossbeam-epoch",
+]
+
+[[package]]
 name = "as-slice"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -966,6 +976,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7354288c522e7e980fafd2075d63d1285794c3a6a16cdd492f189ea406e5f18b"
 
 [[package]]
+name = "byteslice"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8330fa105fc493ba2c0f1e8f7a31201717ceffbf8b66dd3079e4a4c1ea20e097"
+dependencies = [
+ "bytes",
+ "serde",
+]
+
+[[package]]
 name = "byteview"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1588,7 +1608,7 @@ dependencies = [
  "surrealdb 3.3.0",
  "surrealdb-rocksdb",
  "surrealkv 0.21.4",
- "surrealmx 0.18.0",
+ "surrealmx 0.27.0 (git+https://github.com/surrealdb/surrealmx)",
  "sysinfo 0.37.2",
  "tokio",
  "tokio-postgres",
@@ -8737,7 +8757,7 @@ dependencies = [
  "chrono",
  "surrealdb-cnf",
  "surrealdb-kvs",
- "surrealmx 0.27.0",
+ "surrealmx 0.27.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio",
  "tracing",
 ]
@@ -9062,9 +9082,9 @@ dependencies = [
 
 [[package]]
 name = "surrealmx"
-version = "0.18.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6508449a7d1379a92a51ba49391b48ccab0b60dd11a4277c0dda965d8c99dbff"
+checksum = "1b5f1002984c1c3918014d924435a7280a6de620dadd51d4db59de4f56e7202c"
 dependencies = [
  "arc-swap",
  "bincode 2.0.1",
@@ -9085,23 +9105,26 @@ dependencies = [
 [[package]]
 name = "surrealmx"
 version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b5f1002984c1c3918014d924435a7280a6de620dadd51d4db59de4f56e7202c"
+source = "git+https://github.com/surrealdb/surrealmx#2ebd6e58b52f7df6da5c54e36bf8189cc074d4a9"
 dependencies = [
  "arc-swap",
+ "artmap",
  "bincode 2.0.1",
  "bytes",
+ "byteslice",
  "crossbeam-deque",
  "crossbeam-queue",
  "crossbeam-skiplist",
+ "crossbeam-utils",
  "lz4",
  "papaya",
  "parking_lot",
  "serde",
- "smallvec",
+ "thin-vec",
  "thiserror 2.0.21",
  "tracing",
  "web-time",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -9312,6 +9335,12 @@ checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
 ]
+
+[[package]]
+name = "thin-vec"
+version = "0.2.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4568d7e143ec86d2021c338bae2afa88699e84b8e0af523626654fe6f03a1748"
 
 [[package]]
 name = "thiserror"
