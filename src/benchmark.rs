@@ -94,8 +94,10 @@ struct WorkerWatchdog {
 
 impl WorkerWatchdog {
 	#[inline]
-	fn begin_op(&self, base: Instant) {
-		let ms = (base.elapsed().as_millis() as u64).max(1);
+	fn begin_op(&self, now: Instant, base: Instant) {
+		// Reuse the caller's already-captured timestamp instead of taking a
+		// second clock read here on every single operation.
+		let ms = (now.duration_since(base).as_millis() as u64).max(1);
 		self.active_start_ms.store(ms, Ordering::Release);
 	}
 
@@ -1163,7 +1165,7 @@ impl Benchmark {
 			}
 		});
 		// Wait for the threads to complete, aborting the remaining tasks on the first failure.
-		let mut global_histogram = Histogram::new_with_bounds(1, 86_400_000_000_000, 3)?;
+		let mut global_histogram = Histogram::new(3)?;
 		let mut global_recall = RecallTally::default();
 		let mut timed_out = false;
 		loop {
@@ -1293,7 +1295,7 @@ impl Benchmark {
 		C: BenchmarkClient,
 		D: Dialect,
 	{
-		let mut histogram = Histogram::new_with_bounds(1, 86_400_000_000_000, 3)?;
+		let mut histogram = Histogram::new(3)?;
 		let mut tally = RecallTally::default();
 		// Check if we have encountered an error
 		while !error.load(Ordering::Relaxed) {
@@ -1327,7 +1329,7 @@ impl Benchmark {
 			};
 
 			let time = Instant::now();
-			watchdog.begin_op(base_instant);
+			watchdog.begin_op(time, base_instant);
 			let res = match &operation {
 				BenchmarkOperation::Create => {
 					client
@@ -1376,14 +1378,15 @@ impl Benchmark {
 			};
 			watchdog.end_op();
 			res?;
-			// Get the completed sample number
-			let sample = complete.fetch_add(1, Ordering::Relaxed);
+			// Only touch the shared completion counter when a progress bar is
+			// actually rendering; otherwise this is pure cross-task cache-line
+			// contention on every single sample for no observer.
 			if let Some(pb) = &progress {
+				let sample = complete.fetch_add(1, Ordering::Relaxed);
 				let done = ((sample + 1).min(samples)) as u64;
 				pb.set_position(done);
 			}
-			let nanos = (time.elapsed().as_nanos() as u64).min(86_400_000_000_000);
-			histogram.record(nanos)?;
+			histogram.record(time.elapsed().as_micros() as u64)?;
 			// Scoring happens strictly after the latency is banked, so recall
 			// never inflates the number it is reported beside.
 			if let Some((query, hits)) = scored
