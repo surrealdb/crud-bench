@@ -199,7 +199,7 @@ impl BenchmarkClient for RocksDBClient {
 		opts.set_target_level(4);
 		opts.set_bottommost_level_compaction(BottommostLevelCompaction::Force);
 		// Compact the entire dataset
-		self.db.compact_range_opt(Some(&[0u8]), Some(&[255u8]), &opts);
+		self.db.compact_range_opt(None::<&[u8]>, None::<&[u8]>, &opts);
 		// Create new wait options
 		let mut opts = WaitForCompactOptions::default();
 		opts.set_flush(true);
@@ -210,7 +210,7 @@ impl BenchmarkClient for RocksDBClient {
 	}
 
 	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
-		self.create_bytes(&key.to_ne_bytes(), val).await
+		self.create_bytes(&key.to_be_bytes(), val).await
 	}
 
 	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
@@ -218,7 +218,7 @@ impl BenchmarkClient for RocksDBClient {
 	}
 
 	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
-		self.read_bytes(&key.to_ne_bytes()).await
+		self.read_bytes(&key.to_be_bytes()).await
 	}
 
 	async fn read_string(&self, key: String) -> Result<BenchValue> {
@@ -226,7 +226,7 @@ impl BenchmarkClient for RocksDBClient {
 	}
 
 	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
-		self.update_bytes(&key.to_ne_bytes(), val).await
+		self.update_bytes(&key.to_be_bytes(), val).await
 	}
 
 	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
@@ -234,7 +234,7 @@ impl BenchmarkClient for RocksDBClient {
 	}
 
 	async fn delete_u32(&self, key: u32) -> Result<()> {
-		self.delete_bytes(&key.to_ne_bytes()).await
+		self.delete_bytes(&key.to_be_bytes()).await
 	}
 
 	async fn delete_string(&self, key: String) -> Result<()> {
@@ -255,7 +255,7 @@ impl BenchmarkClient for RocksDBClient {
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
 			let val = val.encode()?;
-			Ok((key.to_ne_bytes().to_vec(), val))
+			Ok((key.to_be_bytes().to_vec(), val))
 		});
 		self.batch_create_bytes(pairs_iter).await
 	}
@@ -272,7 +272,7 @@ impl BenchmarkClient for RocksDBClient {
 	}
 
 	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
-		let keys_iter = keys.map(|key| key.to_ne_bytes().to_vec());
+		let keys_iter = keys.map(|key| key.to_be_bytes().to_vec());
 		self.batch_read_bytes(keys_iter).await
 	}
 
@@ -287,7 +287,7 @@ impl BenchmarkClient for RocksDBClient {
 	) -> Result<()> {
 		let pairs_iter = key_vals.map(|(key, val)| {
 			let val = val.encode()?;
-			Ok((key.to_ne_bytes().to_vec(), val))
+			Ok((key.to_be_bytes().to_vec(), val))
 		});
 		self.batch_update_bytes(pairs_iter).await
 	}
@@ -304,7 +304,7 @@ impl BenchmarkClient for RocksDBClient {
 	}
 
 	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
-		let keys_iter = keys.map(|key| key.to_ne_bytes().to_vec());
+		let keys_iter = keys.map(|key| key.to_be_bytes().to_vec());
 		self.batch_delete_bytes(keys_iter).await
 	}
 
@@ -502,8 +502,6 @@ impl RocksDBClient {
 		let mut ro = ReadOptions::default();
 		ro.set_snapshot(&txn.snapshot());
 		ro.set_readahead_size(2 * 1024 * 1024);
-		ro.set_iterate_lower_bound([0u8]);
-		ro.set_iterate_upper_bound([255u8]);
 		ro.set_verify_checksums(false);
 		ro.set_async_io(true);
 		ro.fill_cache(true);

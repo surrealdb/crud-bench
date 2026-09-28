@@ -1,7 +1,7 @@
-#![cfg(feature = "mariadb")]
+#![cfg(feature = "mysql")]
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
-use crate::dialect::{Dialect, MariaDBDialect};
+use crate::dialect::{Dialect, MySqlDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
 use crate::memory::Config;
@@ -19,15 +19,15 @@ use std::hint::black_box;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub const DEFAULT: &str = "mysql://root:mariadb@127.0.0.1:3306/bench";
+pub const DEFAULT: &str = "mysql://root:mysql@127.0.0.1:3306/bench";
 
-/// Calculate MariaDB specific memory allocation
-fn calculate_mariadb_memory() -> (u64, u64, u64) {
+/// Calculate MySQL specific memory allocation
+fn calculate_mysql_memory() -> (u64, u64, u64) {
 	// Load the system memory
 	let memory = Config::new();
 	// Use ~50% of recommended cache allocation. Equal fraction to Postgres
-	// `shared_buffers` and MySQL `innodb_buffer_pool_size` so the SQL
-	// adapters get the same in-process cache budget under `--optimised`.
+	// `shared_buffers` so the two SQL adapters get the same in-process cache
+	// budget under `--optimised`.
 	let buffer_pool_gb = (memory.cache_gb / 2).max(1);
 	// Use ~10% of buffer pool for redo log capacity, min 1GB, max 8GB
 	let redo_log_gb = (memory.cache_gb / 10).clamp(1, 8);
@@ -37,11 +37,9 @@ fn calculate_mariadb_memory() -> (u64, u64, u64) {
 	(buffer_pool_gb, redo_log_gb, buffer_pool_instances)
 }
 
-/// Returns the Docker parameters required to run a MariaDB instance for benchmarking,
-/// with configuration optimized based on the provided benchmark options.
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Calculate memory allocation
-	let (buffer_pool_gb, redo_log_gb, buffer_pool_instances) = calculate_mariadb_memory();
+	let (buffer_pool_gb, redo_log_gb, buffer_pool_instances) = calculate_mysql_memory();
 	// Durability keyed on `--sync`. At `--sync=false`, innodb_flush_log_at_trx_commit=2
 	// still writes the redo log to the OS page cache on every commit and only
 	// defers the fsync (~1/sec) — the same no-sync tier as the other adapters
@@ -59,15 +57,17 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	} else {
 		"0"
 	};
+	// Return Docker parameters
 	DockerParams {
-		image: "mariadb",
-		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MARIADB_ROOT_PASSWORD=mariadb -e MARIADB_DATABASE=bench".to_string(),
+		image: "mysql",
+		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_HOST=% -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=bench".to_string(),
 		post_args: match options.optimised {
+			// Optimised configuration
 			true => format!(
 				"--max-connections=1024 \
 				--innodb-buffer-pool-size={buffer_pool_gb}G \
 				--innodb-buffer-pool-instances={buffer_pool_instances} \
-				--innodb-log-file-size={redo_log_gb}G \
+				--innodb-redo-log-capacity={redo_log_gb}G \
 				--innodb-log-buffer-size=256M \
 				--innodb-flush-method=O_DIRECT \
 				--innodb-io-capacity=2000 \
@@ -82,7 +82,6 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--join-buffer-size=32M \
 				--tmp-table-size=1G \
 				--max-heap-table-size=1G \
-				--query-cache-size=0 \
 				--log-bin=mysql-bin \
 				--binlog-format=ROW \
 				--server-id=1 \
@@ -90,6 +89,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--sync_binlog={sync_binlog} \
 				--innodb-flush-log-at-trx-commit={trx_commit}"
 			),
+			// Default configuration
 			false => format!(
 				"--max-connections=1024 \
 				--log-bin=mysql-bin \
@@ -103,9 +103,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	}
 }
 
-pub(crate) struct MariadbClientProvider(KeyType, Columns, String);
+pub(crate) struct MysqlClientProvider(KeyType, Columns, String);
 
-impl BenchmarkEngine<MariadbClient> for MariadbClientProvider {
+impl BenchmarkEngine<MysqlClient> for MysqlClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Get the custom endpoint if specified
@@ -118,9 +118,9 @@ impl BenchmarkEngine<MariadbClient> for MariadbClientProvider {
 	/// used by `wait_for_client`. One `Mutex<Conn>` per client serialises
 	/// the `-t` worker tasks per client to one in-flight query at a time,
 	/// matching the pre-049e85c semantics — `-c` is the concurrency knob.
-	async fn create_client(&self) -> Result<MariadbClient> {
+	async fn create_client(&self) -> Result<MysqlClient> {
 		let conn = Conn::new(Opts::from_url(&self.2)?).await?;
-		Ok(MariadbClient {
+		Ok(MysqlClient {
 			conn: Arc::new(Mutex::new(conn)),
 			kt: self.0,
 			columns: self.1.clone(),
@@ -128,13 +128,13 @@ impl BenchmarkEngine<MariadbClient> for MariadbClientProvider {
 	}
 }
 
-pub(crate) struct MariadbClient {
+pub(crate) struct MysqlClient {
 	conn: Arc<Mutex<Conn>>,
 	kt: KeyType,
 	columns: Columns,
 }
 
-impl BenchmarkClient for MariadbClient {
+impl BenchmarkClient for MysqlClient {
 	// The return type when reading a row
 	type ReadRow = BenchValue;
 
@@ -154,7 +154,7 @@ impl BenchmarkClient for MariadbClient {
 			.0
 			.iter()
 			.map(|(n, t)| {
-				let n = MariaDBDialect::escape_field(n.clone());
+				let n = MySqlDialect::escape_field(n.clone());
 				match t {
 					ColumnType::String => format!("{n} TEXT NOT NULL"),
 					ColumnType::Integer => format!("{n} INTEGER NOT NULL"),
@@ -166,12 +166,8 @@ impl BenchmarkClient for MariadbClient {
 					ColumnType::Decimal => format!("{n} DECIMAL(38, 10) NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} VARBINARY(8192) NOT NULL"),
-					// VARBINARY rather than LONGBLOB: small embeddings (up to
-					// 2048-dim at 4 bytes/float) stay in-row under InnoDB's
-					// DYNAMIC row format, avoiding off-page I/O thrash during
-					// the high-concurrency UPDATE workloads. LONGBLOB always
-					// stores off-page, which crashed the combined-workload
-					// scan leg on MariaDB under default `binlog-row-image=FULL`.
+					// Match MariaDB: VARBINARY keeps small embeddings in-row
+					// under DYNAMIC format. LONGBLOB always lives off-page.
 					ColumnType::FloatVector(_) => format!("{n} VARBINARY(8192) NOT NULL"),
 				}
 			})
@@ -217,7 +213,7 @@ impl BenchmarkClient for MariadbClient {
 	}
 
 	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
-		// COUNT-style indexes have no MariaDB equivalent; the indexed scan
+		// COUNT-style indexes have no MySQL equivalent; the indexed scan
 		// leg runs the same query as the baseline so the row still populates.
 		if spec.index_type.as_deref() == Some("count") {
 			return Ok(());
@@ -236,17 +232,17 @@ impl BenchmarkClient for MariadbClient {
 					.fields
 					.iter()
 					.cloned()
-					.map(MariaDBDialect::escape_field)
+					.map(MySqlDialect::escape_field)
 					.collect::<Vec<_>>()
 					.join(", ");
 				format!("CREATE FULLTEXT INDEX {name} ON record ({fields})")
 			}
 			Some(kind) => {
-				let fields = MariaDBDialect::btree_index_key_list(&self.columns, spec);
+				let fields = MySqlDialect::btree_index_key_list(&self.columns, spec);
 				format!("CREATE INDEX {name} USING {kind} ON record ({fields})")
 			}
 			None => {
-				let fields = MariaDBDialect::btree_index_key_list(&self.columns, spec);
+				let fields = MySqlDialect::btree_index_key_list(&self.columns, spec);
 				format!("CREATE {unique} INDEX {name} ON record ({fields})")
 			}
 		};
@@ -257,10 +253,9 @@ impl BenchmarkClient for MariadbClient {
 	}
 
 	async fn drop_index(&self, name: &str) -> Result<()> {
-		// MariaDB's `DROP INDEX` supports `IF EXISTS`, but we go through a
-		// `SHOW INDEX` lookup for parity with the MySQL adapter. Paired with
-		// the COUNT-index no-op `build_index` above, a missing index here is
-		// not an error.
+		// MySQL's `DROP INDEX` has no `IF EXISTS`. Paired with the COUNT-index
+		// no-op `build_index` above, a missing index here is not an error —
+		// check existence first and skip the DDL when there's nothing to drop.
 		let mut conn = self.conn.lock().await;
 		let exists: Option<mysql_async::Row> =
 			conn.query_first(format!("SHOW INDEX FROM record WHERE Key_name = '{name}'")).await?;
@@ -325,9 +320,10 @@ impl BenchmarkClient for MariadbClient {
 	}
 }
 
-impl MariadbClient {
+impl MysqlClient {
 	fn consume(&self, mut row: Row) -> Result<BenchValue> {
 		let mut val: Vec<(String, BenchValue)> = Vec::with_capacity(row.columns().len());
+		//
 		for (i, c) in row.columns().iter().enumerate() {
 			let name = c.name_str().to_string();
 			let column_type = self.columns.0.iter().find(|(n, _)| n == &name).map(|(_, t)| *t);
@@ -414,12 +410,11 @@ impl MariadbClient {
 				| consts::ColumnType::MYSQL_TYPE_TINY_BLOB
 				| consts::ColumnType::MYSQL_TYPE_MEDIUM_BLOB
 				| consts::ColumnType::MYSQL_TYPE_LONG_BLOB => {
-					// MariaDB returns both binary BLOB and TEXT columns with
-					// the MYSQL_TYPE_BLOB / *_BLOB variants. Disambiguate
-					// using the schema-declared `ColumnType`: bytes-typed
-					// columns stay as `BenchValue::Bytes`, anything else
-					// (TEXT, VARCHAR-as-text, etc.) is decoded as a UTF-8
-					// string.
+					// MySQL returns both binary BLOB and TEXT columns with the
+					// MYSQL_TYPE_BLOB / *_BLOB variants. Disambiguate using
+					// the schema-declared `ColumnType`: bytes-typed columns
+					// stay as `BenchValue::Bytes`, anything else (TEXT,
+					// VARCHAR-as-text, etc.) is decoded as a UTF-8 string.
 					let v: Option<Vec<u8>> = row.take(i);
 					match (v, column_type) {
 						(Some(b), Some(ColumnType::Bytes)) => BenchValue::Bytes(b),
@@ -459,8 +454,34 @@ impl MariadbClient {
 						None => BenchValue::Null,
 					}
 				}
-				c => {
-					todo!("Not yet implemented {c:?}")
+				consts::ColumnType::MYSQL_TYPE_NULL => BenchValue::Null,
+				consts::ColumnType::MYSQL_TYPE_BIT => {
+					let v: Option<u64> = row.take(i);
+					match v {
+						Some(b) => BenchValue::UInt(b),
+						None => BenchValue::Null,
+					}
+				}
+				consts::ColumnType::MYSQL_TYPE_YEAR => {
+					let v: Option<i16> = row.take(i);
+					match v {
+						Some(y) => BenchValue::Int(y as i64),
+						None => BenchValue::Null,
+					}
+				}
+				consts::ColumnType::MYSQL_TYPE_SET | consts::ColumnType::MYSQL_TYPE_ENUM => {
+					let v: Option<String> = row.take(i);
+					match v {
+						Some(s) => BenchValue::String(s),
+						None => BenchValue::Null,
+					}
+				}
+				_ => {
+					let v: Option<String> = row.take(i);
+					match v {
+						Some(s) => BenchValue::String(s),
+						None => BenchValue::Null,
+					}
 				}
 			};
 			val.push((name, bv));
@@ -473,7 +494,7 @@ impl MariadbClient {
 		T: ToValue + Sync,
 	{
 		let obj = val.into_object()?;
-		let (columns, placeholders) = MariaDBDialect::create_clause(&self.columns);
+		let (columns, placeholders) = MySqlDialect::create_clause(&self.columns);
 		let stm = format!("INSERT INTO record (id, {columns}) VALUES (?, {placeholders})");
 		let mut params: Vec<mysql_async::Value> = vec![key.to_value()];
 		for (name, column_type) in &self.columns.0 {
@@ -503,7 +524,7 @@ impl MariadbClient {
 		T: ToValue + Sync,
 	{
 		let obj = val.into_object()?;
-		let set = MariaDBDialect::update_clause(&self.columns);
+		let set = MySqlDialect::update_clause(&self.columns);
 		let stm = format!("UPDATE record SET {set} WHERE id=?");
 		let mut params: Vec<mysql_async::Value> = Vec::new();
 		for (name, column_type) in &self.columns.0 {
@@ -529,7 +550,7 @@ impl MariadbClient {
 	}
 
 	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
-		// MariaDB requires a full-text index to run a MATCH query
+		// MySQL requires a full-text index to run a MATCH query
 		if ctx == ScanContext::WithoutIndex
 			&& let Some(index) = &scan.with_index
 			&& let Some(kind) = &index.index_type
@@ -540,8 +561,8 @@ impl MariadbClient {
 		// Extract parameters
 		let s = scan.start.map(|s| format!("OFFSET {}", s)).unwrap_or_default();
 		let l = scan.limit.map(|s| format!("LIMIT {}", s)).unwrap_or_default();
-		let c = MariaDBDialect::filter_clause(scan)?;
-		let o = MariaDBDialect::order_by_clause(scan)?;
+		let c = MySqlDialect::filter_clause(scan)?;
+		let o = MySqlDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
 		// Perform the relevant projection scan type
 		match p {
@@ -586,10 +607,7 @@ impl MariadbClient {
 	where
 		T: ToValue + Sync,
 	{
-		if key_vals.is_empty() {
-			return Ok(());
-		}
-		let (columns, placeholders) = MariaDBDialect::create_clause(&self.columns);
+		let (columns, placeholders) = MySqlDialect::create_clause(&self.columns);
 		let values = (0..key_vals.len())
 			.map(|_| format!("(?, {placeholders})"))
 			.collect::<Vec<_>>()
@@ -616,12 +634,12 @@ impl MariadbClient {
 	where
 		T: ToValue + Sync,
 	{
-		if keys.is_empty() {
-			return Ok(());
-		}
-		let ids = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-		let stm = format!("SELECT * FROM record WHERE id IN ({ids})");
+		// Store the record ids
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
+		// Build the IN clause
+		let ids = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+		// Build and execute the SELECT statement
+		let stm = format!("SELECT * FROM record WHERE id IN ({ids})");
 		let res: Vec<Row> = self.conn.lock().await.exec(stm, params).await?;
 		assert_eq!(res.len(), keys.len());
 		for row in res {
@@ -634,10 +652,7 @@ impl MariadbClient {
 	where
 		T: ToValue + Sync,
 	{
-		if key_vals.is_empty() {
-			return Ok(());
-		}
-		let columns = MariaDBDialect::escaped_columns(&self.columns);
+		let columns = MySqlDialect::escaped_columns(&self.columns);
 		let set = columns
 			.iter()
 			.map(|col| {
@@ -673,12 +688,12 @@ impl MariadbClient {
 	where
 		T: ToValue + Sync,
 	{
-		if keys.is_empty() {
-			return Ok(());
-		}
-		let ids = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-		let stm = format!("DELETE FROM record WHERE id IN ({ids})");
+		// Store the record ids
 		let params: Vec<mysql_async::Value> = keys.iter().map(|k| k.to_value()).collect();
+		// Build the IN clause
+		let ids = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+		// Build and execute the DELETE statement
+		let stm = format!("DELETE FROM record WHERE id IN ({ids})");
 		let mut conn = self.conn.lock().await;
 		let res = conn.exec_iter(stm, params).await?;
 		assert_eq!(res.affected_rows(), keys.len() as u64);

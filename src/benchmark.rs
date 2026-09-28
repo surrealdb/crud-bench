@@ -90,7 +90,25 @@ impl VectorQuerySet {
 	}
 }
 
-/// Shared benchmark settings and UI, built from CLI [`crate::Args`].
+/// Watchdog tracker for active worker operations.
+#[derive(Default)]
+struct WorkerWatchdog {
+	/// Milliseconds since `base_instant` when the current operation started, or 0 when idle.
+	active_start_ms: std::sync::atomic::AtomicU64,
+}
+
+impl WorkerWatchdog {
+	#[inline]
+	fn begin_op(&self, base: Instant) {
+		let ms = (base.elapsed().as_millis() as u64).max(1);
+		self.active_start_ms.store(ms, Ordering::Release);
+	}
+
+	#[inline]
+	fn end_op(&self) {
+		self.active_start_ms.store(0, Ordering::Release);
+	}
+}
 pub(crate) struct Benchmark {
 	/// Whether to run containers in privileged mode
 	pub(crate) privileged: bool,
@@ -506,10 +524,7 @@ impl Benchmark {
 							vq.field
 						)
 					})?;
-				let strategy_needs_index = matches!(
-					vq.index_strategy,
-					VectorIndexStrategy::Hnsw { .. } | VectorIndexStrategy::DiskAnn { .. }
-				);
+				let strategy_needs_index = vq.index_strategy.requires_index();
 				let query_set = self.build_vector_query_set(&scan, &vq, &vp)?;
 				let mut runs = Vec::with_capacity(1);
 				// Derive the index spec from `vector_query.field` so the user
@@ -1185,6 +1200,11 @@ impl Benchmark {
 		let complete = Arc::new(AtomicU32::new(0));
 		// Store the worker tasks in a join set so failures can stop the operation promptly.
 		let mut tasks = JoinSet::new();
+		let base_instant = Instant::now();
+		let watchdog_notify = Arc::new(tokio::sync::Notify::new());
+		let timeout_ms = self.operation_timeout.as_millis() as u64;
+		let operation_timeout = self.operation_timeout;
+		let mut watchdogs = Vec::new();
 		// Measure the starting time
 		let metric = OperationMetric::new(self.pid, samples);
 		// Loop over the clients
@@ -1199,7 +1219,8 @@ impl Benchmark {
 				let progress = progress.clone();
 				let vp = vp.clone();
 				let operation = operation.clone();
-				let operation_timeout = self.operation_timeout;
+				let watchdog = Arc::new(WorkerWatchdog::default());
+				watchdogs.push(watchdog.clone());
 				tasks.spawn(async move {
 					match Self::operation_loop::<C, D>(
 						client,
@@ -1208,6 +1229,8 @@ impl Benchmark {
 						&current,
 						&complete,
 						operation,
+						watchdog,
+						base_instant,
 						operation_timeout,
 						(kp, vp, progress),
 					)
@@ -1227,39 +1250,88 @@ impl Benchmark {
 				});
 			}
 		}
-		// Wait for the threads to complete, aborting the remaining tasks on the first failure.
-		let mut global_histogram = Histogram::new(3)?;
-		let mut global_recall = RecallTally::default();
-		let mut global_build_returned: Option<Duration> = None;
-		while let Some(result) = tasks.join_next().await {
-			match result {
-				Ok(Ok(Some((histogram, recall, build_returned)))) => {
-					global_histogram.add(histogram)?;
-					global_recall.merge(recall);
-					// Only a build sets this, as one sample on one worker, so
-					// taking the larger just picks the one that exists.
-					global_build_returned = global_build_returned.max(build_returned);
+		// Background watchdog task to monitor for stuck worker operations without
+		// paying per-iteration timer creation overhead in the hot path.
+		let wd_notify = watchdog_notify.clone();
+		let wds = watchdogs.clone();
+		let error_flag = error.clone();
+		let watchdog_handle = tokio::spawn(async move {
+			let mut interval = tokio::time::interval(Duration::from_millis(500));
+			interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+			loop {
+				interval.tick().await;
+				if error_flag.load(Ordering::Relaxed) {
+					break;
 				}
-				Ok(Ok(None)) => {}
-				Ok(Err(e)) => {
-					error.store(true, Ordering::Relaxed);
-					tasks.abort_all();
-					while tasks.join_next().await.is_some() {}
-					if let Some(ref pb) = progress {
-						pb.finish_and_clear();
+				let now_ms = base_instant.elapsed().as_millis() as u64;
+				for wd in &wds {
+					let start = wd.active_start_ms.load(Ordering::Acquire);
+					if start != 0 && now_ms.saturating_sub(start) >= timeout_ms {
+						wd_notify.notify_one();
+						return;
 					}
-					return Err(e).with_context(|| format!("{operation} worker failed"));
-				}
-				Err(e) => {
-					error.store(true, Ordering::Relaxed);
-					tasks.abort_all();
-					while tasks.join_next().await.is_some() {}
-					if let Some(ref pb) = progress {
-						pb.finish_and_clear();
-					}
-					return Err(e).with_context(|| format!("{operation} task failed"));
 				}
 			}
+		});
+		// Wait for the threads to complete, aborting the remaining tasks on the first failure.
+		let mut global_histogram = Histogram::new_with_bounds(1, 86_400_000_000_000, 3)?;
+		let mut global_recall = RecallTally::default();
+		let mut global_build_returned: Option<Duration> = None;
+		let mut timed_out = false;
+		loop {
+			tokio::select! {
+				result = tasks.join_next() => {
+					match result {
+						Some(Ok(Ok(Some((histogram, recall, build_returned))))) => {
+							global_histogram.add(histogram)?;
+							global_recall.merge(recall);
+							// Only a build sets this, as one sample on one worker, so
+							// taking the larger just picks the one that exists.
+							global_build_returned = global_build_returned.max(build_returned);
+						}
+						Some(Ok(Ok(None))) => {}
+						Some(Ok(Err(e))) => {
+							error.store(true, Ordering::Relaxed);
+							watchdog_handle.abort();
+							tasks.abort_all();
+							while tasks.join_next().await.is_some() {}
+							if let Some(ref pb) = progress {
+								pb.finish_and_clear();
+							}
+							return Err(e).with_context(|| format!("{operation} worker failed"));
+						}
+						Some(Err(e)) => {
+							error.store(true, Ordering::Relaxed);
+							watchdog_handle.abort();
+							tasks.abort_all();
+							while tasks.join_next().await.is_some() {}
+							if let Some(ref pb) = progress {
+								pb.finish_and_clear();
+							}
+							return Err(e).with_context(|| format!("{operation} task failed"));
+						}
+						None => break,
+					}
+				}
+				_ = watchdog_notify.notified() => {
+					timed_out = true;
+					error.store(true, Ordering::Relaxed);
+					break;
+				}
+			}
+		}
+		watchdog_handle.abort();
+		if timed_out {
+			tasks.abort_all();
+			while tasks.join_next().await.is_some() {}
+			if let Some(ref pb) = progress {
+				pb.finish_and_clear();
+			}
+			bail!(
+				"{operation} did not complete within {:?}{}",
+				self.operation_timeout,
+				timeout_hint(&operation)
+			);
 		}
 		// Finish the progress bar at 100% before tearing it down
 		if let Some(ref pb) = progress {
@@ -1346,6 +1418,10 @@ impl Benchmark {
 		current: &AtomicU32,
 		complete: &AtomicU32,
 		operation: BenchmarkOperation,
+		watchdog: Arc<WorkerWatchdog>,
+		base_instant: Instant,
+		// Enforced by the watchdog; passed in so a build can budget its wait
+		// until the index is queryable against what is left of it.
 		operation_timeout: Duration,
 		(mut kp, mut vp, progress): (KeyProvider, ValueProvider, Option<Arc<ProgressBar>>),
 	) -> Result<(Histogram<u64>, RecallTally, Option<Duration>)>
@@ -1353,7 +1429,7 @@ impl Benchmark {
 		C: BenchmarkClient,
 		D: Dialect,
 	{
-		let mut histogram = Histogram::new(3)?;
+		let mut histogram = Histogram::new_with_bounds(1, 86_400_000_000_000, 3)?;
 		let mut tally = RecallTally::default();
 		// When an index build's own call returned, measured from the start of
 		// the timed build. The build is timed until the index is queryable, so
@@ -1369,90 +1445,106 @@ impl Benchmark {
 				// We are done
 				break;
 			}
-			// Perform the benchmark operation under a per-iteration
-			// timeout. A stuck `await` inside the underlying SDK
-			// (e.g. a WebSocket reply that never lands because the
-			// connection was torn down without completing the
-			// matching oneshot) returns an error here instead of
-			// parking the worker task forever; the operation `JoinSet` then
-			// short-circuits with the operation name in the error
-			// chain rather than hanging in `block_on`.
 			// KNN hits, kept so recall can be scored after the latency is
 			// recorded rather than inside the measured window.
 			let mut scored: Option<(usize, Vec<KnnKey>)> = None;
+			// Pre-generate payloads and query parameters outside the timed window
+			// so that client-side generation CPU and memory allocations are not
+			// attributed to the datastore's measured latency.
+			let pregen_value = match &operation {
+				BenchmarkOperation::Create => {
+					Some(vp.generate_value_for(ValueStream::Create, sample))
+				}
+				BenchmarkOperation::Update => {
+					Some(vp.generate_value_for(ValueStream::Update, sample))
+				}
+				_ => None,
+			};
+			let vec_query = match &operation {
+				BenchmarkOperation::VectorScan(_, _, qs) => {
+					Some((qs.pick(sample), qs.query_index(sample)))
+				}
+				_ => None,
+			};
+
 			let time = Instant::now();
-			tokio::time::timeout(operation_timeout, async {
-				match &operation {
-					BenchmarkOperation::Create => {
-						let value = vp.generate_value_for(ValueStream::Create, sample);
-						client.create(sample, value, &mut kp).await
-					}
-					BenchmarkOperation::Read => client.read(sample, &mut kp).await.map(|_| ()),
-					BenchmarkOperation::Update => {
-						let value = vp.generate_value_for(ValueStream::Update, sample);
-						client.update(sample, value, &mut kp).await
-					}
-					BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await,
-					BenchmarkOperation::VectorScan(s, ctx, qs) => {
-						let q = qs.pick(sample);
-						let hits = client.scan_vector(s, q, &kp, *ctx).await?;
-						scored = Some((qs.query_index(sample), hits));
-						Ok(())
-					}
-					BenchmarkOperation::ScanWithWrites(scan, ctx, spec) => {
-						workloads::run_scan_with_writes(
-							&*client, scan, *ctx, spec, sample, samples, &mut kp,
-						)
+			watchdog.begin_op(base_instant);
+			let res = match &operation {
+				BenchmarkOperation::Create => {
+					client
+						.create(sample, pregen_value.expect("payload pre-generated"), &mut kp)
 						.await
-					}
-					// A build is timed until the index serves at index speed, which
-					// for some engines is long after the build call returns. The two
-					// coincide for an engine whose build call does all the work, and
-					// are minutes to hours apart for one that finishes in the
-					// background — only the later one lets their builds share a
-					// column.
-					BenchmarkOperation::BuildIndex(spec, id, _) => {
-						client.build_index(spec, id.as_str()).await?;
-						build_returned = Some(time.elapsed());
-						let budget = queryable_budget(operation_timeout, time.elapsed());
-						client.await_index_queryable(id.as_str(), budget).await
-					}
-					BenchmarkOperation::BuildVectorIndex(spec, vq, dim, name) => {
-						client.build_vector_index(spec, vq, *dim, name.as_str()).await?;
-						build_returned = Some(time.elapsed());
-						let budget = queryable_budget(operation_timeout, time.elapsed());
-						client.await_index_queryable(name.as_str(), budget).await
-					}
-					BenchmarkOperation::RemoveIndex(id, _) => client.drop_index(id.as_str()).await,
-					BenchmarkOperation::Delete => client.delete(sample, &mut kp).await,
-					BenchmarkOperation::BatchCreate(batch_op) => {
-						client.batch_create(sample, batch_op, &mut kp, &mut vp).await
-					}
-					BenchmarkOperation::BatchRead(batch_op) => {
-						client.batch_read(sample, batch_op, &mut kp).await
-					}
-					BenchmarkOperation::BatchUpdate(batch_op) => {
-						client.batch_update(sample, batch_op, &mut kp, &mut vp).await
-					}
-					BenchmarkOperation::BatchDelete(batch_op) => {
-						client.batch_delete(sample, batch_op, &mut kp).await
+				}
+				BenchmarkOperation::Read => client.read(sample, &mut kp).await.map(|_| ()),
+				BenchmarkOperation::Update => {
+					client
+						.update(sample, pregen_value.expect("payload pre-generated"), &mut kp)
+						.await
+				}
+				BenchmarkOperation::Scan(s, ctx) => client.scan(s, &kp, *ctx).await,
+				BenchmarkOperation::VectorScan(s, ctx, _) => {
+					let (q, q_idx) = vec_query.expect("vector query pre-picked");
+					let hits = client.scan_vector(s, q, &kp, *ctx).await?;
+					scored = Some((q_idx, hits));
+					Ok(())
+				}
+				BenchmarkOperation::ScanWithWrites(scan, ctx, spec) => {
+					workloads::run_scan_with_writes(
+						&*client, scan, *ctx, spec, sample, samples, &mut kp,
+					)
+					.await
+				}
+				// A build is timed until the index serves at index speed, which
+				// for some engines is long after the build call returns. The two
+				// coincide for an engine whose build call does all the work, and
+				// are minutes to hours apart for one that finishes in the
+				// background — only the later one lets their builds share a
+				// column.
+				BenchmarkOperation::BuildIndex(spec, id, _) => {
+					match client.build_index(spec, id.as_str()).await {
+						Ok(()) => {
+							build_returned = Some(time.elapsed());
+							let budget = queryable_budget(operation_timeout, time.elapsed());
+							client.await_index_queryable(id.as_str(), budget).await
+						}
+						Err(e) => Err(e),
 					}
 				}
-			})
-			.await
-			.with_context(|| {
-				format!(
-					"{operation} did not complete within {operation_timeout:?}{}",
-					timeout_hint(&operation)
-				)
-			})??;
+				BenchmarkOperation::BuildVectorIndex(spec, vq, dim, name) => {
+					match client.build_vector_index(spec, vq, *dim, name.as_str()).await {
+						Ok(()) => {
+							build_returned = Some(time.elapsed());
+							let budget = queryable_budget(operation_timeout, time.elapsed());
+							client.await_index_queryable(name.as_str(), budget).await
+						}
+						Err(e) => Err(e),
+					}
+				}
+				BenchmarkOperation::RemoveIndex(id, _) => client.drop_index(id.as_str()).await,
+				BenchmarkOperation::Delete => client.delete(sample, &mut kp).await,
+				BenchmarkOperation::BatchCreate(batch_op) => {
+					client.batch_create(sample, batch_op, &mut kp, &mut vp).await
+				}
+				BenchmarkOperation::BatchRead(batch_op) => {
+					client.batch_read(sample, batch_op, &mut kp).await
+				}
+				BenchmarkOperation::BatchUpdate(batch_op) => {
+					client.batch_update(sample, batch_op, &mut kp, &mut vp).await
+				}
+				BenchmarkOperation::BatchDelete(batch_op) => {
+					client.batch_delete(sample, batch_op, &mut kp).await
+				}
+			};
+			watchdog.end_op();
+			res?;
 			// Get the completed sample number
 			let sample = complete.fetch_add(1, Ordering::Relaxed);
 			if let Some(pb) = &progress {
 				let done = ((sample + 1).min(samples)) as u64;
 				pb.set_position(done);
 			}
-			histogram.record(time.elapsed().as_micros() as u64)?;
+			let nanos = (time.elapsed().as_nanos() as u64).min(86_400_000_000_000);
+			histogram.record(nanos)?;
 			// Scoring happens strictly after the latency is banked, so recall
 			// never inflates the number it is reported beside.
 			if let Some((query, hits)) = scored
