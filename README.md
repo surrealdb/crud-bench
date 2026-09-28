@@ -334,9 +334,10 @@ until `INFO FOR INDEX` reports `ready`, no `pending` entries, **and** `compactin
 alone arrives while a vector index is still being built from per-record pending entries, and a kNN
 query in that state scores the remainder by hand. A server that does not report `compacting` cannot
 say when that has finished, so crud-bench **skips** HNSW and DiskANN legs there, reporting `-`,
-rather than time a scan wearing the index's name. That includes the 3.2.4 crate embedded mode links
-(`-e memory`, `-e rocksdb:…`, `-e surrealkv:…`): it defers the same work without reporting it. The
-nightly Docker image, which server mode uses by default, reports it.
+rather than time a scan wearing the index's name. SurrealDB 3.3.0 is the first release that reports
+it, so both the crate embedded mode links (`-e memory`, `-e rocksdb:…`, `-e surrealkv:…`) and the
+nightly Docker image server mode uses by default are covered; releases before 3.3.0 defer the same
+work without reporting it, and get the skip.
 
 The wait is bounded by `--operation-timeout`, like every timed operation. A build that used to fit
 in the 30-minute default can stop fitting once its materialisation counts — a large vector index is

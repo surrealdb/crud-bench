@@ -136,21 +136,22 @@ serial_test = "3.4.0"
 # — and this matches what server mode already does, which pulls the `nightly`
 # image.
 #
-# Held at 3.2.4 because no newer published version is usable yet:
+# 3.3.0 is the first release since 3.2.4 that is usable here, and the first whose
+# `INFO FOR INDEX` reports `building.compacting` — without it the SurrealDB
+# adapter cannot tell when a vector index has finished materialising, and skips
+# HNSW and DiskANN legs rather than time a scan (see `build_vector_index`). The
+# prereleases before it were each held back for a reason worth checking again at
+# the next bump:
 #
-#   3.3.0-beta.3 answers HNSW queries with recall 0.002 against 1.000
-#   elsewhere, and the broken leg runs *faster* than a correct one, so latency
-#   alone would rank it best. Only the recall axis catches it.
+#   3.3.0-beta.3 answered HNSW queries with recall 0.002 against 1.000
+#   elsewhere, and the broken leg ran *faster* than a correct one, so latency
+#   alone would have ranked it best. Only the recall axis caught it.
 #
-#   3.3.0-beta.4 fixes that recall bug, but was published 2026-09-09 22:52,
-#   about eighty minutes before the engine fix that keeps a transaction alive
-#   while its snapshot is read landed. Without that fix a snapshot can outlive
-#   its transaction, and the string90 benchmark segfaults on embedded RocksDB
-#   in CI — intermittently, which is what a use-after-free looks like.
-#
-# 3.3.0-beta.5 should carry both: the recall fix by inheritance and the RocksDB
-# fix by backport. Take it once published.
-surrealdb = { version = "3.2.4", default-features = false, optional = true }
+#   3.3.0-beta.4 fixed that, but predates the engine fix that keeps a
+#   transaction alive while its snapshot is read. Without it a snapshot can
+#   outlive its transaction, and the string90 benchmark segfaulted on embedded
+#   RocksDB in CI — intermittently, which is what a use-after-free looks like.
+surrealdb = { version = "3.3.0", default-features = false, optional = true }
 surrealdb2 = { package = "surrealdb", version = "2.6", default-features = false, optional = true }
 surrealkv = { version = "0.21.2", optional = true }
 surrealmx = { version = "0.18.0", optional = true }

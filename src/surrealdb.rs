@@ -865,9 +865,8 @@ impl BenchmarkClient for SurrealDBClient {
 		// per-record pending entries; the graph is built from them afterwards,
 		// and until it is, a kNN query scores the remainder by hand.
 		// `building.compacting` is the only signal for that, and servers that
-		// predate the field defer the same work without reporting it — including
-		// the 3.2.4 crate that embedded mode links, which has the per-record
-		// pending keys but no such field. On those, `await_index_queryable`
+		// predate the field (releases before 3.3.0) defer the same work without
+		// reporting it. On those, `await_index_queryable`
 		// would return while the index still scans, and every timed leg would
 		// measure that scan under the index's name. So skip instead: the leg
 		// reports `-`, which is honest, rather than a number that is not.
