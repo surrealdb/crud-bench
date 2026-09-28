@@ -45,7 +45,7 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Determine directory, memory environment, and whether we're in pure in-memory mode
 		let (mem_env, dir, in_memory) = match options.endpoint.as_deref() {
-			Some("memory" | "in-memory" | "mem" | "mem://") => {
+			Some("memory") => {
 				let env = Arc::new(rocksdb::Env::mem_env()?);
 				let path = std::env::temp_dir().join("crud-bench-rocksdb-mem");
 				(Some(env), path, true)

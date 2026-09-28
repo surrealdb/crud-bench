@@ -39,7 +39,7 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Determine directory and flags based on options
 		let (dir, in_memory) = match options.endpoint.as_deref() {
-			Some("memory" | "in-memory" | "mem" | "mem://") => {
+			Some("memory") => {
 				let path = if std::path::Path::new("/dev/shm").is_dir() {
 					PathBuf::from("/dev/shm/crud-bench-lmdb")
 				} else {
@@ -64,22 +64,37 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 		// Recreate the database directory
 		std::fs::create_dir_all(&dir)?;
 
-		// Configure flags based on options
-		let mut flags = EnvFlags::NO_READ_AHEAD | EnvFlags::NO_MEM_INIT;
-		if in_memory {
-			// In-memory mode disables all disk syncing and uses asynchronous memory-mapped I/O
-			flags |= EnvFlags::NO_SYNC
-				| EnvFlags::NO_META_SYNC
-				| EnvFlags::WRITE_MAP
-				| EnvFlags::MAP_ASYNC;
-		} else {
-			// Configure flags for filesystem sync
-			if !options.sync {
-				flags |= EnvFlags::NO_SYNC | EnvFlags::NO_META_SYNC;
-			}
-			if options.optimised {
-				flags |= EnvFlags::WRITE_MAP | EnvFlags::MAP_ASYNC;
-			}
+		// Configure the environment flags. Each flag below is independent, so
+		// whether it applies is decided on its own rather than nested inside
+		// the in-memory/disk branch above.
+		let mut flags =
+			// Skip the OS readahead heuristic: benchmark access is point/range
+			// lookups driven by the workload, not a sequential scan the OS
+			// could usefully prefetch ahead of.
+			EnvFlags::NO_READ_AHEAD
+			// Skip zeroing newly-mapped pages: every page is fully overwritten
+			// before it is ever read.
+			| EnvFlags::NO_MEM_INIT;
+		// Skip fsync/fdatasync on every commit. Pure in-memory mode never
+		// persists at all regardless of --sync, and otherwise this only
+		// applies when --sync was not requested.
+		if in_memory || !options.sync {
+			flags |= EnvFlags::NO_SYNC | EnvFlags::NO_META_SYNC;
+		}
+		// Write through the memory map directly instead of write() syscalls.
+		// Faster, and still durable via msync at commit as long as MAP_ASYNC
+		// (below) is not also set. Used for in-memory mode and whenever
+		// --optimised was requested.
+		if in_memory || options.optimised {
+			flags |= EnvFlags::WRITE_MAP;
+		}
+		// Defer flushes to the OS page-cache writeback instead of
+		// synchronising at commit. This is what makes in-memory mode
+		// non-durable, and it must never be combined with --sync: MAP_ASYNC
+		// silently defeats sync durability even when NO_SYNC/NO_META_SYNC are
+		// not set, so --optimised only enables it when --sync is off.
+		if in_memory || (options.optimised && !options.sync) {
+			flags |= EnvFlags::MAP_ASYNC;
 		}
 
 		// Calculate database map size (scale with samples if larger than default 4GiB)
