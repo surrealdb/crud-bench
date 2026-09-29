@@ -13,7 +13,7 @@ use crate::result::{
 use crate::system::SystemInfo;
 use crate::terminal::BenchUi;
 use crate::util::format_duration;
-use crate::valueprovider::ColumnType;
+use crate::valueprovider::{ColumnType, Columns};
 use crate::valueprovider::{ValueProvider, ValueStream};
 use crate::vectorfilter::{FilterField, VectorFilter};
 use crate::vectorgt::{self, GroundTruth, RecallTally, VectorAnswer};
@@ -366,6 +366,71 @@ impl Benchmark {
 		Ok(())
 	}
 
+	/// Index each distinct filter column of a `filter_index` vector scan.
+	///
+	/// Untimed: it is schema setup for the legs, not the index under test. The
+	/// engine returns once the index serves queries. Returns the `(column,
+	/// index name)` pairs built, or `None` when the engine cannot index a
+	/// filter column — the scan is then reported as skipped, since measuring it
+	/// without the index would repeat the default scan under a misleading name.
+	async fn build_filter_indexes<C>(
+		&self,
+		client: &Arc<C>,
+		scan_id: &str,
+		vq: &VectorQuerySpec,
+		columns: &Columns,
+	) -> Result<Option<Vec<(String, String)>>>
+	where
+		C: BenchmarkClient + Send + Sync,
+	{
+		let mut built: Vec<(String, String)> = Vec::new();
+		for filter in &vq.filters {
+			if built.iter().any(|(column, _)| column == &filter.field) {
+				continue;
+			}
+			let Some(ty) = filter.column_type(columns) else {
+				// `validate` accepts only the types `column_type` maps.
+				bail!("vector filter `{}` has no usable column type", filter.name);
+			};
+			let name = filter_index_name(scan_id, &filter.field);
+			let started = Instant::now();
+			match client.build_filter_index(&filter.field, ty, &name).await {
+				Ok(()) => {
+					self.bench_ui.println_muted(&format!(
+						"  filter index on `{}` built in {}",
+						filter.field,
+						format_duration(started.elapsed())
+					));
+					built.push((filter.field.clone(), name));
+				}
+				Err(e) if e.to_string() == NOT_SUPPORTED_ERROR => {
+					self.drop_filter_indexes(client, &built).await?;
+					self.bench_ui.println_muted(
+						"  this engine cannot index a filter column, so the scan is skipped",
+					);
+					return Ok(None);
+				}
+				Err(e) => return Err(e),
+			}
+		}
+		Ok(Some(built))
+	}
+
+	/// Drop what [`Self::build_filter_indexes`] built.
+	async fn drop_filter_indexes<C>(
+		&self,
+		client: &Arc<C>,
+		built: &[(String, String)],
+	) -> Result<()>
+	where
+		C: BenchmarkClient + Send + Sync,
+	{
+		for (column, name) in built {
+			client.drop_filter_index(column, name).await?;
+		}
+		Ok(())
+	}
+
 	/// Sleep a fixed beat to let any server-side phase tail settle (open
 	/// snapshots, draining tasks, deferred cleanup that outlives the
 	/// client's `try_join_all`), then emit the grep-friendly `Server idle`
@@ -555,6 +620,17 @@ impl Benchmark {
 					self.await_index_queryable(&clients[0], &id).await?;
 					self.maybe_compact_datastore::<C, E>(&engine).await?;
 				}
+				// Filter-column indexes, when asked for, go in after the vector
+				// index and before any leg, so every leg — the unfiltered
+				// baseline included — runs against the same schema. Not built
+				// when the legs will not run.
+				let filter_indexes = if vq.filter_index
+					&& (!vq.index_strategy.requires_index() || vec_index_build.is_some())
+				{
+					self.build_filter_indexes(&clients[0], &id, &vq, &vp.columns()).await?
+				} else {
+					Some(Vec::new())
+				};
 				// Run the scan if either the strategy doesn't require an index
 				// (so a missing build is fine) or build actually produced one.
 				// HNSW/DiskANN with no index = skip.
@@ -593,7 +669,9 @@ impl Benchmark {
 					// next predicate, and every answer key costs a full corpus
 					// sweep — so the remaining filters are recorded as skipped
 					// rather than each buying a key nothing will score against.
-					let mut unsupported = false;
+					// An engine that could not build the filter indexes this scan
+					// asked for skips every leg, the baseline included.
+					let mut unsupported = filter_indexes.is_none();
 					// Filters outermost: each has its own answer key, computed
 					// once and reused across that filter's search values.
 					for filter in &filter_legs {
@@ -683,6 +761,9 @@ impl Benchmark {
 						selectivity: None,
 						result: None,
 					});
+				}
+				if let Some(built) = &filter_indexes {
+					self.drop_filter_indexes(&clients[0], built).await?;
 				}
 				// Drop the index *after* the scan finishes — strictly in this
 				// order so the timed scan sees the index.
@@ -1574,6 +1655,23 @@ impl Benchmark {
 /// (at most 250ms) plus one status round trip.
 const QUERYABLE_DEADLINE_MARGIN: Duration = Duration::from_secs(1);
 
+/// Name for the index on a filter column: scoped by scan so two scans never
+/// share one, and reduced to characters every engine accepts in an identifier
+/// (a nested column such as `geography.code` would not be).
+fn filter_index_name(scan_id: &str, column: &str) -> String {
+	let column: String = column
+		.chars()
+		.map(|c| {
+			if c.is_ascii_alphanumeric() {
+				c
+			} else {
+				'_'
+			}
+		})
+		.collect();
+	format!("{scan_id}_filter_{column}")
+}
+
 /// Budget for the queryable wait inside a timed build: what is left of the
 /// operation timeout after the build call, less [`QUERYABLE_DEADLINE_MARGIN`].
 fn queryable_budget(operation_timeout: Duration, spent: Duration) -> Duration {
@@ -1918,6 +2016,15 @@ mod test {
 	#[test]
 	fn a_slower_window_counts_as_settled() {
 		assert!(warmup_has_plateaued(&recent(&[100, 102, 98, 101]), ms(140)));
+	}
+
+	/// Index names are scoped by scan and reduced to identifier characters, so
+	/// a nested column cannot produce DDL an engine rejects.
+	#[test]
+	fn filter_index_names_are_scoped_and_identifier_safe() {
+		assert_eq!(super::filter_index_name("knn", "number"), "knn_filter_number");
+		assert_eq!(super::filter_index_name("knn", "geography.code"), "knn_filter_geography_code");
+		assert_ne!(super::filter_index_name("a", "n"), super::filter_index_name("b", "n"));
 	}
 
 	// ------------------------------------------------------------------

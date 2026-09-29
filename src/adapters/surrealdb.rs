@@ -7,7 +7,7 @@ use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext, index
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
-use crate::vectorfilter::ListSyntax;
+use crate::vectorfilter::{FilterColumnType, ListSyntax};
 use crate::{
 	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
 	VectorQuerySpec,
@@ -163,6 +163,25 @@ fn surreal_knn_sql(vq: &VectorQuerySpec) -> String {
 			format!("SELECT id FROM record WHERE {field} <|{k},{search}|> $q{and_pred}")
 		}
 	}
+}
+
+/// Declare a filter column's type, so SurrealDB's KNN pre-filter will use an
+/// index on it.
+///
+/// The pre-filter turns covered WHERE conjuncts into an allow-list of matching
+/// records before the search — scored exactly when few match — but only trusts
+/// a b-tree index on a column whose declared type excludes arrays. On a
+/// schemaless table an array value fans out to one index entry per element, so
+/// the index could admit rows the predicate rejects; without this the planner
+/// declines and tests the predicate against each graph candidate's full record.
+fn surreal_filter_field_sql(column: &str, ty: FilterColumnType) -> String {
+	let ty = match ty {
+		FilterColumnType::Int => "int",
+		FilterColumnType::Float => "float",
+		FilterColumnType::String => "string",
+		FilterColumnType::Bool => "bool",
+	};
+	format!("DEFINE FIELD {column} ON TABLE record TYPE {ty}")
 }
 
 /// Pull the record key out of one `SELECT id` KNN row.
@@ -693,6 +712,35 @@ impl BenchmarkClient for SurrealDBClient {
 			sleep(index_poll_interval(started.elapsed())).await;
 		}
 		// All ok
+		Ok(())
+	}
+
+	async fn build_filter_index(
+		&self,
+		column: &str,
+		ty: FilterColumnType,
+		name: &str,
+	) -> Result<()> {
+		// The type first: the planner reads it when the query is planned, and a
+		// field defined after the index would work too, but this way the index
+		// is never online over an undeclared column.
+		let sql = surreal_filter_field_sql(column, ty);
+		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
+		let spec = Index {
+			skip: false,
+			fields: vec![column.to_string()],
+			unique: None,
+			index_type: None,
+		};
+		// A plain b-tree index; `build_index` returns once it reports ready.
+		self.build_index(&spec, name).await
+	}
+
+	async fn drop_filter_index(&self, column: &str, name: &str) -> Result<()> {
+		self.drop_index(name).await?;
+		// Back to schemaless, as every other scan expects the table.
+		let sql = format!("REMOVE FIELD {column} ON TABLE record");
+		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
 		Ok(())
 	}
 
@@ -1331,11 +1379,32 @@ impl SurrealDBClient {
 
 #[cfg(test)]
 mod test {
-	use super::surreal_knn_sql;
+	use super::{surreal_filter_field_sql, surreal_knn_sql};
 	use crate::VectorQuerySpec;
+	use crate::vectorfilter::FilterColumnType;
 
 	/// Build a resolved [`VectorQuerySpec`] the way the leg expansion hands one
 	/// to an adapter: at most one search value and at most one predicate.
+	#[test]
+	fn a_filter_column_is_declared_with_an_array_free_type() {
+		assert_eq!(
+			surreal_filter_field_sql("number", FilterColumnType::Int),
+			"DEFINE FIELD number ON TABLE record TYPE int"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("score", FilterColumnType::Float),
+			"DEFINE FIELD score ON TABLE record TYPE float"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("status", FilterColumnType::String),
+			"DEFINE FIELD status ON TABLE record TYPE string"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("active", FilterColumnType::Bool),
+			"DEFINE FIELD active ON TABLE record TYPE bool"
+		);
+	}
+
 	fn spec(strategy: &str, filters: &str) -> VectorQuerySpec {
 		let json = format!(
 			r#"{{ "field": "embedding", "top_k": 10, "distance": "cosine",

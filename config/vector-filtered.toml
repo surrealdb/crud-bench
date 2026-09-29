@@ -193,3 +193,67 @@ filters = [
     { name = "sel~50%", field = "number", op = "lte", value = 2500 },
     { name = "tag~33%", field = "status", op = "eq", value = "published" },
 ]
+
+# ----------------------------------------------------------------------------
+# The same three runs with `filter_index = true`: each filter column is indexed
+# before the legs (untimed) and dropped after. Without that index an engine has
+# to test the predicate candidate by candidate; with it, it can start from the
+# matching rows. SurrealDB also declares the column's type, which its KNN
+# pre-filter requires; Redis indexes filter columns as part of the vector index
+# already, so its two variants measure the same configuration.
+# ----------------------------------------------------------------------------
+
+[[scans.runs]]
+name = "bruteforce knn(10) · filter index"
+# A bruteforce leg is a full table scan per query, and the filter ladder
+# multiplies it by five. Exact search is the reference point rather than a
+# competitor, so it needs far fewer samples to be characterised.
+iterations = 50
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "bruteforce" }
+holdout = { count = 200, seed = 42 }
+filter_index = true
+filters = [
+    { name = "sel~1%", field = "number", op = "lte", value = 50 },
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "sel~50%", field = "number", op = "lte", value = 2500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
+
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200 · filter index"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 64, 128, 256] }
+holdout = { count = 200, seed = 42 }
+filter_index = true
+filters = [
+    { name = "sel~1%", field = "number", op = "lte", value = 50 },
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "sel~50%", field = "number", op = "lte", value = 2500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
+
+[[scans.runs]]
+name = "diskann knn(10) deg=64 L=100 alpha=1.2 · filter index"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = [50, 200] }
+holdout = { count = 200, seed = 42 }
+filter_index = true
+filters = [
+    { name = "sel~1%", field = "number", op = "lte", value = 50 },
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "sel~50%", field = "number", op = "lte", value = 2500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]

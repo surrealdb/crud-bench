@@ -362,6 +362,8 @@ block describes one KNN benchmark:
   schema's own vector generator and are **never inserted**, so no query is its own nearest neighbour.
 - `filters`: a list of predicates the KNN result is restricted to, one timed leg each plus an
   unfiltered baseline — see [Filtered KNN](#filtered-knn).
+- `filter_index`: `true` to index each filter column before the legs (untimed) and drop it after —
+  see [Indexed filter columns](#indexed-filter-columns). Default `false`.
 - `tie_epsilon`: relative tolerance when deciding whether a returned neighbour counts as correct
   (default `0.0`, i.e. strict recall@k). Engines compute distances at different precisions, so rows
   straddling the k-th boundary can swap without any real quality difference; a small tolerance stops
@@ -584,13 +586,40 @@ DiskANN is filtered wherever it exists, which today is SurrealDB 3.x alone — i
 above with HNSW. Neither pgvector nor Redis Stack ships a DiskANN index, so there is nowhere else to
 apply it; pgvectorscale's `diskann` would be a separate adapter and is tracked in #284.
 
+##### Indexed filter columns
+
+Whether the filter column is indexed changes how an engine can answer, far more than any search
+parameter does. Without an index it has to test the predicate candidate by candidate as it
+searches; with one it can start from the rows that match. That is a property of the schema, not the
+engine, so it is a switch — `filter_index = true` on a `vector_query` — and
+`config/vector-filtered.toml` runs every strategy both ways, the second labelled `· filter index`.
+
+Each distinct filter column is indexed after the vector index and before the first leg, so the
+unfiltered baseline runs against the same schema, and dropped after the last. The build is not timed:
+it is schema setup, not the index under test.
+
+| engine | what `filter_index` does |
+|---|---|
+| SurrealDB (3.x) | `DEFINE FIELD <col> ON record TYPE <int\|float\|string\|bool>` plus a b-tree index; both removed afterwards |
+| PostgreSQL | a b-tree index, then `ANALYZE` so the planner can cost it straight after a bulk load |
+| Redis Stack | nothing: filter columns are already `NUMERIC` / `TAG` fields of the vector index, so the two variants measure the same configuration |
+| SurrealDB (2.x) | declined (`-`), like every filtered leg |
+
+SurrealDB needs the declared type. Its KNN pre-filter turns an indexed predicate into an allow-list
+of matching records — scored exactly when few match, without touching the graph — but only trusts a
+b-tree index on a column that cannot hold arrays: on a schemaless table an array value fans out to one
+index entry per element, so the index could admit rows the predicate rejects. With an index and no
+declared type the plan does not change. At 1% selectivity on 50k × 768-d, the pre-filter took a
+filtered HNSW query from 1.1 s and recall 0.96 to 25 ms and 1.000
+([#314](https://github.com/surrealdb/crud-bench/issues/314)).
+
+`--skip-indexes` removes `filter_index` scans along with the other index builds.
+
 Two caveats worth knowing when reading the numbers:
 
-- **No supporting index is built on the filter column.** pgvector was measured post-filtering its
-  HNSW scan, which is its documented default (`hnsw.iterative_scan = off`); it was not choosing
-  between that and a bitmap index scan, because there was no index to scan. That is a deliberate
-  scope choice for this first cut, not a claim about what pgvector does when the filter column is
-  indexed or iterative scan is enabled.
+- **pgvector runs with its defaults.** Without `filter_index` it post-filters its HNSW scan, its
+  documented default (`hnsw.iterative_scan = off`). Iterative scans are not exercised yet
+  ([#312](https://github.com/surrealdb/crud-bench/issues/312)).
 - **Redis mirrors filter columns on every write.** They ride in the same `HSET` as the embedding, so
   the cost is marginal, but the create and update phases of a filtered config are not byte-identical
   in work to those of `config/vector.toml`.

@@ -3,6 +3,7 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::keyprovider::{IntegerKeyProvider, KeyProvider, StringKeyProvider};
 use crate::value::BenchValue;
 use crate::valueprovider::{Columns, ValueStream};
+use crate::vectorfilter::FilterColumnType;
 use crate::{BatchOperation, Index, KeyType, Scan, VectorQuerySpec};
 use anyhow::{Result, bail};
 use std::future::Future;
@@ -324,6 +325,34 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 	/// Drop an index by name
 	fn drop_index(&self, _name: &str) -> impl Future<Output = Result<()>> + Send {
 		async { bail!(NOT_SUPPORTED_ERROR) }
+	}
+
+	/// Index a filter column, for a vector scan with `filter_index = true`, in
+	/// whatever form this engine's planner needs to answer a filtered KNN query
+	/// from the index rather than by testing candidates one at a time.
+	///
+	/// `ty` is the column's scalar type, for engines that must declare it before
+	/// the index is usable for that. Return once the index serves queries. The
+	/// harness drops it with [`Self::drop_filter_index`] after the scan's legs.
+	/// Engines that cannot index a filter column return `NOT_SUPPORTED_ERROR`,
+	/// and the scan is reported as skipped rather than measured without it.
+	fn build_filter_index(
+		&self,
+		_column: &str,
+		_ty: FilterColumnType,
+		_name: &str,
+	) -> impl Future<Output = Result<()>> + Send {
+		async { bail!(NOT_SUPPORTED_ERROR) }
+	}
+
+	/// Undo [`Self::build_filter_index`], leaving the table as later scans
+	/// expect to find it.
+	fn drop_filter_index(
+		&self,
+		_column: &str,
+		_name: &str,
+	) -> impl Future<Output = Result<()>> + Send {
+		async { Ok(()) }
 	}
 
 	/// Apply a scan's search-time parameters to this client, before its leg runs.

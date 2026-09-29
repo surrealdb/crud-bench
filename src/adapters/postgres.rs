@@ -7,7 +7,7 @@ use crate::memory::Config;
 use crate::util::sql::bench_to_postgres_param;
 use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::vectorfilter::ListSyntax;
+use crate::vectorfilter::{FilterColumnType, ListSyntax};
 use crate::{
 	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
 	VectorQuerySpec,
@@ -331,6 +331,32 @@ impl BenchmarkClient for PostgresClient {
 		self.client.execute(&stmt, &[]).await?;
 		// All ok
 		Ok(())
+	}
+
+	async fn build_filter_index(
+		&self,
+		column: &str,
+		_ty: FilterColumnType,
+		name: &str,
+	) -> Result<()> {
+		// Columns are typed already; a b-tree is what lets the planner choose a
+		// bitmap scan of the matching rows plus an exact sort over the HNSW scan
+		// when the predicate is selective enough.
+		let spec = Index {
+			skip: false,
+			fields: vec![column.to_string()],
+			unique: None,
+			index_type: None,
+		};
+		self.build_index(&spec, name).await?;
+		// Fresh statistics, or the planner costs the new index blind: straight
+		// after a bulk load autovacuum may not have analysed the table yet.
+		self.client.execute("ANALYZE record", &[]).await?;
+		Ok(())
+	}
+
+	async fn drop_filter_index(&self, _column: &str, name: &str) -> Result<()> {
+		self.drop_index(name).await
 	}
 
 	async fn drop_index(&self, name: &str) -> Result<()> {

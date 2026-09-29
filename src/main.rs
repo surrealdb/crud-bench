@@ -383,10 +383,11 @@ fn skip_index_operations(scans: &mut Scans, database: Database) {
 			index.skip = true;
 		}
 
-		!scan
-			.vector_query
-			.as_ref()
-			.is_some_and(|vq| database.vector_scan_builds_index(&vq.index_strategy))
+		// A filter index is a physical index too, whatever the strategy.
+		!scan.vector_query.as_ref().is_some_and(|vq| {
+			database.vector_scan_builds_index(&vq.index_strategy)
+				|| (vq.filter_index && !vq.filters.is_empty())
+		})
 	});
 }
 
@@ -525,6 +526,13 @@ fn collect_vector_filter_fields(scans: &[Scan], columns: &Columns) -> Result<Vec
 		let Some(vq) = scan.vector_query.as_ref() else {
 			continue;
 		};
+		if vq.filter_index && vq.filters.is_empty() {
+			bail!(
+				"scan `{}`: `filter_index = true` indexes the filter columns, but the scan has \
+				 no `filters`",
+				scan.name
+			);
+		}
 		for (i, filter) in vq.filters.iter().enumerate() {
 			filter.validate(columns).map_err(|e| anyhow::anyhow!("scan `{}`: {e}", scan.name))?;
 			// A duplicate name makes two legs indistinguishable in the results
@@ -759,6 +767,25 @@ pub(crate) struct VectorQuerySpec {
 	/// [`Self::filter`] — the same resolution the search sweep goes through.
 	#[serde(default)]
 	pub(crate) filters: Vec<VectorFilter>,
+	/// Also index each filter column before the legs run, and drop it after.
+	///
+	/// A KNN query restricted by a predicate is answered very differently
+	/// depending on whether the predicate's column is indexed: without one an
+	/// engine has to test the predicate candidate by candidate, with one it can
+	/// turn the predicate into the set of matching rows first. Which of the two
+	/// a benchmark measures is a property of the schema rather than the engine,
+	/// so it is a switch here, meant to be run as a second scan beside the
+	/// default one so both appear in the results.
+	///
+	/// Each engine indexes the column the way its planner needs to use it —
+	/// SurrealDB also declares the column's type, since its pre-filter only
+	/// trusts an index on a column that cannot hold arrays; Redis already
+	/// indexes filter columns as part of the vector index. The build is not
+	/// timed: it is schema setup, not the index under test.
+	///
+	/// Requires at least one filter.
+	#[serde(default)]
+	pub(crate) filter_index: bool,
 	/// Relative tolerance when deciding whether a returned neighbour counts as
 	/// correct: a hit is accepted when its true distance is within this
 	/// fraction of the k-th true distance.
@@ -1295,6 +1322,19 @@ mod test {
 		);
 	}
 
+	/// Indexing the filter columns of a scan with no filters would build nothing
+	/// and report a variant that is not one.
+	#[test]
+	fn a_filter_index_needs_filters() {
+		let json = r#"[{ "id": "v", "name": "v", "iterations": 1,
+		   "vector_query": { "field": "e", "top_k": 10, "distance": "cosine",
+		   "index_strategy": { "kind": "bruteforce" }, "filter_index": true } }]"#;
+		let scans = expand_scan_specs(serde_json::from_str(json).unwrap()).unwrap();
+		let columns = ValueProvider::new(FILTER_TEMPLATE).unwrap().columns();
+		let err = collect_vector_filter_fields(&scans, &columns).unwrap_err().to_string();
+		assert!(err.contains("filter_index") && err.contains("no `filters`"), "{err}");
+	}
+
 	/// Two predicates on one column need that column prepared once, not twice —
 	/// a duplicate would declare the same RediSearch attribute again and fail
 	/// the index build.
@@ -1799,6 +1839,22 @@ mod test {
 
 		assert_eq!(scans.len(), 1);
 		assert_eq!(scans[0].name, "bruteforce");
+	}
+
+	/// A filter index is a physical index whatever the vector strategy, so a
+	/// bruteforce scan that asks for one goes with the other index builds.
+	#[test]
+	fn skip_indexes_removes_scans_that_index_their_filter_columns() {
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"vector","runs":[{"name":"plain","vector_query":{"field":"embedding","top_k":10,"distance":"cosine","index_strategy":{"kind":"bruteforce"},"filters":[{"name":"n","field":"number","op":"lte","value":50}]}},{"name":"indexed","vector_query":{"field":"embedding","top_k":10,"distance":"cosine","index_strategy":{"kind":"bruteforce"},"filters":[{"name":"n","field":"number","op":"lte","value":50}],"filter_index":true}}]}]"#,
+		)
+		.unwrap();
+		let mut scans = super::expand_scan_specs(specs).unwrap();
+
+		super::skip_index_operations(&mut scans, Database::Dry);
+
+		assert_eq!(scans.len(), 1);
+		assert_eq!(scans[0].name, "plain");
 	}
 
 	#[cfg(feature = "redis")]

@@ -5,7 +5,7 @@ use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext, index_poll_interval};
 use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
-use crate::vectorfilter::{FilterField, FilterFieldKind, redis_field_name};
+use crate::vectorfilter::{FilterColumnType, FilterField, FilterFieldKind, redis_field_name};
 use crate::{
 	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
 	VectorQuerySpec,
@@ -217,6 +217,20 @@ impl BenchmarkClient for RedisClient {
 
 	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan_bytes(scan).await
+	}
+
+	async fn build_filter_index(
+		&self,
+		_column: &str,
+		_ty: FilterColumnType,
+		_name: &str,
+	) -> Result<()> {
+		// Already done: every filter column is declared NUMERIC or TAG in the
+		// vector index's own schema at `FT.CREATE`, and the hybrid query applies
+		// the predicate from those fields before the KNN. A `filter_index` scan
+		// therefore measures the same configuration as the default one — which
+		// is the honest result for an engine that always indexes them.
+		Ok(())
 	}
 
 	async fn build_vector_index(

@@ -234,6 +234,21 @@ pub(crate) enum FilterFieldKind {
 	Tag,
 }
 
+/// The scalar type of a filter column, for engines that must declare it
+/// before an index on the column can serve a pre-filter.
+///
+/// SurrealDB's KNN pre-filter only turns a b-tree index into an allow-list
+/// when the column's declared type excludes arrays: on a schemaless table an
+/// array value fans out to one index entry per element, so the index could
+/// admit rows the predicate rejects, and the planner rightly declines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FilterColumnType {
+	Int,
+	Float,
+	String,
+	Bool,
+}
+
 /// A filter column, resolved against the schema.
 ///
 /// Engines that index filter columns separately from the primary record —
@@ -380,6 +395,18 @@ impl VectorFilter {
 
 	/// The Redis field kind this predicate's column maps to. Only meaningful
 	/// after [`Self::validate`] has accepted the column.
+	/// The declared scalar type of this filter's column, when it has one a
+	/// filter may use (see [`Self::validate`]).
+	pub(crate) fn column_type(&self, columns: &Columns) -> Option<FilterColumnType> {
+		columns.0.iter().find(|(n, _)| n == &self.field).and_then(|(_, t)| match t {
+			ColumnType::Integer => Some(FilterColumnType::Int),
+			ColumnType::Float => Some(FilterColumnType::Float),
+			ColumnType::String => Some(FilterColumnType::String),
+			ColumnType::Bool => Some(FilterColumnType::Bool),
+			_ => None,
+		})
+	}
+
 	pub(crate) fn field_kind(&self, columns: &Columns) -> Option<FilterFieldKind> {
 		columns.0.iter().find(|(n, _)| n == &self.field).and_then(|(_, t)| match t {
 			ColumnType::Integer | ColumnType::Float => Some(FilterFieldKind::Numeric),
@@ -765,5 +792,27 @@ mod test {
 		assert_eq!(f.field_kind(&cols), Some(FilterFieldKind::Tag));
 		let f = filter(r#"{"name":"n","field":"active","op":"eq","value":true}"#);
 		assert_eq!(f.field_kind(&cols), Some(FilterFieldKind::Tag));
+	}
+
+	#[test]
+	fn column_type_follows_the_schema() {
+		let cols = columns();
+		let ty = |json: &str| filter(json).column_type(&cols);
+		assert_eq!(
+			ty(r#"{"name":"n","field":"number","op":"lte","value":50}"#),
+			Some(FilterColumnType::Int)
+		);
+		assert_eq!(
+			ty(r#"{"name":"n","field":"score","op":"lte","value":50.0}"#),
+			Some(FilterColumnType::Float)
+		);
+		assert_eq!(
+			ty(r#"{"name":"n","field":"status","op":"eq","value":"draft"}"#),
+			Some(FilterColumnType::String)
+		);
+		assert_eq!(
+			ty(r#"{"name":"n","field":"active","op":"eq","value":true}"#),
+			Some(FilterColumnType::Bool)
+		);
 	}
 }

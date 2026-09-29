@@ -493,6 +493,23 @@ filters = [
     { name = "tag~33%", field = "status", op = "eq", value = "published" },
 ]
 
+# The HNSW run again with each filter column indexed first (`filter_index`), so
+# every engine's filter-index hooks run in CI: SurrealDB declares the column's
+# type and builds a b-tree, pgvector builds a b-tree, Redis already indexes them.
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200 efs=64 · filter index"
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = 64 }
+holdout = { count = 50, seed = 42 }
+filters = [
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
+filter_index = true
+
 [[scans.runs]]
 name = "diskann knn(10) deg=64 L=100 alpha=1.2"
 [scans.runs.vector_query]
