@@ -10,6 +10,7 @@ use heed::types::Bytes;
 use heed::{Database, EnvOpenOptions};
 use heed::{Env, EnvFlags, WithoutTls};
 use std::hint::black_box;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -24,7 +25,10 @@ static DATABASE_SIZE: LazyLock<usize> = LazyLock::new(|| {
 		.unwrap_or(DEFAULT_SIZE)
 });
 
-pub(crate) struct LmDBClientProvider(Arc<(Env<WithoutTls>, Database<Bytes, Bytes>)>);
+pub(crate) struct LmDBClientProvider {
+	db: Arc<(Env<WithoutTls>, Database<Bytes, Bytes>)>,
+	dir: PathBuf,
+}
 
 impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 	/// The number of seconds to wait before connecting
@@ -33,16 +37,69 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 	}
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
+		// Determine directory and flags based on options
+		let (dir, in_memory) = match options.endpoint.as_deref() {
+			Some("memory") => {
+				let path = if std::path::Path::new("/dev/shm").is_dir() {
+					PathBuf::from("/dev/shm/crud-bench-lmdb")
+				} else {
+					std::env::temp_dir().join("crud-bench-lmdb")
+				};
+				(path, true)
+			}
+			Some("tmpfs") => {
+				let path = if std::path::Path::new("/dev/shm").is_dir() {
+					PathBuf::from("/dev/shm/crud-bench-lmdb")
+				} else {
+					std::env::temp_dir().join("crud-bench-lmdb")
+				};
+				(path, false)
+			}
+			Some(p) => (PathBuf::from(p), false),
+			None => (PathBuf::from(DATABASE_DIR), false),
+		};
+
 		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		std::fs::remove_dir_all(&dir).ok();
 		// Recreate the database directory
-		std::fs::create_dir(DATABASE_DIR)?;
-		// Configure flags based on options
-		let mut flags = EnvFlags::NO_READ_AHEAD | EnvFlags::NO_MEM_INIT;
-		// Configure flags for filesystem sync
-		if !options.sync {
+		std::fs::create_dir_all(&dir)?;
+
+		// Configure the environment flags. Each flag below is independent, so
+		// whether it applies is decided on its own rather than nested inside
+		// the in-memory/disk branch above.
+		let mut flags =
+			// Skip the OS readahead heuristic: benchmark access is point/range
+			// lookups driven by the workload, not a sequential scan the OS
+			// could usefully prefetch ahead of.
+			EnvFlags::NO_READ_AHEAD
+			// Skip zeroing newly-mapped pages: every page is fully overwritten
+			// before it is ever read.
+			| EnvFlags::NO_MEM_INIT;
+		// Skip fsync/fdatasync on every commit. Pure in-memory mode never
+		// persists at all regardless of --sync, and otherwise this only
+		// applies when --sync was not requested.
+		if in_memory || !options.sync {
 			flags |= EnvFlags::NO_SYNC | EnvFlags::NO_META_SYNC;
 		}
+		// Write through the memory map directly instead of write() syscalls.
+		// Faster, and still durable via msync at commit as long as MAP_ASYNC
+		// (below) is not also set. Used for in-memory mode and whenever
+		// --optimised was requested.
+		if in_memory || options.optimised {
+			flags |= EnvFlags::WRITE_MAP;
+		}
+		// Defer flushes to the OS page-cache writeback instead of
+		// synchronising at commit. This is what makes in-memory mode
+		// non-durable, and it must never be combined with --sync: MAP_ASYNC
+		// silently defeats sync durability even when NO_SYNC/NO_META_SYNC are
+		// not set, so --optimised only enables it when --sync is off.
+		if in_memory || (options.optimised && !options.sync) {
+			flags |= EnvFlags::MAP_ASYNC;
+		}
+
+		// Calculate database map size (scale with samples if larger than default 4GiB)
+		let map_size = (*DATABASE_SIZE).max((options.samples as usize).saturating_mul(2048));
+
 		// Create a new environment
 		let env = unsafe {
 			EnvOpenOptions::new()
@@ -55,9 +112,9 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 				// Optimize for expected concurrent readers
 				.max_readers(126)
 				// Set the database size
-				.map_size(*DATABASE_SIZE)
+				.map_size(map_size)
 				// Open the database
-				.open(DATABASE_DIR)
+				.open(&dir)
 		}?;
 		// Create the database
 		let db = {
@@ -67,18 +124,23 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 			env.create_database::<Bytes, Bytes>(&mut txn, None)?
 		};
 		// Create the store
-		Ok(Self(Arc::new((env, db))))
+		Ok(Self {
+			db: Arc::new((env, db)),
+			dir,
+		})
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<LmDBClient> {
 		Ok(LmDBClient {
-			db: self.0.clone(),
+			db: self.db.clone(),
+			dir: self.dir.clone(),
 		})
 	}
 }
 
 pub(crate) struct LmDBClient {
 	db: Arc<(Env<WithoutTls>, Database<Bytes, Bytes>)>,
+	dir: PathBuf,
 }
 
 impl BenchmarkClient for LmDBClient {
@@ -87,7 +149,7 @@ impl BenchmarkClient for LmDBClient {
 
 	async fn shutdown(&self) -> Result<()> {
 		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		std::fs::remove_dir_all(&self.dir).ok();
 		// Ok
 		Ok(())
 	}
