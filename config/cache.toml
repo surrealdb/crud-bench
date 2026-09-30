@@ -65,7 +65,7 @@ iterations = 1000
 
 [[scans]]
 id = "limit"
-iterations = 10000
+iterations = 5000000
 limit = 100
 expect = 100
 
@@ -83,7 +83,7 @@ projection = "FULL"
 
 [[scans]]
 id = "start_limit"
-iterations = 10000
+iterations = 5000000
 start = 5000
 limit = 100
 expect = 100
