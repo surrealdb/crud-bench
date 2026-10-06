@@ -954,7 +954,16 @@
     // recall figures measured against different corpora and different answer
     // keys, so aligning their vector rows compares numbers that were never
     // about the same data.
-    const fields = ["samples", "clients", "threads", "key_type", "random", "sync", "persisted", "optimised", "corpus_seed", "template_digest"];
+    //
+    // `index_build_timing` says what an `[I]ndex · … · build` row measured.
+    // Files that predate the field timed only the engine's build call; newer
+    // ones time until the index serves at index speed. For an engine that
+    // finishes an index in the background the two differ by orders of
+    // magnitude — a 1M-row SurrealDB HNSW index reported 56s under the old
+    // definition and was still building an hour later — so an old file and a
+    // new one cannot share a build column. A missing field compares as its own
+    // value, which is exactly how a mix of the two is caught.
+    const fields = ["samples", "clients", "threads", "key_type", "random", "sync", "persisted", "optimised", "corpus_seed", "template_digest", "index_build_timing"];
     const mismatches = [];
     for (const f of fields) {
       const vals = new Map();

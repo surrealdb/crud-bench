@@ -455,6 +455,12 @@ index_type = "fulltext"
 # is skipped, same pattern as the fulltext block above. The holdout query
 # set is built deterministically from inserted rows (constant memory in
 # `count`, independent of `-s N`).
+#
+# Each run also has two filters, so every engine's filtered path is exercised:
+# a numeric range and a tag equality. Each becomes its own leg beside the
+# unfiltered one, scored against its own exact answer key — so the bruteforce
+# legs scoring 1.000 checks that each engine's rendering of the predicate
+# selects the same rows the harness does.
 # ============================================================================
 
 [[scans]]
@@ -469,6 +475,10 @@ top_k = 10
 distance = "cosine"
 index_strategy = { kind = "bruteforce" }
 holdout = { count = 50, seed = 42 }
+filters = [
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
 
 [[scans.runs]]
 name = "hnsw knn(10) m=16 efc=200 efs=64"
@@ -478,6 +488,27 @@ top_k = 10
 distance = "cosine"
 index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = 64 }
 holdout = { count = 50, seed = 42 }
+filters = [
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
+
+# The HNSW run again with each filter column indexed first (`filter_index`), so
+# every engine's filter-index hooks run in CI: SurrealDB declares the column's
+# type and builds a b-tree, pgvector builds a b-tree, Redis already indexes them.
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200 efs=64 · filter index"
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = 64 }
+holdout = { count = 50, seed = 42 }
+filters = [
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
+filter_index = true
 
 [[scans.runs]]
 name = "diskann knn(10) deg=64 L=100 alpha=1.2"
@@ -487,6 +518,10 @@ top_k = 10
 distance = "cosine"
 index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = 100 }
 holdout = { count = 50, seed = 42 }
+filters = [
+    { name = "sel~10%", field = "number", op = "lte", value = 500 },
+    { name = "tag~33%", field = "status", op = "eq", value = "published" },
+]
 
 # ============================================================================
 # batch_create_100
