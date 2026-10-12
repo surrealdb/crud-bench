@@ -2,9 +2,10 @@
 
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext, index_poll_interval};
 use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
+use crate::vectorfilter::{FilterColumnType, FilterField, FilterFieldKind, redis_field_name};
 use crate::{
 	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
 	VectorQuerySpec,
@@ -19,11 +20,6 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
-
-/// How long to wait for RediSearch to finish populating an index before giving
-/// up. Generous: the point is to fail loudly on a stuck build rather than to
-/// bound a healthy one.
-const INDEX_BUILD_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Pull `(indexing, percent_indexed, hash_indexing_failures)` out of an
 /// `FT.INFO` reply.
@@ -101,6 +97,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 pub(crate) struct RedisClientProvider {
 	url: String,
 	vector_field: Option<(String, usize)>,
+	filter_fields: Vec<FilterField>,
 }
 
 impl BenchmarkEngine<RedisClient> for RedisClientProvider {
@@ -113,6 +110,11 @@ impl BenchmarkEngine<RedisClient> for RedisClientProvider {
 		Ok(Self {
 			url: options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned(),
 			vector_field,
+			// Filter columns have to be mirrored alongside the embedding from
+			// the very first write, which is long before a scan names them —
+			// hence taking the set from the run's configuration rather than
+			// discovering it when a filtered leg runs.
+			filter_fields: options.vector_filter_fields.clone(),
 		})
 	}
 	/// Creates a new client for this benchmarking engine
@@ -122,6 +124,7 @@ impl BenchmarkEngine<RedisClient> for RedisClientProvider {
 			conn_iter: Mutex::new(client.get_multiplexed_async_connection().await?),
 			conn_record: Mutex::new(client.get_multiplexed_async_connection().await?),
 			vector_field: self.vector_field.clone(),
+			filter_fields: self.filter_fields.clone(),
 		})
 	}
 }
@@ -133,6 +136,14 @@ pub(crate) struct RedisClient {
 	/// CRUD operations dual-write the vector bytes to a `vec:{key}` HASH so the
 	/// Redis Stack `FT.CREATE` index can target a per-key indexed payload.
 	vector_field: Option<(String, usize)>,
+	/// Columns any filtered KNN leg tests, mirrored into the same `vec:{key}`
+	/// HASH as the embedding.
+	///
+	/// RediSearch can only filter on attributes of the indexed document, and
+	/// the indexed document here is the mirror, not the primary record — so a
+	/// filter column that is not mirrored does not produce an error, it
+	/// produces a query that matches nothing.
+	filter_fields: Vec<FilterField>,
 }
 
 impl BenchmarkClient for RedisClient {
@@ -206,6 +217,20 @@ impl BenchmarkClient for RedisClient {
 
 	async fn scan_string(&self, scan: &Scan, _ctx: ScanContext) -> Result<usize> {
 		self.scan_bytes(scan).await
+	}
+
+	async fn build_filter_index(
+		&self,
+		_column: &str,
+		_ty: FilterColumnType,
+		_name: &str,
+	) -> Result<()> {
+		// Already done: every filter column is declared NUMERIC or TAG in the
+		// vector index's own schema at `FT.CREATE`, and the hybrid query applies
+		// the predicate from those fields before the KNN. A `filter_index` scan
+		// therefore measures the same configuration as the default one — which
+		// is the honest result for an engine that always indexes them.
+		Ok(())
 	}
 
 	async fn build_vector_index(
@@ -287,6 +312,26 @@ impl BenchmarkClient for RedisClient {
 		for p in &vector_params {
 			create.arg(p.as_str());
 		}
+		// Filter columns join the same schema. RediSearch can only filter on
+		// declared attributes, so a column left out here is not a query error —
+		// the query parses, matches nothing, and reports zero recall against a
+		// perfectly good index.
+		for field in &self.filter_fields {
+			create.arg(redis_field_name(&field.name));
+			match field.kind {
+				FilterFieldKind::Numeric => {
+					create.arg("NUMERIC");
+				}
+				FilterFieldKind::Tag => {
+					// CASESENSITIVE keeps RediSearch's notion of tag equality
+					// identical to the harness's, which compares strings byte
+					// for byte. Without it RediSearch folds case on both sides
+					// and would admit rows the answer key excludes — a
+					// systematic recall error that looks like an index fault.
+					create.arg("TAG").arg("CASESENSITIVE");
+				}
+			}
+		}
 		let _: () = create.query_async(&mut *conn).await?;
 		Ok(())
 	}
@@ -303,7 +348,13 @@ impl BenchmarkClient for RedisClient {
 	/// the exact (FLAT) leg scored 0.268 where exact search must score 1.000.
 	/// Latency fell as the search budget rose, which is backwards. None of it
 	/// was a property of Redis.
-	async fn await_index_queryable(&self, name: &str) -> Result<()> {
+	///
+	/// Called inside the timed build. `FT.CREATE` returns before a single
+	/// document is indexed, so without this wait Redis's build time is the
+	/// time to accept a schema — 1 ms at 1M rows — and cannot sit in a column
+	/// beside an engine whose build call does the indexing. `timeout` is the
+	/// caller's remaining budget from `--operation-timeout`.
+	async fn await_index_queryable(&self, name: &str, timeout: Duration) -> Result<()> {
 		let started = Instant::now();
 		let mut conn = self.conn_record.lock().await;
 		loop {
@@ -325,15 +376,16 @@ impl BenchmarkClient for RedisClient {
 			if indexing == 0 && fraction >= 1.0 {
 				return Ok(());
 			}
-			if started.elapsed() > INDEX_BUILD_TIMEOUT {
+			if started.elapsed() > timeout {
 				bail!(
 					"index {name}: still building after {:?} ({:.1}% indexed); \
-					 a KNN scan now would query a partial index",
+					 a KNN scan now would query a partial index. Raise --operation-timeout \
+					 to wait longer",
 					started.elapsed(),
 					fraction * 100.0,
 				);
 			}
-			sleep(Duration::from_millis(100)).await;
+			sleep(index_poll_interval(started.elapsed())).await;
 		}
 	}
 
@@ -485,6 +537,50 @@ impl BenchmarkClient for RedisClient {
 	}
 }
 
+/// Build the `FT.SEARCH` query argument for a resolved vector query.
+///
+/// Pure, so the query can be asserted without a server. RediSearch puts the
+/// predicate in front of the KNN clause, which makes this a *hybrid* query: the
+/// engine decides for itself whether to narrow the candidate set first or run
+/// the KNN and filter after, and which it picks is precisely what a filtered
+/// benchmark is measuring.
+fn redis_knn_query(vq: &VectorQuerySpec, kind: Option<FilterFieldKind>) -> Result<String> {
+	let k = vq.top_k;
+	let prefilter = match (vq.filter(), kind) {
+		(Some(f), Some(kind)) => format!("({})", f.to_redis(kind)?),
+		(Some(f), None) => bail!("redis: filter `{}` has no indexed column kind", f.name),
+		(None, _) => "*".to_string(),
+	};
+	Ok(match vq.index_strategy {
+		// Bruteforce is a FLAT index — an exact scan with no search budget to
+		// set.
+		VectorIndexStrategy::Bruteforce => format!("{prefilter}=>[KNN {k} @v $q AS score]"),
+		_ => {
+			let ef = vq.index_strategy.search_value();
+			format!("{prefilter}=>[KNN {k} @v $q EF_RUNTIME {ef} AS score]")
+		}
+	})
+}
+
+/// Render one filter column's value for the `vec:{key}` mirror.
+///
+/// The stored form is the raw value — escaping belongs to query syntax, not to
+/// storage — so a tag written here is matched by the escaped term
+/// `VectorFilter::to_redis` produces.
+fn redis_filter_cell(cell: &BenchValue, field: &FilterField) -> Result<String> {
+	Ok(match (field.kind, cell) {
+		(FilterFieldKind::Numeric, BenchValue::Int(i)) => i.to_string(),
+		(FilterFieldKind::Numeric, BenchValue::UInt(u)) => u.to_string(),
+		(FilterFieldKind::Numeric, BenchValue::Float(f)) => f.to_string(),
+		(FilterFieldKind::Tag, BenchValue::String(t)) => t.clone(),
+		(FilterFieldKind::Tag, BenchValue::Bool(b)) => b.to_string(),
+		(kind, other) => bail!(
+			"redis: filter field `{}` is declared {kind:?} but the row holds {other:?}",
+			field.name
+		),
+	})
+}
+
 /// Map the benchmark's distance enum to Redis Stack's distance metric keyword.
 ///
 /// Returns `None` for metrics Redis Stack does not implement natively — the
@@ -519,9 +615,19 @@ impl RedisClient {
 		}
 		let bytes: &[u8] = bytemuck::cast_slice(v);
 		let hkey = format!("vec:{key}");
+		let mut cmd = redis::cmd("HSET");
+		cmd.arg(hkey).arg("v").arg(bytes);
+		// Filter columns ride in the same HSET rather than a second round trip:
+		// the mirror has to stay consistent with the record, and one command
+		// makes that atomic instead of merely likely.
+		for field in &self.filter_fields {
+			let cell = val
+				.get_field(&field.name)
+				.ok_or_else(|| anyhow!("redis: missing filter field `{}`", field.name))?;
+			cmd.arg(redis_field_name(&field.name)).arg(redis_filter_cell(cell, field)?);
+		}
 		let mut conn = self.conn_record.lock().await;
-		let _: () =
-			redis::cmd("HSET").arg(hkey).arg("v").arg(bytes).query_async(&mut *conn).await?;
+		let _: () = cmd.query_async(&mut *conn).await?;
 		Ok(())
 	}
 
@@ -546,18 +652,20 @@ impl RedisClient {
 			.ok_or_else(|| anyhow!("knn_scan: scan `{}` missing vector_query", scan.name))?;
 		let k = vq.top_k;
 		let bytes: &[u8] = bytemuck::cast_slice(query);
+		let kind = match vq.filter() {
+			Some(f) => match self.filter_fields.iter().find(|x| x.name == f.field) {
+				Some(field) => Some(field.kind),
+				// The column was never mirrored, so filtering on it would
+				// quietly match nothing. Skipping is the honest answer.
+				None => bail!(NOT_SUPPORTED_ERROR),
+			},
+			None => None,
+		};
+		let query_arg = redis_knn_query(vq, kind)?;
 		let mut conn = self.conn_record.lock().await;
 		let res: redis::Value = redis::cmd("FT.SEARCH")
 			.arg(&scan.id)
-			.arg(match vq.index_strategy {
-				// Bruteforce is a FLAT index — an exact scan with no search
-				// budget to set.
-				VectorIndexStrategy::Bruteforce => format!("*=>[KNN {k} @v $q AS score]"),
-				_ => {
-					let ef = vq.index_strategy.search_value();
-					format!("*=>[KNN {k} @v $q EF_RUNTIME {ef} AS score]")
-				}
-			})
+			.arg(query_arg)
 			.arg("PARAMS")
 			.arg(2)
 			.arg("q")
@@ -663,8 +771,72 @@ impl RedisClient {
 
 #[cfg(test)]
 mod test {
-	use super::parse_ft_info;
+	use super::{parse_ft_info, redis_knn_query};
+	use crate::VectorQuerySpec;
+	use crate::vectorfilter::FilterFieldKind;
 	use redis::Value;
+
+	/// Build a resolved [`VectorQuerySpec`] the way the leg expansion hands one
+	/// to an adapter: at most one search value and at most one predicate.
+	fn spec(strategy: &str, filters: &str) -> VectorQuerySpec {
+		let json = format!(
+			r#"{{ "field": "embedding", "top_k": 10, "distance": "cosine",
+			   "index_strategy": {strategy}, "filters": {filters} }}"#
+		);
+		serde_json::from_str(&json).expect("spec parses")
+	}
+
+	const HNSW: &str = r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": 64 }"#;
+	const FLAT: &str = r#"{ "kind": "bruteforce" }"#;
+
+	/// An unfiltered query keeps the `*` prefilter, so the FLAT and HNSW forms
+	/// are unchanged by the filter machinery.
+	#[test]
+	fn unfiltered_queries_are_unchanged() {
+		assert_eq!(redis_knn_query(&spec(FLAT, "[]"), None).unwrap(), "*=>[KNN 10 @v $q AS score]");
+		assert_eq!(
+			redis_knn_query(&spec(HNSW, "[]"), None).unwrap(),
+			"*=>[KNN 10 @v $q EF_RUNTIME 64 AS score]"
+		);
+	}
+
+	/// A predicate becomes the hybrid query's prefilter, over the mirrored
+	/// `f_`-prefixed attribute rather than the raw column name.
+	#[test]
+	fn a_filter_becomes_the_hybrid_prefilter() {
+		assert_eq!(
+			redis_knn_query(
+				&spec(HNSW, r#"[{ "name": "s", "field": "number", "op": "lte", "value": 50 }]"#),
+				Some(FilterFieldKind::Numeric)
+			)
+			.unwrap(),
+			"(@f_number:[-inf 50])=>[KNN 10 @v $q EF_RUNTIME 64 AS score]"
+		);
+		assert_eq!(
+			redis_knn_query(
+				&spec(
+					FLAT,
+					r#"[{ "name": "l", "field": "status", "op": "in", "value": ["draft", "archived"] }]"#
+				),
+				Some(FilterFieldKind::Tag)
+			)
+			.unwrap(),
+			"(@f_status:{draft|archived})=>[KNN 10 @v $q AS score]"
+		);
+	}
+
+	/// A predicate whose column was never mirrored must not render into a query
+	/// that matches nothing — the caller skips instead.
+	#[test]
+	fn an_unmirrored_column_is_refused() {
+		assert!(
+			redis_knn_query(
+				&spec(HNSW, r#"[{ "name": "s", "field": "number", "op": "lte", "value": 50 }]"#),
+				None
+			)
+			.is_err()
+		);
+	}
 
 	fn bulk(s: &str) -> Value {
 		Value::BulkString(s.as_bytes().to_vec())

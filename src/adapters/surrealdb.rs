@@ -3,10 +3,11 @@
 use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::SurrealDBDialect;
 use crate::docker::DockerParams;
-use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext, index_poll_interval};
 use crate::memory::Config as MemoryConfig;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
+use crate::vectorfilter::{FilterColumnType, ListSyntax};
 use crate::{
 	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
 	VectorQuerySpec,
@@ -122,10 +123,66 @@ fn surreal_distance_function(d: VectorDistance) -> &'static str {
 	}
 }
 
-/// How long to wait for an index's pending queue to drain before giving up. The
-/// background task runs every `index_compaction_interval` (5s by default), so
-/// this allows for a slow drain without hanging a run forever.
-const INDEX_COMPACTION_TIMEOUT: Duration = Duration::from_secs(300);
+/// Build the KNN statement for a resolved vector query.
+///
+/// Pure, so the statement can be asserted without a server. That matters most
+/// for the filtered forms: a mis-rendered predicate does not fail, it answers a
+/// different question, and the recall gap that follows looks exactly like an
+/// index quality difference.
+///
+/// A filtered leg restricts the result to rows the predicate admits. On the
+/// bruteforce path that is a plain `WHERE`, evaluated before the ordering, so
+/// the answer stays exact. On the index paths the KNN operator stays leading
+/// and the predicate is `AND`-ed after it — how the engine then combines the
+/// two, narrowing the traversal or filtering the k rows it already chose, is
+/// exactly what a filtered benchmark is trying to observe, so it is left to the
+/// engine and read off the recall rather than forced here.
+fn surreal_knn_sql(vq: &VectorQuerySpec) -> String {
+	let field = &vq.field;
+	let k = vq.top_k;
+	let pred = vq.filter().map(|f| f.to_sql::<SurrealDBDialect>(ListSyntax::Brackets));
+	match vq.index_strategy {
+		VectorIndexStrategy::Bruteforce => {
+			let func_path = surreal_distance_function(vq.distance);
+			let dir = surreal_distance_order(vq.distance);
+			let where_clause = pred.as_ref().map(|p| format!("WHERE {p} ")).unwrap_or_default();
+			// Aliased distance so the parser's "ORDER BY idiom must appear
+			// in SELECT" rule is satisfied.
+			format!(
+				"SELECT id, {func_path}({field}, $q) AS _d FROM record {where_clause}ORDER BY _d {dir} LIMIT {k}"
+			)
+		}
+		VectorIndexStrategy::Hnsw {
+			..
+		}
+		| VectorIndexStrategy::DiskAnn {
+			..
+		} => {
+			let search = vq.index_strategy.search_value();
+			let and_pred = pred.as_ref().map(|p| format!(" AND {p}")).unwrap_or_default();
+			format!("SELECT id FROM record WHERE {field} <|{k},{search}|> $q{and_pred}")
+		}
+	}
+}
+
+/// Declare a filter column's type, so SurrealDB's KNN pre-filter will use an
+/// index on it.
+///
+/// The pre-filter turns covered WHERE conjuncts into an allow-list of matching
+/// records before the search — scored exactly when few match — but only trusts
+/// a b-tree index on a column whose declared type excludes arrays. On a
+/// schemaless table an array value fans out to one index entry per element, so
+/// the index could admit rows the predicate rejects; without this the planner
+/// declines and tests the predicate against each graph candidate's full record.
+fn surreal_filter_field_sql(column: &str, ty: FilterColumnType) -> String {
+	let ty = match ty {
+		FilterColumnType::Int => "int",
+		FilterColumnType::Float => "float",
+		FilterColumnType::String => "string",
+		FilterColumnType::Bool => "bool",
+	};
+	format!("DEFINE FIELD {column} ON TABLE record TYPE {ty}")
+}
 
 /// Pull the record key out of one `SELECT id` KNN row.
 fn surreal_knn_key(row: &Value) -> Result<KnnKey> {
@@ -632,7 +689,9 @@ impl BenchmarkClient for SurrealDBClient {
 		};
 		// Create the index
 		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
-		// Wait until the index is ready
+		// Wait until the index is ready. This poll is inside the timed build, so
+		// its cadence adapts rather than rounding the build up to a fixed step.
+		let started = Instant::now();
 		loop {
 			let sql = format!("INFO FOR INDEX {name} ON record");
 			let r: surrealdb::types::Value = self
@@ -650,9 +709,38 @@ impl BenchmarkClient for SurrealDBClient {
 				"indexing" | "cleaning" | "started" => {}
 				_ => bail!("Unexpected status: {}", r.into_json_value()),
 			}
-			sleep(Duration::from_millis(500)).await;
+			sleep(index_poll_interval(started.elapsed())).await;
 		}
 		// All ok
+		Ok(())
+	}
+
+	async fn build_filter_index(
+		&self,
+		column: &str,
+		ty: FilterColumnType,
+		name: &str,
+	) -> Result<()> {
+		// The type first: the planner reads it when the query is planned, and a
+		// field defined after the index would work too, but this way the index
+		// is never online over an undeclared column.
+		let sql = surreal_filter_field_sql(column, ty);
+		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
+		let spec = Index {
+			skip: false,
+			fields: vec![column.to_string()],
+			unique: None,
+			index_type: None,
+		};
+		// A plain b-tree index; `build_index` returns once it reports ready.
+		self.build_index(&spec, name).await
+	}
+
+	async fn drop_filter_index(&self, column: &str, name: &str) -> Result<()> {
+		self.drop_index(name).await?;
+		// Back to schemaless, as every other scan expects the table.
+		let sql = format!("REMOVE FIELD {column} ON TABLE record");
+		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
 		Ok(())
 	}
 
@@ -797,7 +885,8 @@ impl BenchmarkClient for SurrealDBClient {
 			return Err(log_sql_err(&sql)(e));
 		}
 		// Wait until the index is ready (same poll loop as `build_index`).
-		loop {
+		let started = Instant::now();
+		let reports_materialisation = loop {
 			let q = format!("INFO FOR INDEX {name} ON record");
 			let r: surrealdb::types::Value = self
 				.db
@@ -810,11 +899,39 @@ impl BenchmarkClient for SurrealDBClient {
 			let building = r.get("building");
 			let status = building.get("status").as_string().expect(&j);
 			match status.as_str() {
-				"ready" => break,
+				// The same reply that says the index is ready says whether this
+				// server reports materialisation at all.
+				"ready" => break matches!(building.get("compacting"), Value::Bool(_)),
 				"indexing" | "cleaning" | "started" => {}
 				_ => bail!("Unexpected status: {}", r.into_json_value()),
 			}
-			sleep(Duration::from_millis(500)).await;
+			sleep(index_poll_interval(started.elapsed())).await;
+		};
+		// Refuse to time a vector index whose materialisation cannot be seen.
+		//
+		// `status = "ready"` arrives once existing rows are enumerated into
+		// per-record pending entries; the graph is built from them afterwards,
+		// and until it is, a kNN query scores the remainder by hand.
+		// `building.compacting` is the only signal for that, and servers that
+		// predate the field (releases before 3.3.0) defer the same work without
+		// reporting it. On those, `await_index_queryable`
+		// would return while the index still scans, and every timed leg would
+		// measure that scan under the index's name. So skip instead: the leg
+		// reports `-`, which is honest, rather than a number that is not.
+		//
+		// The index was defined, and a skipped build is never dropped by the
+		// harness; remove it here, or the next leg building an index of the same
+		// name — `config/vector.toml` reuses one across HNSW and DiskANN — would
+		// collide with it.
+		if !reports_materialisation {
+			eprintln!(
+				"SurrealDB: skipping vector index `{name}`: this server does not report \
+				 `building.compacting`, so it cannot say when the index has finished \
+				 materialising, and a timed leg could measure a scan over the unmaterialised \
+				 remainder. Run against a server that reports it — the nightly Docker image does."
+			);
+			self.drop_index(name).await?;
+			bail!(NOT_SUPPORTED_ERROR);
 		}
 		Ok(())
 	}
@@ -830,10 +947,35 @@ impl BenchmarkClient for SurrealDBClient {
 	/// especially misleading, since a queue scan is exact and so reports a
 	/// perfect recall of 1.0 for entirely the wrong reason.
 	///
-	/// `building.pending` carries the queue depth, so poll until it clears.
+	/// `building.pending` carries the queue depth, and `building.compacting`
+	/// says whether the materialisation task is still running. **Both** have to
+	/// clear: at 1M rows an index reports `status = "ready"` with `pending = 0`
+	/// while `compacting` is still true, and a KNN query against it costs ~2.9s
+	/// against single-digit ms once materialised — one core pegged, scanning
+	/// state the index has not absorbed yet.
+	///
+	/// Waiting on `pending` alone is what made that measurable: a 1M-row
+	/// calibration timed 24 minutes for a single 500-iteration leg, and the
+	/// compaction never finished *because* the query load starved it. Waiting
+	/// here, before any timed leg, gives the materialisation task the machine to
+	/// itself.
+	///
+	/// `compacting` is absent on older servers, where its absence reads as
+	/// "not compacting" and the check is the pre-existing one. That is only
+	/// reachable for the kinds `build_index` defines — fulltext, count, standard
+	/// indexes. A vector index on such a server never gets here:
+	/// `build_vector_index` refuses it, because its deferred work is exactly what
+	/// the missing field would have reported.
+	///
+	/// Called inside the timed build, so it is what makes SurrealDB's build time
+	/// comparable with an engine whose build call returns only when the index is
+	/// complete: `status = "ready"` arrives after row enumeration, and at 1M rows
+	/// the graph construction that follows is over an hour of the real build.
+	/// `timeout` is the caller's remaining budget from `--operation-timeout`.
+	///
 	/// Note this is unrelated to `ALTER SYSTEM COMPACT` (see [`Self::compact`]),
 	/// which compacts the RocksDB keyspace and does nothing for this queue.
-	async fn await_index_queryable(&self, name: &str) -> Result<()> {
+	async fn await_index_queryable(&self, name: &str, timeout: Duration) -> Result<()> {
 		let started = Instant::now();
 		loop {
 			let q = format!("INFO FOR INDEX {name} ON record");
@@ -853,20 +995,25 @@ impl BenchmarkClient for SurrealDBClient {
 				Value::Number(n) => n.to_int().unwrap_or(0),
 				_ => 0,
 			};
+			// Absent on servers that predate the field, where "not compacting"
+			// is the right reading and the behaviour is unchanged.
+			let compacting = matches!(building.get("compacting"), Value::Bool(true));
 			// `pending` sits at 0 while the initial build is still running, so
 			// it only means "drained" once the build itself reports ready.
 			match status.as_str() {
-				"ready" if pending == 0 => return Ok(()),
+				"ready" if pending == 0 && !compacting => return Ok(()),
 				"ready" | "indexing" | "cleaning" | "started" => {}
 				_ => bail!("Unexpected index status: {j}"),
 			}
-			if started.elapsed() > INDEX_COMPACTION_TIMEOUT {
+			if started.elapsed() > timeout {
 				bail!(
-					"index {name}: {pending} entries still pending after {:?}; 					 a KNN scan now would measure a brute-force scan over the queue",
+					"index {name}: {pending} entries pending, compacting={compacting}, after \
+					 {:?}; a scan now would measure a scan over unmaterialised state rather than \
+					 the index. Raise --operation-timeout to wait longer",
 					started.elapsed()
 				);
 			}
-			sleep(Duration::from_millis(250)).await;
+			sleep(index_poll_interval(started.elapsed())).await;
 		}
 	}
 
@@ -1021,32 +1168,16 @@ impl SurrealDBClient {
 		let vq = scan.vector_query.as_ref().ok_or_else(|| {
 			anyhow::anyhow!("knn_scan called without a vector_query on scan `{}`", scan.name)
 		})?;
-		let field = &vq.field;
-		let k = vq.top_k;
 		let is_diskann = matches!(vq.index_strategy, VectorIndexStrategy::DiskAnn { .. });
-		let sql = match vq.index_strategy {
-			VectorIndexStrategy::Bruteforce => {
-				let func_path = surreal_distance_function(vq.distance);
-				let dir = surreal_distance_order(vq.distance);
-				// Aliased distance so the parser's "ORDER BY idiom must appear
-				// in SELECT" rule is satisfied (surrealdb-private 0df9e38c era).
-				format!(
-					"SELECT id, {func_path}({field}, $q) AS _d FROM record ORDER BY _d {dir} LIMIT {k}"
-				)
-			}
-			VectorIndexStrategy::Hnsw {
-				..
-			} => {
-				let ef_search = vq.index_strategy.search_value();
-				format!("SELECT id FROM record WHERE {field} <|{k},{ef_search}|> $q")
-			}
-			VectorIndexStrategy::DiskAnn {
-				..
-			} => {
-				let l_search = vq.index_strategy.search_value();
-				format!("SELECT id FROM record WHERE {field} <|{k},{l_search}|> $q")
-			}
-		};
+		// A build whose parser will not accept the KNN operator beside a
+		// `WHERE` predicate cannot answer a filtered leg at all, which is a
+		// capability gap and belongs in the output as a skip. Scoped to
+		// filtered legs: a parse error on an unfiltered query is crud-bench
+		// emitting bad SurrealQL, and hiding that would be hiding our own bug.
+		// Note this covers only *parse* failures — a filtered query the engine
+		// accepts and then fails on still aborts, as it should.
+		let is_filtered = vq.filter().is_some();
+		let sql = surreal_knn_sql(vq);
 		// Bind the query vector as a SurrealQL array so the server doesn't
 		// re-parse a multi-KB array literal on every iteration.
 		let q_value = Value::Array(Array::from(
@@ -1062,6 +1193,7 @@ impl SurrealDBClient {
 			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
 				bail!(NOT_SUPPORTED_ERROR)
 			}
+			Err(e) if is_filtered && is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
 			Err(e) => return Err(log_sql_err(&sql)(e)),
 		};
 		let res: surrealdb::types::Value = match resp.take(0) {
@@ -1069,6 +1201,7 @@ impl SurrealDBClient {
 			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
 				bail!(NOT_SUPPORTED_ERROR)
 			}
+			Err(e) if is_filtered && is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
 			Err(e) => return Err(log_sql_err(&sql)(e)),
 		};
 		let Some(arr) = res.as_array() else {
@@ -1241,5 +1374,91 @@ impl SurrealDBClient {
 			Ok(())
 		})
 		.await
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::{surreal_filter_field_sql, surreal_knn_sql};
+	use crate::VectorQuerySpec;
+	use crate::vectorfilter::FilterColumnType;
+
+	/// Build a resolved [`VectorQuerySpec`] the way the leg expansion hands one
+	/// to an adapter: at most one search value and at most one predicate.
+	#[test]
+	fn a_filter_column_is_declared_with_an_array_free_type() {
+		assert_eq!(
+			surreal_filter_field_sql("number", FilterColumnType::Int),
+			"DEFINE FIELD number ON TABLE record TYPE int"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("score", FilterColumnType::Float),
+			"DEFINE FIELD score ON TABLE record TYPE float"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("status", FilterColumnType::String),
+			"DEFINE FIELD status ON TABLE record TYPE string"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("active", FilterColumnType::Bool),
+			"DEFINE FIELD active ON TABLE record TYPE bool"
+		);
+	}
+
+	fn spec(strategy: &str, filters: &str) -> VectorQuerySpec {
+		let json = format!(
+			r#"{{ "field": "embedding", "top_k": 10, "distance": "cosine",
+			   "index_strategy": {strategy}, "filters": {filters} }}"#
+		);
+		serde_json::from_str(&json).expect("spec parses")
+	}
+
+	const HNSW: &str = r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": 64 }"#;
+	const DISKANN: &str =
+		r#"{ "kind": "diskann", "degree": 64, "l_build": 100, "alpha": 1.2, "l_search": 50 }"#;
+	const BRUTEFORCE: &str = r#"{ "kind": "bruteforce" }"#;
+	const NUMERIC: &str = r#"[{ "name": "sel", "field": "number", "op": "lte", "value": 50 }]"#;
+	const TAGS: &str =
+		r#"[{ "name": "live", "field": "status", "op": "in", "value": ["draft", "archived"] }]"#;
+
+	/// Unfiltered statements must not change shape when the filter machinery is
+	/// present but unused.
+	#[test]
+	fn unfiltered_statements_are_unchanged() {
+		assert_eq!(
+			surreal_knn_sql(&spec(BRUTEFORCE, "[]")),
+			"SELECT id, vector::similarity::cosine(embedding, $q) AS _d FROM record ORDER BY _d DESC LIMIT 10"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(HNSW, "[]")),
+			"SELECT id FROM record WHERE embedding <|10,64|> $q"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(DISKANN, "[]")),
+			"SELECT id FROM record WHERE embedding <|10,50|> $q"
+		);
+	}
+
+	/// Bruteforce filters before ordering, so the exact answer stays exact.
+	#[test]
+	fn a_filtered_bruteforce_scan_restricts_before_ordering() {
+		assert_eq!(
+			surreal_knn_sql(&spec(BRUTEFORCE, NUMERIC)),
+			"SELECT id, vector::similarity::cosine(embedding, $q) AS _d FROM record WHERE number <= 50 ORDER BY _d DESC LIMIT 10"
+		);
+	}
+
+	/// The KNN operator stays leading on the index paths; the predicate follows
+	/// it.
+	#[test]
+	fn a_filtered_index_scan_keeps_the_knn_operator_leading() {
+		assert_eq!(
+			surreal_knn_sql(&spec(HNSW, NUMERIC)),
+			"SELECT id FROM record WHERE embedding <|10,64|> $q AND number <= 50"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(DISKANN, TAGS)),
+			"SELECT id FROM record WHERE embedding <|10,50|> $q AND status IN ['draft', 'archived']"
+		);
 	}
 }
