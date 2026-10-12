@@ -35,12 +35,14 @@ impl BenchmarkEngine<MDBXClient> for MDBXClientProvider {
 				} else {
 					SyncMode::UtterlyNoSync
 				},
-				// No maximum database size
-				max_size: None,
+				// Upper bound on the database size. Left unset, the library's
+				// default bound applies, and the delete and batch phases can
+				// fill it without a sync to recycle freed pages.
+				max_size: Some(64 * 1024 * 1024 * 1024),
 				// 64MB minimum database size
 				min_size: Some(64 * 1024 * 1024),
-				// Grow in 256MB steps
-				growth_step: Some(256 * 1024 * 1024),
+				// Grow in 1GB steps
+				growth_step: Some(1024 * 1024 * 1024),
 				// Disable shrinking in benchmarks
 				shrink_threshold: None,
 			}),
