@@ -35,10 +35,10 @@ impl BenchmarkEngine<MDBXClient> for MDBXClientProvider {
 				} else {
 					SyncMode::UtterlyNoSync
 				},
-				// Upper bound on the database size. Left unset, the library's
-				// default bound applies, and the delete and batch phases can
-				// fill it without a sync to recycle freed pages.
-				max_size: Some(64 * 1024 * 1024 * 1024),
+				// Upper bound on the database size: 1 TiB. Without a sync, pages
+				// freed by a commit are not recycled, so the file grows with
+				// every write and a full run needs far more than the data.
+				max_size: Some(1024 * 1024 * 1024 * 1024),
 				// 64MB minimum database size
 				min_size: Some(64 * 1024 * 1024),
 				// Grow in 1GB steps
