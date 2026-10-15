@@ -153,7 +153,7 @@ serial_test = "3.5.0"
 #   RocksDB in CI — intermittently, which is what a use-after-free looks like.
 surrealdb = { version = "3.3.0", default-features = false, optional = true }
 surrealdb2 = { package = "surrealdb", version = "2.6", default-features = false, optional = true }
-surrealkv = { git = "https://github.com/surrealdb/surrealkv", optional = true }
+surrealkv = { version = "1.0.0", optional = true }
 surrealmx = { version = "1.0.0", optional = true }
 sysinfo = { version = "0.37.2", features = ["serde"] }
 tokio = { version = "1.53.1", features = ["macros", "time", "rt-multi-thread"] }
