@@ -611,7 +611,6 @@ impl Database {
 			}
 			#[cfg(feature = "surrealmx")]
 			Database::Surrealmx => {
-				benchmark.persisted = false;
 				benchmark
 					.run::<_, DefaultDialect, _>(
 						crate::adapters::surrealmx::SurrealMXClientProvider::setup(
