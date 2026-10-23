@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
-use surrealdb::opt::{Config, Resource};
+use surrealdb::opt::{Config, Resource, WebsocketConfig};
 use surrealdb::types::{
 	Array, Bytes as SurrealBytes, Datetime, Geometry, Number, Object, RecordId, RecordIdKey,
 	SurrealValue, ToSql, Uuid as SurrealUuid, Value,
@@ -458,7 +458,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		}
 		Endpoint::Docker(Docker::Memory) => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
-			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
+			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB --user root".to_string(),
 			post_args: match options.persisted {
 				true => {
 					format!(
@@ -474,9 +474,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: match options.optimised {
 				true => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
 				),
-				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
+				false => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB --user root".to_string(),
 			},
 			post_args: format!(
 				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db?sync={sync}",
@@ -486,9 +486,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			image: "surrealdb/surrealdb:nightly",
 			pre_args: match options.optimised {
 				true => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
 				),
-				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
+				false => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB --user root".to_string(),
 			},
 			post_args: format!(
 				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db?sync={sync}",
@@ -504,8 +504,12 @@ pub(crate) struct SurrealDBClientProvider {
 }
 
 pub(super) async fn initialise_db(endpoint: &str, root: Root) -> Result<Surreal<Any>> {
-	// Set the root user
-	let config = Config::new().user(root.clone());
+	// Set the root user and disable the client-side 64 MiB WebSocket frame limit
+	// so wide full-row scans (e.g. 20k+ rows carrying embedding vectors) do not
+	// reset the connection.
+	let config = Config::new()
+		.user(root.clone())
+		.websocket(WebsocketConfig::new().max_message_size(None))?;
 	// Connect to the database
 	let db = connect((endpoint, config)).await?;
 	// Signin as a namespace, database, or root user

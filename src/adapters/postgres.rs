@@ -130,7 +130,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		// schema declares a `FloatVector` column, see `startup`).
 		image: "pgvector/pgvector:pg17",
 		pre_args:
-			"--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
+			"--ulimit nofile=65536:65536 --shm-size=4g -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
 				.to_string(),
 		post_args: match options.optimised {
 			// Optimised configuration
