@@ -435,6 +435,12 @@ fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 					scan.name
 				);
 			}
+			if kind == Some("spatial") && idx.unique == Some(true) {
+				bail!(
+					"scan `{}`: with_index.index_type = `spatial` cannot be combined with `unique = true`",
+					scan.name
+				);
+			}
 		}
 		if let Some(ref vq) = scan.vector_query {
 			if vq.top_k == 0 {
@@ -563,6 +569,52 @@ fn collect_vector_filter_fields(scans: &[Scan], columns: &Columns) -> Result<Vec
 		}
 	}
 	Ok(fields)
+}
+
+/// Validate `with_index.index_type = "spatial"` declarations against the value
+/// template's columns: every field in `with_index.fields` must exist, the
+/// trailing field must be a `point` column, and any leading equality-prefix
+/// fields must be non-`point` columns.
+fn validate_spatial_indexes(scans: &[Scan], columns: &Columns) -> Result<()> {
+	use crate::valueprovider::ColumnType;
+	for scan in scans {
+		let Some(ref idx) = scan.with_index else {
+			continue;
+		};
+		if idx.skip || idx.index_type.as_deref() != Some("spatial") {
+			continue;
+		}
+		let Some((geom_field, prefix_fields)) = idx.fields.split_last() else {
+			bail!("scan `{}`: spatial index requires at least one field", scan.name);
+		};
+		for prefix in prefix_fields {
+			let Some((_, ty)) = columns.0.iter().find(|(n, _)| n == prefix) else {
+				bail!(
+					"scan `{}`: spatial index prefix field `{prefix}` does not exist in [value]",
+					scan.name
+				);
+			};
+			if *ty == ColumnType::Point {
+				bail!(
+					"scan `{}`: spatial index prefix field `{prefix}` cannot be a `point` column (only the trailing field may be `point`)",
+					scan.name
+				);
+			}
+		}
+		let Some((_, geom_ty)) = columns.0.iter().find(|(n, _)| n == geom_field) else {
+			bail!(
+				"scan `{}`: spatial index geometry field `{geom_field}` does not exist in [value]",
+				scan.name
+			);
+		};
+		if *geom_ty != ColumnType::Point {
+			bail!(
+				"scan `{}`: spatial index trailing field `{geom_field}` must be a `point` column, found {geom_ty:?}",
+				scan.name
+			);
+		}
+	}
+	Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1115,6 +1167,7 @@ fn run(args: Args) -> Result<()> {
 			skip_index_operations(&mut scans, args.database);
 		}
 		validate_scan_index_ids(&scans)?;
+		validate_spatial_indexes(&scans, &vp.columns())?;
 		// Engines that mirror filter columns into a separate vector-index
 		// payload need the whole set before any row is written, which is before
 		// a scan is ever looked at.
@@ -1883,5 +1936,71 @@ mod test {
 
 		assert_eq!(scans.len(), 1);
 		assert!(scans[0].with_index.as_ref().unwrap().skip);
+	}
+
+	#[test]
+	fn spatial_config_parses_and_validates() -> Result<()> {
+		let path = format!("{}/config/spatial.toml", env!("CARGO_MANIFEST_DIR"));
+		let bench_toml = super::load_bench_toml(&path)?;
+		let value_json = serde_json::to_string(&bench_toml.value)?;
+		let vp = super::ValueProvider::new(&value_json)?;
+		let scans = super::expand_scan_specs(bench_toml.scans)?;
+		super::validate_scan_index_ids(&scans)?;
+		super::validate_spatial_indexes(&scans, &vp.columns())?;
+		super::collect_vector_filter_fields(&scans, &vp.columns())?;
+		let mut saw_vector_knn = false;
+		for scan in &scans {
+			if scan.vector_query.is_some() {
+				saw_vector_knn = true;
+				continue;
+			}
+			let cond = scan
+				.condition
+				.as_ref()
+				.ok_or_else(|| anyhow::anyhow!("scan `{}` missing condition", scan.name))?;
+			assert!(cond.surrealdb.is_some(), "scan `{}` missing surrealdb condition", scan.name);
+			assert!(cond.postgres.is_some(), "scan `{}` missing postgres condition", scan.name);
+			assert!(cond.mongodb.is_some(), "scan `{}` missing mongodb condition", scan.name);
+		}
+		assert!(saw_vector_knn, "spatial.toml should include spatial + vector KNN legs");
+		Ok(())
+	}
+
+	#[test]
+	fn spatial_index_validation_rejects_invalid_configs() -> Result<()> {
+		let vp = super::ValueProvider::new(
+			r#"{"status":"string_enum:a,b","location":"point","other_pt":"point"}"#,
+		)?;
+		let cols = vp.columns();
+
+		// Reject unique = true on spatial index
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"s","name":"s","with_index":{"fields":["location"],"index_type":"spatial","unique":true}}]"#,
+		)?;
+		let scans = super::expand_scan_specs(specs)?;
+		assert!(super::validate_scan_index_ids(&scans).is_err());
+
+		// Reject non-point trailing field
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"s","name":"s","with_index":{"fields":["status"],"index_type":"spatial"}}]"#,
+		)?;
+		let scans = super::expand_scan_specs(specs)?;
+		assert!(super::validate_spatial_indexes(&scans, &cols).is_err());
+
+		// Reject point in prefix position
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"s","name":"s","with_index":{"fields":["other_pt","location"],"index_type":"spatial"}}]"#,
+		)?;
+		let scans = super::expand_scan_specs(specs)?;
+		assert!(super::validate_spatial_indexes(&scans, &cols).is_err());
+
+		// Reject unknown field
+		let specs: Vec<super::ScanSpec> = serde_json::from_str(
+			r#"[{"id":"s","name":"s","with_index":{"fields":["missing","location"],"index_type":"spatial"}}]"#,
+		)?;
+		let scans = super::expand_scan_specs(specs)?;
+		assert!(super::validate_spatial_indexes(&scans, &cols).is_err());
+
+		Ok(())
 	}
 }

@@ -171,6 +171,9 @@ impl BenchmarkClient for Neo4jClient {
 			Some(kind) if kind == "fulltext" => {
 				format!("CREATE FULLTEXT INDEX {name} FOR (r:Record) ON EACH [{fields}]")
 			}
+			Some(kind) if kind == "spatial" => {
+				bail!(NOT_SUPPORTED_ERROR)
+			}
 			_ => {
 				format!("CREATE INDEX {name} FOR (r:Record) ON ({fields})")
 			}
@@ -283,7 +286,10 @@ fn bench_leaf_to_bolt(v: &BenchValue) -> Result<BoltType> {
 		BenchValue::Bytes(b) => BoltType::from(b.clone()),
 		BenchValue::Uuid(u) => BoltType::from(u.to_string()),
 		BenchValue::DateTime(dt) => BoltType::from(dt.to_rfc3339()),
-		BenchValue::Array(_) | BenchValue::Object(_) | BenchValue::FloatVector(_) => {
+		BenchValue::Array(_)
+		| BenchValue::Object(_)
+		| BenchValue::FloatVector(_)
+		| BenchValue::Point(_, _) => {
 			bail!("internal: expected scalar leaf BenchValue")
 		}
 	})
@@ -328,6 +334,18 @@ fn flatten_dispatch_value(
 			// per-index keys on a follow-up update.
 			if !v.is_empty() {
 				flatten_float_vector_into(v.as_slice(), parent_key.as_str(), depth, out)?;
+			}
+			Ok(())
+		}
+		BenchValue::Point(lon, lat) => {
+			for (i, coord) in [*lon, *lat].into_iter().enumerate() {
+				let idx_key = format!("{parent_key}{ARRAY_INDEX_START}{i}{ARRAY_INDEX_END}");
+				let bolt = if coord.is_finite() {
+					BoltType::from(coord)
+				} else {
+					BoltType::Null(BoltNull)
+				};
+				try_insert_prop(out, idx_key, bolt)?;
 			}
 			Ok(())
 		}

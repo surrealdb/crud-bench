@@ -49,12 +49,12 @@ fn sqlite_cell_to_bench(columns: &Columns, key: &str, value: Value) -> BenchValu
 		// JSON columns are stored as TEXT; parse back into structured [`BenchValue`]
 		// so subsequent writes don't re-escape the raw JSON string (which would grow
 		// the column on every read/write cycle and eventually trip `SQLITE_TOOBIG`).
-		(Some(ColumnType::Object), Value::Text(s)) | (Some(ColumnType::Array), Value::Text(s)) => {
-			match serde_json::from_str::<JsonValue>(&s) {
-				Ok(j) => BenchValue::from(j),
-				Err(_) => BenchValue::String(s),
-			}
-		}
+		(Some(ColumnType::Object), Value::Text(s))
+		| (Some(ColumnType::Array), Value::Text(s))
+		| (Some(ColumnType::Point), Value::Text(s)) => match serde_json::from_str::<JsonValue>(&s) {
+			Ok(j) => BenchValue::from(j),
+			Err(_) => BenchValue::String(s),
+		},
 		(_, Value::Null) => BenchValue::Null,
 		(_, Value::Integer(int)) => BenchValue::Int(int),
 		(_, Value::Real(float)) => BenchValue::Float(float),
@@ -173,6 +173,7 @@ impl BenchmarkClient for SqliteClient {
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} BLOB NOT NULL"),
 					ColumnType::FloatVector(_) => format!("{n} BLOB NOT NULL"),
+					ColumnType::Point => format!("{n} JSON NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
@@ -236,7 +237,7 @@ impl BenchmarkClient for SqliteClient {
 		let fields = SqliteDialect::btree_index_key_list(&self.columns, spec);
 		// Check if an index type is specified
 		let stmt = match &spec.index_type {
-			Some(kind) if kind == "fulltext" => {
+			Some(kind) if kind == "fulltext" || kind == "spatial" => {
 				bail!(NOT_SUPPORTED_ERROR)
 			}
 			_ => {

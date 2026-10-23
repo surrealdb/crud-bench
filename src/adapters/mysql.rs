@@ -169,6 +169,7 @@ impl BenchmarkClient for MysqlClient {
 					// Match MariaDB: VARBINARY keeps small embeddings in-row
 					// under DYNAMIC format. LONGBLOB always lives off-page.
 					ColumnType::FloatVector(_) => format!("{n} VARBINARY(8192) NOT NULL"),
+					ColumnType::Point => format!("{n} JSON NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
@@ -236,6 +237,9 @@ impl BenchmarkClient for MysqlClient {
 					.collect::<Vec<_>>()
 					.join(", ");
 				format!("CREATE FULLTEXT INDEX {name} ON record ({fields})")
+			}
+			Some(kind) if kind == "spatial" => {
+				bail!(NOT_SUPPORTED_ERROR)
 			}
 			Some(kind) => {
 				let fields = MySqlDialect::btree_index_key_list(&self.columns, spec);
@@ -418,6 +422,16 @@ impl MysqlClient {
 					let v: Option<Vec<u8>> = row.take(i);
 					match (v, column_type) {
 						(Some(b), Some(ColumnType::Bytes)) => BenchValue::Bytes(b),
+						(
+							Some(b),
+							Some(ColumnType::Object | ColumnType::Array | ColumnType::Point),
+						) => match serde_json::from_slice::<serde_json::Value>(&b) {
+							Ok(j) => BenchValue::from(&j),
+							Err(_) => match String::from_utf8(b) {
+								Ok(s) => BenchValue::String(s),
+								Err(e) => BenchValue::Bytes(e.into_bytes()),
+							},
+						},
 						(Some(b), _) => match String::from_utf8(b) {
 							Ok(s) => BenchValue::String(s),
 							Err(e) => BenchValue::Bytes(e.into_bytes()),

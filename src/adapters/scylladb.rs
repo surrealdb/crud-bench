@@ -102,6 +102,7 @@ impl BenchmarkClient for ScylladbClient {
 				ColumnType::Bool => format!("{n} BOOLEAN"),
 				ColumnType::Bytes => format!("{n} BLOB"),
 				ColumnType::FloatVector(_) => format!("{n} BLOB"),
+				ColumnType::Point => format!("{n} TEXT"),
 			})
 			.collect();
 		let fields = fields.join(",");
@@ -169,7 +170,7 @@ fn bench_to_cql_value(column_type: &ColumnType, v: &BenchValue) -> Result<CqlVal
 		(ColumnType::Float, BenchValue::Int(i)) => Ok(CqlValue::Float(*i as f32)),
 		(ColumnType::Bool, BenchValue::Bool(b)) => Ok(CqlValue::Boolean(*b)),
 		(ColumnType::String, BenchValue::String(s)) => Ok(CqlValue::Text(s.clone())),
-		(ColumnType::Object | ColumnType::Array, _) => {
+		(ColumnType::Object | ColumnType::Array | ColumnType::Point, _) => {
 			Ok(CqlValue::Text(serde_json::to_string(&v.to_json())?))
 		}
 		(ColumnType::DateTime, BenchValue::DateTime(dt)) => {
