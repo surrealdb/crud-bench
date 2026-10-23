@@ -1947,7 +1947,13 @@ mod test {
 		let scans = super::expand_scan_specs(bench_toml.scans)?;
 		super::validate_scan_index_ids(&scans)?;
 		super::validate_spatial_indexes(&scans, &vp.columns())?;
+		super::collect_vector_filter_fields(&scans, &vp.columns())?;
+		let mut saw_vector_knn = false;
 		for scan in &scans {
+			if scan.vector_query.is_some() {
+				saw_vector_knn = true;
+				continue;
+			}
 			let cond = scan
 				.condition
 				.as_ref()
@@ -1956,6 +1962,7 @@ mod test {
 			assert!(cond.postgres.is_some(), "scan `{}` missing postgres condition", scan.name);
 			assert!(cond.mongodb.is_some(), "scan `{}` missing mongodb condition", scan.name);
 		}
+		assert!(saw_vector_knn, "spatial.toml should include spatial + vector KNN legs");
 		Ok(())
 	}
 

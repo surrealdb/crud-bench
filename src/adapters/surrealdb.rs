@@ -184,6 +184,7 @@ fn surreal_filter_field_sql(column: &str, ty: FilterColumnType) -> String {
 		FilterColumnType::Float => "float",
 		FilterColumnType::String => "string",
 		FilterColumnType::Bool => "bool",
+		FilterColumnType::Point => "geometry<point>",
 	};
 	format!("DEFINE FIELD {column} ON TABLE record TYPE {ty}")
 }
@@ -800,20 +801,25 @@ impl BenchmarkClient for SurrealDBClient {
 		// is never online over an undeclared column.
 		let sql = surreal_filter_field_sql(column, ty);
 		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
+		let index_type = match ty {
+			FilterColumnType::Point => Some("spatial".to_string()),
+			_ => None,
+		};
 		let spec = Index {
 			skip: false,
 			fields: vec![column.to_string()],
 			unique: None,
-			index_type: None,
+			index_type,
 		};
-		// A plain b-tree index; `build_index` returns once it reports ready.
+		// A plain b-tree index (or SPATIAL index for Point); `build_index` returns once it reports ready.
 		self.build_index(&spec, name).await
 	}
 
 	async fn drop_filter_index(&self, column: &str, name: &str) -> Result<()> {
 		self.drop_index(name).await?;
-		// Back to schemaless, as every other scan expects the table.
-		let sql = format!("REMOVE FIELD {column} ON TABLE record");
+		// Back to schemaless, as every other scan expects the table (`IF EXISTS`
+		// because `drop_index` on a SPATIAL index already removes its geometry field).
+		let sql = format!("REMOVE FIELD IF EXISTS {column} ON TABLE record");
 		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
 		Ok(())
 	}
@@ -1484,6 +1490,10 @@ mod test {
 		assert_eq!(
 			surreal_filter_field_sql("active", FilterColumnType::Bool),
 			"DEFINE FIELD active ON TABLE record TYPE bool"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("location", FilterColumnType::Point),
+			"DEFINE FIELD location ON TABLE record TYPE geometry<point>"
 		);
 	}
 

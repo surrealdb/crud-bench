@@ -356,17 +356,21 @@ impl BenchmarkClient for PostgresClient {
 	async fn build_filter_index(
 		&self,
 		column: &str,
-		_ty: FilterColumnType,
+		ty: FilterColumnType,
 		name: &str,
 	) -> Result<()> {
-		// Columns are typed already; a b-tree is what lets the planner choose a
-		// bitmap scan of the matching rows plus an exact sort over the HNSW scan
-		// when the predicate is selective enough.
+		// Columns are typed already; a b-tree (or GiST for `Point`) is what lets
+		// the planner choose a bitmap scan of the matching rows plus an exact
+		// sort over the HNSW scan when the predicate is selective enough.
+		let index_type = match ty {
+			FilterColumnType::Point => Some("spatial".to_string()),
+			_ => None,
+		};
 		let spec = Index {
 			skip: false,
 			fields: vec![column.to_string()],
 			unique: None,
-			index_type: None,
+			index_type,
 		};
 		self.build_index(&spec, name).await?;
 		// Fresh statistics, or the planner costs the new index blind: straight

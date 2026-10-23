@@ -180,6 +180,10 @@ pub(crate) enum FilterOp {
 	/// Membership in a list — the natural way to dial selectivity on a
 	/// categorical column, where each additional label adds its own share.
 	In,
+	/// Great-circle (Haversine) distance from a reference `(lon, lat)` point is
+	/// strictly less than `radius_m` metres (`value = [lon, lat, radius_m]`).
+	#[serde(rename = "within_m")]
+	WithinMeters,
 }
 
 impl FilterOp {
@@ -188,8 +192,8 @@ impl FilterOp {
 		matches!(self, FilterOp::Lt | FilterOp::Lte | FilterOp::Gt | FilterOp::Gte)
 	}
 
-	/// SQL / SurrealQL spelling. `IN` is handled by the caller because its
-	/// right-hand side is bracketed differently per dialect.
+	/// SQL / SurrealQL spelling. `IN` and `within_m` are handled by the caller
+	/// because their right-hand sides are formatted per dialect.
 	fn to_sql(self) -> &'static str {
 		match self {
 			FilterOp::Eq => "=",
@@ -199,6 +203,7 @@ impl FilterOp {
 			FilterOp::Gt => ">",
 			FilterOp::Gte => ">=",
 			FilterOp::In => "IN",
+			FilterOp::WithinMeters => "within_m",
 		}
 	}
 }
@@ -224,14 +229,15 @@ impl FilterValue {
 
 /// How a filter column is declared in a RediSearch index.
 ///
-/// RediSearch has no general scalar type: a column is either `NUMERIC`, and
-/// queried with a range, or `TAG`, and queried by exact label. The choice is
-/// fixed at `FT.CREATE` time, before any scan runs, so it is derived from the
-/// schema's column type rather than from the predicate.
+/// RediSearch has no general scalar type: a column is `NUMERIC` (queried with a
+/// range), `TAG` (queried by exact label), or `GEO` (queried by radius). The
+/// choice is fixed at `FT.CREATE` time, before any scan runs, so it is derived
+/// from the schema's column type rather than from the predicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FilterFieldKind {
 	Numeric,
 	Tag,
+	Geo,
 }
 
 /// The scalar type of a filter column, for engines that must declare it
@@ -247,6 +253,7 @@ pub(crate) enum FilterColumnType {
 	Float,
 	String,
 	Bool,
+	Point,
 }
 
 /// A filter column, resolved against the schema.
@@ -324,9 +331,10 @@ impl VectorFilter {
 		let kind = match column {
 			ColumnType::Integer | ColumnType::Float => FilterFieldKind::Numeric,
 			ColumnType::String | ColumnType::Bool => FilterFieldKind::Tag,
+			ColumnType::Point => FilterFieldKind::Geo,
 			other => bail!(
 				"vector filter `{}`: field `{}` is a {other:?} column; filters are supported on \
-				 integer, float, string and boolean columns",
+				 integer, float, string, boolean and point columns",
 				self.name,
 				self.field
 			),
@@ -338,10 +346,50 @@ impl VectorFilter {
 		for v in values {
 			v.validate().map_err(|e| anyhow::anyhow!("vector filter `{}`: {e}", self.name))?;
 		}
+		if (kind == FilterFieldKind::Geo) != (self.op == FilterOp::WithinMeters) {
+			bail!(
+				"vector filter `{}`: `within_m` requires a point column and a point column \
+				 requires `within_m`",
+				self.name
+			);
+		}
 		match self.op {
 			FilterOp::In => {
 				if matches!(self.value, FilterValue::One(_)) {
 					bail!("vector filter `{}`: `in` takes a list, e.g. value = [0, 1]", self.name);
+				}
+			}
+			FilterOp::WithinMeters => {
+				if !matches!(&self.value, FilterValue::Many(v) if v.len() == 3) {
+					bail!(
+						"vector filter `{}`: `within_m` takes `[lon, lat, radius_m]`, e.g. \
+						 value = [2.3522, 48.8566, 50000]",
+						self.name
+					);
+				}
+				for v in values {
+					if !v.is_numeric() {
+						bail!(
+							"vector filter `{}`: `within_m` takes numeric `[lon, lat, radius_m]`",
+							self.name
+						);
+					}
+				}
+				let lon = values[0].as_f64().expect("numeric");
+				let lat = values[1].as_f64().expect("numeric");
+				let radius_m = values[2].as_f64().expect("numeric");
+				if !(-180.0..=180.0).contains(&lon) || !(-90.0..=90.0).contains(&lat) {
+					bail!(
+						"vector filter `{}`: `within_m` coordinates ({lon}, {lat}) out of range \
+						 (lon in -180..=180, lat in -90..=90)",
+						self.name
+					);
+				}
+				if radius_m <= 0.0 {
+					bail!(
+						"vector filter `{}`: `within_m` radius must be positive, got {radius_m}",
+						self.name
+					);
 				}
 			}
 			op if op.is_ordering() => {
@@ -374,7 +422,7 @@ impl VectorFilter {
 		// A numeric column compared against a label (or the reverse) would
 		// evaluate to a constant `false` in-process while the engine might
 		// reject the query outright — two different wrong answers.
-		let numeric_column = kind == FilterFieldKind::Numeric;
+		let numeric_column = matches!(kind, FilterFieldKind::Numeric | FilterFieldKind::Geo);
 		for v in values {
 			match (numeric_column, v) {
 				(true, v) if !v.is_numeric() => bail!(
@@ -403,6 +451,7 @@ impl VectorFilter {
 			ColumnType::Float => Some(FilterColumnType::Float),
 			ColumnType::String => Some(FilterColumnType::String),
 			ColumnType::Bool => Some(FilterColumnType::Bool),
+			ColumnType::Point => Some(FilterColumnType::Point),
 			_ => None,
 		})
 	}
@@ -411,6 +460,7 @@ impl VectorFilter {
 		columns.0.iter().find(|(n, _)| n == &self.field).and_then(|(_, t)| match t {
 			ColumnType::Integer | ColumnType::Float => Some(FilterFieldKind::Numeric),
 			ColumnType::String | ColumnType::Bool => Some(FilterFieldKind::Tag),
+			ColumnType::Point => Some(FilterFieldKind::Geo),
 			_ => None,
 		})
 	}
@@ -430,6 +480,15 @@ impl VectorFilter {
 			FilterOp::Eq => equals(cell, &values[0]),
 			FilterOp::Ne => !equals(cell, &values[0]),
 			FilterOp::In => values.iter().any(|v| equals(cell, v)),
+			FilterOp::WithinMeters => match cell {
+				BenchValue::Point(lon, lat) => {
+					let ref_lon = values[0].as_f64().expect("validated");
+					let ref_lat = values[1].as_f64().expect("validated");
+					let radius_m = values[2].as_f64().expect("validated");
+					haversine_distance_m(*lon, *lat, ref_lon, ref_lat) < radius_m
+				}
+				_ => false,
+			},
 			op => match compare(cell, &values[0]) {
 				// A row whose cell is not comparable with the literal cannot
 				// satisfy an ordering predicate. `validate` has already ruled
@@ -441,7 +500,7 @@ impl VectorFilter {
 					FilterOp::Lte => ord != Ordering::Greater,
 					FilterOp::Gt => ord == Ordering::Greater,
 					FilterOp::Gte => ord != Ordering::Less,
-					_ => unreachable!("eq/ne/in handled above"),
+					_ => unreachable!("eq/ne/in/within_m handled above"),
 				},
 			},
 		})
@@ -450,8 +509,9 @@ impl VectorFilter {
 	/// Render as a SQL / SurrealQL boolean expression, with identifiers escaped
 	/// by the caller's dialect.
 	///
-	/// The two dialects agree on every operator here; they differ only in how
-	/// an `IN` list is bracketed, which [`ListSyntax`] carries.
+	/// The two dialects agree on scalar operators; they differ in how an `IN`
+	/// list is bracketed and how a geodesic radius predicate (`within_m`) is
+	/// expressed, which [`ListSyntax`] carries.
 	pub(crate) fn to_sql<D: Dialect>(&self, list: ListSyntax) -> String {
 		let field = D::escape_field(self.field.clone());
 		match self.op {
@@ -465,6 +525,23 @@ impl VectorFilter {
 					.join(", ");
 				let (open, close) = list.brackets();
 				format!("{field} IN {open}{items}{close}")
+			}
+			FilterOp::WithinMeters => {
+				let values = self.value.scalars();
+				let lon = values[0].to_sql_literal();
+				let lat = values[1].to_sql_literal();
+				let radius_m = values[2].to_sql_literal();
+				match list {
+					ListSyntax::Brackets => {
+						format!("geo::distance({field}, ({lon}, {lat})) < {radius_m}")
+					}
+					ListSyntax::Parens => {
+						let lon_f = values[0].as_f64().expect("validated");
+						let lat_f = values[1].as_f64().expect("validated");
+						let rad_f = values[2].as_f64().expect("validated");
+						postgres_within_meters_sql(&field, lon_f, lat_f, rad_f)
+					}
+				}
 			}
 			op => {
 				format!("{field} {} {}", op.to_sql(), self.value.scalars()[0].to_sql_literal())
@@ -517,10 +594,77 @@ impl VectorFilter {
 						out.push(')');
 						out
 					}
+					FilterOp::WithinMeters => {
+						bail!("redis: `within_m` is not supported on a NUMERIC field")
+					}
 				}
 			}
+			FilterFieldKind::Geo => match self.op {
+				FilterOp::WithinMeters => {
+					let lon = values[0].to_redis_number()?;
+					let lat = values[1].to_redis_number()?;
+					let radius_m = values[2].to_redis_number()?;
+					format!("@{field}:[{lon} {lat} {radius_m} m]")
+				}
+				op => bail!("redis: `{}` is not supported on a GEO field", op.to_sql()),
+			},
 		})
 	}
+}
+
+/// Mean Earth radius in metres (IUGG / GRS80 authalic sphere), matching
+/// `geo::Haversine` (used by SurrealDB's `geo::distance`) and PostgreSQL's
+/// `earthdistance` extension.
+const EARTH_RADIUS_M: f64 = 6_371_008.8;
+
+/// Metres per statute mile, used to convert a metre radius into the unit
+/// PostgreSQL's `earthdistance` point `<@>` operator returns.
+const METERS_PER_STATUTE_MILE: f64 = 1609.344;
+
+/// Great-circle (Haversine) distance in metres between two `(lon, lat)` degree
+/// pairs on a sphere of radius [`EARTH_RADIUS_M`].
+fn haversine_distance_m(lon1_deg: f64, lat1_deg: f64, lon2_deg: f64, lat2_deg: f64) -> f64 {
+	let lat1 = lat1_deg.to_radians();
+	let lat2 = lat2_deg.to_radians();
+	let dlat = (lat2_deg - lat1_deg).to_radians();
+	let dlon = (lon2_deg - lon1_deg).to_radians();
+	let a = ((dlat * 0.5).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon * 0.5).sin().powi(2))
+		.clamp(0.0, 1.0);
+	let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+	EARTH_RADIUS_M * c
+}
+
+/// Render a geodesic radius predicate for PostgreSQL (`point` + `earthdistance`).
+///
+/// Pairs an exact `<@>` statute-mile distance filter with a conservative
+/// spherical-cap bounding box (`<@ box`), so PostgreSQL's planner can drive a
+/// `GiST (point_ops)` bitmap scan when `filter_index = true`.
+fn postgres_within_meters_sql(field: &str, lon: f64, lat: f64, radius_m: f64) -> String {
+	let miles = radius_m / METERS_PER_STATUTE_MILE;
+	// Pad the angular radius by 0.1% so the bounding box is a strict superset
+	// of the great-circle disk.
+	let angular_rad = (radius_m * 1.001) / EARTH_RADIUS_M;
+	let dlat_deg = angular_rad.to_degrees();
+	let min_lat = (lat - dlat_deg).max(-90.0);
+	let max_lat = (lat + dlat_deg).min(90.0);
+	let lat_rad = lat.to_radians();
+	let cos_lat = lat_rad.cos();
+	if min_lat > -90.0
+		&& max_lat < 90.0
+		&& angular_rad < std::f64::consts::FRAC_PI_2
+		&& angular_rad.sin() < cos_lat
+	{
+		let dlon_deg = (angular_rad.sin() / cos_lat).asin().to_degrees();
+		let min_lon = lon - dlon_deg;
+		let max_lon = lon + dlon_deg;
+		if min_lon >= -180.0 && max_lon <= 180.0 {
+			return format!(
+				"{field} <@ box '(({min_lon:.6}, {min_lat:.6}), ({max_lon:.6}, {max_lat:.6}))' \
+				 AND ({field} <@> point({lon:?}, {lat:?})) < {miles:.7}"
+			);
+		}
+	}
+	format!("({field} <@> point({lon:?}, {lat:?})) < {miles:.7}")
 }
 
 /// How a dialect brackets an `IN` list.
@@ -604,6 +748,7 @@ mod test {
 		"status": "string_enum:draft,published,archived",
 		"city": "string_enum:London,New York",
 		"active": "bool",
+		"location": "point",
 		"created_at": "datetime",
 		"embedding": "vector:8"
 	}"#;
@@ -813,6 +958,38 @@ mod test {
 		assert_eq!(
 			ty(r#"{"name":"n","field":"active","op":"eq","value":true}"#),
 			Some(FilterColumnType::Bool)
+		);
+		assert_eq!(
+			ty(r#"{"name":"n","field":"location","op":"within_m","value":[2.3522,48.8566,50000]}"#),
+			Some(FilterColumnType::Point)
+		);
+	}
+
+	#[test]
+	fn matches_and_renders_within_meters() {
+		let cols = columns();
+		let f = filter(
+			r#"{"name":"r50","field":"location","op":"within_m","value":[2.3522,48.8566,50000]}"#,
+		);
+		f.validate(&cols).unwrap();
+		assert_eq!(f.field_kind(&cols), Some(FilterFieldKind::Geo));
+		// Paris itself (0 m) and Versailles (~17 km) are within 50 km; Lyon (~392 km) is not.
+		assert!(f.matches(&row(vec![("location", BenchValue::Point(2.3522, 48.8566))])).unwrap());
+		assert!(f.matches(&row(vec![("location", BenchValue::Point(2.1204, 48.8049))])).unwrap());
+		assert!(!f.matches(&row(vec![("location", BenchValue::Point(4.8357, 45.7640))])).unwrap());
+		assert_eq!(
+			f.to_sql::<SurrealDBDialect>(ListSyntax::Brackets),
+			"geo::distance(location, (2.3522, 48.8566)) < 50000"
+		);
+		let pg = f.to_sql::<AnsiSqlDialect>(ListSyntax::Parens);
+		assert!(pg.starts_with(r#""location" <@ box '"#), "{pg}");
+		assert!(
+			pg.ends_with(r#"AND ("location" <@> point(2.3522, 48.8566)) < 31.0685596"#),
+			"{pg}"
+		);
+		assert_eq!(
+			f.to_redis(FilterFieldKind::Geo).unwrap(),
+			"@f_location:[2.3522 48.8566 50000 m]"
 		);
 	}
 }

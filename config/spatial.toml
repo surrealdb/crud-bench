@@ -29,6 +29,11 @@
 #   - Compound prefix + spatial index (`FIELDS status, location SPATIAL` and `FIELDS status, category, location SPATIAL`,
 #     using `btree_gist` on PostgreSQL and compound `2dsphere` on MongoDB)
 #   - Concurrent spatial scans under active write load (`with_writes` at 15% and 50% UPDATE ratios)
+#   - Hybrid spatial + vector KNN search (`geo::distance(location, (lon, lat)) < r AND embedding <|k, ef|> $q` on
+#     SurrealDB, `<@ box` + `<@>` + `ORDER BY embedding <=> $1 LIMIT k` on PostgreSQL/pgvector, and
+#     `(@f_location:[lon lat r m])=>[KNN k @v $q]` on Redis Stack), comparing no-spatial-index vs
+#     `filter_index = true` (`SPATIAL` Hilbert index / `GiST`) across 50 km (~0.06%), 250 km (~1.5%),
+#     and 1,000 km (~21%) radii with recall@10 scored against exact Haversine + cosine ground truth
 
 seed = 42
 
@@ -38,6 +43,7 @@ status = "string_enum:draft,published,archived"
 category = "string_enum:restaurant,hotel,cafe,park,museum"
 rating = "float:1.0..5.0"
 location = "point:-10.0..40.0,35.0..65.0"
+embedding = "vector:128:clustered:50"
 
 # ==============================================================================
 # 1. Single-field SPATIAL index — Geodesic radius queries
@@ -326,7 +332,112 @@ fields = ["status", "category", "location"]
 index_type = "spatial"
 
 # ==============================================================================
-# 5. Batches
+# 5. Hybrid spatial + vector KNN search (with and without SPATIAL / GiST index)
+# ==============================================================================
+
+[[scans]]
+id = "spatial_vector_knn"
+iterations = 500
+clients = 1
+threads = 1
+
+[[scans.runs]]
+name = "bruteforce knn(10)"
+iterations = 50
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "bruteforce" }
+holdout = { count = 100, seed = 42 }
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 64, 128, 256] }
+holdout = { count = 100, seed = 42 }
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+[[scans.runs]]
+name = "diskann knn(10) deg=64 L=100 alpha=1.2"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = [50, 200] }
+holdout = { count = 100, seed = 42 }
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+[[scans.runs]]
+name = "bruteforce knn(10) · spatial filter index"
+iterations = 50
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "bruteforce" }
+holdout = { count = 100, seed = 42 }
+filter_index = true
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200 · spatial filter index"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 64, 128, 256] }
+holdout = { count = 100, seed = 42 }
+filter_index = true
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+[[scans.runs]]
+name = "diskann knn(10) deg=64 L=100 alpha=1.2 · spatial filter index"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = [50, 200] }
+holdout = { count = 100, seed = 42 }
+filter_index = true
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+# ==============================================================================
+# 6. Batches
 # ==============================================================================
 
 [[batches]]
