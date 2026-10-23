@@ -338,8 +338,15 @@ fn flatten_dispatch_value(
 			Ok(())
 		}
 		BenchValue::Point(lon, lat) => {
-			let coords = [*lon as f32, *lat as f32];
-			flatten_float_vector_into(&coords, parent_key.as_str(), depth, out)?;
+			for (i, coord) in [*lon, *lat].into_iter().enumerate() {
+				let idx_key = format!("{parent_key}{ARRAY_INDEX_START}{i}{ARRAY_INDEX_END}");
+				let bolt = if coord.is_finite() {
+					BoltType::from(coord)
+				} else {
+					BoltType::Null(BoltNull)
+				};
+				try_insert_prop(out, idx_key, bolt)?;
+			}
 			Ok(())
 		}
 		_ => try_insert_prop(out, parent_key, bench_leaf_to_bolt(v)?),

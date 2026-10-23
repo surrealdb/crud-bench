@@ -65,6 +65,14 @@ fn bson_to_bench_value(b: &Bson) -> BenchValue {
 		},
 		Bson::Array(a) => BenchValue::Array(a.iter().map(bson_to_bench_value).collect()),
 		Bson::Document(d) => {
+			if d.len() == 2
+				&& d.get_str("type") == Ok("Point")
+				&& let Ok(coords) = d.get_array("coordinates")
+				&& coords.len() == 2
+				&& let (Some(lon), Some(lat)) = (coords[0].as_f64(), coords[1].as_f64())
+			{
+				return BenchValue::Point(lon, lat);
+			}
 			BenchValue::Object(d.iter().map(|(k, v)| (k.clone(), bson_to_bench_value(v))).collect())
 		}
 		Bson::ObjectId(oid) => BenchValue::String(oid.to_hex()),

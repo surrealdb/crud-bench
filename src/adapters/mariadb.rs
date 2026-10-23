@@ -427,6 +427,16 @@ impl MariadbClient {
 					let v: Option<Vec<u8>> = row.take(i);
 					match (v, column_type) {
 						(Some(b), Some(ColumnType::Bytes)) => BenchValue::Bytes(b),
+						(
+							Some(b),
+							Some(ColumnType::Object | ColumnType::Array | ColumnType::Point),
+						) => match serde_json::from_slice::<serde_json::Value>(&b) {
+							Ok(j) => BenchValue::from(&j),
+							Err(_) => match String::from_utf8(b) {
+								Ok(s) => BenchValue::String(s),
+								Err(e) => BenchValue::Bytes(e.into_bytes()),
+							},
+						},
 						(Some(b), _) => match String::from_utf8(b) {
 							Ok(s) => BenchValue::String(s),
 							Err(e) => BenchValue::Bytes(e.into_bytes()),

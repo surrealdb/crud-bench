@@ -14,8 +14,10 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use log::{error, warn};
+use std::collections::HashMap;
 use std::env;
 use std::hint::black_box;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
@@ -567,6 +569,13 @@ pub(crate) struct SurrealDBClient {
 	db: Surreal<Any>,
 }
 
+/// Maps spatial index names to the geometry field declared via
+/// `DEFINE FIELD OVERWRITE <field> ON TABLE record TYPE geometry<point>` during
+/// `build_index`, so `drop_index` removes only that field and restores the
+/// table to schemaless mode between scan phases.
+static SPATIAL_INDEX_FIELDS: LazyLock<Mutex<HashMap<String, String>>> =
+	LazyLock::new(|| Mutex::new(HashMap::new()));
+
 impl SurrealDBClient {
 	pub(super) const fn new(db: Surreal<Any>) -> Self {
 		Self {
@@ -701,6 +710,10 @@ impl BenchmarkClient for SurrealDBClient {
 						.map_err(log_sql_err(&field_sql))?
 						.check()
 						.map_err(log_sql_err(&field_sql))?;
+					SPATIAL_INDEX_FIELDS
+						.lock()
+						.unwrap()
+						.insert(name.to_string(), geom_field.clone());
 				}
 				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} SPATIAL CONCURRENTLY")
 			}
@@ -711,17 +724,38 @@ impl BenchmarkClient for SurrealDBClient {
 		// Create the index. Treat parse errors on newer index types (`count`,
 		// `spatial`) as `NOT_SUPPORTED_ERROR` so older SurrealDB builds skip
 		// the indexed leg cleanly.
+		let cleanup_spatial_field = |name: &str| SPATIAL_INDEX_FIELDS.lock().unwrap().remove(name);
 		let resp = match self.db.query(&sql).await {
 			Ok(r) => r,
 			Err(e)
 				if matches!(spec.index_type.as_deref(), Some("count" | "spatial"))
 					&& is_surreal_parse_error(&e) =>
 			{
+				if let Some(geom_field) = cleanup_spatial_field(name) {
+					let _ = self
+						.db
+						.query(format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record"))
+						.await;
+				}
 				bail!(NOT_SUPPORTED_ERROR)
 			}
-			Err(e) => return Err(log_sql_err(&sql)(e)),
+			Err(e) => {
+				if let Some(geom_field) = cleanup_spatial_field(name) {
+					let _ = self
+						.db
+						.query(format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record"))
+						.await;
+				}
+				return Err(log_sql_err(&sql)(e));
+			}
 		};
 		if let Err(e) = resp.check() {
+			if let Some(geom_field) = cleanup_spatial_field(name) {
+				let _ = self
+					.db
+					.query(format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record"))
+					.await;
+			}
 			if matches!(spec.index_type.as_deref(), Some("count" | "spatial"))
 				&& is_surreal_parse_error(&e)
 			{
@@ -862,6 +896,14 @@ impl BenchmarkClient for SurrealDBClient {
 		// Remove the analyzer
 		let sql = format!("REMOVE ANALYZER IF EXISTS {name}");
 		retry(sql, Duration::from_secs(180)).await?;
+		// If this index was a `spatial` index that declared a `geometry<point>`
+		// field on `record`, remove that field so the table returns to
+		// schemaless mode for subsequent scans.
+		let geom_field = SPATIAL_INDEX_FIELDS.lock().unwrap().remove(name);
+		if let Some(geom_field) = geom_field {
+			let sql = format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record");
+			retry(sql, Duration::from_secs(180)).await?;
+		}
 		// All ok
 		Ok(())
 	}

@@ -179,9 +179,19 @@ impl From<&JsonValue> for BenchValue {
 			}
 			JsonValue::String(s) => BenchValue::String(s.clone()),
 			JsonValue::Array(a) => BenchValue::Array(a.iter().map(BenchValue::from).collect()),
-			JsonValue::Object(o) => BenchValue::Object(
-				o.iter().map(|(k, v)| (k.clone(), BenchValue::from(v))).collect(),
-			),
+			JsonValue::Object(o) => {
+				if o.len() == 2
+					&& o.get("type").and_then(JsonValue::as_str) == Some("Point")
+					&& let Some(JsonValue::Array(coords)) = o.get("coordinates")
+					&& coords.len() == 2
+					&& let (Some(lon), Some(lat)) = (coords[0].as_f64(), coords[1].as_f64())
+				{
+					return BenchValue::Point(lon, lat);
+				}
+				BenchValue::Object(
+					o.iter().map(|(k, v)| (k.clone(), BenchValue::from(v))).collect(),
+				)
+			}
 		}
 	}
 }
@@ -295,7 +305,9 @@ mod tests {
 		assert_eq!(bv.to_json(), JsonValue::String("3.14".into()));
 
 		let pt = BenchValue::Point(-0.1276, 51.5072);
-		assert_eq!(pt.to_json(), json!({"type": "Point", "coordinates": [-0.1276, 51.5072]}));
+		let pt_json = pt.to_json();
+		assert_eq!(pt_json, json!({"type": "Point", "coordinates": [-0.1276, 51.5072]}));
+		assert_eq!(BenchValue::from(&pt_json), pt);
 		assert_eq!(BenchValue::decode(&pt.encode().unwrap()).unwrap(), pt);
 	}
 }
