@@ -1,8 +1,9 @@
-# Spatial index benchmark workload (`DEFINE INDEX ... SPATIAL` / MongoDB `2dsphere`).
+# Spatial index benchmark workload (`DEFINE INDEX ... SPATIAL` / PostgreSQL `GiST` / MongoDB `2dsphere`).
 #
 # Usage:
 #   cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 --config config/spatial.toml
 #   cargo run -r -- -d surrealkv -s 100000 -c 12 -t 24 --config config/spatial.toml
+#   cargo run -r -- -d postgres  -s 100000 -c 12 -t 24 --config config/spatial.toml
 #   cargo run -r -- -d mongodb   -s 100000 -c 12 -t 24 --config config/spatial.toml
 #
 # Points are drawn reproducibly (`seed = 42`) across a 50 deg lon x 30 deg lat
@@ -12,19 +13,21 @@
 #
 # For every `[[scans]]` entry below, `crud-bench` runs:
 #   1. `Scan :: no-index` baseline (and combined read/write workload when `with_writes` is set)
-#   2. `BuildIndex` (creating the `SPATIAL` / `2dsphere` index and waiting until queryable)
+#   2. `BuildIndex` (creating the `SPATIAL` / `GiST` / `2dsphere` index and waiting until queryable)
 #   3. `Scan :: index` (and combined read/write workload under the spatial index)
 #   4. `DropIndex`
 #
 # Workloads covered:
 #   - Single-field spatial index: geodesic radius (`geo::distance < r`) at 50 km, 250 km, 1,000 km
-#     (SurrealDB's `geo::distance` uses the `geo` crate's Haversine mean Earth radius
-#     R = 6,371,008.8 m; MongoDB's `$centerSphere` radii are `r / 6371008.8` radians)
+#     (SurrealDB's `geo::distance` and PostgreSQL's `earthdistance` `<@>` both use IUGG mean Earth
+#     radius R = 6,371,008.8 m; PostgreSQL pairs `<@ box` for GiST index filtering with `<@>` in
+#     statute miles `r / 1609.344`; MongoDB's `$centerSphere` radii are `r / 6371008.8` radians)
 #   - Single-field spatial index: axis-aligned bounding-box (`INSIDE` box polygon) at narrow, medium, wide boxes
-#     (Note: SurrealDB `INSIDE` evaluates planar polygon containment in (lon, lat), whereas
+#     (SurrealDB `INSIDE` and PostgreSQL `<@ box` evaluate planar containment in (lon, lat), whereas
 #     MongoDB `$geoWithin` + `$geometry` evaluates geodesic edges on the sphere)
-#   - Single-field spatial index: non-axis-aligned polygon containment (`INSIDE` pentagon)
-#   - Compound prefix + spatial index (`FIELDS status, location SPATIAL` and `FIELDS status, category, location SPATIAL`)
+#   - Single-field spatial index: non-axis-aligned polygon containment (`INSIDE` pentagon / `<@ polygon`)
+#   - Compound prefix + spatial index (`FIELDS status, location SPATIAL` and `FIELDS status, category, location SPATIAL`,
+#     using `btree_gist` on PostgreSQL and compound `2dsphere` on MongoDB)
 #   - Concurrent spatial scans under active write load (`with_writes` at 15% and 50% UPDATE ratios)
 
 seed = 42
@@ -58,6 +61,7 @@ projection = "COUNT"
 
 [scans.condition]
 surrealdb = "geo::distance(location, (2.3522, 48.8566)) < 50000"
+postgres = "\"location\" <@ box '((1.66, 48.40), (3.05, 49.31))' AND (\"location\" <@> point(2.3522, 48.8566)) < 31.0685596"
 mongodb = { location = { "$geoWithin" = { "$centerSphere" = [[2.3522, 48.8566], 0.0078480507] } } }
 
 [scans.with_index]
@@ -82,6 +86,7 @@ projection = "COUNT"
 
 [scans.condition]
 surrealdb = "geo::distance(location, (2.3522, 48.8566)) < 250000"
+postgres = "\"location\" <@ box '((-1.08, 46.60), (5.78, 51.11))' AND (\"location\" <@> point(2.3522, 48.8566)) < 155.3427981"
 mongodb = { location = { "$geoWithin" = { "$centerSphere" = [[2.3522, 48.8566], 0.0392402535] } } }
 
 [scans.with_index]
@@ -116,6 +121,7 @@ projection = "COUNT"
 
 [scans.condition]
 surrealdb = "geo::distance(location, (2.3522, 48.8566)) < 1000000"
+postgres = "\"location\" <@ box '((-11.42, 39.86), (16.12, 57.86))' AND (\"location\" <@> point(2.3522, 48.8566)) < 621.3711922"
 mongodb = { location = { "$geoWithin" = { "$centerSphere" = [[2.3522, 48.8566], 0.1569610138] } } }
 
 [scans.with_index]
@@ -144,6 +150,7 @@ projection = "COUNT"
 
 [scans.condition]
 surrealdb = 'location INSIDE { type: "Polygon", coordinates: [[[2.0, 48.5], [3.0, 48.5], [3.0, 49.5], [2.0, 49.5], [2.0, 48.5]]] }'
+postgres = "\"location\" <@ box '((2.0, 48.5), (3.0, 49.5))'"
 mongodb = { location = { "$geoWithin" = { "$geometry" = { type = "Polygon", coordinates = [[[2.0, 48.5], [3.0, 48.5], [3.0, 49.5], [2.0, 49.5], [2.0, 48.5]]] } } } }
 
 [scans.with_index]
@@ -168,6 +175,7 @@ projection = "COUNT"
 
 [scans.condition]
 surrealdb = 'location INSIDE { type: "Polygon", coordinates: [[[0.0, 46.0], [5.0, 46.0], [5.0, 51.0], [0.0, 51.0], [0.0, 46.0]]] }'
+postgres = "\"location\" <@ box '((0.0, 46.0), (5.0, 51.0))'"
 mongodb = { location = { "$geoWithin" = { "$geometry" = { type = "Polygon", coordinates = [[[0.0, 46.0], [5.0, 46.0], [5.0, 51.0], [0.0, 51.0], [0.0, 46.0]]] } } } }
 
 [scans.with_index]
@@ -192,6 +200,7 @@ projection = "COUNT"
 
 [scans.condition]
 surrealdb = 'location INSIDE { type: "Polygon", coordinates: [[[-5.0, 40.0], [15.0, 40.0], [15.0, 55.0], [-5.0, 55.0], [-5.0, 40.0]]] }'
+postgres = "\"location\" <@ box '((-5.0, 40.0), (15.0, 55.0))'"
 mongodb = { location = { "$geoWithin" = { "$geometry" = { type = "Polygon", coordinates = [[[-5.0, 40.0], [15.0, 40.0], [15.0, 55.0], [-5.0, 55.0], [-5.0, 40.0]]] } } } }
 
 [scans.with_index]
@@ -220,6 +229,7 @@ projection = "COUNT"
 
 [scans.condition]
 surrealdb = 'location INSIDE { type: "Polygon", coordinates: [[[2.0, 46.0], [6.0, 47.0], [7.0, 50.0], [3.0, 51.5], [-0.5, 48.5], [2.0, 46.0]]] }'
+postgres = "\"location\" <@ polygon '((2.0, 46.0), (6.0, 47.0), (7.0, 50.0), (3.0, 51.5), (-0.5, 48.5))'"
 mongodb = { location = { "$geoWithin" = { "$geometry" = { type = "Polygon", coordinates = [[[2.0, 46.0], [6.0, 47.0], [7.0, 50.0], [3.0, 51.5], [-0.5, 48.5], [2.0, 46.0]]] } } } }
 
 [scans.with_index]
@@ -248,6 +258,7 @@ projection = "COUNT"
 
 [scans.condition]
 surrealdb = "status = 'published' AND geo::distance(location, (2.3522, 48.8566)) < 250000"
+postgres = "\"status\" = 'published' AND \"location\" <@ box '((-1.08, 46.60), (5.78, 51.11))' AND (\"location\" <@> point(2.3522, 48.8566)) < 155.3427981"
 mongodb = { status = "published", location = { "$geoWithin" = { "$centerSphere" = [[2.3522, 48.8566], 0.0392402535] } } }
 
 [scans.with_index]
@@ -282,6 +293,7 @@ projection = "COUNT"
 
 [scans.condition]
 surrealdb = "status = 'published' AND location INSIDE { type: 'Polygon', coordinates: [[[0.0, 46.0], [5.0, 46.0], [5.0, 51.0], [0.0, 51.0], [0.0, 46.0]]] }"
+postgres = "\"status\" = 'published' AND \"location\" <@ box '((0.0, 46.0), (5.0, 51.0))'"
 mongodb = { status = "published", location = { "$geoWithin" = { "$geometry" = { type = "Polygon", coordinates = [[[0.0, 46.0], [5.0, 46.0], [5.0, 51.0], [0.0, 51.0], [0.0, 46.0]]] } } } }
 
 [scans.with_index]
@@ -306,6 +318,7 @@ projection = "COUNT"
 
 [scans.condition]
 surrealdb = "status = 'published' AND category = 'restaurant' AND geo::distance(location, (2.3522, 48.8566)) < 250000"
+postgres = "\"status\" = 'published' AND \"category\" = 'restaurant' AND \"location\" <@ box '((-1.08, 46.60), (5.78, 51.11))' AND (\"location\" <@> point(2.3522, 48.8566)) < 155.3427981"
 mongodb = { status = "published", category = "restaurant", location = { "$geoWithin" = { "$centerSphere" = [[2.3522, 48.8566], 0.0392402535] } } }
 
 [scans.with_index]

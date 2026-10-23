@@ -93,8 +93,8 @@ and lists those which are planned in the future.
 - [x] Full-text search query, using boolean OR search terms, projecting all fields
 - [x] Full-text search query, using boolean OR search terms, projecting id field
 - [x] Full-text search query, using boolean OR search terms, counting rows
-- [x] Spatial index query, geodesic radius (`geo::distance` / `$centerSphere`), projecting all fields, id field, and count
-- [x] Spatial index query, bounding-box and polygon containment (`INSIDE` / `$geoWithin`), projecting all fields, id field, and count
+- [x] Spatial index query, geodesic radius (`geo::distance` / `<@>` / `$centerSphere`), projecting all fields, id field, and count
+- [x] Spatial index query, bounding-box and polygon containment (`INSIDE` / `<@` / `$geoWithin`), projecting all fields, id field, and count
 - [x] Compound equality prefix + spatial index query (`FIELDS prefix, geom SPATIAL`), projecting all fields, id field, and count
 - [x] Concurrent spatial index scans under active write load (`with_writes`)
 
@@ -683,19 +683,22 @@ cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 --config config/vector.toml
 Spatial workloads live in [`config/spatial.toml`](config/spatial.toml) and use `with_index = { fields = [...], index_type = "spatial" }`:
 
 - **SurrealDB (3.x)**: Binds `point` columns natively as `Geometry::Point((lon, lat))`, declares `DEFINE FIELD OVERWRITE <geom_field> ON TABLE record TYPE geometry<point>` so the Hilbert index activates its compact point-only fast path, and builds `DEFINE INDEX <name> ON TABLE record FIELDS <fields> SPATIAL CONCURRENTLY`.
+- **PostgreSQL**: Binds `point` columns natively as 16-byte binary `POINT` (`(lon, lat)`), enables `btree_gist`, `cube`, and `earthdistance`, and builds `CREATE INDEX <name> ON record USING GIST (<fields>)` (supporting both single-column and compound prefix + spatial indexes).
 - **MongoDB**: Binds `point` columns as GeoJSON `{"type": "Point", "coordinates": [lon, lat]}` documents and builds a `"2dsphere"` index on the geometry field (with ascending `1` prefix keys for compound indexes such as `fields = ["status", "location"]`).
 - **Other engines**: Cleanly skip `index_type = "spatial"` scans (`NOT_SUPPORTED_ERROR`).
 
 The suite covers:
 - Unindexed baseline scans (radius, bounding box, compound prefix + radius)
-- Geodesic radius queries (`geo::distance(location, (2.3522, 48.8566)) < R` / `$centerSphere`) at narrow (50 km, ~0.06%), medium (250 km, ~1.5%), and wide (1,000 km, ~24%) selectivities across `ID`, `FULL`, and `COUNT` projections
-- Axis-aligned bounding-box (`INSIDE` box polygon / `$geoWithin`) at narrow, medium, and wide selectivities across `ID`, `FULL`, and `COUNT` projections
-- Non-axis-aligned polygon containment (`INSIDE` pentagon) exercising exact geometry verification after Hilbert range pruning
+- Geodesic radius queries (`geo::distance(location, (2.3522, 48.8566)) < R` / `<@ box AND <@>` / `$centerSphere`) at narrow (50 km, ~0.06%), medium (250 km, ~1.5%), and wide (1,000 km, ~24%) selectivities across `ID`, `FULL`, and `COUNT` projections
+- Axis-aligned bounding-box (`INSIDE` box polygon / `<@ box` / `$geoWithin`) at narrow, medium, and wide selectivities across `ID`, `FULL`, and `COUNT` projections
+- Non-axis-aligned polygon containment (`INSIDE` pentagon / `<@ polygon`) exercising exact geometry verification after index pruning
 - Compound equality prefix + spatial queries (`FIELDS status, location SPATIAL` and `FIELDS status, category, location SPATIAL`)
 - Concurrent spatial scans under active write load (`with_writes`)
 
 ```bash
 cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 --config config/spatial.toml
+cargo run -r -- -d postgres  -s 100000 -c 12 -t 24 --config config/spatial.toml
+cargo run -r -- -d mongodb   -s 100000 -c 12 -t 24 --config config/spatial.toml
 ```
 
 ## Databases

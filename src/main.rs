@@ -1947,6 +1947,15 @@ mod test {
 		let scans = super::expand_scan_specs(bench_toml.scans)?;
 		super::validate_scan_index_ids(&scans)?;
 		super::validate_spatial_indexes(&scans, &vp.columns())?;
+		for scan in &scans {
+			let cond = scan
+				.condition
+				.as_ref()
+				.ok_or_else(|| anyhow::anyhow!("scan `{}` missing condition", scan.name))?;
+			assert!(cond.surrealdb.is_some(), "scan `{}` missing surrealdb condition", scan.name);
+			assert!(cond.postgres.is_some(), "scan `{}` missing postgres condition", scan.name);
+			assert!(cond.mongodb.is_some(), "scan `{}` missing mongodb condition", scan.name);
+		}
 		Ok(())
 	}
 

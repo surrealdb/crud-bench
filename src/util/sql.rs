@@ -13,6 +13,50 @@ use crate::valueprovider::ColumnType;
 #[allow(unused_imports)]
 use anyhow::{Result, anyhow, bail};
 
+/// Native PostgreSQL `POINT` wire-format wrapper (`(lon, lat)` as two big-endian `f64`s).
+#[cfg(feature = "postgres")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PgPoint(pub f64, pub f64);
+
+#[cfg(feature = "postgres")]
+impl tokio_postgres::types::ToSql for PgPoint {
+	fn to_sql(
+		&self,
+		_ty: &tokio_postgres::types::Type,
+		out: &mut tokio_postgres::types::private::BytesMut,
+	) -> std::result::Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>>
+	{
+		out.extend_from_slice(&self.0.to_be_bytes());
+		out.extend_from_slice(&self.1.to_be_bytes());
+		Ok(tokio_postgres::types::IsNull::No)
+	}
+
+	fn accepts(ty: &tokio_postgres::types::Type) -> bool {
+		*ty == tokio_postgres::types::Type::POINT
+	}
+
+	tokio_postgres::types::to_sql_checked!();
+}
+
+#[cfg(feature = "postgres")]
+impl<'a> tokio_postgres::types::FromSql<'a> for PgPoint {
+	fn from_sql(
+		_ty: &tokio_postgres::types::Type,
+		raw: &'a [u8],
+	) -> std::result::Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+		if raw.len() != 16 {
+			return Err(format!("invalid PostgreSQL POINT byte length: {}", raw.len()).into());
+		}
+		let lon = f64::from_be_bytes(raw[0..8].try_into()?);
+		let lat = f64::from_be_bytes(raw[8..16].try_into()?);
+		Ok(PgPoint(lon, lat))
+	}
+
+	fn accepts(ty: &tokio_postgres::types::Type) -> bool {
+		*ty == tokio_postgres::types::Type::POINT
+	}
+}
+
 /// Bind a [`BenchValue`] to a [`tokio_postgres::types::ToSql`] heap parameter,
 /// validated against the destination [`ColumnType`].
 #[cfg(feature = "postgres")]
@@ -36,9 +80,14 @@ pub(crate) fn bench_to_postgres_param(
 		(ColumnType::Object, BenchValue::Object(_))
 		| (ColumnType::Object, BenchValue::Array(_))
 		| (ColumnType::Array, BenchValue::Object(_))
-		| (ColumnType::Array, BenchValue::Array(_))
-		| (ColumnType::Point, BenchValue::Point(_, _))
-		| (ColumnType::Point, BenchValue::Object(_)) => Ok(Box::new(Json(v.to_json()))),
+		| (ColumnType::Array, BenchValue::Array(_)) => Ok(Box::new(Json(v.to_json()))),
+		(ColumnType::Point, BenchValue::Point(lon, lat)) => Ok(Box::new(PgPoint(*lon, *lat))),
+		(ColumnType::Point, BenchValue::Object(_)) => {
+			let (lon, lat) = v
+				.as_point()
+				.ok_or_else(|| anyhow!("column {column_name}: invalid GeoJSON Point object"))?;
+			Ok(Box::new(PgPoint(lon, lat)))
+		}
 		(ColumnType::FloatVector(dim), BenchValue::FloatVector(vec)) => {
 			if vec.len() != *dim {
 				bail!("column {column_name}: vector dim mismatch ({} != {dim})", vec.len());
@@ -139,5 +188,24 @@ pub(crate) fn bench_to_mysql_value(
 		// `bench_to_sqlite_param`).
 		(ColumnType::FloatVector(_), BenchValue::Bytes(b)) => Ok(MyValue::Bytes(b.clone())),
 		(t, _) => bail!("BenchValue does not match column type {t:?}"),
+	}
+}
+
+#[cfg(all(test, feature = "postgres"))]
+mod tests {
+	use super::PgPoint;
+	use tokio_postgres::types::{FromSql, ToSql, Type, private::BytesMut};
+
+	#[test]
+	fn pg_point_wire_roundtrip() {
+		let pt = PgPoint(2.3522, 48.8566);
+		assert!(<PgPoint as ToSql>::accepts(&Type::POINT));
+		assert!(<PgPoint as FromSql>::accepts(&Type::POINT));
+		let mut buf = BytesMut::new();
+		pt.to_sql(&Type::POINT, &mut buf).unwrap();
+		assert_eq!(buf.len(), 16);
+		let decoded = PgPoint::from_sql(&Type::POINT, &buf).unwrap();
+		assert_eq!(decoded, pt);
+		assert!(PgPoint::from_sql(&Type::POINT, &[0u8; 8]).is_err());
 	}
 }

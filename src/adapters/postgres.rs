@@ -5,7 +5,7 @@ use crate::dialect::{AnsiSqlDialect, Dialect, PostgresDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::memory::Config;
-use crate::util::sql::bench_to_postgres_param;
+use crate::util::sql::{PgPoint, bench_to_postgres_param};
 use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::vectorfilter::{FilterColumnType, ListSyntax};
@@ -206,6 +206,15 @@ impl BenchmarkClient for PostgresClient {
 		if self.columns.0.iter().any(|(_, t)| matches!(t, ColumnType::FloatVector(_))) {
 			self.client.batch_execute("CREATE EXTENSION IF NOT EXISTS vector;").await?;
 		}
+		if self.columns.0.iter().any(|(_, t)| matches!(t, ColumnType::Point)) {
+			self.client
+				.batch_execute(
+					"CREATE EXTENSION IF NOT EXISTS btree_gist; \
+					 CREATE EXTENSION IF NOT EXISTS cube; \
+					 CREATE EXTENSION IF NOT EXISTS earthdistance;",
+				)
+				.await?;
+		}
 		let id_type = match self.kt {
 			KeyType::Integer => "SERIAL",
 			KeyType::String26 => "VARCHAR(26)",
@@ -234,7 +243,7 @@ impl BenchmarkClient for PostgresClient {
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} BYTEA NOT NULL"),
 					ColumnType::FloatVector(dim) => format!("{n} vector({dim}) NOT NULL"),
-					ColumnType::Point => format!("{n} JSONB NOT NULL"),
+					ColumnType::Point => format!("{n} POINT NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
@@ -309,7 +318,10 @@ impl BenchmarkClient for PostgresClient {
 				format!("CREATE INDEX {name} ON record USING GIN ({tsvector_expr})")
 			}
 			Some(kind) if kind == "spatial" => {
-				bail!(NOT_SUPPORTED_ERROR)
+				if spec.unique.unwrap_or(false) {
+					bail!(NOT_SUPPORTED_ERROR);
+				}
+				format!("CREATE INDEX {name} ON record USING GIST ({fields})")
 			}
 			Some(kind) => {
 				format!("CREATE {unique} INDEX {name} ON record USING {kind} ({fields})")
@@ -334,6 +346,9 @@ impl BenchmarkClient for PostgresClient {
 		};
 		// Create the index
 		self.client.execute(&stmt, &[]).await?;
+		if spec.index_type.as_deref() == Some("spatial") {
+			self.client.execute("ANALYZE record", &[]).await?;
+		}
 		// All ok
 		Ok(())
 	}
@@ -536,9 +551,13 @@ impl PostgresClient {
 						let v: Vec<u8> = row.try_get(n.as_str())?;
 						BenchValue::Bytes(v)
 					}
-					ColumnType::Object | ColumnType::Array | ColumnType::Point => {
+					ColumnType::Object | ColumnType::Array => {
 						let v: Json<serde_json::Value> = row.try_get(n.as_str())?;
 						BenchValue::from(&v.0)
+					}
+					ColumnType::Point => {
+						let v: PgPoint = row.try_get(n.as_str())?;
+						BenchValue::Point(v.0, v.1)
 					}
 					ColumnType::FloatVector(_) => {
 						let v: pgvector::Vector = row.try_get(n.as_str())?;
@@ -870,7 +889,7 @@ fn get_column_type(column_type: &ColumnType) -> &'static str {
 		ColumnType::Decimal => "NUMERIC",
 		ColumnType::Bytes => "BYTEA",
 		ColumnType::FloatVector(_) => "vector",
-		ColumnType::Point => "JSONB",
+		ColumnType::Point => "POINT",
 	}
 }
 

@@ -136,10 +136,40 @@ impl BenchValue {
 	}
 
 	/// Return the `(lon, lat)` coordinates of a geographic point, if this value is one.
-	#[cfg(test)]
+	#[cfg_attr(not(any(test, feature = "postgres")), allow(dead_code))]
 	pub(crate) fn as_point(&self) -> Option<(f64, f64)> {
 		match self {
 			BenchValue::Point(lon, lat) => Some((*lon, *lat)),
+			BenchValue::Object(entries) if entries.len() == 2 => {
+				let is_point = entries
+					.iter()
+					.find(|(k, _)| k == "type")
+					.is_some_and(|(_, v)| matches!(v, BenchValue::String(s) if s == "Point"));
+				if !is_point {
+					return None;
+				}
+				let Some((_, BenchValue::Array(coords))) =
+					entries.iter().find(|(k, _)| k == "coordinates")
+				else {
+					return None;
+				};
+				if coords.len() != 2 {
+					return None;
+				}
+				let lon = match &coords[0] {
+					BenchValue::Float(f) => *f,
+					BenchValue::Int(i) => *i as f64,
+					BenchValue::UInt(u) => *u as f64,
+					_ => return None,
+				};
+				let lat = match &coords[1] {
+					BenchValue::Float(f) => *f,
+					BenchValue::Int(i) => *i as f64,
+					BenchValue::UInt(u) => *u as f64,
+					_ => return None,
+				};
+				Some((lon, lat))
+			}
 			_ => None,
 		}
 	}
