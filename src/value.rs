@@ -53,6 +53,12 @@ pub(crate) enum BenchValue {
 	Object(Vec<(String, BenchValue)>),
 	/// Fixed-length packed vector of f32 components (vector search payloads).
 	FloatVector(Vec<f32>),
+	/// 2D geographic point `(longitude, latitude)` in WGS84 degrees.
+	///
+	/// Maps to native `geometry<point>` in SurrealDB and to a GeoJSON Point
+	/// object `{"type": "Point", "coordinates": [lon, lat]}` in JSON/BSON
+	/// engines (MongoDB `2dsphere`, ArangoDB `geo`, etc.).
+	Point(f64, f64),
 }
 
 impl BenchValue {
@@ -106,6 +112,18 @@ impl BenchValue {
 					})
 					.collect(),
 			),
+			BenchValue::Point(lon, lat) => {
+				let mut map = serde_json::Map::with_capacity(2);
+				map.insert("type".to_string(), JsonValue::String("Point".to_string()));
+				map.insert(
+					"coordinates".to_string(),
+					JsonValue::Array(vec![
+						Number::from_f64(*lon).map_or(JsonValue::Null, JsonValue::Number),
+						Number::from_f64(*lat).map_or(JsonValue::Null, JsonValue::Number),
+					]),
+				);
+				JsonValue::Object(map)
+			}
 		}
 	}
 
@@ -113,6 +131,15 @@ impl BenchValue {
 	pub(crate) fn as_float_vector(&self) -> Option<&[f32]> {
 		match self {
 			BenchValue::FloatVector(v) => Some(v.as_slice()),
+			_ => None,
+		}
+	}
+
+	/// Return the `(lon, lat)` coordinates of a geographic point, if this value is one.
+	#[cfg(test)]
+	pub(crate) fn as_point(&self) -> Option<(f64, f64)> {
+		match self {
+			BenchValue::Point(lon, lat) => Some((*lon, *lat)),
 			_ => None,
 		}
 	}
@@ -266,5 +293,9 @@ mod tests {
 		let d = Decimal::from_str("3.14").unwrap();
 		let bv = BenchValue::Decimal(d);
 		assert_eq!(bv.to_json(), JsonValue::String("3.14".into()));
+
+		let pt = BenchValue::Point(-0.1276, 51.5072);
+		assert_eq!(pt.to_json(), json!({"type": "Point", "coordinates": [-0.1276, 51.5072]}));
+		assert_eq!(BenchValue::decode(&pt.encode().unwrap()).unwrap(), pt);
 	}
 }

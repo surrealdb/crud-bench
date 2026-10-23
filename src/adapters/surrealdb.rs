@@ -22,8 +22,8 @@ use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
 use surrealdb::opt::{Config, Resource};
 use surrealdb::types::{
-	Array, Bytes as SurrealBytes, Datetime, Number, Object, RecordId, RecordIdKey, SurrealValue,
-	ToSql, Uuid as SurrealUuid, Value,
+	Array, Bytes as SurrealBytes, Datetime, Geometry, Number, Object, RecordId, RecordIdKey,
+	SurrealValue, ToSql, Uuid as SurrealUuid, Value,
 };
 use tokio::time::{sleep, timeout};
 
@@ -57,6 +57,7 @@ fn bench_to_surreal_value(v: BenchValue) -> Value {
 		BenchValue::FloatVector(v) => Value::Array(Array::from(
 			v.into_iter().map(|f| Value::Number(Number::Float(f as f64))).collect::<Vec<_>>(),
 		)),
+		BenchValue::Point(lon, lat) => Value::Geometry(Geometry::Point((lon, lat).into())),
 	}
 }
 
@@ -73,6 +74,7 @@ fn surreal_to_bench_value(v: Value) -> BenchValue {
 		Value::Bytes(b) => BenchValue::Bytes(b.to_vec()),
 		Value::Uuid(u) => BenchValue::Uuid(u.into()),
 		Value::Datetime(dt) => BenchValue::DateTime(*dt),
+		Value::Geometry(Geometry::Point(p)) => BenchValue::Point(p.0.x, p.0.y),
 		Value::Array(a) => {
 			BenchValue::Array(Vec::from(a).into_iter().map(surreal_to_bench_value).collect())
 		}
@@ -683,12 +685,50 @@ impl BenchmarkClient for SurrealDBClient {
 				// COUNT indexes apply to the whole table and accept no FIELDS / UNIQUE.
 				format!("DEFINE INDEX {name} ON TABLE record COUNT CONCURRENTLY")
 			}
+			Some(kind) if kind == "spatial" => {
+				// Declare the geometry field's schema type (`geometry<point>`) before
+				// defining the spatial index so SurrealDB's planner and index builder
+				// activate the point-only Hilbert key fast path (no secondary `/hg`
+				// geometry payload storage, direct coordinate decoding from the 64-bit
+				// Hilbert key for `geo::distance`).
+				if let Some(geom_field) = spec.fields.last() {
+					let field_sql = format!(
+						"DEFINE FIELD OVERWRITE {geom_field} ON TABLE record TYPE geometry<point>;"
+					);
+					self.db
+						.query(&field_sql)
+						.await
+						.map_err(log_sql_err(&field_sql))?
+						.check()
+						.map_err(log_sql_err(&field_sql))?;
+				}
+				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} SPATIAL CONCURRENTLY")
+			}
 			_ => {
 				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique} CONCURRENTLY")
 			}
 		};
-		// Create the index
-		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
+		// Create the index. Treat parse errors on newer index types (`count`,
+		// `spatial`) as `NOT_SUPPORTED_ERROR` so older SurrealDB builds skip
+		// the indexed leg cleanly.
+		let resp = match self.db.query(&sql).await {
+			Ok(r) => r,
+			Err(e)
+				if matches!(spec.index_type.as_deref(), Some("count" | "spatial"))
+					&& is_surreal_parse_error(&e) =>
+			{
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			Err(e) => return Err(log_sql_err(&sql)(e)),
+		};
+		if let Err(e) = resp.check() {
+			if matches!(spec.index_type.as_deref(), Some("count" | "spatial"))
+				&& is_surreal_parse_error(&e)
+			{
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+			return Err(log_sql_err(&sql)(e));
+		}
 		// Wait until the index is ready. This poll is inside the timed build, so
 		// its cadence adapts rather than rounding the build up to a fixed step.
 		let started = Instant::now();

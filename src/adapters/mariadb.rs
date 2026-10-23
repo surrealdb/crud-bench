@@ -173,6 +173,7 @@ impl BenchmarkClient for MariadbClient {
 					// stores off-page, which crashed the combined-workload
 					// scan leg on MariaDB under default `binlog-row-image=FULL`.
 					ColumnType::FloatVector(_) => format!("{n} VARBINARY(8192) NOT NULL"),
+					ColumnType::Point => format!("{n} JSON NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
@@ -240,6 +241,9 @@ impl BenchmarkClient for MariadbClient {
 					.collect::<Vec<_>>()
 					.join(", ");
 				format!("CREATE FULLTEXT INDEX {name} ON record ({fields})")
+			}
+			Some(kind) if kind == "spatial" => {
+				bail!(NOT_SUPPORTED_ERROR)
 			}
 			Some(kind) => {
 				let fields = MariaDBDialect::btree_index_key_list(&self.columns, spec);

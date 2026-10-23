@@ -36,7 +36,9 @@ pub(crate) fn bench_to_postgres_param(
 		(ColumnType::Object, BenchValue::Object(_))
 		| (ColumnType::Object, BenchValue::Array(_))
 		| (ColumnType::Array, BenchValue::Object(_))
-		| (ColumnType::Array, BenchValue::Array(_)) => Ok(Box::new(Json(v.to_json()))),
+		| (ColumnType::Array, BenchValue::Array(_))
+		| (ColumnType::Point, BenchValue::Point(_, _))
+		| (ColumnType::Point, BenchValue::Object(_)) => Ok(Box::new(Json(v.to_json()))),
 		(ColumnType::FloatVector(dim), BenchValue::FloatVector(vec)) => {
 			if vec.len() != *dim {
 				bail!("column {column_name}: vector dim mismatch ({} != {dim})", vec.len());
@@ -72,7 +74,7 @@ pub(crate) fn bench_to_sqlite_param(
 		(ColumnType::Bool, BenchValue::Int(i)) => Ok(Box::new(*i != 0)),
 		(ColumnType::Bool, BenchValue::UInt(u)) => Ok(Box::new(*u != 0)),
 		(ColumnType::String, BenchValue::String(s)) => Ok(Box::new(s.clone())),
-		(ColumnType::Object, _) | (ColumnType::Array, _) => {
+		(ColumnType::Object, _) | (ColumnType::Array, _) | (ColumnType::Point, _) => {
 			Ok(Box::new(serde_json::to_string(&v.to_json())?))
 		}
 		(ColumnType::DateTime, BenchValue::DateTime(dt)) => Ok(Box::new(dt.to_rfc3339())),
@@ -127,7 +129,7 @@ pub(crate) fn bench_to_mysql_value(
 			Ok(MyValue::Bytes(d.to_string().into_bytes()))
 		}
 		(ColumnType::Bytes, BenchValue::Bytes(b)) => Ok(MyValue::Bytes(b.clone())),
-		(ColumnType::Object, _) | (ColumnType::Array, _) => {
+		(ColumnType::Object, _) | (ColumnType::Array, _) | (ColumnType::Point, _) => {
 			Ok(MyValue::Bytes(serde_json::to_string(&v.to_json())?.into_bytes()))
 		}
 		(ColumnType::FloatVector(_), BenchValue::FloatVector(v)) => {

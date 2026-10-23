@@ -1,5 +1,6 @@
 #![cfg(feature = "postgres")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::{AnsiSqlDialect, Dialect, PostgresDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
@@ -233,6 +234,7 @@ impl BenchmarkClient for PostgresClient {
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} BYTEA NOT NULL"),
 					ColumnType::FloatVector(dim) => format!("{n} vector({dim}) NOT NULL"),
+					ColumnType::Point => format!("{n} JSONB NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
@@ -305,6 +307,9 @@ impl BenchmarkClient for PostgresClient {
 					format!("to_tsvector('english', {})", spec.fields.join(" || ' ' || "))
 				};
 				format!("CREATE INDEX {name} ON record USING GIN ({tsvector_expr})")
+			}
+			Some(kind) if kind == "spatial" => {
+				bail!(NOT_SUPPORTED_ERROR)
 			}
 			Some(kind) => {
 				format!("CREATE {unique} INDEX {name} ON record USING {kind} ({fields})")
@@ -531,7 +536,7 @@ impl PostgresClient {
 						let v: Vec<u8> = row.try_get(n.as_str())?;
 						BenchValue::Bytes(v)
 					}
-					ColumnType::Object | ColumnType::Array => {
+					ColumnType::Object | ColumnType::Array | ColumnType::Point => {
 						let v: Json<serde_json::Value> = row.try_get(n.as_str())?;
 						BenchValue::from(&v.0)
 					}
@@ -865,6 +870,7 @@ fn get_column_type(column_type: &ColumnType) -> &'static str {
 		ColumnType::Decimal => "NUMERIC",
 		ColumnType::Bytes => "BYTEA",
 		ColumnType::FloatVector(_) => "vector",
+		ColumnType::Point => "JSONB",
 	}
 }
 

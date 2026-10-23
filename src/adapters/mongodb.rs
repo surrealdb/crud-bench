@@ -116,6 +116,10 @@ fn bench_to_bson(v: &BenchValue) -> Bson {
 		BenchValue::FloatVector(v) => {
 			Bson::Array(v.iter().map(|f| Bson::Double(*f as f64)).collect())
 		}
+		BenchValue::Point(lon, lat) => Bson::Document(doc! {
+			"type": "Point",
+			"coordinates": [*lon, *lat],
+		}),
 	}
 }
 
@@ -287,6 +291,18 @@ impl BenchmarkClient for MongoDBClient {
 				// Create a text index
 				for field in &fields {
 					doc.insert(field, "text");
+				}
+			}
+			Some(kind) if kind == "spatial" => {
+				// Portable spatial index: leading fields become ascending equality
+				// prefixes (1) and the trailing geometry field gets a "2dsphere" key.
+				let last = fields.len().saturating_sub(1);
+				for (i, field) in fields.iter().enumerate() {
+					if i == last {
+						doc.insert(field, "2dsphere");
+					} else {
+						doc.insert(field, 1);
+					}
 				}
 			}
 			Some(kind) => {
