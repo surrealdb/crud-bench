@@ -41,7 +41,9 @@ impl BenchmarkEngine<FjallClient> for FjallClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		if options.mode.wipes_on_setup() {
+			std::fs::remove_dir_all(DATABASE_DIR).ok();
+		}
 		// Calculate memory allocation
 		let memory = calculate_fjall_memory();
 		// Configure and create the database
@@ -97,9 +99,11 @@ impl BenchmarkClient for FjallClient {
 	// The return type when reading a row
 	type ReadRow = BenchValue;
 
-	async fn shutdown(&self) -> Result<()> {
+	async fn shutdown(&self, keep_data: bool) -> Result<()> {
 		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		if !keep_data {
+			std::fs::remove_dir_all(DATABASE_DIR).ok();
+		}
 		// Ok
 		Ok(())
 	}

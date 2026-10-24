@@ -20,6 +20,7 @@ pub(crate) fn docker(_: &Benchmark) -> DockerParams {
 		image: "docker.dragonflydb.io/dragonflydb/dragonfly",
 		pre_args: "-p 127.0.0.1:6379:6379 --ulimit memlock=-1".to_string(),
 		post_args: "--requirepass root".to_string(),
+		data_path: Some("/data"),
 	}
 }
 

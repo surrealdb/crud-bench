@@ -63,7 +63,9 @@ impl BenchmarkEngine<RocksDBClient> for RocksDBClientProvider {
 		};
 
 		// Cleanup the data directory
-		std::fs::remove_dir_all(&dir).ok();
+		if options.mode.wipes_on_setup() {
+			std::fs::remove_dir_all(&dir).ok();
+		}
 		// Recreate the database directory
 		std::fs::create_dir_all(&dir)?;
 
@@ -216,11 +218,11 @@ impl BenchmarkClient for RocksDBClient {
 	// The return type when reading a row
 	type ReadRow = BenchValue;
 
-	async fn shutdown(&self) -> Result<()> {
+	async fn shutdown(&self, keep_data: bool) -> Result<()> {
 		// No need to run background jobs
 		self.db.cancel_all_background_work(true);
 		// Cleanup the data directory
-		if !self.in_memory {
+		if !self.in_memory && !keep_data {
 			std::fs::remove_dir_all(&self.dir).ok();
 		}
 		// Ok

@@ -156,6 +156,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				-c synchronous_commit=on"
 			),
 		},
+		data_path: Some("/var/lib/postgresql/data"),
 	}
 }
 

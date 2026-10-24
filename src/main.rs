@@ -6,6 +6,7 @@ use crate::benchmark::Benchmark;
 use crate::config::load_bench_toml;
 use crate::database::Database;
 use crate::keyprovider::KeyProvider;
+use crate::reuse::{Manifest, RunMode, Shape};
 use crate::terminal::ColorChoice;
 use crate::valueprovider::{Columns, ValueProvider};
 use crate::vectorfilter::{FilterField, VectorFilter};
@@ -31,6 +32,7 @@ mod keyprovider;
 mod memory;
 mod profiling;
 mod result;
+mod reuse;
 #[cfg(feature = "surrealdb")]
 mod storage;
 mod system;
@@ -96,6 +98,20 @@ pub(crate) struct Args {
 	/// Whether to ensure data is synced and durable
 	#[arg(long, default_value = "false")]
 	pub(crate) sync: bool,
+
+	/// Which phases to run, and whether to keep or reuse the dataset.
+	///
+	/// `all` loads, queries and deletes in one run. `load` creates and updates
+	/// the dataset and keeps it; `query` then runs reads and scans against it
+	/// without reloading, as many times as needed. A `query` run refuses a
+	/// dataset loaded with different settings. Deletes and batches run only
+	/// under `all`.
+	#[arg(long, value_enum, default_value_t = RunMode::All)]
+	pub(crate) mode: RunMode,
+
+	/// Directory recording what a `load` run left behind, checked by `query` runs
+	#[arg(long, env = "CRUD_BENCH_DATA_DIR", default_value = ".crud-bench-data")]
+	pub(crate) data_dir: String,
 
 	/// Per-operation timeout in seconds
 	#[arg(long, env = "CRUD_BENCH_OPERATION_TIMEOUT", default_value = "1800", value_parser=clap::value_parser!(u64).range(1..))]
@@ -1035,14 +1051,6 @@ fn run(args: Args) -> Result<()> {
 	}
 	// Prepare the benchmark
 	let mut benchmark = Benchmark::new(&args);
-	// Check if we should spawn a Docker container
-	let container = if args.database.wants_docker(&args.endpoint) {
-		// Start the Docker container
-		args.database.start_docker(&benchmark)
-	} else {
-		// No Docker container needed
-		None
-	};
 	// Setup the asynchronous runtime
 	let runtime = runtime::Builder::new_multi_thread()
 		.thread_stack_size(2 * 1024 * 1024) // Set stack size to 5MiB
@@ -1120,6 +1128,45 @@ fn run(args: Args) -> Result<()> {
 		// a scan is ever looked at.
 		benchmark.set_vector_filter_fields(collect_vector_filter_fields(&scans, &vp.columns())?);
 	}
+	// A split run is only sound against the dataset it was configured for, so
+	// this is settled before anything is started: a refused query run must not
+	// leave a container behind.
+	let database_key = args
+		.database
+		.to_possible_value()
+		.map(|v| v.get_name().to_string())
+		.unwrap_or_else(|| name.clone());
+	let data_dir = reuse::data_dir(&args.data_dir, &database_key, args.name.as_deref());
+	let manifest = Manifest::new(&Shape {
+		database: &database_key,
+		endpoint: args.endpoint.as_deref(),
+		samples: args.samples,
+		key_type: format!("{:?}", args.key),
+		random: args.random,
+		corpus_seed,
+		template_digest: metadata.template_digest.as_deref().unwrap_or_default(),
+		persisted: args.persisted,
+		optimised: args.optimised,
+		sync: args.sync,
+		vector_filter_fields: &benchmark.vector_filter_fields,
+	});
+	if args.mode != RunMode::All {
+		args.database.supports_reuse(&benchmark)?;
+	}
+	match args.mode {
+		RunMode::Query => reuse::verify(&data_dir, &manifest)?,
+		// A load that fails part-way must not leave a dataset a query run accepts.
+		RunMode::Load => reuse::clear_manifest(&data_dir)?,
+		RunMode::All => {}
+	}
+	// Check if we should spawn a Docker container
+	let container = if args.database.wants_docker(&args.endpoint) {
+		// Start the Docker container
+		args.database.start_docker(&benchmark)
+	} else {
+		// No Docker container needed
+		None
+	};
 	// Run the benchmark
 	let res = runtime.block_on(async {
 		args.database
@@ -1144,6 +1191,10 @@ fn run(args: Args) -> Result<()> {
 	match res {
 		// Output the results
 		Ok(res) => {
+			if args.mode == RunMode::Load {
+				reuse::write_manifest(&data_dir, &manifest)?;
+				println!("Dataset loaded; run again with `--mode query` to measure it");
+			}
 			println!("--------------------------------------------------");
 			match container.as_ref().map(Container::image) {
 				Some(v) => {
@@ -1253,6 +1304,7 @@ fn run(args: Args) -> Result<()> {
 #[cfg(test)]
 /// Unit and integration-style tests for scan expansion and CLI wiring.
 mod test {
+	use crate::reuse::RunMode;
 	use crate::terminal::ColorChoice;
 	use crate::valueprovider::ValueProvider;
 	use crate::vectorfilter::FilterFieldKind;
@@ -1509,10 +1561,23 @@ mod test {
 	}
 
 	fn test(database: Database, key: KeyType, random: bool) -> Result<()> {
+		test_split(database, key, random, 10000, RunMode::All, ".crud-bench-data")
+	}
+
+	fn test_split(
+		database: Database,
+		key: KeyType,
+		random: bool,
+		samples: u32,
+		mode: RunMode,
+		data_dir: &str,
+	) -> Result<()> {
 		run(Args {
 			corpus_seed: None,
 			ground_truth_cache: ".crud-bench-gt".to_string(),
 			vector_warmup_seconds: 30,
+			mode,
+			data_dir: data_dir.to_string(),
 			image: None,
 			name: None,
 			database,
@@ -1522,7 +1587,7 @@ mod test {
 			workers: 5,
 			clients: 2,
 			threads: 2,
-			samples: 10000,
+			samples,
 			sync: false,
 			operation_timeout: 300,
 			persisted: false,
@@ -1540,6 +1605,44 @@ mod test {
 			skip_indexes: false,
 			emit_phase_markers: false,
 		})
+	}
+
+	/// A load run leaves the dataset behind and a separate query run reads and
+	/// scans it without recreating anything; the scans' `expect` cardinalities
+	/// only hold if every loaded row survived.
+	#[test]
+	#[serial]
+	fn a_query_run_reads_what_a_load_run_left() -> Result<()> {
+		let dir = std::env::temp_dir().join(format!("crud-bench-split-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		let dir = dir.to_str().unwrap().to_string();
+		// A query run with nothing loaded is refused.
+		assert!(
+			test_split(Database::Fjall, KeyType::Integer, false, 2000, RunMode::Query, &dir)
+				.is_err()
+		);
+		test_split(Database::Fjall, KeyType::Integer, false, 2000, RunMode::Load, &dir)?;
+		// The same dataset can be queried repeatedly.
+		test_split(Database::Fjall, KeyType::Integer, false, 2000, RunMode::Query, &dir)?;
+		test_split(Database::Fjall, KeyType::Integer, false, 2000, RunMode::Query, &dir)?;
+		// A run configured for a different dataset is refused.
+		let mismatch =
+			test_split(Database::Fjall, KeyType::Integer, false, 3000, RunMode::Query, &dir);
+		assert!(format!("{:#}", mismatch.unwrap_err()).contains("samples"));
+		// Only an `all` run cleans up after itself.
+		test_split(Database::Fjall, KeyType::Integer, false, 2000, RunMode::All, &dir)?;
+		assert!(!std::path::Path::new("fjall").exists());
+		let _ = std::fs::remove_dir_all(&dir);
+		let _ = std::fs::remove_dir_all("fjall");
+		Ok(())
+	}
+
+	/// In-memory stores cannot hold a dataset between processes.
+	#[test]
+	fn memory_stores_refuse_a_split_run() {
+		let err = test_split(Database::Map, KeyType::Integer, false, 10, RunMode::Load, ".x")
+			.unwrap_err();
+		assert!(format!("{err:#}").contains("in-process memory store"));
 	}
 
 	#[test]

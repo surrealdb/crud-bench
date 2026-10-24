@@ -10,6 +10,7 @@ use crate::result::{
 	BenchmarkMetadata, BenchmarkResult, OperationMetric, OperationResult, ScanResult, ScanRun,
 	ScanWorkload, writes_ratio_percent,
 };
+use crate::reuse::RunMode;
 use crate::system::SystemInfo;
 use crate::terminal::BenchUi;
 use crate::util::format_duration;
@@ -24,6 +25,7 @@ use crate::{
 };
 
 use anyhow::{Context, Result, bail};
+use clap::ValueEnum;
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
 use indicatif::ProgressBar;
@@ -124,6 +126,10 @@ pub(crate) struct Benchmark {
 	pub(crate) threads: u32,
 	/// The number of samples to run
 	pub(crate) samples: u32,
+	/// Which phases run and whether the dataset is kept or reused
+	pub(crate) mode: RunMode,
+	/// Docker volume holding the dataset between runs, when the mode keeps one
+	pub(crate) volume: Option<String>,
 	/// Pid to monitor
 	pub(crate) pid: Option<u32>,
 	/// Whether to ensure data is synced
@@ -170,6 +176,15 @@ impl Benchmark {
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
+			mode: args.mode,
+			volume: (args.mode != RunMode::All).then(|| {
+				let key = args
+					.database
+					.to_possible_value()
+					.map(|v| v.get_name().to_string())
+					.unwrap_or_default();
+				crate::reuse::volume_name(&key, args.name.as_deref())
+			}),
 			sync: args.sync,
 			pid: args.pid,
 			persisted: args.persisted,
@@ -470,53 +485,81 @@ impl Benchmark {
 		// Setup the datastore
 		self.bench_ui
 			.println_muted(&format!("Setting up the datastore with {} clients", self.clients));
-		// Setup the datastore
-		self.wait_for_client(&engine).await?.startup().await?;
+		// A query run opens a dataset a load run left behind, so it neither
+		// recreates the schema nor writes any row.
+		if self.mode.loads() {
+			self.wait_for_client(&engine).await?.startup().await?;
+		} else {
+			// Still wait for the datastore to accept connections
+			self.wait_for_client(&engine).await?;
+		}
 		// Setup the clients
 		let clients = self.setup_clients(&engine).await?;
 		// Start the benchmark (optional line for log-based profiling)
 		if self.emit_phase_markers {
 			self.bench_ui.println_plain("Benchmark starting");
 		}
+		let mode = self.mode;
 		// Run the "creates" benchmark
-		let creates = self
-			.run_operation::<C, D>(
-				&clients,
-				BenchmarkOperation::Create,
-				kp,
-				vp.clone(),
-				self.samples,
-				self.threads,
-			)
-			.await?;
-		// Compact the datastore
-		self.maybe_compact_datastore::<C, E>(&engine).await?;
+		let creates = if mode.loads() {
+			let creates = self
+				.run_operation::<C, D>(
+					&clients,
+					BenchmarkOperation::Create,
+					kp,
+					vp.clone(),
+					self.samples,
+					self.threads,
+				)
+				.await?;
+			// Compact the datastore
+			self.maybe_compact_datastore::<C, E>(&engine).await?;
+			creates
+		} else {
+			None
+		};
 		// Run the "reads" benchmark
-		let reads = self
-			.run_operation::<C, D>(
-				&clients,
-				BenchmarkOperation::Read,
-				kp,
-				vp.clone(),
-				self.samples,
-				self.threads,
-			)
-			.await?;
-		// Compact the datastore
-		self.maybe_compact_datastore::<C, E>(&engine).await?;
-		// Run the "reads" benchmark
-		let updates = self
-			.run_operation::<C, D>(
-				&clients,
-				BenchmarkOperation::Update,
-				kp,
-				vp.clone(),
-				self.samples,
-				self.threads,
-			)
-			.await?;
-		// Compact the datastore
-		self.maybe_compact_datastore::<C, E>(&engine).await?;
+		let reads = if mode.queries() {
+			let reads = self
+				.run_operation::<C, D>(
+					&clients,
+					BenchmarkOperation::Read,
+					kp,
+					vp.clone(),
+					self.samples,
+					self.threads,
+				)
+				.await?;
+			// Compact the datastore
+			self.maybe_compact_datastore::<C, E>(&engine).await?;
+			reads
+		} else {
+			None
+		};
+		// Run the "updates" benchmark
+		let updates = if mode.loads() {
+			let updates = self
+				.run_operation::<C, D>(
+					&clients,
+					BenchmarkOperation::Update,
+					kp,
+					vp.clone(),
+					self.samples,
+					self.threads,
+				)
+				.await?;
+			// Compact the datastore
+			self.maybe_compact_datastore::<C, E>(&engine).await?;
+			updates
+		} else {
+			None
+		};
+		// A load run stops once the dataset is complete and compacted
+		let scans: Scans = if mode.queries() {
+			scans
+		} else {
+			Vec::new()
+		};
 		// Run the "scan" benchmarks
 		let mut scan_results = Vec::with_capacity(scans.len());
 		let mut prev_spec_group: Option<u32> = None;
@@ -1036,20 +1079,32 @@ impl Benchmark {
 		}
 		// Compact the datastore
 		self.maybe_compact_datastore::<C, E>(&engine).await?;
-		self.bench_ui.section_header("Delete");
-		// Run the "deletes" benchmark
-		let deletes = self
-			.run_operation::<C, D>(
-				&clients,
-				BenchmarkOperation::Delete,
-				kp,
-				vp.clone(),
-				self.samples,
-				self.threads,
-			)
-			.await?;
-		// Compact the datastore
-		self.maybe_compact_datastore::<C, E>(&engine).await?;
+		// Deletes and batches consume or mutate the dataset, so a split run
+		// leaves them out and keeps the data intact for the runs that follow.
+		let deletes = if mode.consumes() {
+			self.bench_ui.section_header("Delete");
+			// Run the "deletes" benchmark
+			let deletes = self
+				.run_operation::<C, D>(
+					&clients,
+					BenchmarkOperation::Delete,
+					kp,
+					vp.clone(),
+					self.samples,
+					self.threads,
+				)
+				.await?;
+			// Compact the datastore
+			self.maybe_compact_datastore::<C, E>(&engine).await?;
+			deletes
+		} else {
+			None
+		};
+		let batches: Batches = if mode.consumes() {
+			batches
+		} else {
+			Vec::new()
+		};
 		if !batches.is_empty() {
 			self.bench_ui.section_header("Batches");
 		}
@@ -1086,7 +1141,7 @@ impl Benchmark {
 			self.bench_ui.println_plain("Benchmark complete");
 		}
 		// Shut down the datastore
-		self.wait_for_client(&engine).await?.shutdown().await?;
+		self.wait_for_client(&engine).await?.shutdown(!mode.wipes_on_shutdown()).await?;
 		// Return the benchmark results
 		Ok(BenchmarkResult {
 			database,

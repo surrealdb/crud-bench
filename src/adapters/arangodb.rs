@@ -53,6 +53,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			}
 			false => "".to_string(),
 		},
+		data_path: Some("/var/lib/arangodb3"),
 	}
 }
 
