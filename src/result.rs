@@ -143,7 +143,13 @@ pub(crate) fn writes_ratio_percent(spec: &crate::ScanWithWrites) -> u32 {
 }
 
 /// Table row title for a scan leg (matches `[S]can` markers in stdout tables).
-pub(crate) fn scan_run_row_label(id: &str, name: &str, iterations: u32, run: &ScanRun) -> String {
+pub(crate) fn scan_run_row_label(id: &str, name: &str, scan: &ScanResult, run: &ScanRun) -> String {
+	// A windowed scan's count differs run to run, so its row is keyed on the
+	// window; a fixed count keeps the label it always had.
+	let iterations = match scan.measurement_secs {
+		Some(secs) => format!("{secs}s"),
+		None => scan.iterations.to_string(),
+	};
 	let index_slug = if run.indexed {
 		"indexed"
 	} else {
@@ -189,8 +195,12 @@ pub(crate) struct ScanResult {
 	pub(crate) id: String,
 	/// Human-readable scan title.
 	pub(crate) name: String,
-	/// Iteration count for timed scan legs (may override global default).
+	/// Iterations a timed scan leg ran: the configured count when fixed, else the
+	/// most any leg recorded within its window.
 	pub(crate) iterations: u32,
+	/// Window the scan legs were measured over, when no fixed count was set.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub(crate) measurement_secs: Option<f64>,
 	/// Index creation phase when an indexed leg exists.
 	pub(crate) index_build: Option<OperationResult>,
 	/// Index teardown phase.
@@ -303,7 +313,7 @@ impl Display for BenchmarkResult {
 		}
 		for scan in &self.scans {
 			for run in scan.runs.iter().filter(|r| !r.indexed) {
-				let label = scan_run_row_label(&scan.id, &scan.name, scan.iterations, run);
+				let label = scan_run_row_label(&scan.id, &scan.name, scan, run);
 				if let Some(res) = &run.result {
 					table.add_row(res.output(label));
 				} else {
@@ -323,7 +333,7 @@ impl Display for BenchmarkResult {
 				}
 			}
 			for run in scan.runs.iter().filter(|r| r.indexed) {
-				let label = scan_run_row_label(&scan.id, &scan.name, scan.iterations, run);
+				let label = scan_run_row_label(&scan.id, &scan.name, scan, run);
 				if let Some(res) = &run.result {
 					table.add_row(res.output(label));
 				} else {
@@ -395,7 +405,7 @@ impl BenchmarkResult {
 		// Add the [S]cans results to the output
 		for scan in &self.scans {
 			for run in scan.runs.iter().filter(|r| !r.indexed) {
-				let label = scan_run_row_label(&scan.id, &scan.name, scan.iterations, run);
+				let label = scan_run_row_label(&scan.id, &scan.name, scan, run);
 				if let Some(res) = &run.result {
 					w.write_record(res.output_csv(label))?;
 				} else {
@@ -415,7 +425,7 @@ impl BenchmarkResult {
 				}
 			}
 			for run in scan.runs.iter().filter(|r| r.indexed) {
-				let label = scan_run_row_label(&scan.id, &scan.name, scan.iterations, run);
+				let label = scan_run_row_label(&scan.id, &scan.name, scan, run);
 				if let Some(res) = &run.result {
 					w.write_record(res.output_csv(label))?;
 				} else {
@@ -556,8 +566,6 @@ pub(super) struct OperationMetric {
 	system: System,
 	/// Process under test (benchmark worker or explicit `--pid`).
 	pid: Pid,
-	/// Logical operation count for OPS calculation.
-	samples: u32,
 	/// Wall-clock start for elapsed time.
 	start_time: Instant,
 	/// Disk counters before the phase (subtracted for delta I/O).
@@ -572,7 +580,7 @@ pub(super) struct OperationMetric {
 
 impl OperationMetric {
 	/// Starts periodic polling for the given PID (defaults to current process).
-	pub(super) fn new(pid: Option<u32>, samples: u32) -> Self {
+	pub(super) fn new(pid: Option<u32>) -> Self {
 		// We collect the PID
 		let pid = Pid::from(pid.unwrap_or_else(process::id) as usize);
 		let refresh_kind = ProcessRefreshKind::nothing().with_memory().with_cpu().with_disk_usage();
@@ -584,7 +592,6 @@ impl OperationMetric {
 
 		let mut metric = Self {
 			pid,
-			samples,
 			system,
 			start_time: Instant::now(),
 			initial_disk_usage: DiskUsage::default(),
@@ -739,6 +746,11 @@ pub(crate) struct OperationResult {
 }
 
 impl OperationResult {
+	/// Samples recorded in this phase's histogram.
+	pub(crate) fn samples(&self) -> u32 {
+		self.samples
+	}
+
 	/// Recall cell for the summary table: mean and 5th percentile, or `-` for
 	/// anything that is not a scored vector scan.
 	///
@@ -854,10 +866,13 @@ impl OperationResult {
 		// Metrics
 		let q75 = histogram.value_at_quantile(0.75);
 		let q25 = histogram.value_at_quantile(0.25);
-		let ops = metric.samples as f64 / (elapsed.as_nanos() as f64 / 1_000_000_000.0);
+		// Counted from the histogram: a timed run's sample count is only known
+		// once it has finished.
+		let samples = histogram.len() as u32;
+		let ops = samples as f64 / (elapsed.as_nanos() as f64 / 1_000_000_000.0);
 
 		Self {
-			samples: metric.samples,
+			samples,
 			// Set by `with_recall` for vector scans only.
 			recall: None,
 			// Set by `with_filter_selectivity` for filtered vector legs only.
