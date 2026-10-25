@@ -60,7 +60,9 @@ impl BenchmarkEngine<LmDBClient> for LmDBClientProvider {
 		};
 
 		// Cleanup the data directory
-		std::fs::remove_dir_all(&dir).ok();
+		if options.mode.wipes_on_setup() {
+			std::fs::remove_dir_all(&dir).ok();
+		}
 		// Recreate the database directory
 		std::fs::create_dir_all(&dir)?;
 
@@ -147,9 +149,11 @@ impl BenchmarkClient for LmDBClient {
 	// The return type when reading a row
 	type ReadRow = BenchValue;
 
-	async fn shutdown(&self) -> Result<()> {
+	async fn shutdown(&self, keep_data: bool) -> Result<()> {
 		// Cleanup the data directory
-		std::fs::remove_dir_all(&self.dir).ok();
+		if !keep_data {
+			std::fs::remove_dir_all(&self.dir).ok();
+		}
 		// Ok
 		Ok(())
 	}

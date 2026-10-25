@@ -100,6 +100,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				--innodb-flush-log-at-trx-commit={trx_commit}"
 			),
 		},
+		data_path: Some("/var/lib/mysql"),
 	}
 }
 

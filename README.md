@@ -151,6 +151,8 @@ Options:
       --warmup-time <SECONDS>                  Seconds of untimed warm-up before each timed scan leg (0 disables) [default: 5]
       --min-iterations <N>                     Fewest iterations a timed window may record [default: 10]
       --max-iterations <N>                     Most iterations a timed window may record [default: 10000000]
+      --mode <MODE>                            Which phases to run: `all`, `load` (keep the dataset), or `query` (reuse it) [default: all]
+      --data-dir <DATA_DIR>                    Directory recording what a `load` run left behind [env: CRUD_BENCH_DATA_DIR=] [default: .crud-bench-data]
       --operation-timeout <OPERATION_TIMEOUT>  Per-operation timeout in seconds [env: CRUD_BENCH_OPERATION_TIMEOUT=] [default: 1800]
       --persisted                              Whether to enable disk persistence for Redis-family databases
       --optimised                              Use optimised database configurations instead of defaults
@@ -1111,3 +1113,24 @@ SurrealDS is ideal for:
 - **Scalability Assessment**: Compare single-node vs. multi-node SurrealDB performance with TiKV
 - **Production Deployment Simulation**: Benchmark configurations that mirror real-world distributed SurrealDB+TiKV deployments
 - **High Availability Testing**: Evaluate performance characteristics of redundant SurrealDB instances backed by TiKV
+
+## Loading once, querying many times
+
+Loading a large dataset dominates a run, and reads and scans can be measured many times against one load. `--mode` splits the two:
+
+```bash
+# Create and update the dataset, then keep it
+crud-bench -d postgres -s 10000000 --mode load
+
+# Read and scan it, as often as needed, without reloading
+crud-bench -d postgres -s 10000000 --mode query
+```
+
+- `all` (the default) loads, queries, deletes and runs batches in one run, and cleans up.
+- `load` runs creates and updates, then leaves the dataset on disk. For Docker databases the data lives in a named volume (`crud-bench-<database>`, with `-<name>` appended when `--name` is set) that is emptied at the start of every `load` run. The volume is left behind afterwards; remove it with `docker volume rm` when finished.
+- `query` runs reads and scans against that dataset. It does not recreate the schema and writes no rows.
+- Deletes and batches run only under `all`, because they consume or mutate the dataset.
+
+A `load` run writes a manifest to `--data-dir` recording the database, endpoint, `--samples`, key type, `--random`, corpus seed, value template, `--persisted`, `--optimised` and `--sync`. A `query` run refuses to start if any of these differ from the manifest, and says which. A `load` run that fails removes the manifest so its partial data cannot be queried.
+
+Pass the same `--name` and `--data-dir` to a `query` run as to its `load` run. Databases that cannot keep data between processes are refused up front: the in-memory `map` engine, `memory` endpoints, `server:memory`, and Redis, KeyDB, Dragonfly and SurrealMX without `--persisted`.

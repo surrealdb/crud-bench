@@ -42,7 +42,9 @@ impl BenchmarkEngine<SurrealKVClient> for SurrealKVClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		if options.mode.wipes_on_setup() {
+			std::fs::remove_dir_all(DATABASE_DIR).ok();
+		}
 		// Calculate memory allocation
 		let block_cache_bytes = calculate_surrealkv_memory();
 		// Configure custom options
@@ -85,11 +87,13 @@ impl BenchmarkClient for SurrealKVClient {
 	// The return type when reading a row
 	type ReadRow = BenchValue;
 
-	async fn shutdown(&self) -> Result<()> {
+	async fn shutdown(&self, keep_data: bool) -> Result<()> {
 		// Close the database
 		self.db.close().await?;
 		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		if !keep_data {
+			std::fs::remove_dir_all(DATABASE_DIR).ok();
+		}
 		// Ok
 		Ok(())
 	}

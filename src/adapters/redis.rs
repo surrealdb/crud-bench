@@ -91,6 +91,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			"redis-server --requirepass root --io-threads {io_threads} \
 			 {persistence} {memory}"
 		),
+		data_path: Some("/data"),
 	}
 }
 

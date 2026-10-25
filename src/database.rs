@@ -141,7 +141,8 @@ impl Database {
 		// Check if a custom image has been specified
 		let image = options.image.clone().unwrap_or(params.image.to_string());
 		// Start the specified container with arguments
-		let container = Container::start(image, &params.pre_args, &params.post_args, options);
+		let container =
+			Container::start(image, &params.pre_args, &params.post_args, params.data_path, options);
 		// Return the container reference
 		Some(container)
 	}
@@ -629,6 +630,74 @@ impl Database {
 					)
 					.await
 			}
+		}
+	}
+
+	/// Errors when this database cannot keep a dataset between runs under the
+	/// given configuration, so a split run is refused before it starts instead
+	/// of failing after a load that could never be queried.
+	pub(crate) fn supports_reuse(&self, options: &Benchmark) -> anyhow::Result<()> {
+		let endpoint = options.endpoint.as_deref();
+		let unsupported = |why: &str| -> anyhow::Result<()> {
+			anyhow::bail!(
+				"`--mode load` / `--mode query` cannot be used with {}: {why}",
+				self.name()
+			)
+		};
+		match self {
+			Database::Dry => unsupported("it stores nothing"),
+			Database::Map => unsupported("it is an in-process memory store"),
+			#[cfg(feature = "dragonfly")]
+			Database::Dragonfly if !options.persisted => {
+				unsupported("it is memory-only unless `--persisted` is set")
+			}
+			#[cfg(feature = "redis")]
+			Database::Redis if !options.persisted => {
+				unsupported("it is memory-only unless `--persisted` is set")
+			}
+			#[cfg(feature = "keydb")]
+			Database::Keydb if !options.persisted => {
+				unsupported("it is memory-only unless `--persisted` is set")
+			}
+			#[cfg(feature = "surrealmx")]
+			Database::Surrealmx if !options.persisted => {
+				unsupported("it is memory-only unless `--persisted` is set")
+			}
+			#[cfg(feature = "rocksdb")]
+			Database::Rocksdb if endpoint == Some("memory") => {
+				unsupported("the `memory` endpoint is not on disk")
+			}
+			#[cfg(feature = "lmdb")]
+			Database::Lmdb if endpoint == Some("memory") => {
+				unsupported("the `memory` endpoint is not on disk")
+			}
+			#[cfg(feature = "surrealdb")]
+			Database::Surrealdb => {
+				use crate::adapters::surrealdb::{Docker, Endpoint, parse_endpoint};
+				match parse_endpoint(endpoint)? {
+					Endpoint::Docker(Docker::Memory) => {
+						unsupported("`server:memory` is not on disk")
+					}
+					Endpoint::Embedded(e) if e.starts_with("mem") => {
+						unsupported("an in-memory endpoint is not on disk")
+					}
+					_ => Ok(()),
+				}
+			}
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2 => {
+				use crate::adapters::surrealdb2::{Docker, Endpoint, parse_endpoint};
+				match parse_endpoint(endpoint)? {
+					Endpoint::Docker(Docker::Memory) => {
+						unsupported("`server:memory` is not on disk")
+					}
+					Endpoint::Embedded(e) if e.starts_with("mem") => {
+						unsupported("an in-memory endpoint is not on disk")
+					}
+					_ => Ok(()),
+				}
+			}
+			_ => Ok(()),
 		}
 	}
 
