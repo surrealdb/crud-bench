@@ -113,6 +113,26 @@ pub(crate) struct Args {
 	#[arg(long, env = "CRUD_BENCH_DATA_DIR", default_value = ".crud-bench-data")]
 	pub(crate) data_dir: String,
 
+	/// Seconds each timed scan leg runs for, when the scan sets no `iterations`.
+	///
+	/// A leg is measured over a fixed window rather than a fixed count, so its
+	/// run time does not grow with the dataset the way `--samples` full scans do.
+	#[arg(long, default_value_t = 30.0, value_parser = parse_seconds)]
+	pub(crate) measurement_time: f64,
+
+	/// Seconds of untimed warm-up before each timed scan leg's window (0 disables).
+	#[arg(long, default_value_t = 5.0, value_parser = parse_seconds)]
+	pub(crate) warmup_time: f64,
+
+	/// Fewest iterations a timed window may record, even if the window elapses first.
+	/// Keeps a slow leg (an exact KNN sweep) from reporting a single sample.
+	#[arg(long, default_value_t = 10, value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) min_iterations: u32,
+
+	/// Most iterations a timed window may record, even if the window is still open.
+	#[arg(long, default_value_t = 10_000_000, value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) max_iterations: u32,
+
 	/// Per-operation timeout in seconds
 	#[arg(long, env = "CRUD_BENCH_OPERATION_TIMEOUT", default_value = "1800", value_parser=clap::value_parser!(u64).range(1..))]
 	pub(crate) operation_timeout: u64,
@@ -192,6 +212,16 @@ pub(crate) struct Args {
 	pub(crate) ground_truth_cache: String,
 }
 
+/// Parses a non-negative, finite number of seconds.
+fn parse_seconds(raw: &str) -> Result<f64, String> {
+	let v: f64 = raw.parse().map_err(|e| format!("{e}"))?;
+	if v.is_finite() && v >= 0.0 {
+		Ok(v)
+	} else {
+		Err("must be a non-negative number of seconds".into())
+	}
+}
+
 /// Primary key shape and size for generated record ids.
 #[derive(Debug, ValueEnum, Clone, Copy)]
 pub(crate) enum KeyType {
@@ -231,6 +261,10 @@ pub(crate) struct ScanRun {
 	/// Without this the only way out is splitting one scan into two `[[scans]]`
 	/// blocks with separate ids, which fragments the results for no real reason.
 	iterations: Option<usize>,
+	/// Seconds this run is measured for, overriding the parent [`ScanSpec`]
+	/// `measurement_time`. Ignored when `iterations` is set.
+	#[serde(default)]
+	measurement_time: Option<f64>,
 	/// `ID`, `FULL`, or `COUNT`; overrides the parent [`ScanSpec`] `projection` when set.
 	projection: Option<String>,
 	/// Per-run vector-query override (e.g. each algorithm leg with its own strategy).
@@ -264,8 +298,16 @@ pub(crate) struct ScanSpec {
 	name: Option<String>,
 	/// Multiple named projections sharing the same parameters; omit when using `name` instead.
 	runs: Option<Vec<ScanRun>>,
-	/// Number of timed scan iterations; falls back to CLI `--samples` when unset.
+	/// Fixed number of timed scan iterations. When unset the leg is measured
+	/// over a time window instead (`measurement_time`, else `--measurement-time`).
 	iterations: Option<usize>,
+	/// Seconds the leg is measured for when `iterations` is unset; falls back to
+	/// CLI `--measurement-time`.
+	#[serde(default)]
+	measurement_time: Option<f64>,
+	/// Seconds of untimed warm-up before the window; falls back to CLI `--warmup-time`.
+	#[serde(default)]
+	warmup_time: Option<f64>,
 	/// Per-dialect filter fragments (`WHERE`); omit for unrestricted/table scans.
 	condition: Option<Condition>,
 	/// Per-dialect `ORDER BY` fragments; omit for unordered scans.
@@ -299,6 +341,8 @@ impl ScanSpec {
 			name,
 			runs,
 			iterations,
+			measurement_time,
+			warmup_time,
 			condition,
 			order_by,
 			start,
@@ -336,6 +380,8 @@ impl ScanSpec {
 					multi_run_spec: false,
 					name: n,
 					iterations,
+					measurement_time,
+					warmup_time,
 					condition,
 					order_by,
 					start,
@@ -366,6 +412,8 @@ impl ScanSpec {
 						multi_run_spec,
 						name: run.name,
 						iterations: run_iterations,
+						measurement_time: run.measurement_time.or(measurement_time),
+						warmup_time,
 						condition: condition.clone(),
 						order_by: order_by.clone(),
 						start,
@@ -864,8 +912,16 @@ pub(crate) struct Scan {
 	pub(crate) multi_run_spec: bool,
 	/// Human-readable title for this scan row (from `name` or a `runs[]` entry).
 	name: String,
-	/// Number of timed scan iterations; falls back to CLI `--samples` when unset.
+	/// Fixed number of timed scan iterations. When unset the leg is measured
+	/// over a time window instead (`measurement_time`, else `--measurement-time`).
 	iterations: Option<usize>,
+	/// Seconds the leg is measured for when `iterations` is unset; falls back to
+	/// CLI `--measurement-time`.
+	#[serde(default)]
+	measurement_time: Option<f64>,
+	/// Seconds of untimed warm-up before the window; falls back to CLI `--warmup-time`.
+	#[serde(default)]
+	warmup_time: Option<f64>,
 	/// Filter predicates per dialect; omit for full scans.
 	condition: Option<Condition>,
 	/// Optional `ORDER BY` per datastore (omit for unordered scans).
@@ -1578,6 +1634,10 @@ mod test {
 			vector_warmup_seconds: 30,
 			mode,
 			data_dir: data_dir.to_string(),
+			measurement_time: 0.2,
+			warmup_time: 0.1,
+			min_iterations: 2,
+			max_iterations: 1000,
 			image: None,
 			name: None,
 			database,
