@@ -324,12 +324,6 @@ jobs:
             endpoint: -e server:memory
             enabled: true
             description: SurrealDB with in-memory storage
-          # SurrealDB + RocksDB
-          - name: surrealdb-rocksdb
-            database: surrealdb
-            endpoint: -e server:rocksdb
-            enabled: true
-            description: SurrealDB with RocksDB storage
           # SurrealDB + SurrealKV
           - name: surrealdb-surrealkv
             database: surrealdb
@@ -342,12 +336,6 @@ jobs:
             enabled: true
             endpoint: -e memory
             description: SurrealDB embedded with in-memory storage
-          # SurrealDB RocksDB Engine
-          - name: surrealdb-embedded-rocksdb
-            database: surrealdb
-            enabled: true
-            endpoint: -e rocksdb:~/crud-bench
-            description: SurrealDB embedded with RocksDB storage
           # SurrealDB SurrealKV Engine
           - name: surrealdb-embedded-surrealkv
             database: surrealdb
@@ -390,6 +378,42 @@ jobs:
             enabled: true
             endpoint: -e surrealkv:~/crud-bench
             description: SurrealDB 2.x embedded with SurrealKV storage
+          # SurrealDB 3.x + Memory
+          - name: surrealdb3-memory
+            database: surrealdb3
+            endpoint: -e server:memory
+            enabled: true
+            description: SurrealDB 3.x with in-memory storage
+          # SurrealDB 3.x + RocksDB
+          - name: surrealdb3-rocksdb
+            database: surrealdb3
+            endpoint: -e server:rocksdb
+            enabled: true
+            description: SurrealDB 3.x with RocksDB storage
+          # SurrealDB 3.x + SurrealKV
+          - name: surrealdb3-surrealkv
+            database: surrealdb3
+            endpoint: -e server:surrealkv
+            enabled: true
+            description: SurrealDB 3.x with SurrealKV storage
+          # SurrealDB 3.x Memory Engine
+          - name: surrealdb3-embedded-memory
+            database: surrealdb3
+            enabled: true
+            endpoint: -e memory
+            description: SurrealDB 3.x embedded with in-memory storage
+          # SurrealDB 3.x RocksDB Engine
+          - name: surrealdb3-embedded-rocksdb
+            database: surrealdb3
+            enabled: true
+            endpoint: -e rocksdb:~/crud-bench
+            description: SurrealDB 3.x embedded with RocksDB storage
+          # SurrealDB 3.x SurrealKV Engine
+          - name: surrealdb3-embedded-surrealkv
+            database: surrealdb3
+            enabled: true
+            endpoint: -e surrealkv:~/crud-bench
+            description: SurrealDB 3.x embedded with SurrealKV storage
           # SurrealKV
           - name: surrealkv
             database: surrealkv

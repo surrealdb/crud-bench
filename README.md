@@ -343,7 +343,7 @@ alone arrives while a vector index is still being built from per-record pending 
 query in that state scores the remainder by hand. A server that does not report `compacting` cannot
 say when that has finished, so crud-bench **skips** HNSW and DiskANN legs there, reporting `-`,
 rather than time a scan wearing the index's name. SurrealDB 3.3.0 is the first release that reports
-it, so both the crate embedded mode links (`-e memory`, `-e rocksdb:…`, `-e surrealkv:…`) and the
+it, so both the crate embedded mode links (`-e memory`, `-e surrealkv:…`) and the
 nightly Docker image server mode uses by default are covered; releases before 3.3.0 defer the same
 work without reporting it, and get the skip.
 
@@ -906,12 +906,12 @@ Specify a custom endpoint using `-e` or `--endpoint` to benchmark a custom deplo
 | Endpoint | Meaning |
 |----------|---------|
 | `server:memory` | Docker server with in-memory storage engine |
-| `server:rocksdb` | Docker server with RocksDB storage engine |
 | `server:surrealkv` | Docker server with SurrealKV storage engine |
 | `memory` | Embedded with in-memory storage engine. |
-| `rocksdb:<path>` (`rocksdb:/tmp/db`) | Embedded with RocksDB storage engine. |
-| `surrealkv:<path>` (`surrealkv:/tmp/db`) | Embedded with RocksDB storage engine. |
+| `surrealkv:<path>` (`surrealkv:/tmp/db`) | Embedded with SurrealKV storage engine. |
 | `ws://...`, `wss://...`, `http://...`, `https://...` | Remote server you manage yourself (no Docker started by crud-bench). |
+
+The default adapter follows the latest SurrealDB release, which no longer offers the RocksDB storage engine. To benchmark SurrealDB 3.x, including RocksDB, use `-d surrealdb3`, which links the 3.x SDK and starts the `surrealdb/surrealdb:v3` image. It accepts the same endpoints as above plus `server:rocksdb` and `rocksdb:<path>`, and defaults to `server:rocksdb`.
 
 ### [SurrealKV](https://surrealkv.org)
 
@@ -936,7 +936,7 @@ To run the benchmark against an already running SurrealDB instance, follow the s
 Start a SurrealDB server:
 
 ```bash
-surreal start --allow-all -u root -p root rocksdb:/tmp/db
+surreal start --allow-all -u root -p root surrealkv:/tmp/db
 ```
 
 Then run crud-bench with the `surrealdb` database option:
@@ -956,7 +956,7 @@ When benchmarking SurrealDB (including `surrealdb`, and `surrealds`), you can co
 
 These environment variables are used in two scenarios:
 
-1. **Docker Container Startup**: When crud-bench automatically starts a SurrealDB Docker container (`-d surrealdb` with no endpoint, or with `-e server:rocksdb` / `-e server:memory` / `-e server:surrealkv`), it uses these credentials to configure the database server
+1. **Docker Container Startup**: When crud-bench automatically starts a SurrealDB Docker container (`-d surrealdb` with no endpoint, or with `-e server:memory` / `-e server:surrealkv`), it uses these credentials to configure the database server
 2. **Client Authentication**: When connecting to SurrealDB instances (both embedded and networked), the benchmark client uses these credentials to authenticate
 
 ### Usage Examples
@@ -986,7 +986,7 @@ SURREALDB_USER=admin SURREALDB_PASS=secure_password cargo run -r -- -d surrealdb
 First, start your SurrealDB instance with custom credentials:
 
 ```bash
-surreal start --allow-all -u admin -p secure_password rocksdb:/tmp/db
+surreal start --allow-all -u admin -p secure_password surrealkv:/tmp/db
 ```
 
 Then run the benchmark with matching credentials:
@@ -1038,16 +1038,16 @@ For testing the load distribution mechanism without TiKV, you can use independen
 
 ```bash
 # Terminal 1 - Start first instance on port 8001
-surreal start --allow-all -u root -p root --bind 127.0.0.1:8001 rocksdb:/tmp/db1
+surreal start --allow-all -u root -p root --bind 127.0.0.1:8001 surrealkv:/tmp/db1
 
 # Terminal 2 - Start second instance on port 8002
-surreal start --allow-all -u root -p root --bind 127.0.0.1:8002 rocksdb:/tmp/db2
+surreal start --allow-all -u root -p root --bind 127.0.0.1:8002 surrealkv:/tmp/db2
 
 # Terminal 3 - Start third instance on port 8003
-surreal start --allow-all -u root -p root --bind 127.0.0.1:8003 rocksdb:/tmp/db3
+surreal start --allow-all -u root -p root --bind 127.0.0.1:8003 surrealkv:/tmp/db3
 ```
 
-> **Note**: When using independent storage backends (like RocksDB above), each instance maintains its own separate data. With TiKV, all instances share the same distributed storage, which is the recommended production setup.
+> **Note**: When using independent storage backends (like SurrealKV above), each instance maintains its own separate data. With TiKV, all instances share the same distributed storage, which is the recommended production setup.
 
 ### Usage
 

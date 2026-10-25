@@ -135,12 +135,14 @@ EXAMPLES:
 AVAILABLE DATASTORES:
     arangodb, dragonfly, dry, fjall, keydb, lmdb, map, mdbx, mongodb,
     mysql, neo4j, postgres, redb, redis, rocksdb, sqlite,
-    surrealdb, surrealdb-memory, surrealdb-rocksdb, surrealdb-surrealkv,
-    surrealdb-embedded-memory, surrealdb-embedded-rocksdb,
-    surrealdb-embedded-surrealkv,
+    surrealdb, surrealdb-memory, surrealdb-surrealkv,
+    surrealdb-embedded-memory, surrealdb-embedded-surrealkv,
     surrealdb2, surrealdb2-memory, surrealdb2-rocksdb, surrealdb2-surrealkv,
     surrealdb2-embedded-memory, surrealdb2-embedded-rocksdb,
-    surrealdb2-embedded-surrealkv, surrealkv, surrealmx
+    surrealdb2-embedded-surrealkv,
+    surrealdb3, surrealdb3-memory, surrealdb3-rocksdb, surrealdb3-surrealkv,
+    surrealdb3-embedded-memory, surrealdb3-embedded-rocksdb,
+    surrealdb3-embedded-surrealkv, surrealkv, surrealmx
 
 ENVIRONMENT VARIABLES:
     CRUD_BENCH_CONFIG
@@ -330,12 +332,10 @@ redis|redis|networked|Redis|
 rocksdb|rocksdb|embedded|RocksDB|
 slatedb|slatedb|embedded|SlateDB|
 sqlite|sqlite|embedded|SQLite|
-surrealdb|surrealdb|networked|SurrealDB (server: RocksDB)|
+surrealdb|surrealdb|networked|SurrealDB (server: SurrealKV)|
 surrealdb-memory|surrealdb|networked|SurrealDB (server: memory)|-e server:memory
-surrealdb-rocksdb|surrealdb|networked|SurrealDB (server: RocksDB)|-e server:rocksdb
 surrealdb-surrealkv|surrealdb|networked|SurrealDB (server: SurrealKV)|-e server:surrealkv
 surrealdb-embedded-memory|surrealdb|embedded|SurrealDB embedded with in-memory storage|-e memory
-surrealdb-embedded-rocksdb|surrealdb|embedded|SurrealDB embedded with RocksDB storage|-e rocksdb:DATA_DIR
 surrealdb-embedded-surrealkv|surrealdb|embedded|SurrealDB embedded with SurrealKV storage|-e surrealkv:DATA_DIR
 surrealdb2|surrealdb2|networked|SurrealDB 2.x (server: RocksDB)|
 surrealdb2-memory|surrealdb2|networked|SurrealDB 2.x (server: memory)|-e server:memory
@@ -344,6 +344,13 @@ surrealdb2-surrealkv|surrealdb2|networked|SurrealDB 2.x (server: SurrealKV)|-e s
 surrealdb2-embedded-memory|surrealdb2|embedded|SurrealDB 2.x embedded with in-memory storage|-e memory
 surrealdb2-embedded-rocksdb|surrealdb2|embedded|SurrealDB 2.x embedded with RocksDB storage|-e rocksdb:DATA_DIR
 surrealdb2-embedded-surrealkv|surrealdb2|embedded|SurrealDB 2.x embedded with SurrealKV storage|-e surrealkv:DATA_DIR
+surrealdb3|surrealdb3|networked|SurrealDB 3.x (server: RocksDB)|
+surrealdb3-memory|surrealdb3|networked|SurrealDB 3.x (server: memory)|-e server:memory
+surrealdb3-rocksdb|surrealdb3|networked|SurrealDB 3.x (server: RocksDB)|-e server:rocksdb
+surrealdb3-surrealkv|surrealdb3|networked|SurrealDB 3.x (server: SurrealKV)|-e server:surrealkv
+surrealdb3-embedded-memory|surrealdb3|embedded|SurrealDB 3.x embedded with in-memory storage|-e memory
+surrealdb3-embedded-rocksdb|surrealdb3|embedded|SurrealDB 3.x embedded with RocksDB storage|-e rocksdb:DATA_DIR
+surrealdb3-embedded-surrealkv|surrealdb3|embedded|SurrealDB 3.x embedded with SurrealKV storage|-e surrealkv:DATA_DIR
 surrealkv|surrealkv|embedded|SurrealKV|
 surrealmx|surrealmx|embedded|SurrealMX|
 "
@@ -425,7 +432,7 @@ get_db_cli_args() {
 
 # Get human-readable description for a database
 # Args: $1 - database name
-# Returns: Description string (e.g., "Postgres", "SurrealDB with RocksDB storage")
+# Returns: Description string (e.g., "Postgres", "SurrealDB with SurrealKV storage")
 get_db_description() {
     get_db_property "$1" "description"
 }
