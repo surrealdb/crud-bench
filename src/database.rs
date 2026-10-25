@@ -648,7 +648,9 @@ impl Database {
 			Database::Dry => unsupported("it stores nothing"),
 			Database::Map => unsupported("it is an in-process memory store"),
 			#[cfg(feature = "dragonfly")]
-			Database::Dragonfly => unsupported("it is started without persistence"),
+			Database::Dragonfly if !options.persisted => {
+				unsupported("it is memory-only unless `--persisted` is set")
+			}
 			#[cfg(feature = "redis")]
 			Database::Redis if !options.persisted => {
 				unsupported("it is memory-only unless `--persisted` is set")

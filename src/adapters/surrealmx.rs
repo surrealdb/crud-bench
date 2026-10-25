@@ -26,6 +26,10 @@ impl BenchmarkEngine<SurrealMXClient> for SurrealMXClientProvider {
 	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Check if persistence is enabled
 		if options.persisted {
+			// A run that loads starts from an empty log; a query run replays the one a load run left
+			if options.mode.wipes_on_setup() {
+				std::fs::remove_dir_all(DATABASE_DIR).ok();
+			}
 			// Specify the database options
 			let opts = DatabaseOptions::default();
 			// Specify the persistence options

@@ -1127,4 +1127,4 @@ crud-bench -d postgres -s 10000000 --mode query
 
 A `load` run writes a manifest to `--data-dir` recording the database, endpoint, `--samples`, key type, `--random`, corpus seed, value template, `--persisted`, `--optimised` and `--sync`. A `query` run refuses to start if any of these differ from the manifest, and says which. A `load` run that fails removes the manifest so its partial data cannot be queried.
 
-Pass the same `--name` and `--data-dir` to a `query` run as to its `load` run. Databases that cannot keep data between processes are refused up front: the in-memory `map` engine, Dragonfly, `memory` endpoints, `server:memory`, and Redis, KeyDB and SurrealMX without `--persisted`.
+Pass the same `--name` and `--data-dir` to a `query` run as to its `load` run. Databases that cannot keep data between processes are refused up front: the in-memory `map` engine, `memory` endpoints, `server:memory`, and Redis, KeyDB, Dragonfly and SurrealMX without `--persisted`.

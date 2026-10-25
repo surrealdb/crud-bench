@@ -15,11 +15,18 @@ use tokio::sync::Mutex;
 
 pub const DEFAULT: &str = "redis://:root@127.0.0.1:6379/";
 
-pub(crate) fn docker(_: &Benchmark) -> DockerParams {
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// With `--persisted` the dataset is snapshotted into the data directory
+	// on shutdown and loaded again on start.
+	let persistence = if options.persisted {
+		" --dir /data --dbfilename dump"
+	} else {
+		""
+	};
 	DockerParams {
 		image: "docker.dragonflydb.io/dragonflydb/dragonfly",
 		pre_args: "-p 127.0.0.1:6379:6379 --ulimit memlock=-1".to_string(),
-		post_args: "--requirepass root".to_string(),
+		post_args: format!("--requirepass root{persistence}"),
 		data_path: Some("/data"),
 	}
 }

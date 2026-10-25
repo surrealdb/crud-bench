@@ -18,17 +18,21 @@ use std::num::NonZeroUsize;
 pub const DEFAULT: &str = "127.0.0.1:9042";
 
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// The flags go after the image name: the harness splits arguments on
+	// spaces, which a quoted `-e SCYLLA_ARGS='…'` value cannot survive. The
+	// node listens on loopback because the client dials `DEFAULT`; left alone
+	// the image binds the container's own address, which that does not reach.
+	let commitlog = match options.sync {
+		true => "--commitlog-sync=batch --commitlog-sync-batch-window-in-ms=1",
+		false => "--commitlog-sync=periodic --commitlog-sync-period-in-ms=1000",
+	};
 	DockerParams {
 		image: "scylladb/scylla",
-		pre_args: match options.sync {
-			true => {
-				"-p 9042:9042 -e SCYLLA_ARGS='--commitlog-sync=batch --commitlog-sync-batch-window-in-ms=1'".to_string()
-			}
-			false => {
-				"-p 9042:9042 -e SCYLLA_ARGS='--commitlog-sync=periodic --commitlog-sync-period-in-ms=1000'".to_string()
-			}
-		},
-		post_args: "".to_string(),
+		pre_args: "-p 9042:9042".to_string(),
+		post_args: format!(
+			"--listen-address 127.0.0.1 --rpc-address 127.0.0.1 \
+			 --seed-provider-parameters seeds=127.0.0.1 {commitlog}"
+		),
 		data_path: Some("/var/lib/scylla"),
 	}
 }
@@ -74,6 +78,7 @@ impl BenchmarkClient for ScylladbClient {
 					CREATE KEYSPACE bench
 					WITH replication = { 'class': 'SimpleStrategy', 'replication_factor' : 1 }
 					AND durable_writes = true
+					AND tablets = { 'enabled': false }
 				",
 				(),
 			)
