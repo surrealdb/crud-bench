@@ -304,8 +304,8 @@ fn is_retryable_conflict<E: std::fmt::Display>(e: &E) -> bool {
 }
 
 /// Run a single DML statement, retrying with bounded exponential backoff on
-/// SurrealDB optimistic-concurrency conflicts. RocksDB surfaces concurrent
-/// writes on the same keys as a "Resource busy" status that the kvs layer
+/// SurrealDB optimistic-concurrency conflicts. The storage engine surfaces
+/// concurrent writes on the same keys as a conflict status that the kvs layer
 /// maps to a `TransactionConflict` error — explicitly marked retryable by
 /// SurrealDB but not auto-retried at the commit path. Crud-bench's
 /// scan-with-writes phases generate this contention by design; without
@@ -337,15 +337,14 @@ where
 /// Storage backend for Docker (`server:<backend>`).
 pub(crate) enum Docker {
 	Memory,
-	Rocksdb,
 	Surrealkv,
 }
 
 /// Connection mode derived from `--endpoint`.
 pub(crate) enum Endpoint {
-	/// `server:rocksdb` | `server:memory` | `server:surrealkv` (default when omitted: server:rocksdb)
+	/// `server:memory` | `server:surrealkv` (default when omitted: server:surrealkv)
 	Docker(Docker),
-	/// `rocksdb:…`, `surrealkv:…`, `memory`, `mem://`, `mem:…`
+	/// `surrealkv:…`, `memory`, `mem://`, `mem:…`
 	Embedded(String),
 	/// Remote SurrealDB (`ws` / `http` URL)
 	Remote(String),
@@ -359,13 +358,13 @@ pub(crate) fn wants_docker(endpoint: Option<&str>) -> bool {
 pub(crate) fn parse_endpoint(opt: Option<&str>) -> Result<Endpoint> {
 	// If no endpoint is specified, use the default
 	let Some(raw) = opt else {
-		return Ok(Endpoint::Docker(Docker::Rocksdb));
+		return Ok(Endpoint::Docker(Docker::Surrealkv));
 	};
 	// Trim whitespace from the endpoint
 	let s = raw.trim();
 	// If the endpoint is empty, use the default
 	if s.is_empty() {
-		return Ok(Endpoint::Docker(Docker::Rocksdb));
+		return Ok(Endpoint::Docker(Docker::Surrealkv));
 	}
 	// If the endpoint is a remote endpoint, return it
 	if s.starts_with("ws://")
@@ -378,11 +377,10 @@ pub(crate) fn parse_endpoint(opt: Option<&str>) -> Result<Endpoint> {
 	// If the endpoint is a server backend, return it
 	if let Some(rest) = s.strip_prefix("server:") {
 		return match rest {
-			"rocksdb" => Ok(Endpoint::Docker(Docker::Rocksdb)),
 			"memory" => Ok(Endpoint::Docker(Docker::Memory)),
 			"surrealkv" => Ok(Endpoint::Docker(Docker::Surrealkv)),
 			_ => bail!(
-				"Invalid server backend {rest:?}. Expected server:rocksdb, server:memory, or server:surrealkv.",
+				"Invalid server backend {rest:?}. Expected server:memory or server:surrealkv.",
 			),
 		};
 	}
@@ -394,20 +392,20 @@ pub(crate) fn parse_endpoint(opt: Option<&str>) -> Result<Endpoint> {
 	if s.starts_with("mem:") {
 		return Ok(Endpoint::Embedded(s.to_string()));
 	}
-	// If the endpoint is a rocksdb or surrealkv endpoint, return it
-	if s.starts_with("rocksdb:") || s.starts_with("surrealkv:") {
+	// If the endpoint is a surrealkv endpoint, return it
+	if s.starts_with("surrealkv:") {
 		return Ok(Endpoint::Embedded(s.to_string()));
 	}
 	bail!(
 		"Invalid SurrealDB endpoint {:?}. Expected:\n\
-		 - server:rocksdb | server:memory | server:surrealkv (Docker)\n\
-		 - rocksdb:<path>[?args] | surrealkv:<path>[?args] | memory | mem:// | mem:<path>[?args] (embedded)\n\
+		 - server:memory | server:surrealkv (Docker)\n\
+		 - surrealkv:<path>[?args] | memory | mem:// | mem:<path>[?args] (embedded)\n\
 		 - ws://... | wss://... | http://... | https://... (remote)",
 		s
 	)
 }
 
-/// Calculate SurrealDB RocksDB specific memory allocation
+/// Calculate SurrealDB storage cache memory allocation
 fn calculate_surrealdb_memory() -> u64 {
 	// Load the system memory
 	let memory = MemoryConfig::new();
@@ -434,7 +432,7 @@ pub(super) fn surrealdb_password() -> String {
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Parse the endpoint or use the default
 	let backend =
-		parse_endpoint(options.endpoint.as_deref()).unwrap_or(Endpoint::Docker(Docker::Rocksdb));
+		parse_endpoint(options.endpoint.as_deref()).unwrap_or(Endpoint::Docker(Docker::Surrealkv));
 	// Calculate memory allocation
 	let cache_gb = calculate_surrealdb_memory();
 	// Get credentials from environment variables or use defaults
@@ -465,19 +463,6 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				}
 			},
 			data_path: None,
-		},
-		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
-			image: "surrealdb/surrealdb:nightly",
-			pre_args: match options.optimised {
-				true => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
-				),
-				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
-			},
-			post_args: format!(
-				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db?sync={sync}",
-			),
-			data_path: Some("/data"),
 		},
 		Endpoint::Docker(Docker::Surrealkv) => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
@@ -609,7 +594,7 @@ impl BenchmarkClient for SurrealDBClient {
 		let sql = "ALTER SYSTEM COMPACT";
 		// Compact all databases and namespaces in SurrealDB
 		let response = self.db.query(sql).await.map_err(log_sql_err(sql))?;
-		// Compaction only works on RocksDB storage engine
+		// Only some storage engines support compaction
 		match response.check() {
 			Ok(_) => Ok(()),
 			Err(e) => {
@@ -753,12 +738,12 @@ impl BenchmarkClient for SurrealDBClient {
 		// ## Why Retry is Necessary
 		//
 		// After intensive concurrent scan operations (e.g., 12 clients × 48 threads = 576 tasks),
-		// each scan creates a READ transaction in SurrealDB that holds a RocksDB snapshot.
+		// each scan creates a READ transaction in SurrealDB that holds a storage snapshot.
 		// These snapshots capture the database state and provide MVCC (Multi-Version Concurrency Control).
 		//
 		// When REMOVE INDEX executes immediately after scans complete:
 		// 1. Client-side: All Rust futures have finished (via try_join_all)
-		// 2. Server-side: SurrealDB/RocksDB may still have:
+		// 2. Server-side: SurrealDB and its storage engine may still have:
 		//    - Active transaction objects not yet fully released
 		//    - Snapshot references held in memory
 		//    - Deferred cleanup operations in progress
@@ -770,7 +755,7 @@ impl BenchmarkClient for SurrealDBClient {
 		// - Update table definition (put_tb)
 		// - Clear caches
 		//
-		// RocksDB's optimistic transaction engine detects conflicts between:
+		// The optimistic transaction engine detects conflicts between:
 		// - Active READ snapshots from completed scan operations
 		// - WRITE transaction from REMOVE INDEX trying to modify metadata
 		//
@@ -781,7 +766,7 @@ impl BenchmarkClient for SurrealDBClient {
 		// The error is transient. As transaction objects are dropped and snapshots released,
 		// the metadata locks become available. The 500ms sleep allows sufficient time for:
 		// - Async transaction cleanup to complete
-		// - RocksDB to release internal snapshot references
+		// - The storage engine to release internal snapshot references
 		// - Memory management to finalize deferred operations
 		//
 		// Since REMOVE INDEX IF EXISTS is idempotent, retrying is safe and appropriate
@@ -977,7 +962,7 @@ impl BenchmarkClient for SurrealDBClient {
 	/// `timeout` is the caller's remaining budget from `--operation-timeout`.
 	///
 	/// Note this is unrelated to `ALTER SYSTEM COMPACT` (see [`Self::compact`]),
-	/// which compacts the RocksDB keyspace and does nothing for this queue.
+	/// which compacts the storage keyspace and does nothing for this queue.
 	async fn await_index_queryable(&self, name: &str, timeout: Duration) -> Result<()> {
 		let started = Instant::now();
 		loop {

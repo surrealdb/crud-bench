@@ -40,6 +40,8 @@ pub(crate) mod sqlite;
 pub(crate) mod surrealdb;
 #[cfg(feature = "surrealdb2")]
 pub(crate) mod surrealdb2;
+#[cfg(feature = "surrealdb3")]
+pub(crate) mod surrealdb3;
 #[cfg(feature = "surrealdb")]
 pub(crate) mod surrealds;
 #[cfg(feature = "surrealkv")]

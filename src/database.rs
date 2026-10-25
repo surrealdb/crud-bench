@@ -61,10 +61,15 @@ pub(crate) enum Database {
 	Surrealdb,
 	/// SurrealDB 2.X server adapter — links against the v2 SDK (renamed
 	/// crate `surrealdb2`) and talks to a 2.x server. Use this when the
-	/// target is a v2 deployment; the default `Surrealdb` variant only
-	/// speaks the v3 RPC protocol.
+	/// target is a v2 deployment.
 	#[cfg(feature = "surrealdb2")]
 	Surrealdb2,
+	/// SurrealDB 3.X server adapter — links against the v3 SDK (renamed
+	/// crate `surrealdb3`) and talks to a 3.x server, which still offers the
+	/// RocksDB storage engine. The default `Surrealdb` variant follows the
+	/// latest release, which does not.
+	#[cfg(feature = "surrealdb3")]
+	Surrealdb3,
 	#[cfg(feature = "surrealkv")]
 	Surrealkv,
 	#[cfg(feature = "surrealmx")]
@@ -102,6 +107,8 @@ impl Database {
 			Database::Surrealdb => crate::adapters::surrealdb::wants_docker(endpoint.as_deref()),
 			#[cfg(feature = "surrealdb2")]
 			Database::Surrealdb2 => crate::adapters::surrealdb2::wants_docker(endpoint.as_deref()),
+			#[cfg(feature = "surrealdb3")]
+			Database::Surrealdb3 => crate::adapters::surrealdb3::wants_docker(endpoint.as_deref()),
 			_ => endpoint.is_none(),
 		}
 	}
@@ -135,6 +142,8 @@ impl Database {
 			Self::Surrealdb => crate::adapters::surrealdb::docker(options),
 			#[cfg(feature = "surrealdb2")]
 			Self::Surrealdb2 => crate::adapters::surrealdb2::docker(options),
+			#[cfg(feature = "surrealdb3")]
+			Self::Surrealdb3 => crate::adapters::surrealdb3::docker(options),
 			#[allow(unreachable_patterns)]
 			_ => return None,
 		};
@@ -570,6 +579,26 @@ impl Database {
 					)
 					.await
 			}
+			#[cfg(feature = "surrealdb3")]
+			Database::Surrealdb3 => {
+				benchmark
+					.run::<_, SurrealDBDialect, _>(
+						crate::adapters::surrealdb3::SurrealDB3ClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
 			#[cfg(feature = "surrealdb")]
 			Database::Surrealds => {
 				benchmark
@@ -697,6 +726,19 @@ impl Database {
 					_ => Ok(()),
 				}
 			}
+			#[cfg(feature = "surrealdb3")]
+			Database::Surrealdb3 => {
+				use crate::adapters::surrealdb3::{Docker, Endpoint, parse_endpoint};
+				match parse_endpoint(endpoint)? {
+					Endpoint::Docker(Docker::Memory) => {
+						unsupported("`server:memory` is not on disk")
+					}
+					Endpoint::Embedded(e) if e.starts_with("mem") => {
+						unsupported("an in-memory endpoint is not on disk")
+					}
+					_ => Ok(()),
+				}
+			}
 			_ => Ok(()),
 		}
 	}
@@ -747,6 +789,8 @@ impl Database {
 			Database::Surrealdb => "SurrealDB",
 			#[cfg(feature = "surrealdb2")]
 			Database::Surrealdb2 => "SurrealDB 2.x",
+			#[cfg(feature = "surrealdb3")]
+			Database::Surrealdb3 => "SurrealDB 3.x",
 			#[allow(unreachable_patterns)]
 			_ => "Unknown",
 		}
