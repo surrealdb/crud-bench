@@ -147,6 +147,10 @@ Options:
   -s, --samples <SAMPLES>                      Number of samples to be created, read, updated, and deleted
   -r, --random                                 Generate the keys in a pseudo-randomized order
       --sync                                   Whether to ensure data is synced and durable
+      --measurement-time <SECONDS>             Seconds each timed scan leg runs for when the scan sets no `iterations` [default: 30]
+      --warmup-time <SECONDS>                  Seconds of untimed warm-up before each timed scan leg (0 disables) [default: 5]
+      --min-iterations <N>                     Fewest iterations a timed window may record [default: 10]
+      --max-iterations <N>                     Most iterations a timed window may record [default: 10000000]
       --operation-timeout <OPERATION_TIMEOUT>  Per-operation timeout in seconds [env: CRUD_BENCH_OPERATION_TIMEOUT=] [default: 1800]
       --persisted                              Whether to enable disk persistence for Redis-family databases
       --optimised                              Use optimised database configurations instead of defaults
@@ -253,6 +257,8 @@ Each scan object can make use of the following values:
 - `id` (**required**): Stable identifier for grouping in the CLI, result tables, CSV output, and for **index create/drop** when `with_index` is present and not skipped. Use a simple identifier (e.g. `where_field_integer_eq`); human-readable titles live in `name` / run `name` and may contain characters that are not valid in SurrealDB or Neo4j index names.
 - `name`: A descriptive name for the test (use this **or** `runs`, not both).
 - `runs`: An array of `{ "name", "iterations"?, "projection"?, "vector_query"? }` objects that share the same scan parameters (`condition`, `with_index`, and so on). Each run becomes a separate benchmark with its own display name. Per-run `iterations`, `projection` and `vector_query` override the entry-level value when both are set; if a run omits one, the entry-level value applies (`projection` defaulting to full-record scans like a single-object entry without `projection`). A per-run `iterations` matters when one array mixes leg kinds — a bruteforce KNN leg is a full table scan costing seconds per query at 100k rows, while the graph-index legs beside it answer in under a millisecond, and no single count suits both.
+- `iterations`: A fixed number of timed iterations. When omitted, the scan is measured over a time window instead, so its run time does not grow with the dataset size.
+- `measurement_time` / `warmup_time`: Seconds of the measured window and of the untimed warm-up before it, overriding `--measurement-time` and `--warmup-time`. Ignored when `iterations` is set. A window never interrupts a query already running, and always records at least `--min-iterations` samples, so a very slow query can run past it. Result rows for a windowed scan are labelled with the window (for example `30s`) instead of an iteration count.
 - `projection`: The projection type of the scan:
     - `"ID"`: only the ID is returned.
     - `"FULL"`: the whole record is returned.
