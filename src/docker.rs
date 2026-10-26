@@ -12,6 +12,9 @@ pub(crate) struct DockerParams {
 	pub(crate) image: &'static str,
 	pub(crate) pre_args: String,
 	pub(crate) post_args: String,
+	/// Where the image keeps its data. Mounted from a named volume when a run
+	/// splits loading from querying, so the dataset outlives the container.
+	pub(crate) data_path: Option<&'static str>,
 }
 
 pub(crate) struct Container {
@@ -31,9 +34,23 @@ impl Container {
 	}
 
 	/// Start the Docker container
-	pub(crate) fn start(image: String, pre: &str, post: &str, options: &Benchmark) -> Self {
+	pub(crate) fn start(
+		image: String,
+		pre: &str,
+		post: &str,
+		data_path: Option<&str>,
+		options: &Benchmark,
+	) -> Self {
 		// Output debug information to the logs
 		info!("Starting Docker image '{image}'");
+		// A load run starts from an empty volume; a query run mounts the one a
+		// load run filled.
+		let volume = options.volume.as_deref().zip(data_path);
+		if let Some((volume, _)) = volume
+			&& options.mode == crate::reuse::RunMode::Load
+		{
+			let _ = Self::execute(Arguments::new(["volume", "rm", "--force", volume]));
+		}
 		// Attempt to start Docker 10 times
 		for i in 1..=RETRIES {
 			// Configure the Docker command arguments
@@ -47,6 +64,10 @@ impl Container {
 			// Run in privileged mode if specified
 			if options.privileged {
 				args.add(["--privileged"]);
+			}
+			// Persist the data directory in a named volume
+			if let Some((volume, path)) = volume {
+				args.add(["-v", &format!("{volume}:{path}")]);
 			}
 			// Configure the Docker container options
 			args.add(["--rm"]);

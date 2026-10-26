@@ -61,10 +61,15 @@ pub(crate) enum Database {
 	Surrealdb,
 	/// SurrealDB 2.X server adapter — links against the v2 SDK (renamed
 	/// crate `surrealdb2`) and talks to a 2.x server. Use this when the
-	/// target is a v2 deployment; the default `Surrealdb` variant only
-	/// speaks the v3 RPC protocol.
+	/// target is a v2 deployment.
 	#[cfg(feature = "surrealdb2")]
 	Surrealdb2,
+	/// SurrealDB 3.X server adapter — links against the v3 SDK (renamed
+	/// crate `surrealdb3`) and talks to a 3.x server, which still offers the
+	/// RocksDB storage engine. The default `Surrealdb` variant follows the
+	/// latest release, which does not.
+	#[cfg(feature = "surrealdb3")]
+	Surrealdb3,
 	#[cfg(feature = "surrealkv")]
 	Surrealkv,
 	#[cfg(feature = "surrealmx")]
@@ -102,6 +107,8 @@ impl Database {
 			Database::Surrealdb => crate::adapters::surrealdb::wants_docker(endpoint.as_deref()),
 			#[cfg(feature = "surrealdb2")]
 			Database::Surrealdb2 => crate::adapters::surrealdb2::wants_docker(endpoint.as_deref()),
+			#[cfg(feature = "surrealdb3")]
+			Database::Surrealdb3 => crate::adapters::surrealdb3::wants_docker(endpoint.as_deref()),
 			_ => endpoint.is_none(),
 		}
 	}
@@ -135,13 +142,16 @@ impl Database {
 			Self::Surrealdb => crate::adapters::surrealdb::docker(options),
 			#[cfg(feature = "surrealdb2")]
 			Self::Surrealdb2 => crate::adapters::surrealdb2::docker(options),
+			#[cfg(feature = "surrealdb3")]
+			Self::Surrealdb3 => crate::adapters::surrealdb3::docker(options),
 			#[allow(unreachable_patterns)]
 			_ => return None,
 		};
 		// Check if a custom image has been specified
 		let image = options.image.clone().unwrap_or(params.image.to_string());
 		// Start the specified container with arguments
-		let container = Container::start(image, &params.pre_args, &params.post_args, options);
+		let container =
+			Container::start(image, &params.pre_args, &params.post_args, params.data_path, options);
 		// Return the container reference
 		Some(container)
 	}
@@ -569,6 +579,26 @@ impl Database {
 					)
 					.await
 			}
+			#[cfg(feature = "surrealdb3")]
+			Database::Surrealdb3 => {
+				benchmark
+					.run::<_, SurrealDBDialect, _>(
+						crate::adapters::surrealdb3::SurrealDB3ClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
 			#[cfg(feature = "surrealdb")]
 			Database::Surrealds => {
 				benchmark
@@ -632,6 +662,87 @@ impl Database {
 		}
 	}
 
+	/// Errors when this database cannot keep a dataset between runs under the
+	/// given configuration, so a split run is refused before it starts instead
+	/// of failing after a load that could never be queried.
+	pub(crate) fn supports_reuse(&self, options: &Benchmark) -> anyhow::Result<()> {
+		let endpoint = options.endpoint.as_deref();
+		let unsupported = |why: &str| -> anyhow::Result<()> {
+			anyhow::bail!(
+				"`--mode load` / `--mode query` cannot be used with {}: {why}",
+				self.name()
+			)
+		};
+		match self {
+			Database::Dry => unsupported("it stores nothing"),
+			Database::Map => unsupported("it is an in-process memory store"),
+			#[cfg(feature = "dragonfly")]
+			Database::Dragonfly if !options.persisted => {
+				unsupported("it is memory-only unless `--persisted` is set")
+			}
+			#[cfg(feature = "redis")]
+			Database::Redis if !options.persisted => {
+				unsupported("it is memory-only unless `--persisted` is set")
+			}
+			#[cfg(feature = "keydb")]
+			Database::Keydb if !options.persisted => {
+				unsupported("it is memory-only unless `--persisted` is set")
+			}
+			#[cfg(feature = "surrealmx")]
+			Database::Surrealmx if !options.persisted => {
+				unsupported("it is memory-only unless `--persisted` is set")
+			}
+			#[cfg(feature = "rocksdb")]
+			Database::Rocksdb if endpoint == Some("memory") => {
+				unsupported("the `memory` endpoint is not on disk")
+			}
+			#[cfg(feature = "lmdb")]
+			Database::Lmdb if endpoint == Some("memory") => {
+				unsupported("the `memory` endpoint is not on disk")
+			}
+			#[cfg(feature = "surrealdb")]
+			Database::Surrealdb => {
+				use crate::adapters::surrealdb::{Docker, Endpoint, parse_endpoint};
+				match parse_endpoint(endpoint)? {
+					Endpoint::Docker(Docker::Memory) => {
+						unsupported("`server:memory` is not on disk")
+					}
+					Endpoint::Embedded(e) if e.starts_with("mem") => {
+						unsupported("an in-memory endpoint is not on disk")
+					}
+					_ => Ok(()),
+				}
+			}
+			#[cfg(feature = "surrealdb2")]
+			Database::Surrealdb2 => {
+				use crate::adapters::surrealdb2::{Docker, Endpoint, parse_endpoint};
+				match parse_endpoint(endpoint)? {
+					Endpoint::Docker(Docker::Memory) => {
+						unsupported("`server:memory` is not on disk")
+					}
+					Endpoint::Embedded(e) if e.starts_with("mem") => {
+						unsupported("an in-memory endpoint is not on disk")
+					}
+					_ => Ok(()),
+				}
+			}
+			#[cfg(feature = "surrealdb3")]
+			Database::Surrealdb3 => {
+				use crate::adapters::surrealdb3::{Docker, Endpoint, parse_endpoint};
+				match parse_endpoint(endpoint)? {
+					Endpoint::Docker(Docker::Memory) => {
+						unsupported("`server:memory` is not on disk")
+					}
+					Endpoint::Embedded(e) if e.starts_with("mem") => {
+						unsupported("an in-memory endpoint is not on disk")
+					}
+					_ => Ok(()),
+				}
+			}
+			_ => Ok(()),
+		}
+	}
+
 	pub fn name(&self) -> &'static str {
 		match self {
 			Database::Dry => "Dry run",
@@ -678,6 +789,8 @@ impl Database {
 			Database::Surrealdb => "SurrealDB",
 			#[cfg(feature = "surrealdb2")]
 			Database::Surrealdb2 => "SurrealDB 2.x",
+			#[cfg(feature = "surrealdb3")]
+			Database::Surrealdb3 => "SurrealDB 3.x",
 			#[allow(unreachable_patterns)]
 			_ => "Unknown",
 		}

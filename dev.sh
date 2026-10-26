@@ -593,7 +593,7 @@ fi
 # -----------------------------------------------------------------------------
 # 3) Start SurrealDB
 # -----------------------------------------------------------------------------
-log "[3/6] Starting SurrealDB (rocksdb:$DB_PATH)"
+log "[3/6] Starting SurrealDB (surrealkv:$DB_PATH)"
 if (( WRAP_PROCS )); then
 	log "      Elevated: ${SERVER_PREFIX[*]}"
 	# A prior elevated run leaves the data dir root-owned, so remove it as root.
@@ -604,7 +604,7 @@ fi
 "${SERVER_PREFIX[@]}" "$SURREAL_BIN" start \
 	--bind "127.0.0.1:$SURREAL_PORT" \
 	--allow-all -u root -p root \
-	"rocksdb:$DB_PATH" \
+	"surrealkv:$DB_PATH" \
 	> "$SURREAL_LOG" 2>&1 &
 SURREAL_PID=$!
 log "      PID=$SURREAL_PID  log=$SURREAL_LOG"

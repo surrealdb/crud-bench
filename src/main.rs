@@ -6,6 +6,7 @@ use crate::benchmark::Benchmark;
 use crate::config::load_bench_toml;
 use crate::database::Database;
 use crate::keyprovider::KeyProvider;
+use crate::reuse::{Manifest, RunMode, Shape};
 use crate::terminal::ColorChoice;
 use crate::valueprovider::{Columns, ValueProvider};
 use crate::vectorfilter::{FilterField, VectorFilter};
@@ -31,6 +32,7 @@ mod keyprovider;
 mod memory;
 mod profiling;
 mod result;
+mod reuse;
 #[cfg(feature = "surrealdb")]
 mod storage;
 mod system;
@@ -96,6 +98,40 @@ pub(crate) struct Args {
 	/// Whether to ensure data is synced and durable
 	#[arg(long, default_value = "false")]
 	pub(crate) sync: bool,
+
+	/// Which phases to run, and whether to keep or reuse the dataset.
+	///
+	/// `all` loads, queries and deletes in one run. `load` creates and updates
+	/// the dataset and keeps it; `query` then runs reads and scans against it
+	/// without reloading, as many times as needed. A `query` run refuses a
+	/// dataset loaded with different settings. Deletes and batches run only
+	/// under `all`.
+	#[arg(long, value_enum, default_value_t = RunMode::All)]
+	pub(crate) mode: RunMode,
+
+	/// Directory recording what a `load` run left behind, checked by `query` runs
+	#[arg(long, env = "CRUD_BENCH_DATA_DIR", default_value = ".crud-bench-data")]
+	pub(crate) data_dir: String,
+
+	/// Seconds each timed scan leg runs for, when the scan sets no `iterations`.
+	///
+	/// A leg is measured over a fixed window rather than a fixed count, so its
+	/// run time does not grow with the dataset the way `--samples` full scans do.
+	#[arg(long, default_value_t = 30.0, value_parser = parse_seconds)]
+	pub(crate) measurement_time: f64,
+
+	/// Seconds of untimed warm-up before each timed scan leg's window (0 disables).
+	#[arg(long, default_value_t = 5.0, value_parser = parse_seconds)]
+	pub(crate) warmup_time: f64,
+
+	/// Fewest iterations a timed window may record, even if the window elapses first.
+	/// Keeps a slow leg (an exact KNN sweep) from reporting a single sample.
+	#[arg(long, default_value_t = 10, value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) min_iterations: u32,
+
+	/// Most iterations a timed window may record, even if the window is still open.
+	#[arg(long, default_value_t = 10_000_000, value_parser=clap::value_parser!(u32).range(1..))]
+	pub(crate) max_iterations: u32,
 
 	/// Per-operation timeout in seconds
 	#[arg(long, env = "CRUD_BENCH_OPERATION_TIMEOUT", default_value = "1800", value_parser=clap::value_parser!(u64).range(1..))]
@@ -176,6 +212,16 @@ pub(crate) struct Args {
 	pub(crate) ground_truth_cache: String,
 }
 
+/// Parses a non-negative, finite number of seconds.
+fn parse_seconds(raw: &str) -> Result<f64, String> {
+	let v: f64 = raw.parse().map_err(|e| format!("{e}"))?;
+	if v.is_finite() && v >= 0.0 {
+		Ok(v)
+	} else {
+		Err("must be a non-negative number of seconds".into())
+	}
+}
+
 /// Primary key shape and size for generated record ids.
 #[derive(Debug, ValueEnum, Clone, Copy)]
 pub(crate) enum KeyType {
@@ -215,6 +261,10 @@ pub(crate) struct ScanRun {
 	/// Without this the only way out is splitting one scan into two `[[scans]]`
 	/// blocks with separate ids, which fragments the results for no real reason.
 	iterations: Option<usize>,
+	/// Seconds this run is measured for, overriding the parent [`ScanSpec`]
+	/// `measurement_time`. Ignored when `iterations` is set.
+	#[serde(default)]
+	measurement_time: Option<f64>,
 	/// `ID`, `FULL`, or `COUNT`; overrides the parent [`ScanSpec`] `projection` when set.
 	projection: Option<String>,
 	/// Per-run vector-query override (e.g. each algorithm leg with its own strategy).
@@ -248,8 +298,16 @@ pub(crate) struct ScanSpec {
 	name: Option<String>,
 	/// Multiple named projections sharing the same parameters; omit when using `name` instead.
 	runs: Option<Vec<ScanRun>>,
-	/// Number of timed scan iterations; falls back to CLI `--samples` when unset.
+	/// Fixed number of timed scan iterations. When unset the leg is measured
+	/// over a time window instead (`measurement_time`, else `--measurement-time`).
 	iterations: Option<usize>,
+	/// Seconds the leg is measured for when `iterations` is unset; falls back to
+	/// CLI `--measurement-time`.
+	#[serde(default)]
+	measurement_time: Option<f64>,
+	/// Seconds of untimed warm-up before the window; falls back to CLI `--warmup-time`.
+	#[serde(default)]
+	warmup_time: Option<f64>,
 	/// Per-dialect filter fragments (`WHERE`); omit for unrestricted/table scans.
 	condition: Option<Condition>,
 	/// Per-dialect `ORDER BY` fragments; omit for unordered scans.
@@ -283,6 +341,8 @@ impl ScanSpec {
 			name,
 			runs,
 			iterations,
+			measurement_time,
+			warmup_time,
 			condition,
 			order_by,
 			start,
@@ -320,6 +380,8 @@ impl ScanSpec {
 					multi_run_spec: false,
 					name: n,
 					iterations,
+					measurement_time,
+					warmup_time,
 					condition,
 					order_by,
 					start,
@@ -350,6 +412,8 @@ impl ScanSpec {
 						multi_run_spec,
 						name: run.name,
 						iterations: run_iterations,
+						measurement_time: run.measurement_time.or(measurement_time),
+						warmup_time,
 						condition: condition.clone(),
 						order_by: order_by.clone(),
 						start,
@@ -900,8 +964,16 @@ pub(crate) struct Scan {
 	pub(crate) multi_run_spec: bool,
 	/// Human-readable title for this scan row (from `name` or a `runs[]` entry).
 	name: String,
-	/// Number of timed scan iterations; falls back to CLI `--samples` when unset.
+	/// Fixed number of timed scan iterations. When unset the leg is measured
+	/// over a time window instead (`measurement_time`, else `--measurement-time`).
 	iterations: Option<usize>,
+	/// Seconds the leg is measured for when `iterations` is unset; falls back to
+	/// CLI `--measurement-time`.
+	#[serde(default)]
+	measurement_time: Option<f64>,
+	/// Seconds of untimed warm-up before the window; falls back to CLI `--warmup-time`.
+	#[serde(default)]
+	warmup_time: Option<f64>,
 	/// Filter predicates per dialect; omit for full scans.
 	condition: Option<Condition>,
 	/// Optional `ORDER BY` per datastore (omit for unordered scans).
@@ -1087,14 +1159,6 @@ fn run(args: Args) -> Result<()> {
 	}
 	// Prepare the benchmark
 	let mut benchmark = Benchmark::new(&args);
-	// Check if we should spawn a Docker container
-	let container = if args.database.wants_docker(&args.endpoint) {
-		// Start the Docker container
-		args.database.start_docker(&benchmark)
-	} else {
-		// No Docker container needed
-		None
-	};
 	// Setup the asynchronous runtime
 	let runtime = runtime::Builder::new_multi_thread()
 		.thread_stack_size(2 * 1024 * 1024) // Set stack size to 5MiB
@@ -1173,6 +1237,45 @@ fn run(args: Args) -> Result<()> {
 		// a scan is ever looked at.
 		benchmark.set_vector_filter_fields(collect_vector_filter_fields(&scans, &vp.columns())?);
 	}
+	// A split run is only sound against the dataset it was configured for, so
+	// this is settled before anything is started: a refused query run must not
+	// leave a container behind.
+	let database_key = args
+		.database
+		.to_possible_value()
+		.map(|v| v.get_name().to_string())
+		.unwrap_or_else(|| name.clone());
+	let data_dir = reuse::data_dir(&args.data_dir, &database_key, args.name.as_deref());
+	let manifest = Manifest::new(&Shape {
+		database: &database_key,
+		endpoint: args.endpoint.as_deref(),
+		samples: args.samples,
+		key_type: format!("{:?}", args.key),
+		random: args.random,
+		corpus_seed,
+		template_digest: metadata.template_digest.as_deref().unwrap_or_default(),
+		persisted: args.persisted,
+		optimised: args.optimised,
+		sync: args.sync,
+		vector_filter_fields: &benchmark.vector_filter_fields,
+	});
+	if args.mode != RunMode::All {
+		args.database.supports_reuse(&benchmark)?;
+	}
+	match args.mode {
+		RunMode::Query => reuse::verify(&data_dir, &manifest)?,
+		// A load that fails part-way must not leave a dataset a query run accepts.
+		RunMode::Load => reuse::clear_manifest(&data_dir)?,
+		RunMode::All => {}
+	}
+	// Check if we should spawn a Docker container
+	let container = if args.database.wants_docker(&args.endpoint) {
+		// Start the Docker container
+		args.database.start_docker(&benchmark)
+	} else {
+		// No Docker container needed
+		None
+	};
 	// Run the benchmark
 	let res = runtime.block_on(async {
 		args.database
@@ -1197,6 +1300,10 @@ fn run(args: Args) -> Result<()> {
 	match res {
 		// Output the results
 		Ok(res) => {
+			if args.mode == RunMode::Load {
+				reuse::write_manifest(&data_dir, &manifest)?;
+				println!("Dataset loaded; run again with `--mode query` to measure it");
+			}
 			println!("--------------------------------------------------");
 			match container.as_ref().map(Container::image) {
 				Some(v) => {
@@ -1306,6 +1413,7 @@ fn run(args: Args) -> Result<()> {
 #[cfg(test)]
 /// Unit and integration-style tests for scan expansion and CLI wiring.
 mod test {
+	use crate::reuse::RunMode;
 	use crate::terminal::ColorChoice;
 	use crate::valueprovider::ValueProvider;
 	use crate::vectorfilter::FilterFieldKind;
@@ -1562,10 +1670,27 @@ mod test {
 	}
 
 	fn test(database: Database, key: KeyType, random: bool) -> Result<()> {
+		test_split(database, key, random, 10000, RunMode::All, ".crud-bench-data")
+	}
+
+	fn test_split(
+		database: Database,
+		key: KeyType,
+		random: bool,
+		samples: u32,
+		mode: RunMode,
+		data_dir: &str,
+	) -> Result<()> {
 		run(Args {
 			corpus_seed: None,
 			ground_truth_cache: ".crud-bench-gt".to_string(),
 			vector_warmup_seconds: 30,
+			mode,
+			data_dir: data_dir.to_string(),
+			measurement_time: 0.2,
+			warmup_time: 0.1,
+			min_iterations: 2,
+			max_iterations: 1000,
 			image: None,
 			name: None,
 			database,
@@ -1575,7 +1700,7 @@ mod test {
 			workers: 5,
 			clients: 2,
 			threads: 2,
-			samples: 10000,
+			samples,
 			sync: false,
 			operation_timeout: 300,
 			persisted: false,
@@ -1593,6 +1718,44 @@ mod test {
 			skip_indexes: false,
 			emit_phase_markers: false,
 		})
+	}
+
+	/// A load run leaves the dataset behind and a separate query run reads and
+	/// scans it without recreating anything; the scans' `expect` cardinalities
+	/// only hold if every loaded row survived.
+	#[test]
+	#[serial]
+	fn a_query_run_reads_what_a_load_run_left() -> Result<()> {
+		let dir = std::env::temp_dir().join(format!("crud-bench-split-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		let dir = dir.to_str().unwrap().to_string();
+		// A query run with nothing loaded is refused.
+		assert!(
+			test_split(Database::Fjall, KeyType::Integer, false, 2000, RunMode::Query, &dir)
+				.is_err()
+		);
+		test_split(Database::Fjall, KeyType::Integer, false, 2000, RunMode::Load, &dir)?;
+		// The same dataset can be queried repeatedly.
+		test_split(Database::Fjall, KeyType::Integer, false, 2000, RunMode::Query, &dir)?;
+		test_split(Database::Fjall, KeyType::Integer, false, 2000, RunMode::Query, &dir)?;
+		// A run configured for a different dataset is refused.
+		let mismatch =
+			test_split(Database::Fjall, KeyType::Integer, false, 3000, RunMode::Query, &dir);
+		assert!(format!("{:#}", mismatch.unwrap_err()).contains("samples"));
+		// Only an `all` run cleans up after itself.
+		test_split(Database::Fjall, KeyType::Integer, false, 2000, RunMode::All, &dir)?;
+		assert!(!std::path::Path::new("fjall").exists());
+		let _ = std::fs::remove_dir_all(&dir);
+		let _ = std::fs::remove_dir_all("fjall");
+		Ok(())
+	}
+
+	/// In-memory stores cannot hold a dataset between processes.
+	#[test]
+	fn memory_stores_refuse_a_split_run() {
+		let err = test_split(Database::Map, KeyType::Integer, false, 10, RunMode::Load, ".x")
+			.unwrap_err();
+		assert!(format!("{err:#}").contains("in-process memory store"));
 	}
 
 	#[test]

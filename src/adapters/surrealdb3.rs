@@ -1,0 +1,1563 @@
+#![cfg(feature = "surrealdb3")]
+
+use crate::benchmark::NOT_SUPPORTED_ERROR;
+use crate::dialect::SurrealDBDialect;
+use crate::docker::DockerParams;
+use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext, index_poll_interval};
+use crate::memory::Config as MemoryConfig;
+use crate::value::BenchValue;
+use crate::valueprovider::Columns;
+use crate::vectorfilter::{FilterColumnType, ListSyntax};
+use crate::{
+	Benchmark, Index, KeyType, Projection, Scan, VectorDistance, VectorIndexStrategy,
+	VectorQuerySpec,
+};
+use anyhow::{Result, bail};
+use log::{error, warn};
+use std::collections::HashMap;
+use std::env;
+use std::hint::black_box;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
+use surrealdb::Surreal;
+use surrealdb::engine::any::{Any, connect};
+use surrealdb::opt::auth::Root;
+use surrealdb::opt::{Config, Resource, WebsocketConfig};
+use surrealdb::types::{
+	Array, Bytes as SurrealBytes, Datetime, Geometry, Number, Object, RecordId, RecordIdKey,
+	SurrealValue, ToSql, Uuid as SurrealUuid, Value,
+};
+use tokio::time::{sleep, timeout};
+
+/// Convert a [`BenchValue`] to a native [`surrealdb::types::Value`]. UUID,
+/// datetime, decimal, and bytes go through directly without a JSON detour.
+fn bench_to_surreal_value(v: BenchValue) -> Value {
+	match v {
+		BenchValue::Null => Value::Null,
+		BenchValue::Bool(b) => Value::Bool(b),
+		BenchValue::Int(i) => Value::Number(Number::Int(i)),
+		BenchValue::UInt(u) => match i64::try_from(u) {
+			Ok(i) => Value::Number(Number::Int(i)),
+			Err(_) => Value::Number(Number::Float(u as f64)),
+		},
+		BenchValue::Float(f) => Value::Number(Number::Float(f)),
+		BenchValue::Decimal(d) => Value::Number(Number::Decimal(d)),
+		BenchValue::String(s) => Value::String(s),
+		BenchValue::Bytes(b) => Value::Bytes(SurrealBytes::from(b)),
+		BenchValue::Uuid(u) => Value::Uuid(SurrealUuid::from(u)),
+		BenchValue::DateTime(dt) => Value::Datetime(Datetime::from(dt)),
+		BenchValue::Array(a) => {
+			Value::Array(Array::from(a.into_iter().map(bench_to_surreal_value).collect::<Vec<_>>()))
+		}
+		BenchValue::Object(o) => {
+			let mut obj = Object::new();
+			for (k, v) in o {
+				obj.insert(k, bench_to_surreal_value(v));
+			}
+			Value::Object(obj)
+		}
+		BenchValue::FloatVector(v) => Value::Array(Array::from(
+			v.into_iter().map(|f| Value::Number(Number::Float(f as f64))).collect::<Vec<_>>(),
+		)),
+		BenchValue::Point(lon, lat) => Value::Geometry(Geometry::Point((lon, lat).into())),
+	}
+}
+
+/// Convert a native [`surrealdb::types::Value`] back to a [`BenchValue`] for
+/// round-trip fidelity at the read path.
+fn surreal_to_bench_value(v: Value) -> BenchValue {
+	match v {
+		Value::None | Value::Null => BenchValue::Null,
+		Value::Bool(b) => BenchValue::Bool(b),
+		Value::Number(Number::Int(i)) => BenchValue::Int(i),
+		Value::Number(Number::Float(f)) => BenchValue::Float(f),
+		Value::Number(Number::Decimal(d)) => BenchValue::Decimal(d),
+		Value::String(s) => BenchValue::String(s),
+		Value::Bytes(b) => BenchValue::Bytes(b.to_vec()),
+		Value::Uuid(u) => BenchValue::Uuid(u.into()),
+		Value::Datetime(dt) => BenchValue::DateTime(*dt),
+		Value::Geometry(Geometry::Point(p)) => BenchValue::Point(p.0.x, p.0.y),
+		Value::Array(a) => {
+			BenchValue::Array(Vec::from(a).into_iter().map(surreal_to_bench_value).collect())
+		}
+		Value::Object(o) => {
+			let mut out: Vec<(String, BenchValue)> = Vec::new();
+			for (k, v) in o {
+				out.push((k, surreal_to_bench_value(v)));
+			}
+			BenchValue::Object(out)
+		}
+		// Fall back to canonical SQL-style printing for SurrealDB-specific
+		// types that do not have a direct BenchValue variant (Duration,
+		// Geometry, RecordId, etc.).
+		other => BenchValue::String(other.to_sql()),
+	}
+}
+
+const DEFAULT: &str = "ws://127.0.0.1:8000";
+const TABLE: &str = "record";
+
+/// Map a [`VectorDistance`] to the SurrealQL `DIST <kw>` clause used in
+/// `DEFINE INDEX ... HNSW/DISKANN`.
+fn surreal_distance_keyword(d: VectorDistance) -> &'static str {
+	match d {
+		VectorDistance::Cosine => "COSINE",
+		VectorDistance::Euclidean => "EUCLIDEAN",
+		VectorDistance::InnerProduct => "INNER_PRODUCT",
+		VectorDistance::Manhattan => "MANHATTAN",
+	}
+}
+
+/// Map a [`VectorDistance`] to the SurrealQL function path used by bruteforce scans.
+///
+/// SurrealDB partitions vector ops between `vector::distance::*` (lower = closer)
+/// and `vector::similarity::*` (higher = closer). `cosine` lives under similarity,
+/// so the caller must reverse the ORDER BY direction — see [`surreal_distance_order`].
+///
+/// `InnerProduct` maps to `vector::dot` (raw `Σ aᵢ·bᵢ`) so it matches what
+/// pgvector's `<#>` and Redis's `IP` measure. `vector::similarity::pearson`
+/// would mean-center the inputs first and produce a bounded [-1, 1]
+/// correlation — that's a different metric.
+fn surreal_distance_function(d: VectorDistance) -> &'static str {
+	match d {
+		VectorDistance::Cosine => "vector::similarity::cosine",
+		VectorDistance::Euclidean => "vector::distance::euclidean",
+		VectorDistance::InnerProduct => "vector::dot",
+		VectorDistance::Manhattan => "vector::distance::manhattan",
+	}
+}
+
+/// Build the KNN statement for a resolved vector query.
+///
+/// Pure, so the statement can be asserted without a server. That matters most
+/// for the filtered forms: a mis-rendered predicate does not fail, it answers a
+/// different question, and the recall gap that follows looks exactly like an
+/// index quality difference.
+///
+/// A filtered leg restricts the result to rows the predicate admits. On the
+/// bruteforce path that is a plain `WHERE`, evaluated before the ordering, so
+/// the answer stays exact. On the index paths the KNN operator stays leading
+/// and the predicate is `AND`-ed after it — how the engine then combines the
+/// two, narrowing the traversal or filtering the k rows it already chose, is
+/// exactly what a filtered benchmark is trying to observe, so it is left to the
+/// engine and read off the recall rather than forced here.
+fn surreal_knn_sql(vq: &VectorQuerySpec) -> String {
+	let field = &vq.field;
+	let k = vq.top_k;
+	let pred = vq.filter().map(|f| f.to_sql::<SurrealDBDialect>(ListSyntax::Brackets));
+	match vq.index_strategy {
+		VectorIndexStrategy::Bruteforce => {
+			let func_path = surreal_distance_function(vq.distance);
+			let dir = surreal_distance_order(vq.distance);
+			let where_clause = pred.as_ref().map(|p| format!("WHERE {p} ")).unwrap_or_default();
+			// Aliased distance so the parser's "ORDER BY idiom must appear
+			// in SELECT" rule is satisfied.
+			format!(
+				"SELECT id, {func_path}({field}, $q) AS _d FROM record {where_clause}ORDER BY _d {dir} LIMIT {k}"
+			)
+		}
+		VectorIndexStrategy::Hnsw {
+			..
+		}
+		| VectorIndexStrategy::DiskAnn {
+			..
+		} => {
+			let search = vq.index_strategy.search_value();
+			let and_pred = pred.as_ref().map(|p| format!(" AND {p}")).unwrap_or_default();
+			format!("SELECT id FROM record WHERE {field} <|{k},{search}|> $q{and_pred}")
+		}
+	}
+}
+
+/// Declare a filter column's type, so SurrealDB's KNN pre-filter will use an
+/// index on it.
+///
+/// The pre-filter turns covered WHERE conjuncts into an allow-list of matching
+/// records before the search — scored exactly when few match — but only trusts
+/// a b-tree index on a column whose declared type excludes arrays. On a
+/// schemaless table an array value fans out to one index entry per element, so
+/// the index could admit rows the predicate rejects; without this the planner
+/// declines and tests the predicate against each graph candidate's full record.
+fn surreal_filter_field_sql(column: &str, ty: FilterColumnType) -> String {
+	let ty = match ty {
+		FilterColumnType::Int => "int",
+		FilterColumnType::Float => "float",
+		FilterColumnType::String => "string",
+		FilterColumnType::Bool => "bool",
+		FilterColumnType::Point => "geometry<point>",
+	};
+	format!("DEFINE FIELD {column} ON TABLE record TYPE {ty}")
+}
+
+/// Pull the record key out of one `SELECT id` KNN row.
+fn surreal_knn_key(row: &Value) -> Result<KnnKey> {
+	let Value::RecordId(rid) = row.get("id") else {
+		bail!("knn scan: row is missing a record id: {}", row.to_sql());
+	};
+	Ok(match &rid.key {
+		RecordIdKey::Number(n) => KnnKey::Integer(*n as u32),
+		RecordIdKey::String(t) => KnnKey::Text(t.clone()),
+		RecordIdKey::Uuid(u) => KnnKey::Text(u.to_string()),
+		other => bail!("knn scan: unsupported record key: {other:?}"),
+	})
+}
+
+/// ORDER BY direction so the nearest neighbours sort to the top of the result set.
+fn surreal_distance_order(d: VectorDistance) -> &'static str {
+	match d {
+		// Similarity scores: higher is closer.
+		VectorDistance::Cosine | VectorDistance::InnerProduct => "DESC",
+		// Distance metrics: lower is closer.
+		VectorDistance::Euclidean | VectorDistance::Manhattan => "ASC",
+	}
+}
+
+/// Wraps a SurrealDB [`types::Value`](surrealdb::types::Value);
+/// [`BenchValue`] is produced only via [`From`]/[`Into`].
+pub(crate) struct Row(pub Value);
+
+impl From<Row> for BenchValue {
+	fn from(row: Row) -> BenchValue {
+		// `db.select(Resource::from(("record", key)))` compiles to
+		// `SELECT * FROM <id>` which always returns a `Value::Array` of
+		// matching rows — even for a single-record select. Unwrap the
+		// singleton so downstream consumers see the `BenchValue::Object`
+		// they expect from a single-row read (otherwise field lookups
+		// like `embedding` go through `BenchValue::Array.get_field(...)`
+		// and return `None`, causing the vector holdout to skip).
+		let inner = match row.0 {
+			Value::Array(a) if a.len() == 1 => {
+				Vec::from(a).into_iter().next().expect("len == 1 guard")
+			}
+			other => other,
+		};
+		surreal_to_bench_value(inner)
+	}
+}
+
+/// Wrap a SurrealDB result error so the failing SurrealQL surfaces in two
+/// places: a `log::error!` line emitted immediately (visible in the bench's
+/// stderr stream while it is still running), and the `anyhow::Error` chain
+/// returned to the caller (which `main` prints with the `{:#}` formatter so
+/// the chain — including the `query: ...` context — is shown end-to-end).
+///
+/// SurrealDB query errors do not embed the SQL that triggered them, which
+/// makes diagnosing failures during long-running scenarios — e.g. a
+/// distributed-scan timeout buried four phases into the bench — very
+/// awkward. Use at every call site that builds or sends a SurrealQL string:
+///
+/// ```ignore
+/// let sql = format!("SELECT ... {c} {l}");
+/// let res = self.db.query(&sql).await
+///     .map_err(log_sql_err(&sql))?
+///     .take(0)
+///     .map_err(log_sql_err(&sql))?;
+/// ```
+///
+/// The closure owns the SQL by value so the returned `FnOnce` is `'static`
+/// and composes cleanly with `?` across multiple result-returning steps.
+/// Returns true when a SurrealDB driver error originates from the parser
+/// rejecting unrecognised syntax (e.g. DiskANN DDL on a SurrealDB build that
+/// doesn't ship it yet, or any future version drift). Used by
+/// `build_vector_index` to convert those failures into `NOT_SUPPORTED_ERROR`
+/// so the framework skips the run cleanly instead of aborting.
+///
+/// Both the SDK's `Error::Db` path (`Error("Parse error: …")`) and the
+/// `Response::check` path surface the SurrealDB core error string verbatim,
+/// so a substring match is sufficient and version-agnostic.
+fn is_surreal_parse_error<E: std::fmt::Display>(e: &E) -> bool {
+	e.to_string().contains("Parse error")
+}
+
+/// Returns true when a SurrealDB error is the upstream DiskANN runtime
+/// reporting its own search failure. The DiskANN index ANN backend is new
+/// in nightly and surfaces intermittent runtime errors (typically on the
+/// first query against a freshly built graph). Caught at the scan boundary
+/// so the run skips cleanly until the upstream engine stabilises — the
+/// check disappears naturally once the runtime no longer emits this
+/// message.
+fn is_surreal_diskann_runtime_error<E: std::fmt::Display>(e: &E) -> bool {
+	e.to_string().contains("DiskANN KNN search failed")
+}
+
+fn log_sql_err<E>(sql: &str) -> impl FnOnce(E) -> anyhow::Error
+where
+	E: std::fmt::Display + Into<anyhow::Error>,
+{
+	let sql = sql.to_owned();
+	move |e| {
+		error!("SurrealDB query failed: {sql}\n  cause: {e}");
+		// Use the explicit `Into` bound (rather than `anyhow::Error::from(e)`)
+		// so the bound documented above resolves: anyhow's blanket `From<E>`
+		// requires `E: std::error::Error + Send + Sync + 'static`, but
+		// `Into<anyhow::Error>` is what we actually want callers to satisfy.
+		let err: anyhow::Error = e.into();
+		err.context(format!("query: {sql}"))
+	}
+}
+
+/// Substrings that identify a SurrealDB error as a retryable transaction
+/// conflict. The first wraps a per-statement KV conflict ("This transaction
+/// can be retried"); the second is the executor wrapper emitted when a
+/// transaction-scoped statement aborts the surrounding query.
+const RETRYABLE_CONFLICT_MARKERS: &[&str] =
+	&["This transaction can be retried", "The query was not executed due to a failed transaction"];
+
+fn is_retryable_conflict<E: std::fmt::Display>(e: &E) -> bool {
+	let msg = e.to_string();
+	RETRYABLE_CONFLICT_MARKERS.iter().any(|p| msg.contains(p))
+}
+
+/// Run a single DML statement, retrying with bounded exponential backoff on
+/// SurrealDB optimistic-concurrency conflicts. RocksDB surfaces concurrent
+/// writes on the same keys as a "Resource busy" status that the kvs layer
+/// maps to a `TransactionConflict` error — explicitly marked retryable by
+/// SurrealDB but not auto-retried at the commit path. Crud-bench's
+/// scan-with-writes phases generate this contention by design; without
+/// application-level retry, a single conflict aborts the whole benchmark
+/// run. The retry budget is small so genuine failures still surface.
+async fn run_dml_with_retry<F, Fut>(sql: &str, mut op: F) -> Result<()>
+where
+	F: FnMut() -> Fut,
+	Fut: std::future::Future<Output = std::result::Result<(), surrealdb::Error>>,
+{
+	const MAX_RETRIES: u32 = 16;
+	const MAX_DELAY: Duration = Duration::from_millis(100);
+	let mut delay = Duration::from_millis(1);
+	let mut attempts = 0u32;
+	loop {
+		match op().await {
+			Ok(()) => return Ok(()),
+			Err(e) if is_retryable_conflict(&e) && attempts < MAX_RETRIES => {
+				attempts += 1;
+				warn!("Retrying {sql} due to transaction conflict (attempt {attempts}): {e}");
+				sleep(delay).await;
+				delay = (delay * 2).min(MAX_DELAY);
+			}
+			Err(e) => return Err(log_sql_err(sql)(e)),
+		}
+	}
+}
+
+/// Storage backend for Docker (`server:<backend>`).
+pub(crate) enum Docker {
+	Memory,
+	Rocksdb,
+	Surrealkv,
+}
+
+/// Connection mode derived from `--endpoint`.
+pub(crate) enum Endpoint {
+	/// `server:rocksdb` | `server:memory` | `server:surrealkv` (default when omitted: server:rocksdb)
+	Docker(Docker),
+	/// `rocksdb:…`, `surrealkv:…`, `memory`, `mem://`, `mem:…`
+	Embedded(String),
+	/// Remote SurrealDB (`ws` / `http` URL)
+	Remote(String),
+}
+
+/// `true` when crud-bench should start the SurrealDB Docker container.
+pub(crate) fn wants_docker(endpoint: Option<&str>) -> bool {
+	matches!(parse_endpoint(endpoint), Ok(Endpoint::Docker(_)))
+}
+
+pub(crate) fn parse_endpoint(opt: Option<&str>) -> Result<Endpoint> {
+	// If no endpoint is specified, use the default
+	let Some(raw) = opt else {
+		return Ok(Endpoint::Docker(Docker::Rocksdb));
+	};
+	// Trim whitespace from the endpoint
+	let s = raw.trim();
+	// If the endpoint is empty, use the default
+	if s.is_empty() {
+		return Ok(Endpoint::Docker(Docker::Rocksdb));
+	}
+	// If the endpoint is a remote endpoint, return it
+	if s.starts_with("ws://")
+		|| s.starts_with("wss://")
+		|| s.starts_with("http://")
+		|| s.starts_with("https://")
+	{
+		return Ok(Endpoint::Remote(s.to_string()));
+	}
+	// If the endpoint is a server backend, return it
+	if let Some(rest) = s.strip_prefix("server:") {
+		return match rest {
+			"rocksdb" => Ok(Endpoint::Docker(Docker::Rocksdb)),
+			"memory" => Ok(Endpoint::Docker(Docker::Memory)),
+			"surrealkv" => Ok(Endpoint::Docker(Docker::Surrealkv)),
+			_ => bail!(
+				"Invalid server backend {rest:?}. Expected server:rocksdb, server:memory, or server:surrealkv.",
+			),
+		};
+	}
+	// If the endpoint is a memory endpoint, return it
+	if s == "memory" {
+		return Ok(Endpoint::Embedded("mem://".to_string()));
+	}
+	// If the endpoint is a memory endpoint, return it
+	if s.starts_with("mem:") {
+		return Ok(Endpoint::Embedded(s.to_string()));
+	}
+	// If the endpoint is a rocksdb or surrealkv endpoint, return it
+	if s.starts_with("rocksdb:") || s.starts_with("surrealkv:") {
+		return Ok(Endpoint::Embedded(s.to_string()));
+	}
+	bail!(
+		"Invalid SurrealDB endpoint {:?}. Expected:\n\
+		 - server:rocksdb | server:memory | server:surrealkv (Docker)\n\
+		 - rocksdb:<path>[?args] | surrealkv:<path>[?args] | memory | mem:// | mem:<path>[?args] (embedded)\n\
+		 - ws://... | wss://... | http://... | https://... (remote)",
+		s
+	)
+}
+
+/// Calculate SurrealDB RocksDB specific memory allocation
+fn calculate_surrealdb_memory() -> u64 {
+	// Load the system memory
+	let memory = MemoryConfig::new();
+	// Use ~80% of recommended cache allocation
+	(memory.cache_gb * 4 / 6).max(1)
+}
+
+/// Retrieves the SurrealDB username from the environment variable or returns the default.
+///
+/// Reads the `SURREALDB_USER` environment variable. If not set, defaults to `"root"`.
+/// This username is used for both Docker container startup and client authentication.
+pub(super) fn surrealdb_username() -> String {
+	env::var("SURREALDB_USER").unwrap_or_else(|_| String::from("root"))
+}
+
+/// Retrieves the SurrealDB password from the environment variable or returns the default.
+///
+/// Reads the `SURREALDB_PASS` environment variable. If not set, defaults to `"root"`.
+/// This password is used for both Docker container startup and client authentication.
+pub(super) fn surrealdb_password() -> String {
+	env::var("SURREALDB_PASS").unwrap_or_else(|_| String::from("root"))
+}
+
+pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// Parse the endpoint or use the default
+	let backend =
+		parse_endpoint(options.endpoint.as_deref()).unwrap_or(Endpoint::Docker(Docker::Rocksdb));
+	// Calculate memory allocation
+	let cache_gb = calculate_surrealdb_memory();
+	// Get credentials from environment variables or use defaults
+	let username = surrealdb_username();
+	let password = surrealdb_password();
+	// Configure the sync parameter
+	let sync = if options.sync {
+		"every"
+	} else {
+		"never"
+	};
+	// Return Docker parameters
+	match backend {
+		Endpoint::Embedded(_) | Endpoint::Remote(_) => {
+			unreachable!("docker() must only be called when wants_docker is true")
+		}
+		Endpoint::Docker(Docker::Memory) => DockerParams {
+			image: "surrealdb/surrealdb:v3",
+			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB --user root".to_string(),
+			post_args: match options.persisted {
+				true => {
+					format!(
+						"start --user {username} --pass {password} mem://?crud-bench.db?aol=sync&sync={sync}"
+					)
+				}
+				false => {
+					format!("start --user {username} --pass {password} mem://")
+				}
+			},
+			data_path: None,
+		},
+		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
+			image: "surrealdb/surrealdb:v3",
+			pre_args: match options.optimised {
+				true => format!(
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
+				),
+				false => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB --user root".to_string(),
+			},
+			post_args: format!(
+				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db?sync={sync}",
+			),
+			data_path: Some("/data"),
+		},
+		Endpoint::Docker(Docker::Surrealkv) => DockerParams {
+			image: "surrealdb/surrealdb:v3",
+			pre_args: match options.optimised {
+				true => format!(
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
+				),
+				false => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB --user root".to_string(),
+			},
+			post_args: format!(
+				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db?sync={sync}",
+			),
+			data_path: Some("/data"),
+		},
+	}
+}
+
+pub(crate) struct SurrealDB3ClientProvider {
+	client: Option<Surreal<Any>>,
+	endpoint: String,
+	root: Root,
+}
+
+pub(super) async fn initialise_db(endpoint: &str, root: Root) -> Result<Surreal<Any>> {
+	// Set the root user and disable the client-side 64 MiB WebSocket frame limit
+	// so wide full-row scans (e.g. 20k+ rows carrying embedding vectors) do not
+	// reset the connection.
+	let config = Config::new()
+		.user(root.clone())
+		.websocket(WebsocketConfig::new().max_message_size(None))?;
+	// Connect to the database
+	let db = connect((endpoint, config)).await?;
+	// Signin as a namespace, database, or root user
+	db.signin(root).await?;
+	// Select a specific namespace / database
+	db.use_ns("test").use_db("test").await?;
+	// Return the client
+	Ok(db)
+}
+
+impl BenchmarkEngine<SurrealDB3Client> for SurrealDB3ClientProvider {
+	/// Initiates a new datastore benchmarking engine
+	async fn setup(_: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
+		// Parse the benchmark engine endpoint
+		let mode = parse_endpoint(options.endpoint.as_deref())?;
+		// Define root user details from environment variables or use defaults
+		let username = surrealdb_username();
+		let password = surrealdb_password();
+		let root = Root {
+			username,
+			password,
+		};
+		// Create the benchmark engine client
+		let (endpoint, client) = match mode {
+			Endpoint::Docker(_) => (DEFAULT.to_string(), None),
+			Endpoint::Remote(url) => (url, None),
+			Endpoint::Embedded(url) => {
+				// Configure the sync parameter
+				let sync = if options.sync {
+					"every"
+				} else {
+					"never"
+				};
+				// Configure the full endpoint URL
+				let full_url = if url.contains('?') {
+					format!("{url}&sync={sync}")
+				} else {
+					format!("{url}?sync={sync}")
+				};
+				let db = initialise_db(&full_url, root.clone()).await?;
+				(full_url, Some(db))
+			}
+		};
+		// Return the client provider
+		Ok(Self {
+			endpoint,
+			root,
+			client,
+		})
+	}
+	/// Creates a new client for this benchmarking engine
+	async fn create_client(&self) -> Result<SurrealDB3Client> {
+		let client = match &self.client {
+			Some(client) => client.clone(),
+			None => initialise_db(&self.endpoint, self.root.clone()).await?,
+		};
+		Ok(SurrealDB3Client::new(client))
+	}
+}
+
+pub(crate) struct SurrealDB3Client {
+	db: Surreal<Any>,
+}
+
+/// Maps spatial index names to the geometry field declared via
+/// `DEFINE FIELD OVERWRITE <field> ON TABLE record TYPE geometry<point>` during
+/// `build_index`, so `drop_index` removes only that field and restores the
+/// table to schemaless mode between scan phases.
+static SPATIAL_INDEX_FIELDS: LazyLock<Mutex<HashMap<String, String>>> =
+	LazyLock::new(|| Mutex::new(HashMap::new()));
+
+impl SurrealDB3Client {
+	pub(super) const fn new(db: Surreal<Any>) -> Self {
+		Self {
+			db,
+		}
+	}
+}
+
+#[derive(Debug, SurrealValue)]
+#[surreal(crate = "surrealdb::types")]
+struct Bindings<T: SurrealValue> {
+	content: Value,
+	id: T,
+}
+
+impl BenchmarkClient for SurrealDB3Client {
+	// The return type when reading a row
+	type ReadRow = Row;
+
+	async fn startup(&self) -> Result<()> {
+		// Ensure the table exists. This wouldn't
+		// normally be an issue, as SurrealDB is
+		// schemaless. However, because we are testing
+		// benchmarking of concurrent, optimistic
+		// transactions, each initial concurrent
+		// insert/create into the table attempts
+		// to set up the NS+DB+TB, and this causes
+		// 'resource busy' key conflict failures.
+		let sql = "
+            REMOVE TABLE IF EXISTS record;
+			DEFINE TABLE record;
+		";
+		self.db.query(sql).await.map_err(log_sql_err(sql))?.check().map_err(log_sql_err(sql))?;
+		Ok(())
+	}
+
+	async fn compact(&self) -> Result<()> {
+		// Issue a system compaction request
+		let sql = "ALTER SYSTEM COMPACT";
+		// Compact all databases and namespaces in SurrealDB
+		let response = self.db.query(sql).await.map_err(log_sql_err(sql))?;
+		// Compaction only works on RocksDB storage engine
+		match response.check() {
+			Ok(_) => Ok(()),
+			Err(e) => {
+				if e.to_string().contains("does not support compaction") {
+					Ok(())
+				} else {
+					Err(log_sql_err(sql)(e))
+				}
+			}
+		}
+	}
+
+	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
+		self.create(key as i64, val).await
+	}
+
+	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
+		self.create(key, val).await
+	}
+
+	async fn read_u32(&self, key: u32) -> Result<Row> {
+		self.read(key as i64).await
+	}
+
+	async fn read_string(&self, key: String) -> Result<Row> {
+		self.read(key).await
+	}
+
+	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
+		self.update(key as i64, val).await
+	}
+
+	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
+		self.update(key, val).await
+	}
+
+	async fn delete_u32(&self, key: u32) -> Result<()> {
+		self.delete(key as i64).await
+	}
+
+	async fn delete_string(&self, key: String) -> Result<()> {
+		self.delete(key).await
+	}
+
+	async fn build_index(&self, spec: &Index, name: &str) -> Result<()> {
+		// Get the unique flag
+		let unique = if spec.unique.unwrap_or(false) {
+			"UNIQUE"
+		} else {
+			""
+		}
+		.to_string();
+		// Get the fields
+		let fields = spec.fields.join(", ");
+		// Check if an index type is specified
+		let sql = match &spec.index_type {
+			Some(kind) if kind == "fulltext" => {
+				// Define the analyzer
+				let sql = format!(
+					"DEFINE ANALYZER IF NOT EXISTS {name} TOKENIZERS blank,class FILTERS lowercase,ascii;"
+				);
+				self.db
+					.query(&sql)
+					.await
+					.map_err(log_sql_err(&sql))?
+					.check()
+					.map_err(log_sql_err(&sql))?;
+				// Define the index concurrently (so we don't maintain an open transaction during the indexing
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} FULLTEXT ANALYZER {name} BM25 CONCURRENTLY"
+				)
+			}
+			Some(kind) if kind == "count" => {
+				// COUNT indexes apply to the whole table and accept no FIELDS / UNIQUE.
+				format!("DEFINE INDEX {name} ON TABLE record COUNT CONCURRENTLY")
+			}
+			Some(kind) if kind == "spatial" => {
+				// Declare the geometry field's schema type (`geometry<point>`) before
+				// defining the spatial index so SurrealDB's planner and index builder
+				// activate the point-only Hilbert key fast path (no secondary `/hg`
+				// geometry payload storage, direct coordinate decoding from the 64-bit
+				// Hilbert key for `geo::distance`).
+				if let Some(geom_field) = spec.fields.last() {
+					let field_sql = format!(
+						"DEFINE FIELD OVERWRITE {geom_field} ON TABLE record TYPE geometry<point>;"
+					);
+					self.db
+						.query(&field_sql)
+						.await
+						.map_err(log_sql_err(&field_sql))?
+						.check()
+						.map_err(log_sql_err(&field_sql))?;
+					SPATIAL_INDEX_FIELDS
+						.lock()
+						.unwrap()
+						.insert(name.to_string(), geom_field.clone());
+				}
+				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} SPATIAL CONCURRENTLY")
+			}
+			_ => {
+				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique} CONCURRENTLY")
+			}
+		};
+		// Create the index. Treat parse errors on newer index types (`count`,
+		// `spatial`) as `NOT_SUPPORTED_ERROR` so older SurrealDB builds skip
+		// the indexed leg cleanly.
+		let cleanup_spatial_field = |name: &str| SPATIAL_INDEX_FIELDS.lock().unwrap().remove(name);
+		let resp = match self.db.query(&sql).await {
+			Ok(r) => r,
+			Err(e)
+				if matches!(spec.index_type.as_deref(), Some("count" | "spatial"))
+					&& is_surreal_parse_error(&e) =>
+			{
+				if let Some(geom_field) = cleanup_spatial_field(name) {
+					let _ = self
+						.db
+						.query(format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record"))
+						.await;
+				}
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			Err(e) => {
+				if let Some(geom_field) = cleanup_spatial_field(name) {
+					let _ = self
+						.db
+						.query(format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record"))
+						.await;
+				}
+				return Err(log_sql_err(&sql)(e));
+			}
+		};
+		if let Err(e) = resp.check() {
+			if let Some(geom_field) = cleanup_spatial_field(name) {
+				let _ = self
+					.db
+					.query(format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record"))
+					.await;
+			}
+			if matches!(spec.index_type.as_deref(), Some("count" | "spatial"))
+				&& is_surreal_parse_error(&e)
+			{
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+			return Err(log_sql_err(&sql)(e));
+		}
+		// Wait until the index is ready. This poll is inside the timed build, so
+		// its cadence adapts rather than rounding the build up to a fixed step.
+		let started = Instant::now();
+		loop {
+			let sql = format!("INFO FOR INDEX {name} ON record");
+			let r: surrealdb::types::Value = self
+				.db
+				.query(&sql)
+				.await
+				.map_err(log_sql_err(&sql))?
+				.take(0)
+				.map_err(log_sql_err(&sql))?;
+			let j = r.to_sql();
+			let building = r.get("building");
+			let status = building.get("status").as_string().expect(&j);
+			match status.as_str() {
+				"ready" => break,
+				"indexing" | "cleaning" | "started" => {}
+				_ => bail!("Unexpected status: {}", r.into_json_value()),
+			}
+			sleep(index_poll_interval(started.elapsed())).await;
+		}
+		// All ok
+		Ok(())
+	}
+
+	async fn build_filter_index(
+		&self,
+		column: &str,
+		ty: FilterColumnType,
+		name: &str,
+	) -> Result<()> {
+		// The type first: the planner reads it when the query is planned, and a
+		// field defined after the index would work too, but this way the index
+		// is never online over an undeclared column.
+		let sql = surreal_filter_field_sql(column, ty);
+		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
+		let index_type = match ty {
+			FilterColumnType::Point => Some("spatial".to_string()),
+			_ => None,
+		};
+		let spec = Index {
+			skip: false,
+			fields: vec![column.to_string()],
+			unique: None,
+			index_type,
+		};
+		// A plain b-tree index (or SPATIAL index for Point); `build_index` returns once it reports ready.
+		self.build_index(&spec, name).await
+	}
+
+	async fn drop_filter_index(&self, column: &str, name: &str) -> Result<()> {
+		self.drop_index(name).await?;
+		// Back to schemaless, as every other scan expects the table (`IF EXISTS`
+		// because `drop_index` on a SPATIAL index already removes its geometry field).
+		let sql = format!("REMOVE FIELD IF EXISTS {column} ON TABLE record");
+		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
+		Ok(())
+	}
+
+	async fn drop_index(&self, name: &str) -> Result<()> {
+		// Retry helper closure for handling transient "Resource busy" errors.
+		//
+		// ## Why Retry is Necessary
+		//
+		// After intensive concurrent scan operations (e.g., 12 clients × 48 threads = 576 tasks),
+		// each scan creates a READ transaction in SurrealDB that holds a RocksDB snapshot.
+		// These snapshots capture the database state and provide MVCC (Multi-Version Concurrency Control).
+		//
+		// When REMOVE INDEX executes immediately after scans complete:
+		// 1. Client-side: All Rust futures have finished (via try_join_all)
+		// 2. Server-side: SurrealDB/RocksDB may still have:
+		//    - Active transaction objects not yet fully released
+		//    - Snapshot references held in memory
+		//    - Deferred cleanup operations in progress
+		//
+		// ## The Conflict
+		//
+		// REMOVE INDEX runs in a WRITE transaction that needs to:
+		// - Delete index metadata keys (del_tb_index)
+		// - Update table definition (put_tb)
+		// - Clear caches
+		//
+		// RocksDB's optimistic transaction engine detects conflicts between:
+		// - Active READ snapshots from completed scan operations
+		// - WRITE transaction from REMOVE INDEX trying to modify metadata
+		//
+		// This results in: "The query was not executed due to a failed transaction. Resource busy:"
+		//
+		// ## Why Retry Works
+		//
+		// The error is transient. As transaction objects are dropped and snapshots released,
+		// the metadata locks become available. The 500ms sleep allows sufficient time for:
+		// - Async transaction cleanup to complete
+		// - RocksDB to release internal snapshot references
+		// - Memory management to finalize deferred operations
+		//
+		// Since REMOVE INDEX IF EXISTS is idempotent, retrying is safe and appropriate
+		// for benchmark scenarios where the goal is reliable completion rather than
+		// immediate failure on transient resource contention.
+		let retry = |sql: String, max_wait: Duration| async move {
+			let fut = async {
+				loop {
+					match self.db.query(&sql).await?.check() {
+						Ok(_) => return Ok(()),
+						Err(e) => {
+							let msg = e.to_string();
+							// Be permissive on the match to tolerate tiny wording changes.
+							// We accept both the executor-level wrapper and the raw KV
+							// transaction conflict error, which surfaces directly when the
+							// failing statement is the only one in the query.
+							const RETRYABLE: &[&str] = &[
+								"This transaction can be retried",
+								"The query was not executed due to a failed transaction",
+							];
+							if RETRYABLE.iter().any(|p| msg.contains(p)) {
+								warn!("Retrying {sql} due to {msg}");
+								sleep(Duration::from_millis(500)).await;
+								continue;
+							}
+							return Err(e);
+						}
+					}
+				}
+			};
+			match timeout(max_wait, fut).await {
+				Ok(res) => res.map_err(|e| e.into()),
+				Err(_) => {
+					bail!("Timed out after {:?} waiting to execute: {}", max_wait, sql)
+				}
+			}
+		};
+		// Remove the index
+		let sql = format!("REMOVE INDEX IF EXISTS {name} ON TABLE record");
+		retry(sql, Duration::from_secs(300)).await?;
+		// Remove the analyzer
+		let sql = format!("REMOVE ANALYZER IF EXISTS {name}");
+		retry(sql, Duration::from_secs(180)).await?;
+		// If this index was a `spatial` index that declared a `geometry<point>`
+		// field on `record`, remove that field so the table returns to
+		// schemaless mode for subsequent scans.
+		let geom_field = SPATIAL_INDEX_FIELDS.lock().unwrap().remove(name);
+		if let Some(geom_field) = geom_field {
+			let sql = format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record");
+			retry(sql, Duration::from_secs(180)).await?;
+		}
+		// All ok
+		Ok(())
+	}
+
+	async fn scan_u32(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
+	}
+
+	async fn scan_string(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		self.scan(scan, ctx).await
+	}
+
+	async fn build_vector_index(
+		&self,
+		spec: &Index,
+		vq: &VectorQuerySpec,
+		dim: usize,
+		name: &str,
+	) -> Result<()> {
+		let fields = spec.fields.join(", ");
+		let dist = surreal_distance_keyword(vq.distance);
+		let sql = match vq.index_strategy {
+			VectorIndexStrategy::Bruteforce => {
+				// Bruteforce on SurrealDB means no auxiliary index; the scan
+				// path uses raw vector::distance::* with ORDER BY LIMIT.
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			VectorIndexStrategy::Hnsw {
+				m,
+				ef_construction,
+				..
+			} => {
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} HNSW DIMENSION {dim} DIST {dist} EFC {ef_construction} M {m} CONCURRENTLY"
+				)
+			}
+			VectorIndexStrategy::DiskAnn {
+				degree,
+				l_build,
+				alpha,
+				..
+			} => {
+				format!(
+					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} DISKANN DIMENSION {dim} DISTANCE {dist} DEGREE {degree} L_BUILD {l_build} ALPHA {alpha} CONCURRENTLY"
+				)
+			}
+		};
+		// Treat any parse error as NotSupported: the running SurrealDB
+		// version doesn't recognise the DDL (DiskANN before the syntax
+		// lands in OSS, future drift between releases, etc.). The
+		// framework already handles NotSupported as a clean skip.
+		let resp = match self.db.query(&sql).await {
+			Ok(r) => r,
+			Err(e) if is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
+			Err(e) => return Err(log_sql_err(&sql)(e)),
+		};
+		if let Err(e) = resp.check() {
+			if is_surreal_parse_error(&e) {
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+			return Err(log_sql_err(&sql)(e));
+		}
+		// Wait until the index is ready (same poll loop as `build_index`).
+		let started = Instant::now();
+		let reports_materialisation = loop {
+			let q = format!("INFO FOR INDEX {name} ON record");
+			let r: surrealdb::types::Value = self
+				.db
+				.query(&q)
+				.await
+				.map_err(log_sql_err(&q))?
+				.take(0)
+				.map_err(log_sql_err(&q))?;
+			let j = r.to_sql();
+			let building = r.get("building");
+			let status = building.get("status").as_string().expect(&j);
+			match status.as_str() {
+				// The same reply that says the index is ready says whether this
+				// server reports materialisation at all.
+				"ready" => break matches!(building.get("compacting"), Value::Bool(_)),
+				"indexing" | "cleaning" | "started" => {}
+				_ => bail!("Unexpected status: {}", r.into_json_value()),
+			}
+			sleep(index_poll_interval(started.elapsed())).await;
+		};
+		// Refuse to time a vector index whose materialisation cannot be seen.
+		//
+		// `status = "ready"` arrives once existing rows are enumerated into
+		// per-record pending entries; the graph is built from them afterwards,
+		// and until it is, a kNN query scores the remainder by hand.
+		// `building.compacting` is the only signal for that, and servers that
+		// predate the field (releases before 3.3.0) defer the same work without
+		// reporting it. On those, `await_index_queryable`
+		// would return while the index still scans, and every timed leg would
+		// measure that scan under the index's name. So skip instead: the leg
+		// reports `-`, which is honest, rather than a number that is not.
+		//
+		// The index was defined, and a skipped build is never dropped by the
+		// harness; remove it here, or the next leg building an index of the same
+		// name — `config/vector.toml` reuses one across HNSW and DiskANN — would
+		// collide with it.
+		if !reports_materialisation {
+			eprintln!(
+				"SurrealDB: skipping vector index `{name}`: this server does not report \
+				 `building.compacting`, so it cannot say when the index has finished \
+				 materialising, and a timed leg could measure a scan over the unmaterialised \
+				 remainder. Run against a server that reports it — the nightly Docker image does."
+			);
+			self.drop_index(name).await?;
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+		Ok(())
+	}
+
+	/// Wait for an index's pending queue to drain.
+	///
+	/// `INFO FOR INDEX` reports `building.status = "ready"` as soon as the
+	/// initial build finishes, but rows indexed after that sit in a pending
+	/// queue that queries answer by scanning it linearly. A background task
+	/// drains it every `index_compaction_interval` (5s by default), and only
+	/// then does the index itself serve the query. In SurrealDB 3.x this
+	/// applies to fulltext, count and HNSW indexes alike; for a KNN scan it is
+	/// especially misleading, since a queue scan is exact and so reports a
+	/// perfect recall of 1.0 for entirely the wrong reason.
+	///
+	/// `building.pending` carries the queue depth, and `building.compacting`
+	/// says whether the materialisation task is still running. **Both** have to
+	/// clear: at 1M rows an index reports `status = "ready"` with `pending = 0`
+	/// while `compacting` is still true, and a KNN query against it costs ~2.9s
+	/// against single-digit ms once materialised — one core pegged, scanning
+	/// state the index has not absorbed yet.
+	///
+	/// Waiting on `pending` alone is what made that measurable: a 1M-row
+	/// calibration timed 24 minutes for a single 500-iteration leg, and the
+	/// compaction never finished *because* the query load starved it. Waiting
+	/// here, before any timed leg, gives the materialisation task the machine to
+	/// itself.
+	///
+	/// `compacting` is absent on older servers, where its absence reads as
+	/// "not compacting" and the check is the pre-existing one. That is only
+	/// reachable for the kinds `build_index` defines — fulltext, count, standard
+	/// indexes. A vector index on such a server never gets here:
+	/// `build_vector_index` refuses it, because its deferred work is exactly what
+	/// the missing field would have reported.
+	///
+	/// Called inside the timed build, so it is what makes SurrealDB's build time
+	/// comparable with an engine whose build call returns only when the index is
+	/// complete: `status = "ready"` arrives after row enumeration, and at 1M rows
+	/// the graph construction that follows is over an hour of the real build.
+	/// `timeout` is the caller's remaining budget from `--operation-timeout`.
+	///
+	/// Note this is unrelated to `ALTER SYSTEM COMPACT` (see [`Self::compact`]),
+	/// which compacts the RocksDB keyspace and does nothing for this queue.
+	async fn await_index_queryable(&self, name: &str, timeout: Duration) -> Result<()> {
+		let started = Instant::now();
+		loop {
+			let q = format!("INFO FOR INDEX {name} ON record");
+			let r: surrealdb::types::Value = self
+				.db
+				.query(&q)
+				.await
+				.map_err(log_sql_err(&q))?
+				.take(0)
+				.map_err(log_sql_err(&q))?;
+			let j = r.to_sql();
+			let building = r.get("building");
+			let status = building.get("status").as_string().expect(&j);
+			// Absent means the engine does not track a queue for this index
+			// kind, which is the same as an empty one.
+			let pending = match building.get("pending") {
+				Value::Number(n) => n.to_int().unwrap_or(0),
+				_ => 0,
+			};
+			// Absent on servers that predate the field, where "not compacting"
+			// is the right reading and the behaviour is unchanged.
+			let compacting = matches!(building.get("compacting"), Value::Bool(true));
+			// `pending` sits at 0 while the initial build is still running, so
+			// it only means "drained" once the build itself reports ready.
+			match status.as_str() {
+				"ready" if pending == 0 && !compacting => return Ok(()),
+				"ready" | "indexing" | "cleaning" | "started" => {}
+				_ => bail!("Unexpected index status: {j}"),
+			}
+			if started.elapsed() > timeout {
+				bail!(
+					"index {name}: {pending} entries pending, compacting={compacting}, after \
+					 {:?}; a scan now would measure a scan over unmaterialised state rather than \
+					 the index. Raise --operation-timeout to wait longer",
+					started.elapsed()
+				);
+			}
+			sleep(index_poll_interval(started.elapsed())).await;
+		}
+	}
+
+	async fn scan_vector_u32(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		_ctx: ScanContext,
+	) -> Result<Vec<KnnKey>> {
+		self.knn_scan(scan, query).await
+	}
+
+	async fn scan_vector_string(
+		&self,
+		scan: &Scan,
+		query: &[f32],
+		_ctx: ScanContext,
+	) -> Result<Vec<KnnKey>> {
+		self.knn_scan(scan, query).await
+	}
+
+	async fn batch_create_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
+	) -> Result<()> {
+		self.batch_create(key_vals.map(|(k, v)| (k as i64, v))).await
+	}
+
+	async fn batch_create_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
+	) -> Result<()> {
+		self.batch_create(key_vals).await
+	}
+
+	async fn batch_read_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		self.batch_read(keys.map(|k| k as i64)).await
+	}
+
+	async fn batch_read_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		self.batch_read(keys).await
+	}
+
+	async fn batch_update_u32(
+		&self,
+		key_vals: impl Iterator<Item = (u32, BenchValue)> + Send,
+	) -> Result<()> {
+		self.batch_update(key_vals.map(|(k, v)| (k as i64, v))).await
+	}
+
+	async fn batch_update_string(
+		&self,
+		key_vals: impl Iterator<Item = (String, BenchValue)> + Send,
+	) -> Result<()> {
+		self.batch_update(key_vals).await
+	}
+
+	async fn batch_delete_u32(&self, keys: impl Iterator<Item = u32> + Send) -> Result<()> {
+		self.batch_delete(keys.map(|k| k as i64)).await
+	}
+
+	async fn batch_delete_string(&self, keys: impl Iterator<Item = String> + Send) -> Result<()> {
+		self.batch_delete(keys).await
+	}
+}
+
+impl SurrealDB3Client {
+	async fn create<T>(&self, key: T, val: BenchValue) -> Result<()>
+	where
+		T: Into<RecordIdKey>,
+	{
+		let sql = "CREATE $id CONTENT $content RETURN NULL";
+		let content = bench_to_surreal_value(val);
+		let id = Value::RecordId(RecordId::new(TABLE, key));
+		run_dml_with_retry(sql, || async {
+			let res = self
+				.db
+				.query(sql)
+				.bind(Bindings {
+					id: id.clone(),
+					content: content.clone(),
+				})
+				.await?
+				.take::<surrealdb::types::Value>(0)?;
+			assert!(!res.is_none());
+			Ok(())
+		})
+		.await
+	}
+
+	async fn read<T>(&self, key: T) -> Result<Row>
+	where
+		T: Into<RecordIdKey>,
+	{
+		let v: Value = self.db.select(Resource::from(("record", key))).await?;
+		assert!(!v.is_none());
+		Ok(black_box(Row(v)))
+	}
+
+	async fn update<T>(&self, key: T, val: BenchValue) -> Result<()>
+	where
+		T: Into<RecordIdKey>,
+	{
+		let sql = "UPDATE $id CONTENT $content RETURN NULL";
+		// Strip any `id` field from the content — `UPDATE $id CONTENT $content`
+		// rejects content that carries an explicit id ("Found 'record:…' for
+		// the `id` field, but a specific record has been specified"). The
+		// read-back side now hands back a proper Object (post-singleton-Array
+		// unwrap), so mixed read/write workloads round-trip the id field
+		// unless we drop it here.
+		let mut content = bench_to_surreal_value(val);
+		if let Value::Object(ref mut obj) = content {
+			obj.remove("id");
+		}
+		let id = Value::RecordId(RecordId::new(TABLE, key));
+		run_dml_with_retry(sql, || async {
+			let res = self
+				.db
+				.query(sql)
+				.bind(Bindings {
+					id: id.clone(),
+					content: content.clone(),
+				})
+				.await?
+				.take::<surrealdb::types::Value>(0)?;
+			assert!(!res.is_none());
+			Ok(())
+		})
+		.await
+	}
+
+	async fn delete<T>(&self, key: T) -> Result<()>
+	where
+		T: Into<RecordIdKey>,
+	{
+		let sql = "DELETE $id RETURN NULL";
+		let id = Value::RecordId(RecordId::new(TABLE, key));
+		run_dml_with_retry(sql, || async {
+			let res = self
+				.db
+				.query(sql)
+				.bind(("id", id.clone()))
+				.await?
+				.take::<surrealdb::types::Value>(0)?;
+			assert!(!res.is_none());
+			Ok(())
+		})
+		.await
+	}
+
+	async fn knn_scan(&self, scan: &Scan, query: &[f32]) -> Result<Vec<KnnKey>> {
+		let vq = scan.vector_query.as_ref().ok_or_else(|| {
+			anyhow::anyhow!("knn_scan called without a vector_query on scan `{}`", scan.name)
+		})?;
+		let is_diskann = matches!(vq.index_strategy, VectorIndexStrategy::DiskAnn { .. });
+		// A build whose parser will not accept the KNN operator beside a
+		// `WHERE` predicate cannot answer a filtered leg at all, which is a
+		// capability gap and belongs in the output as a skip. Scoped to
+		// filtered legs: a parse error on an unfiltered query is crud-bench
+		// emitting bad SurrealQL, and hiding that would be hiding our own bug.
+		// Note this covers only *parse* failures — a filtered query the engine
+		// accepts and then fails on still aborts, as it should.
+		let is_filtered = vq.filter().is_some();
+		let sql = surreal_knn_sql(vq);
+		// Bind the query vector as a SurrealQL array so the server doesn't
+		// re-parse a multi-KB array literal on every iteration.
+		let q_value = Value::Array(Array::from(
+			query.iter().map(|f| Value::Number(Number::Float(*f as f64))).collect::<Vec<_>>(),
+		));
+		// DiskANN runtime in current nightly intermittently fails the search
+		// itself even though the index built successfully. Treat that as
+		// NotSupported so the scan skips cleanly — same pattern as the parse
+		// error path in `build_vector_index`. The check is scoped to the
+		// DiskANN strategy so genuine errors on Bruteforce / HNSW still abort.
+		let mut resp = match self.db.query(&sql).bind(("q", q_value)).await {
+			Ok(r) => r,
+			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			Err(e) if is_filtered && is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
+			Err(e) => return Err(log_sql_err(&sql)(e)),
+		};
+		let res: surrealdb::types::Value = match resp.take(0) {
+			Ok(v) => v,
+			Err(e) if is_diskann && is_surreal_diskann_runtime_error(&e) => {
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			Err(e) if is_filtered && is_surreal_parse_error(&e) => bail!(NOT_SUPPORTED_ERROR),
+			Err(e) => return Err(log_sql_err(&sql)(e)),
+		};
+		let Some(arr) = res.as_array() else {
+			bail!("knn scan: unexpected response shape: {}", res.to_sql());
+		};
+		// Recall is scored by identity, so return the record keys rather than a
+		// count. `SELECT id` yields the record id; the table half is constant
+		// so only the key half is kept.
+		arr.iter().map(surreal_knn_key).collect()
+	}
+
+	async fn scan(&self, scan: &Scan, ctx: ScanContext) -> Result<usize> {
+		// SurrealDB requires a full-text index to use the @@ operator
+		if ctx == ScanContext::WithoutIndex
+			&& let Some(index) = &scan.with_index
+			&& let Some(kind) = &index.index_type
+			&& kind == "fulltext"
+		{
+			bail!(NOT_SUPPORTED_ERROR);
+		}
+		// Extract parameters
+		let s = scan.start.map(|s| format!("START {s}")).unwrap_or_default();
+		let l = scan.limit.map(|s| format!("LIMIT {s}")).unwrap_or_default();
+		let c = SurrealDBDialect::filter_clause(scan)?;
+		let o = SurrealDBDialect::order_by_clause(scan)?;
+		let p = scan.projection()?;
+		// Perform the relevant projection scan type
+		match p {
+			Projection::Id => {
+				let sql = format!("SELECT id FROM record {c} {o} {s} {l}");
+				let res: surrealdb::types::Value = self
+					.db
+					.query(&sql)
+					.await
+					.map_err(log_sql_err(&sql))?
+					.take(0)
+					.map_err(log_sql_err(&sql))?;
+				let Some(arr) = res.as_array() else {
+					panic!("Unexpected response type");
+				};
+				Ok(arr.len())
+			}
+			Projection::Full => {
+				let sql = format!("SELECT * FROM record {c} {o} {s} {l}");
+				let res: surrealdb::types::Value = self
+					.db
+					.query(&sql)
+					.await
+					.map_err(log_sql_err(&sql))?
+					.take(0)
+					.map_err(log_sql_err(&sql))?;
+				let Some(arr) = res.as_array() else {
+					panic!("Unexpected response type");
+				};
+				Ok(arr.len())
+			}
+			Projection::Count => {
+				let sql = if s.is_empty() && l.is_empty() {
+					format!("SELECT count() FROM record {c} GROUP ALL")
+				} else {
+					format!("SELECT count() FROM (SELECT 1 FROM record {c} {s} {l}) GROUP ALL")
+				};
+				let res: Option<usize> = self
+					.db
+					.query(&sql)
+					.await
+					.map_err(log_sql_err(&sql))?
+					.take("count")
+					.map_err(log_sql_err(&sql))?;
+				Ok(res.unwrap())
+			}
+		}
+	}
+
+	async fn batch_create<K>(
+		&self,
+		key_vals: impl Iterator<Item = (K, BenchValue)> + Send,
+	) -> Result<()>
+	where
+		K: Into<RecordIdKey>,
+	{
+		// Construct the records
+		let rows: Vec<Value> = key_vals
+			.map(|(k, v)| {
+				let mut obj = match bench_to_surreal_value(v) {
+					Value::Object(o) => o,
+					_ => panic!("Unexpected value type"),
+				};
+				obj.insert("id", Value::RecordId(RecordId::new(TABLE, k)));
+				Value::Object(obj)
+			})
+			.collect();
+		// Construct the SQL query
+		let sql = "INSERT $rows RETURN NONE";
+		let rows = Value::Array(Array::from(rows));
+		run_dml_with_retry(sql, || async {
+			self.db.query(sql).bind(("rows", rows.clone())).await?.check()?;
+			Ok(())
+		})
+		.await
+	}
+
+	async fn batch_read<K>(&self, keys: impl Iterator<Item = K> + Send) -> Result<()>
+	where
+		K: Into<RecordIdKey>,
+	{
+		// Construct the Record IDs
+		let ids: Vec<Value> = keys.map(|k| Value::RecordId(RecordId::new("record", k))).collect();
+		// Store the total Record IDs
+		let ids_len = ids.len();
+		// Construct the SQL query
+		let sql = "SELECT * FROM $ids";
+		// Execute the SQL query
+		let res: surrealdb::types::Value = self
+			.db
+			.query(sql)
+			.bind(("ids", Value::Array(Array::from(ids))))
+			.await
+			.map_err(log_sql_err(sql))?
+			.take(0)
+			.map_err(log_sql_err(sql))?;
+		// Check the response
+		let Some(arr) = res.as_array() else {
+			panic!("Unexpected response type");
+		};
+		assert_eq!(arr.len(), ids_len);
+		// All ok
+		Ok(())
+	}
+
+	async fn batch_update<K>(
+		&self,
+		key_vals: impl Iterator<Item = (K, BenchValue)> + Send,
+	) -> Result<()>
+	where
+		K: Into<RecordIdKey>,
+	{
+		// Construct the records
+		let rows: Vec<Value> = key_vals
+			.map(|(k, v)| {
+				let mut obj = match bench_to_surreal_value(v) {
+					Value::Object(o) => o,
+					_ => panic!("Unexpected value type"),
+				};
+				obj.insert("id", Value::RecordId(RecordId::new(TABLE, k)));
+				Value::Object(obj)
+			})
+			.collect();
+		// Construct the SQL query
+		let sql = "FOR $row IN $rows { UPDATE $row.id CONTENT $row RETURN NONE }";
+		let rows = Value::Array(Array::from(rows));
+		run_dml_with_retry(sql, || async {
+			self.db.query(sql).bind(("rows", rows.clone())).await?.check()?;
+			Ok(())
+		})
+		.await
+	}
+
+	async fn batch_delete<K>(&self, keys: impl Iterator<Item = K> + Send) -> Result<()>
+	where
+		K: Into<RecordIdKey>,
+	{
+		// Construct the Record IDs
+		let ids: Vec<Value> = keys.map(|k| Value::RecordId(RecordId::new("record", k))).collect();
+		// Construct the SQL query
+		let sql = "DELETE $ids";
+		let ids = Value::Array(Array::from(ids));
+		run_dml_with_retry(sql, || async {
+			self.db.query(sql).bind(("ids", ids.clone())).await?.check()?;
+			Ok(())
+		})
+		.await
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::{surreal_filter_field_sql, surreal_knn_sql};
+	use crate::VectorQuerySpec;
+	use crate::vectorfilter::FilterColumnType;
+
+	/// Build a resolved [`VectorQuerySpec`] the way the leg expansion hands one
+	/// to an adapter: at most one search value and at most one predicate.
+	#[test]
+	fn a_filter_column_is_declared_with_an_array_free_type() {
+		assert_eq!(
+			surreal_filter_field_sql("number", FilterColumnType::Int),
+			"DEFINE FIELD number ON TABLE record TYPE int"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("score", FilterColumnType::Float),
+			"DEFINE FIELD score ON TABLE record TYPE float"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("status", FilterColumnType::String),
+			"DEFINE FIELD status ON TABLE record TYPE string"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("active", FilterColumnType::Bool),
+			"DEFINE FIELD active ON TABLE record TYPE bool"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("location", FilterColumnType::Point),
+			"DEFINE FIELD location ON TABLE record TYPE geometry<point>"
+		);
+	}
+
+	fn spec(strategy: &str, filters: &str) -> VectorQuerySpec {
+		let json = format!(
+			r#"{{ "field": "embedding", "top_k": 10, "distance": "cosine",
+			   "index_strategy": {strategy}, "filters": {filters} }}"#
+		);
+		serde_json::from_str(&json).expect("spec parses")
+	}
+
+	const HNSW: &str = r#"{ "kind": "hnsw", "m": 16, "ef_construction": 200, "ef_search": 64 }"#;
+	const DISKANN: &str =
+		r#"{ "kind": "diskann", "degree": 64, "l_build": 100, "alpha": 1.2, "l_search": 50 }"#;
+	const BRUTEFORCE: &str = r#"{ "kind": "bruteforce" }"#;
+	const NUMERIC: &str = r#"[{ "name": "sel", "field": "number", "op": "lte", "value": 50 }]"#;
+	const TAGS: &str =
+		r#"[{ "name": "live", "field": "status", "op": "in", "value": ["draft", "archived"] }]"#;
+
+	/// Unfiltered statements must not change shape when the filter machinery is
+	/// present but unused.
+	#[test]
+	fn unfiltered_statements_are_unchanged() {
+		assert_eq!(
+			surreal_knn_sql(&spec(BRUTEFORCE, "[]")),
+			"SELECT id, vector::similarity::cosine(embedding, $q) AS _d FROM record ORDER BY _d DESC LIMIT 10"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(HNSW, "[]")),
+			"SELECT id FROM record WHERE embedding <|10,64|> $q"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(DISKANN, "[]")),
+			"SELECT id FROM record WHERE embedding <|10,50|> $q"
+		);
+	}
+
+	/// Bruteforce filters before ordering, so the exact answer stays exact.
+	#[test]
+	fn a_filtered_bruteforce_scan_restricts_before_ordering() {
+		assert_eq!(
+			surreal_knn_sql(&spec(BRUTEFORCE, NUMERIC)),
+			"SELECT id, vector::similarity::cosine(embedding, $q) AS _d FROM record WHERE number <= 50 ORDER BY _d DESC LIMIT 10"
+		);
+	}
+
+	/// The KNN operator stays leading on the index paths; the predicate follows
+	/// it.
+	#[test]
+	fn a_filtered_index_scan_keeps_the_knn_operator_leading() {
+		assert_eq!(
+			surreal_knn_sql(&spec(HNSW, NUMERIC)),
+			"SELECT id FROM record WHERE embedding <|10,64|> $q AND number <= 50"
+		);
+		assert_eq!(
+			surreal_knn_sql(&spec(DISKANN, TAGS)),
+			"SELECT id FROM record WHERE embedding <|10,50|> $q AND status IN ['draft', 'archived']"
+		);
+	}
+}

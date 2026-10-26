@@ -10,6 +10,7 @@ use crate::result::{
 	BenchmarkMetadata, BenchmarkResult, OperationMetric, OperationResult, ScanResult, ScanRun,
 	ScanWorkload, writes_ratio_percent,
 };
+use crate::reuse::RunMode;
 use crate::system::SystemInfo;
 use crate::terminal::BenchUi;
 use crate::util::format_duration;
@@ -24,6 +25,7 @@ use crate::{
 };
 
 use anyhow::{Context, Result, bail};
+use clap::ValueEnum;
 use futures::future::try_join_all;
 use hdrhistogram::Histogram;
 use indicatif::ProgressBar;
@@ -47,6 +49,74 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 /// human, long enough to mop up the kind of MVCC drain visible in
 /// SurrealDB/RocksDB after heavy concurrent scans.
 const QUIESCE_DELAY: Duration = Duration::from_secs(1);
+
+/// How long a phase runs: a fixed number of samples, or a time window.
+///
+/// A fixed count suits phases whose samples are distinct rows (create, delete)
+/// and so define the dataset. A window suits repeatable queries, whose cost
+/// should not scale with how many rows the dataset holds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Iterations {
+	/// Run exactly this many samples.
+	Fixed(u32),
+	/// Run until the window elapses, bounded by `min` and `max` samples.
+	Timed(Window),
+}
+
+impl From<u32> for Iterations {
+	fn from(samples: u32) -> Self {
+		Self::Fixed(samples)
+	}
+}
+
+/// A measurement window with an untimed warm-up in front of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Window {
+	/// Untimed warm-up run before the window opens.
+	pub(crate) warmup: Duration,
+	/// Wall-clock length of the measured window.
+	pub(crate) measure: Duration,
+	/// Samples recorded even if the window has already elapsed.
+	pub(crate) min: u32,
+	/// Samples after which the window closes even if time remains.
+	pub(crate) max: u32,
+}
+
+impl Iterations {
+	/// Count to report for a scan: the configured number when fixed, else the
+	/// most samples any leg actually recorded in its window.
+	fn reported(&self, runs: &[ScanRun]) -> u32 {
+		match self {
+			Self::Fixed(n) => *n,
+			Self::Timed(_) => runs
+				.iter()
+				.filter_map(|r| r.result.as_ref().map(OperationResult::samples))
+				.max()
+				.unwrap_or(0),
+		}
+	}
+
+	/// Window length in seconds for a timed run, so a result can say its
+	/// iteration count was not configured.
+	fn window_secs(&self) -> Option<f64> {
+		match self {
+			Self::Fixed(_) => None,
+			Self::Timed(w) => Some(w.measure.as_secs_f64()),
+		}
+	}
+
+	/// Whether a worker that has claimed `claimed` samples must stop, given the
+	/// instant the measured window opened. A `Fixed` run ignores the clock.
+	fn exhausted(&self, claimed: u32, now: Instant, opened: Instant) -> bool {
+		match self {
+			Self::Fixed(n) => claimed >= *n,
+			Self::Timed(w) => {
+				claimed >= w.max
+					|| (claimed >= w.min && now.saturating_duration_since(opened) >= w.measure)
+			}
+		}
+	}
+}
 
 /// Error string returned by adapters to mark an operation as unsupported (skipped, not fatal).
 pub(crate) const NOT_SUPPORTED_ERROR: &str = "NotSupported";
@@ -124,6 +194,10 @@ pub(crate) struct Benchmark {
 	pub(crate) threads: u32,
 	/// The number of samples to run
 	pub(crate) samples: u32,
+	/// Which phases run and whether the dataset is kept or reused
+	pub(crate) mode: RunMode,
+	/// Docker volume holding the dataset between runs, when the mode keeps one
+	pub(crate) volume: Option<String>,
 	/// Pid to monitor
 	pub(crate) pid: Option<u32>,
 	/// Whether to ensure data is synced
@@ -136,6 +210,8 @@ pub(crate) struct Benchmark {
 	pub(crate) operation_timeout: Duration,
 	/// Directory holding cached vector-search ground truth
 	pub(crate) ground_truth_cache: PathBuf,
+	/// Default window for scan legs that set no fixed `iterations`
+	pub(crate) window: Window,
 	/// Safety cap on warming a vector index before a timed leg
 	pub(crate) vector_warmup_budget: Duration,
 	/// JSON form of the configured value template. Ground truth keys its cache
@@ -170,6 +246,15 @@ impl Benchmark {
 			clients: args.clients,
 			threads: args.threads,
 			samples: args.samples,
+			mode: args.mode,
+			volume: (args.mode != RunMode::All).then(|| {
+				let key = args
+					.database
+					.to_possible_value()
+					.map(|v| v.get_name().to_string())
+					.unwrap_or_default();
+				crate::reuse::volume_name(&key, args.name.as_deref())
+			}),
 			sync: args.sync,
 			pid: args.pid,
 			persisted: args.persisted,
@@ -179,8 +264,30 @@ impl Benchmark {
 			emit_phase_markers,
 			ground_truth_cache: PathBuf::from(&args.ground_truth_cache),
 			vector_warmup_budget: Duration::from_secs(args.vector_warmup_seconds),
+			window: Window {
+				warmup: Duration::from_secs_f64(args.warmup_time),
+				measure: Duration::from_secs_f64(args.measurement_time),
+				min: args.min_iterations,
+				max: args.max_iterations,
+			},
 			value_template: String::new(),
 			vector_filter_fields: Vec::new(),
+		}
+	}
+
+	/// How a scan leg is run: a fixed `iterations` when the scan sets one, else
+	/// the scan's own window layered over the CLI default.
+	fn scan_iterations(&self, scan: &Scan) -> Iterations {
+		match scan.iterations {
+			Some(n) => Iterations::Fixed(n as u32),
+			None => Iterations::Timed(Window {
+				warmup: scan.warmup_time.map(Duration::from_secs_f64).unwrap_or(self.window.warmup),
+				measure: scan
+					.measurement_time
+					.map(Duration::from_secs_f64)
+					.unwrap_or(self.window.measure),
+				..self.window
+			}),
 		}
 	}
 
@@ -470,53 +577,81 @@ impl Benchmark {
 		// Setup the datastore
 		self.bench_ui
 			.println_muted(&format!("Setting up the datastore with {} clients", self.clients));
-		// Setup the datastore
-		self.wait_for_client(&engine).await?.startup().await?;
+		// A query run opens a dataset a load run left behind, so it neither
+		// recreates the schema nor writes any row.
+		if self.mode.loads() {
+			self.wait_for_client(&engine).await?.startup().await?;
+		} else {
+			// Still wait for the datastore to accept connections
+			self.wait_for_client(&engine).await?;
+		}
 		// Setup the clients
 		let clients = self.setup_clients(&engine).await?;
 		// Start the benchmark (optional line for log-based profiling)
 		if self.emit_phase_markers {
 			self.bench_ui.println_plain("Benchmark starting");
 		}
+		let mode = self.mode;
 		// Run the "creates" benchmark
-		let creates = self
-			.run_operation::<C, D>(
-				&clients,
-				BenchmarkOperation::Create,
-				kp,
-				vp.clone(),
-				self.samples,
-				self.threads,
-			)
-			.await?;
-		// Compact the datastore
-		self.maybe_compact_datastore::<C, E>(&engine).await?;
+		let creates = if mode.loads() {
+			let creates = self
+				.run_operation::<C, D>(
+					&clients,
+					BenchmarkOperation::Create,
+					kp,
+					vp.clone(),
+					self.samples,
+					self.threads,
+				)
+				.await?;
+			// Compact the datastore
+			self.maybe_compact_datastore::<C, E>(&engine).await?;
+			creates
+		} else {
+			None
+		};
 		// Run the "reads" benchmark
-		let reads = self
-			.run_operation::<C, D>(
-				&clients,
-				BenchmarkOperation::Read,
-				kp,
-				vp.clone(),
-				self.samples,
-				self.threads,
-			)
-			.await?;
-		// Compact the datastore
-		self.maybe_compact_datastore::<C, E>(&engine).await?;
-		// Run the "reads" benchmark
-		let updates = self
-			.run_operation::<C, D>(
-				&clients,
-				BenchmarkOperation::Update,
-				kp,
-				vp.clone(),
-				self.samples,
-				self.threads,
-			)
-			.await?;
-		// Compact the datastore
-		self.maybe_compact_datastore::<C, E>(&engine).await?;
+		let reads = if mode.queries() {
+			let reads = self
+				.run_operation::<C, D>(
+					&clients,
+					BenchmarkOperation::Read,
+					kp,
+					vp.clone(),
+					self.samples,
+					self.threads,
+				)
+				.await?;
+			// Compact the datastore
+			self.maybe_compact_datastore::<C, E>(&engine).await?;
+			reads
+		} else {
+			None
+		};
+		// Run the "updates" benchmark
+		let updates = if mode.loads() {
+			let updates = self
+				.run_operation::<C, D>(
+					&clients,
+					BenchmarkOperation::Update,
+					kp,
+					vp.clone(),
+					self.samples,
+					self.threads,
+				)
+				.await?;
+			// Compact the datastore
+			self.maybe_compact_datastore::<C, E>(&engine).await?;
+			updates
+		} else {
+			None
+		};
+		// A load run stops once the dataset is complete and compacted
+		let scans: Scans = if mode.queries() {
+			scans
+		} else {
+			Vec::new()
+		};
 		// Run the "scan" benchmarks
 		let mut scan_results = Vec::with_capacity(scans.len());
 		let mut prev_spec_group: Option<u32> = None;
@@ -537,7 +672,7 @@ impl Benchmark {
 			}
 			let id = scan.id.clone();
 			let name = scan.name.clone();
-			let iterations = scan.iterations.map(|s| s as u32).unwrap_or(self.samples);
+			let iterations = self.scan_iterations(&scan);
 			let write_specs = scan.with_writes.as_slice();
 			let w = write_specs.len();
 			// A scan may run at its own concurrency. A query answering in
@@ -807,7 +942,8 @@ impl Benchmark {
 						Some(kind) => format!("{name} ({kind})"),
 						None => name,
 					},
-					iterations,
+					iterations: iterations.reported(&runs),
+					measurement_secs: iterations.window_secs(),
 					index_build: vec_index_build,
 					index_remove: vec_index_remove,
 					runs,
@@ -969,7 +1105,8 @@ impl Benchmark {
 				ScanResult {
 					id: id.clone(),
 					name,
-					iterations,
+					iterations: iterations.reported(&runs),
+					measurement_secs: iterations.window_secs(),
 					index_build,
 					index_remove,
 					runs,
@@ -1023,7 +1160,8 @@ impl Benchmark {
 				ScanResult {
 					id: id.clone(),
 					name,
-					iterations,
+					iterations: iterations.reported(&runs),
+					measurement_secs: iterations.window_secs(),
 					index_build: None,
 					index_remove: None,
 					runs,
@@ -1036,20 +1174,32 @@ impl Benchmark {
 		}
 		// Compact the datastore
 		self.maybe_compact_datastore::<C, E>(&engine).await?;
-		self.bench_ui.section_header("Delete");
-		// Run the "deletes" benchmark
-		let deletes = self
-			.run_operation::<C, D>(
-				&clients,
-				BenchmarkOperation::Delete,
-				kp,
-				vp.clone(),
-				self.samples,
-				self.threads,
-			)
-			.await?;
-		// Compact the datastore
-		self.maybe_compact_datastore::<C, E>(&engine).await?;
+		// Deletes and batches consume or mutate the dataset, so a split run
+		// leaves them out and keeps the data intact for the runs that follow.
+		let deletes = if mode.consumes() {
+			self.bench_ui.section_header("Delete");
+			// Run the "deletes" benchmark
+			let deletes = self
+				.run_operation::<C, D>(
+					&clients,
+					BenchmarkOperation::Delete,
+					kp,
+					vp.clone(),
+					self.samples,
+					self.threads,
+				)
+				.await?;
+			// Compact the datastore
+			self.maybe_compact_datastore::<C, E>(&engine).await?;
+			deletes
+		} else {
+			None
+		};
+		let batches: Batches = if mode.consumes() {
+			batches
+		} else {
+			Vec::new()
+		};
 		if !batches.is_empty() {
 			self.bench_ui.section_header("Batches");
 		}
@@ -1086,7 +1236,7 @@ impl Benchmark {
 			self.bench_ui.println_plain("Benchmark complete");
 		}
 		// Shut down the datastore
-		self.wait_for_client(&engine).await?.shutdown().await?;
+		self.wait_for_client(&engine).await?.shutdown(!mode.wipes_on_shutdown()).await?;
 		// Return the benchmark results
 		Ok(BenchmarkResult {
 			database,
@@ -1252,27 +1402,101 @@ impl Benchmark {
 	}
 
 	/// Runs one logical phase across `clients × threads` workers with shared progress and metrics.
+	///
+	/// A timed phase first runs its untimed warm-up, then opens the measured
+	/// window; only the window is reported.
 	async fn run_operation<C, D>(
 		&self,
 		clients: &[Arc<C>],
 		operation: BenchmarkOperation,
 		kp: KeyProvider,
 		vp: ValueProvider,
-		samples: u32,
+		iterations: impl Into<Iterations>,
 		threads: u32,
 	) -> Result<Option<OperationResult>>
 	where
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
 	{
+		let iterations = iterations.into();
+		if let Iterations::Timed(window) = iterations
+			&& !window.warmup.is_zero()
+		{
+			let warmup = Iterations::Timed(Window {
+				measure: window.warmup,
+				min: 1,
+				..window
+			});
+			let warmed = self
+				.run_phase::<C, D>(
+					clients,
+					operation.clone(),
+					kp,
+					vp.clone(),
+					warmup,
+					threads,
+					true,
+				)
+				.await?;
+			if warmed.is_none() {
+				return Ok(None);
+			}
+		}
+		self.run_phase::<C, D>(clients, operation, kp, vp, iterations, threads, false).await
+	}
+
+	/// One pass over the workers. `quiet` suppresses all output and the
+	/// post-phase quiesce, for warm-up passes whose result is discarded.
+	#[allow(clippy::too_many_arguments)]
+	async fn run_phase<C, D>(
+		&self,
+		clients: &[Arc<C>],
+		operation: BenchmarkOperation,
+		kp: KeyProvider,
+		vp: ValueProvider,
+		iterations: Iterations,
+		threads: u32,
+		quiet: bool,
+	) -> Result<Option<OperationResult>>
+	where
+		C: BenchmarkClient + Send + Sync,
+		D: Dialect,
+	{
+		let rows = self.samples;
 		// Optional line for log-based profiling (`dev.sh`, grep over captured logs).
 		// `phase_marker_label` includes the scan id / run name / ctx so per-scan and
 		// per-index DDL windows are uniquely greppable.
-		if self.emit_phase_markers {
+		if self.emit_phase_markers && !quiet {
 			self.bench_ui.println_plain(&format!("{} starting", phase_marker_label(&operation)));
 		}
-		let progress =
-			self.bench_ui.progress_bar(samples as u64, &progress_short_label(&operation));
+		let progress = if quiet {
+			None
+		} else {
+			match iterations {
+				Iterations::Fixed(n) => {
+					self.bench_ui.progress_bar(n as u64, &progress_short_label(&operation))
+				}
+				// A window has no sample total to count towards, so the bar
+				// tracks elapsed milliseconds against the window instead.
+				Iterations::Timed(w) => {
+					let bar = self.bench_ui.progress_bar(
+						w.measure.as_millis() as u64,
+						&progress_short_label(&operation),
+					);
+					if let Some(bar) = &bar {
+						let bar = bar.clone();
+						let opened = Instant::now();
+						tokio::spawn(async move {
+							while !bar.is_finished() {
+								bar.set_position(opened.elapsed().as_millis() as u64);
+								tokio::time::sleep(Duration::from_millis(200)).await;
+							}
+						});
+					}
+					bar
+				}
+			}
+		};
 		// Whether we have experienced an error
 		let error = Arc::new(AtomicBool::new(false));
 		// Wether the test should be skipped
@@ -1289,7 +1513,7 @@ impl Benchmark {
 		let operation_timeout = self.operation_timeout;
 		let mut watchdogs = Vec::new();
 		// Measure the starting time
-		let metric = OperationMetric::new(self.pid, samples);
+		let metric = OperationMetric::new(self.pid);
 		// Loop over the clients
 		for (client, _) in clients.iter().cloned().zip(1..) {
 			// Loop over the threads
@@ -1307,7 +1531,7 @@ impl Benchmark {
 				tasks.spawn(async move {
 					match Self::operation_loop::<C, D>(
 						client,
-						samples,
+						(iterations, rows),
 						&error,
 						&current,
 						&complete,
@@ -1418,7 +1642,7 @@ impl Benchmark {
 		}
 		// Finish the progress bar at 100% before tearing it down
 		if let Some(ref pb) = progress {
-			pb.set_position(samples as u64);
+			pb.set_position(pb.length().unwrap_or(0));
 			pb.finish_and_clear();
 		}
 		if error.load(Ordering::Relaxed) {
@@ -1428,6 +1652,9 @@ impl Benchmark {
 		let result = OperationResult::new(metric, global_histogram)
 			.with_recall(global_recall.summarise())
 			.with_build_returned(global_build_returned);
+		if quiet {
+			return Ok((!skip.load(Ordering::Relaxed)).then_some(result));
+		}
 		let took = result.total_time();
 		match &operation {
 			BenchmarkOperation::Scan(_, ctx) => {
@@ -1496,7 +1723,9 @@ impl Benchmark {
 	/// Per-worker loop: claim sample indices until done; record microsecond latencies in a histogram.
 	async fn operation_loop<C, D>(
 		client: Arc<C>,
-		samples: u32,
+		// `rows` is the dataset size, which keys derived from a sample index
+		// wrap around: a timed run can claim more samples than there are rows.
+		(iterations, rows): (Iterations, u32),
 		error: &AtomicBool,
 		current: &AtomicU32,
 		complete: &AtomicU32,
@@ -1524,7 +1753,7 @@ impl Benchmark {
 			// Get the current sample number
 			let sample = current.fetch_add(1, Ordering::Relaxed);
 			// Have we produced enough samples
-			if sample >= samples {
+			if iterations.exhausted(sample, Instant::now(), base_instant) {
 				// We are done
 				break;
 			}
@@ -1573,7 +1802,7 @@ impl Benchmark {
 				}
 				BenchmarkOperation::ScanWithWrites(scan, ctx, spec) => {
 					workloads::run_scan_with_writes(
-						&*client, scan, *ctx, spec, sample, samples, &mut kp,
+						&*client, scan, *ctx, spec, sample, rows, &mut kp,
 					)
 					.await
 				}
@@ -1623,9 +1852,11 @@ impl Benchmark {
 			// Only touch the shared completion counter when a progress bar is
 			// actually rendering; otherwise this is pure cross-task cache-line
 			// contention on every single sample for no observer.
-			if let Some(pb) = &progress {
+			// A timed run's bar tracks elapsed time on its own, so only a
+			// fixed-count run reports completions into it.
+			if let (Some(pb), Iterations::Fixed(total)) = (&progress, iterations) {
 				let sample = complete.fetch_add(1, Ordering::Relaxed);
-				let done = ((sample + 1).min(samples)) as u64;
+				let done = (sample + 1).min(total) as u64;
 				pb.set_position(done);
 			}
 			histogram.record(time.elapsed().as_micros() as u64)?;
@@ -1950,8 +2181,8 @@ fn progress_short_label(operation: &BenchmarkOperation) -> String {
 #[cfg(test)]
 mod test {
 	use super::{
-		Benchmark, BenchmarkOperation, QUERYABLE_DEADLINE_MARGIN, VECTOR_WARMUP_PLATEAU_SPAN,
-		warmup_has_plateaued,
+		Benchmark, BenchmarkOperation, Iterations, QUERYABLE_DEADLINE_MARGIN,
+		VECTOR_WARMUP_PLATEAU_SPAN, Window, warmup_has_plateaued,
 	};
 	use crate::dialect::DefaultDialect;
 	use crate::engine::BenchmarkClient;
@@ -1964,6 +2195,57 @@ mod test {
 	use std::collections::VecDeque;
 	use std::sync::{Arc, Mutex};
 	use std::time::Duration;
+	use tokio::time::Instant;
+
+	fn window(measure_ms: u64, min: u32, max: u32) -> Iterations {
+		Iterations::Timed(Window {
+			warmup: Duration::ZERO,
+			measure: Duration::from_millis(measure_ms),
+			min,
+			max,
+		})
+	}
+
+	#[test]
+	fn a_fixed_run_ignores_the_clock() {
+		let opened = Instant::now();
+		let later = opened + Duration::from_secs(3600);
+		let it = Iterations::Fixed(3);
+		assert!(!it.exhausted(2, later, opened));
+		assert!(it.exhausted(3, opened, opened));
+	}
+
+	#[test]
+	fn a_window_runs_until_it_elapses() {
+		let opened = Instant::now();
+		let it = window(100, 1, 1000);
+		assert!(!it.exhausted(50, opened + Duration::from_millis(99), opened));
+		assert!(it.exhausted(50, opened + Duration::from_millis(100), opened));
+	}
+
+	#[test]
+	fn a_window_honours_the_minimum_past_its_deadline() {
+		let opened = Instant::now();
+		let late = opened + Duration::from_secs(10);
+		let it = window(100, 5, 1000);
+		assert!(!it.exhausted(4, late, opened));
+		assert!(it.exhausted(5, late, opened));
+	}
+
+	#[test]
+	fn a_window_closes_at_the_maximum_even_with_time_left() {
+		let opened = Instant::now();
+		let it = window(60_000, 1, 10);
+		assert!(!it.exhausted(9, opened, opened));
+		assert!(it.exhausted(10, opened, opened));
+	}
+
+	#[test]
+	fn a_timed_scan_reports_the_most_any_leg_recorded() {
+		let it = window(100, 1, 1000);
+		assert_eq!(it.reported(&[]), 0);
+		assert_eq!(Iterations::Fixed(7).reported(&[]), 7);
+	}
 
 	fn ms(v: u64) -> Duration {
 		Duration::from_millis(v)

@@ -152,6 +152,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			// Default configuration
 			false => "".to_string(),
 		},
+		data_path: Some("/data/db"),
 	}
 }
 

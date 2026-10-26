@@ -102,8 +102,9 @@ pub(crate) trait BenchmarkClient: Sync + Send + 'static {
 		Ok(())
 	}
 
-	/// Cleanup the store at shutdown
-	async fn shutdown(&self) -> Result<()> {
+	/// Close the store at shutdown. With `keep_data` the on-disk dataset is
+	/// left in place for a later query run; otherwise it is removed.
+	async fn shutdown(&self, _keep_data: bool) -> Result<()> {
 		Ok(())
 	}
 

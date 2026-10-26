@@ -34,6 +34,7 @@ default = [
     "sqlite",
     "surrealdb",
     "surrealdb2",
+    "surrealdb3",
     "surrealkv",
     "surrealmx",
 ]
@@ -55,6 +56,14 @@ scylladb = ["dep:scylla"]
 slatedb = ["dep:slatedb"]
 sqlite = ["dep:tokio-rusqlite"]
 surrealdb = [
+    "dep:surrealdb",
+    "surrealdb/kv-mem",
+    "surrealdb/kv-surrealkv",
+    "surrealdb/protocol-http",
+    "surrealdb/protocol-ws",
+    "surrealdb/rustls",
+]
+surrealdb3 = [
     "dep:surrealdb",
     "surrealdb/kv-mem",
     "surrealdb/kv-rocksdb",

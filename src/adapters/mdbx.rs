@@ -25,7 +25,9 @@ impl BenchmarkEngine<MDBXClient> for MDBXClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(_kt: KeyType, _columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		if options.mode.wipes_on_setup() {
+			std::fs::remove_dir_all(DATABASE_DIR).ok();
+		}
 		// Configure database options
 		let options = DatabaseOptions {
 			// Configure the read-write options
@@ -94,9 +96,11 @@ impl BenchmarkClient for MDBXClient {
 	// The return type when reading a row
 	type ReadRow = BenchValue;
 
-	async fn shutdown(&self) -> Result<()> {
+	async fn shutdown(&self, keep_data: bool) -> Result<()> {
 		// Cleanup the data directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		if !keep_data {
+			std::fs::remove_dir_all(DATABASE_DIR).ok();
+		}
 		// Ok
 		Ok(())
 	}

@@ -62,6 +62,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			 -e NEO4J_AUTH=none {checkpoint} {memory}"
 		),
 		post_args: "".to_string(),
+		data_path: Some("/data"),
 	}
 }
 

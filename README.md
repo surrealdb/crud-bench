@@ -151,6 +151,12 @@ Options:
   -s, --samples <SAMPLES>                      Number of samples to be created, read, updated, and deleted
   -r, --random                                 Generate the keys in a pseudo-randomized order
       --sync                                   Whether to ensure data is synced and durable
+      --measurement-time <SECONDS>             Seconds each timed scan leg runs for when the scan sets no `iterations` [default: 30]
+      --warmup-time <SECONDS>                  Seconds of untimed warm-up before each timed scan leg (0 disables) [default: 5]
+      --min-iterations <N>                     Fewest iterations a timed window may record [default: 10]
+      --max-iterations <N>                     Most iterations a timed window may record [default: 10000000]
+      --mode <MODE>                            Which phases to run: `all`, `load` (keep the dataset), or `query` (reuse it) [default: all]
+      --data-dir <DATA_DIR>                    Directory recording what a `load` run left behind [env: CRUD_BENCH_DATA_DIR=] [default: .crud-bench-data]
       --operation-timeout <OPERATION_TIMEOUT>  Per-operation timeout in seconds [env: CRUD_BENCH_OPERATION_TIMEOUT=] [default: 1800]
       --persisted                              Whether to enable disk persistence for Redis-family databases
       --optimised                              Use optimised database configurations instead of defaults
@@ -260,6 +266,8 @@ Each scan object can make use of the following values:
 - `id` (**required**): Stable identifier for grouping in the CLI, result tables, CSV output, and for **index create/drop** when `with_index` is present and not skipped. Use a simple identifier (e.g. `where_field_integer_eq`); human-readable titles live in `name` / run `name` and may contain characters that are not valid in SurrealDB or Neo4j index names.
 - `name`: A descriptive name for the test (use this **or** `runs`, not both).
 - `runs`: An array of `{ "name", "iterations"?, "projection"?, "vector_query"? }` objects that share the same scan parameters (`condition`, `with_index`, and so on). Each run becomes a separate benchmark with its own display name. Per-run `iterations`, `projection` and `vector_query` override the entry-level value when both are set; if a run omits one, the entry-level value applies (`projection` defaulting to full-record scans like a single-object entry without `projection`). A per-run `iterations` matters when one array mixes leg kinds — a bruteforce KNN leg is a full table scan costing seconds per query at 100k rows, while the graph-index legs beside it answer in under a millisecond, and no single count suits both.
+- `iterations`: A fixed number of timed iterations. When omitted, the scan is measured over a time window instead, so its run time does not grow with the dataset size.
+- `measurement_time` / `warmup_time`: Seconds of the measured window and of the untimed warm-up before it, overriding `--measurement-time` and `--warmup-time`. Ignored when `iterations` is set. A window never interrupts a query already running, and always records at least `--min-iterations` samples, so a very slow query can run past it. Result rows for a windowed scan are labelled with the window (for example `30s`) instead of an iteration count.
 - `projection`: The projection type of the scan:
     - `"ID"`: only the ID is returned.
     - `"FULL"`: the whole record is returned.
@@ -342,7 +350,7 @@ alone arrives while a vector index is still being built from per-record pending 
 query in that state scores the remainder by hand. A server that does not report `compacting` cannot
 say when that has finished, so crud-bench **skips** HNSW and DiskANN legs there, reporting `-`,
 rather than time a scan wearing the index's name. SurrealDB 3.3.0 is the first release that reports
-it, so both the crate embedded mode links (`-e memory`, `-e rocksdb:…`, `-e surrealkv:…`) and the
+it, so both the crate embedded mode links (`-e memory`, `-e surrealkv:…`) and the
 nightly Docker image server mode uses by default are covered; releases before 3.3.0 defer the same
 work without reporting it, and get the skip.
 
@@ -682,7 +690,7 @@ cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 --config config/vector.toml
 
 Spatial workloads live in [`config/spatial.toml`](config/spatial.toml) and use `with_index = { fields = [...], index_type = "spatial" }`:
 
-- **SurrealDB (3.x)**: Binds `point` columns natively as `Geometry::Point((lon, lat))`, declares `DEFINE FIELD OVERWRITE <geom_field> ON TABLE record TYPE geometry<point>` so the Hilbert index activates its compact point-only fast path, and builds `DEFINE INDEX <name> ON TABLE record FIELDS <fields> SPATIAL CONCURRENTLY`.
+- **SurrealDB**: Binds `point` columns natively as `Geometry::Point((lon, lat))`, declares `DEFINE FIELD OVERWRITE <geom_field> ON TABLE record TYPE geometry<point>` so the Hilbert index activates its compact point-only fast path, and builds `DEFINE INDEX <name> ON TABLE record FIELDS <fields> SPATIAL CONCURRENTLY`.
 - **PostgreSQL**: Binds `point` columns natively as 16-byte binary `POINT` (`(lon, lat)`), enables `btree_gist`, `cube`, and `earthdistance`, and builds `CREATE INDEX <name> ON record USING GIST (<fields>)` (supporting both single-column and compound prefix + spatial indexes).
 - **MongoDB**: Binds `point` columns as GeoJSON `{"type": "Point", "coordinates": [lon, lat]}` documents and builds a `"2dsphere"` index on the geometry field (with ascending `1` prefix keys for compound indexes such as `fields = ["status", "location"]`).
 - **Other engines**: Cleanly skip `index_type = "spatial"` scans (`NOT_SUPPORTED_ERROR`).
@@ -928,12 +936,12 @@ Specify a custom endpoint using `-e` or `--endpoint` to benchmark a custom deplo
 | Endpoint | Meaning |
 |----------|---------|
 | `server:memory` | Docker server with in-memory storage engine |
-| `server:rocksdb` | Docker server with RocksDB storage engine |
 | `server:surrealkv` | Docker server with SurrealKV storage engine |
 | `memory` | Embedded with in-memory storage engine. |
-| `rocksdb:<path>` (`rocksdb:/tmp/db`) | Embedded with RocksDB storage engine. |
-| `surrealkv:<path>` (`surrealkv:/tmp/db`) | Embedded with RocksDB storage engine. |
+| `surrealkv:<path>` (`surrealkv:/tmp/db`) | Embedded with SurrealKV storage engine. |
 | `ws://...`, `wss://...`, `http://...`, `https://...` | Remote server you manage yourself (no Docker started by crud-bench). |
+
+The default adapter follows the latest SurrealDB release, which no longer offers the RocksDB storage engine. To benchmark SurrealDB 3.x, including RocksDB, use `-d surrealdb3`, which links the 3.x SDK and starts the `surrealdb/surrealdb:v3` image. It accepts the same endpoints as above plus `server:rocksdb` and `rocksdb:<path>`, and defaults to `server:rocksdb`.
 
 ### [SurrealKV](https://surrealkv.org)
 
@@ -958,7 +966,7 @@ To run the benchmark against an already running SurrealDB instance, follow the s
 Start a SurrealDB server:
 
 ```bash
-surreal start --allow-all -u root -p root rocksdb:/tmp/db
+surreal start --allow-all -u root -p root surrealkv:/tmp/db
 ```
 
 Then run crud-bench with the `surrealdb` database option:
@@ -978,7 +986,7 @@ When benchmarking SurrealDB (including `surrealdb`, and `surrealds`), you can co
 
 These environment variables are used in two scenarios:
 
-1. **Docker Container Startup**: When crud-bench automatically starts a SurrealDB Docker container (`-d surrealdb` with no endpoint, or with `-e server:rocksdb` / `-e server:memory` / `-e server:surrealkv`), it uses these credentials to configure the database server
+1. **Docker Container Startup**: When crud-bench automatically starts a SurrealDB Docker container (`-d surrealdb` with no endpoint, or with `-e server:memory` / `-e server:surrealkv`), it uses these credentials to configure the database server
 2. **Client Authentication**: When connecting to SurrealDB instances (both embedded and networked), the benchmark client uses these credentials to authenticate
 
 ### Usage Examples
@@ -1008,7 +1016,7 @@ SURREALDB_USER=admin SURREALDB_PASS=secure_password cargo run -r -- -d surrealdb
 First, start your SurrealDB instance with custom credentials:
 
 ```bash
-surreal start --allow-all -u admin -p secure_password rocksdb:/tmp/db
+surreal start --allow-all -u admin -p secure_password surrealkv:/tmp/db
 ```
 
 Then run the benchmark with matching credentials:
@@ -1060,16 +1068,16 @@ For testing the load distribution mechanism without TiKV, you can use independen
 
 ```bash
 # Terminal 1 - Start first instance on port 8001
-surreal start --allow-all -u root -p root --bind 127.0.0.1:8001 rocksdb:/tmp/db1
+surreal start --allow-all -u root -p root --bind 127.0.0.1:8001 surrealkv:/tmp/db1
 
 # Terminal 2 - Start second instance on port 8002
-surreal start --allow-all -u root -p root --bind 127.0.0.1:8002 rocksdb:/tmp/db2
+surreal start --allow-all -u root -p root --bind 127.0.0.1:8002 surrealkv:/tmp/db2
 
 # Terminal 3 - Start third instance on port 8003
-surreal start --allow-all -u root -p root --bind 127.0.0.1:8003 rocksdb:/tmp/db3
+surreal start --allow-all -u root -p root --bind 127.0.0.1:8003 surrealkv:/tmp/db3
 ```
 
-> **Note**: When using independent storage backends (like RocksDB above), each instance maintains its own separate data. With TiKV, all instances share the same distributed storage, which is the recommended production setup.
+> **Note**: When using independent storage backends (like SurrealKV above), each instance maintains its own separate data. With TiKV, all instances share the same distributed storage, which is the recommended production setup.
 
 ### Usage
 
@@ -1135,3 +1143,24 @@ SurrealDS is ideal for:
 - **Scalability Assessment**: Compare single-node vs. multi-node SurrealDB performance with TiKV
 - **Production Deployment Simulation**: Benchmark configurations that mirror real-world distributed SurrealDB+TiKV deployments
 - **High Availability Testing**: Evaluate performance characteristics of redundant SurrealDB instances backed by TiKV
+
+## Loading once, querying many times
+
+Loading a large dataset dominates a run, and reads and scans can be measured many times against one load. `--mode` splits the two:
+
+```bash
+# Create and update the dataset, then keep it
+crud-bench -d postgres -s 10000000 --mode load
+
+# Read and scan it, as often as needed, without reloading
+crud-bench -d postgres -s 10000000 --mode query
+```
+
+- `all` (the default) loads, queries, deletes and runs batches in one run, and cleans up.
+- `load` runs creates and updates, then leaves the dataset on disk. For Docker databases the data lives in a named volume (`crud-bench-<database>`, with `-<name>` appended when `--name` is set) that is emptied at the start of every `load` run. The volume is left behind afterwards; remove it with `docker volume rm` when finished.
+- `query` runs reads and scans against that dataset. It does not recreate the schema and writes no rows.
+- Deletes and batches run only under `all`, because they consume or mutate the dataset.
+
+A `load` run writes a manifest to `--data-dir` recording the database, endpoint, `--samples`, key type, `--random`, corpus seed, value template, `--persisted`, `--optimised` and `--sync`. A `query` run refuses to start if any of these differ from the manifest, and says which. A `load` run that fails removes the manifest so its partial data cannot be queried.
+
+Pass the same `--name` and `--data-dir` to a `query` run as to its `load` run. Databases that cannot keep data between processes are refused up front: the in-memory `map` engine, `memory` endpoints, `server:memory`, and Redis, KeyDB, Dragonfly and SurrealMX without `--persisted`.

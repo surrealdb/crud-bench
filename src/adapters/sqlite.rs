@@ -89,9 +89,11 @@ impl BenchmarkEngine<SqliteClient> for SqliteClientProvider {
 	/// Initiates a new datastore benchmarking engine
 	async fn setup(kt: KeyType, columns: Columns, options: &Benchmark) -> Result<Self> {
 		// Remove the database directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		if options.mode.wipes_on_setup() {
+			std::fs::remove_dir_all(DATABASE_DIR).ok();
+		}
 		// Recreate the database directory
-		std::fs::create_dir(DATABASE_DIR)?;
+		std::fs::create_dir_all(DATABASE_DIR)?;
 		// Database file path
 		let path = format!("{DATABASE_DIR}/db");
 		// Store the path so each client opens its own connection
@@ -137,9 +139,11 @@ impl BenchmarkClient for SqliteClient {
 	// The return type when reading a row
 	type ReadRow = BenchValue;
 
-	async fn shutdown(&self) -> Result<()> {
+	async fn shutdown(&self, keep_data: bool) -> Result<()> {
 		// Remove the database directory
-		std::fs::remove_dir_all(DATABASE_DIR).ok();
+		if !keep_data {
+			std::fs::remove_dir_all(DATABASE_DIR).ok();
+		}
 		// Ok
 		Ok(())
 	}
