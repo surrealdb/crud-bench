@@ -1,10 +1,11 @@
 #![cfg(feature = "postgres")]
 
+use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::{AnsiSqlDialect, Dialect, PostgresDialect};
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, KnnKey, ScanContext};
 use crate::memory::Config;
-use crate::util::sql::bench_to_postgres_param;
+use crate::util::sql::{PgPoint, bench_to_postgres_param};
 use crate::value::BenchValue;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::vectorfilter::{FilterColumnType, ListSyntax};
@@ -129,7 +130,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		// schema declares a `FloatVector` column, see `startup`).
 		image: "pgvector/pgvector:pg17",
 		pre_args:
-			"--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
+			"--ulimit nofile=65536:65536 --shm-size=4g -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
 				.to_string(),
 		post_args: match options.optimised {
 			// Optimised configuration
@@ -206,6 +207,15 @@ impl BenchmarkClient for PostgresClient {
 		if self.columns.0.iter().any(|(_, t)| matches!(t, ColumnType::FloatVector(_))) {
 			self.client.batch_execute("CREATE EXTENSION IF NOT EXISTS vector;").await?;
 		}
+		if self.columns.0.iter().any(|(_, t)| matches!(t, ColumnType::Point)) {
+			self.client
+				.batch_execute(
+					"CREATE EXTENSION IF NOT EXISTS btree_gist; \
+					 CREATE EXTENSION IF NOT EXISTS cube; \
+					 CREATE EXTENSION IF NOT EXISTS earthdistance;",
+				)
+				.await?;
+		}
 		let id_type = match self.kt {
 			KeyType::Integer => "SERIAL",
 			KeyType::String26 => "VARCHAR(26)",
@@ -234,6 +244,7 @@ impl BenchmarkClient for PostgresClient {
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} BYTEA NOT NULL"),
 					ColumnType::FloatVector(dim) => format!("{n} vector({dim}) NOT NULL"),
+					ColumnType::Point => format!("{n} POINT NOT NULL"),
 				}
 			})
 			.collect::<Vec<String>>()
@@ -307,6 +318,12 @@ impl BenchmarkClient for PostgresClient {
 				};
 				format!("CREATE INDEX {name} ON record USING GIN ({tsvector_expr})")
 			}
+			Some(kind) if kind == "spatial" => {
+				if spec.unique.unwrap_or(false) {
+					bail!(NOT_SUPPORTED_ERROR);
+				}
+				format!("CREATE INDEX {name} ON record USING GIST ({fields})")
+			}
 			Some(kind) => {
 				format!("CREATE {unique} INDEX {name} ON record USING {kind} ({fields})")
 			}
@@ -330,6 +347,9 @@ impl BenchmarkClient for PostgresClient {
 		};
 		// Create the index
 		self.client.execute(&stmt, &[]).await?;
+		if spec.index_type.as_deref() == Some("spatial") {
+			self.client.execute("ANALYZE record", &[]).await?;
+		}
 		// All ok
 		Ok(())
 	}
@@ -337,17 +357,21 @@ impl BenchmarkClient for PostgresClient {
 	async fn build_filter_index(
 		&self,
 		column: &str,
-		_ty: FilterColumnType,
+		ty: FilterColumnType,
 		name: &str,
 	) -> Result<()> {
-		// Columns are typed already; a b-tree is what lets the planner choose a
-		// bitmap scan of the matching rows plus an exact sort over the HNSW scan
-		// when the predicate is selective enough.
+		// Columns are typed already; a b-tree (or GiST for `Point`) is what lets
+		// the planner choose a bitmap scan of the matching rows plus an exact
+		// sort over the HNSW scan when the predicate is selective enough.
+		let index_type = match ty {
+			FilterColumnType::Point => Some("spatial".to_string()),
+			_ => None,
+		};
 		let spec = Index {
 			skip: false,
 			fields: vec![column.to_string()],
 			unique: None,
-			index_type: None,
+			index_type,
 		};
 		self.build_index(&spec, name).await?;
 		// Fresh statistics, or the planner costs the new index blind: straight
@@ -535,6 +559,10 @@ impl PostgresClient {
 					ColumnType::Object | ColumnType::Array => {
 						let v: Json<serde_json::Value> = row.try_get(n.as_str())?;
 						BenchValue::from(&v.0)
+					}
+					ColumnType::Point => {
+						let v: PgPoint = row.try_get(n.as_str())?;
+						BenchValue::Point(v.0, v.1)
 					}
 					ColumnType::FloatVector(_) => {
 						let v: pgvector::Vector = row.try_get(n.as_str())?;
@@ -866,6 +894,7 @@ fn get_column_type(column_type: &ColumnType) -> &'static str {
 		ColumnType::Decimal => "NUMERIC",
 		ColumnType::Bytes => "BYTEA",
 		ColumnType::FloatVector(_) => "vector",
+		ColumnType::Point => "POINT",
 	}
 }
 

@@ -14,16 +14,18 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use log::{error, warn};
+use std::collections::HashMap;
 use std::env;
 use std::hint::black_box;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
-use surrealdb::opt::{Config, Resource};
+use surrealdb::opt::{Config, Resource, WebsocketConfig};
 use surrealdb::types::{
-	Array, Bytes as SurrealBytes, Datetime, Number, Object, RecordId, RecordIdKey, SurrealValue,
-	ToSql, Uuid as SurrealUuid, Value,
+	Array, Bytes as SurrealBytes, Datetime, Geometry, Number, Object, RecordId, RecordIdKey,
+	SurrealValue, ToSql, Uuid as SurrealUuid, Value,
 };
 use tokio::time::{sleep, timeout};
 
@@ -57,6 +59,7 @@ fn bench_to_surreal_value(v: BenchValue) -> Value {
 		BenchValue::FloatVector(v) => Value::Array(Array::from(
 			v.into_iter().map(|f| Value::Number(Number::Float(f as f64))).collect::<Vec<_>>(),
 		)),
+		BenchValue::Point(lon, lat) => Value::Geometry(Geometry::Point((lon, lat).into())),
 	}
 }
 
@@ -73,6 +76,7 @@ fn surreal_to_bench_value(v: Value) -> BenchValue {
 		Value::Bytes(b) => BenchValue::Bytes(b.to_vec()),
 		Value::Uuid(u) => BenchValue::Uuid(u.into()),
 		Value::Datetime(dt) => BenchValue::DateTime(*dt),
+		Value::Geometry(Geometry::Point(p)) => BenchValue::Point(p.0.x, p.0.y),
 		Value::Array(a) => {
 			BenchValue::Array(Vec::from(a).into_iter().map(surreal_to_bench_value).collect())
 		}
@@ -180,6 +184,7 @@ fn surreal_filter_field_sql(column: &str, ty: FilterColumnType) -> String {
 		FilterColumnType::Float => "float",
 		FilterColumnType::String => "string",
 		FilterColumnType::Bool => "bool",
+		FilterColumnType::Point => "geometry<point>",
 	};
 	format!("DEFINE FIELD {column} ON TABLE record TYPE {ty}")
 }
@@ -453,7 +458,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		}
 		Endpoint::Docker(Docker::Memory) => DockerParams {
 			image: "surrealdb/surrealdb:v3",
-			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
+			pre_args: "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB --user root".to_string(),
 			post_args: match options.persisted {
 				true => {
 					format!(
@@ -470,9 +475,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			image: "surrealdb/surrealdb:v3",
 			pre_args: match options.optimised {
 				true => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB -e SURREAL_ROCKSDB_BLOCK_CACHE_SIZE={cache_gb}GB --user root",
 				),
-				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
+				false => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB --user root".to_string(),
 			},
 			post_args: format!(
 				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db?sync={sync}",
@@ -483,9 +488,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			image: "surrealdb/surrealdb:v3",
 			pre_args: match options.optimised {
 				true => format!(
-					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
+					"--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB -e SURREAL_SURREALKV_MAX_VALUE_CACHE_SIZE={cache_gb}GB --user root",
 				),
-				false => "--ulimit nofile=65536:65536 -p 8000:8000 --user root".to_string(),
+				false => "--ulimit nofile=65536:65536 -p 8000:8000 -e SURREAL_WEBSOCKET_MAX_MESSAGE_SIZE=512MB --user root".to_string(),
 			},
 			post_args: format!(
 				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db?sync={sync}",
@@ -502,8 +507,12 @@ pub(crate) struct SurrealDB3ClientProvider {
 }
 
 pub(super) async fn initialise_db(endpoint: &str, root: Root) -> Result<Surreal<Any>> {
-	// Set the root user
-	let config = Config::new().user(root.clone());
+	// Set the root user and disable the client-side 64 MiB WebSocket frame limit
+	// so wide full-row scans (e.g. 20k+ rows carrying embedding vectors) do not
+	// reset the connection.
+	let config = Config::new()
+		.user(root.clone())
+		.websocket(WebsocketConfig::new().max_message_size(None))?;
 	// Connect to the database
 	let db = connect((endpoint, config)).await?;
 	// Signin as a namespace, database, or root user
@@ -567,6 +576,13 @@ impl BenchmarkEngine<SurrealDB3Client> for SurrealDB3ClientProvider {
 pub(crate) struct SurrealDB3Client {
 	db: Surreal<Any>,
 }
+
+/// Maps spatial index names to the geometry field declared via
+/// `DEFINE FIELD OVERWRITE <field> ON TABLE record TYPE geometry<point>` during
+/// `build_index`, so `drop_index` removes only that field and restores the
+/// table to schemaless mode between scan phases.
+static SPATIAL_INDEX_FIELDS: LazyLock<Mutex<HashMap<String, String>>> =
+	LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl SurrealDB3Client {
 	pub(super) const fn new(db: Surreal<Any>) -> Self {
@@ -686,12 +702,75 @@ impl BenchmarkClient for SurrealDB3Client {
 				// COUNT indexes apply to the whole table and accept no FIELDS / UNIQUE.
 				format!("DEFINE INDEX {name} ON TABLE record COUNT CONCURRENTLY")
 			}
+			Some(kind) if kind == "spatial" => {
+				// Declare the geometry field's schema type (`geometry<point>`) before
+				// defining the spatial index so SurrealDB's planner and index builder
+				// activate the point-only Hilbert key fast path (no secondary `/hg`
+				// geometry payload storage, direct coordinate decoding from the 64-bit
+				// Hilbert key for `geo::distance`).
+				if let Some(geom_field) = spec.fields.last() {
+					let field_sql = format!(
+						"DEFINE FIELD OVERWRITE {geom_field} ON TABLE record TYPE geometry<point>;"
+					);
+					self.db
+						.query(&field_sql)
+						.await
+						.map_err(log_sql_err(&field_sql))?
+						.check()
+						.map_err(log_sql_err(&field_sql))?;
+					SPATIAL_INDEX_FIELDS
+						.lock()
+						.unwrap()
+						.insert(name.to_string(), geom_field.clone());
+				}
+				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} SPATIAL CONCURRENTLY")
+			}
 			_ => {
 				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique} CONCURRENTLY")
 			}
 		};
-		// Create the index
-		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
+		// Create the index. Treat parse errors on newer index types (`count`,
+		// `spatial`) as `NOT_SUPPORTED_ERROR` so older SurrealDB builds skip
+		// the indexed leg cleanly.
+		let cleanup_spatial_field = |name: &str| SPATIAL_INDEX_FIELDS.lock().unwrap().remove(name);
+		let resp = match self.db.query(&sql).await {
+			Ok(r) => r,
+			Err(e)
+				if matches!(spec.index_type.as_deref(), Some("count" | "spatial"))
+					&& is_surreal_parse_error(&e) =>
+			{
+				if let Some(geom_field) = cleanup_spatial_field(name) {
+					let _ = self
+						.db
+						.query(format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record"))
+						.await;
+				}
+				bail!(NOT_SUPPORTED_ERROR)
+			}
+			Err(e) => {
+				if let Some(geom_field) = cleanup_spatial_field(name) {
+					let _ = self
+						.db
+						.query(format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record"))
+						.await;
+				}
+				return Err(log_sql_err(&sql)(e));
+			}
+		};
+		if let Err(e) = resp.check() {
+			if let Some(geom_field) = cleanup_spatial_field(name) {
+				let _ = self
+					.db
+					.query(format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record"))
+					.await;
+			}
+			if matches!(spec.index_type.as_deref(), Some("count" | "spatial"))
+				&& is_surreal_parse_error(&e)
+			{
+				bail!(NOT_SUPPORTED_ERROR);
+			}
+			return Err(log_sql_err(&sql)(e));
+		}
 		// Wait until the index is ready. This poll is inside the timed build, so
 		// its cadence adapts rather than rounding the build up to a fixed step.
 		let started = Instant::now();
@@ -729,20 +808,25 @@ impl BenchmarkClient for SurrealDB3Client {
 		// is never online over an undeclared column.
 		let sql = surreal_filter_field_sql(column, ty);
 		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
+		let index_type = match ty {
+			FilterColumnType::Point => Some("spatial".to_string()),
+			_ => None,
+		};
 		let spec = Index {
 			skip: false,
 			fields: vec![column.to_string()],
 			unique: None,
-			index_type: None,
+			index_type,
 		};
-		// A plain b-tree index; `build_index` returns once it reports ready.
+		// A plain b-tree index (or SPATIAL index for Point); `build_index` returns once it reports ready.
 		self.build_index(&spec, name).await
 	}
 
 	async fn drop_filter_index(&self, column: &str, name: &str) -> Result<()> {
 		self.drop_index(name).await?;
-		// Back to schemaless, as every other scan expects the table.
-		let sql = format!("REMOVE FIELD {column} ON TABLE record");
+		// Back to schemaless, as every other scan expects the table (`IF EXISTS`
+		// because `drop_index` on a SPATIAL index already removes its geometry field).
+		let sql = format!("REMOVE FIELD IF EXISTS {column} ON TABLE record");
 		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
 		Ok(())
 	}
@@ -825,6 +909,14 @@ impl BenchmarkClient for SurrealDB3Client {
 		// Remove the analyzer
 		let sql = format!("REMOVE ANALYZER IF EXISTS {name}");
 		retry(sql, Duration::from_secs(180)).await?;
+		// If this index was a `spatial` index that declared a `geometry<point>`
+		// field on `record`, remove that field so the table returns to
+		// schemaless mode for subsequent scans.
+		let geom_field = SPATIAL_INDEX_FIELDS.lock().unwrap().remove(name);
+		if let Some(geom_field) = geom_field {
+			let sql = format!("REMOVE FIELD IF EXISTS {geom_field} ON TABLE record");
+			retry(sql, Duration::from_secs(180)).await?;
+		}
 		// All ok
 		Ok(())
 	}
@@ -1405,6 +1497,10 @@ mod test {
 		assert_eq!(
 			surreal_filter_field_sql("active", FilterColumnType::Bool),
 			"DEFINE FIELD active ON TABLE record TYPE bool"
+		);
+		assert_eq!(
+			surreal_filter_field_sql("location", FilterColumnType::Point),
+			"DEFINE FIELD location ON TABLE record TYPE geometry<point>"
 		);
 	}
 

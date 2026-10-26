@@ -242,6 +242,33 @@ enum ValueGenerator {
 		/// Noise length relative to a unit centroid.
 		sigma: f32,
 	},
+	/// 2D geographic point `(lon, lat)` drawn uniformly from a bounding box.
+	Point {
+		lon: Range<f64>,
+		lat: Range<f64>,
+	},
+	/// 2D geographic point `(lon, lat)` drawn from a mixture of Gaussian
+	/// clusters in WGS84 degrees.
+	ClusteredPoint {
+		centroids: Arc<Vec<(f64, f64)>>,
+		sigma: f64,
+	},
+}
+
+/// Default standard deviation (in degrees, ~55 km at the equator) when
+/// `point:clustered:<n>` omits `<sigma>`.
+const DEFAULT_POINT_CLUSTER_SIGMA: f64 = 0.5;
+
+/// Draw `clusters` geographic cluster centres deterministically from `seed`.
+fn point_cluster_centroids(clusters: usize, seed: u64) -> Vec<(f64, f64)> {
+	let mut rng = SmallRng::seed_from_u64(seed);
+	(0..clusters)
+		.map(|_| {
+			let lon = RandGen::random_range(&mut rng, -175.0_f64..175.0_f64);
+			let lat = RandGen::random_range(&mut rng, -80.0_f64..80.0_f64);
+			(lon, lat)
+		})
+		.collect()
 }
 
 /// Cluster spread when `vector:<dim>:clustered:<n>` omits it.
@@ -372,6 +399,14 @@ impl ValueGenerator {
 				let clusters = centroids.len();
 				*centroids =
 					Arc::new(cluster_centroids(*dim, clusters, seed ^ DEFAULT_CENTROID_SEED));
+			}
+			ValueGenerator::ClusteredPoint {
+				centroids,
+				..
+			} => {
+				let clusters = centroids.len();
+				*centroids =
+					Arc::new(point_cluster_centroids(clusters, seed ^ DEFAULT_CENTROID_SEED));
 			}
 			ValueGenerator::Array(items) => {
 				for g in items {
@@ -525,6 +560,69 @@ impl ValueGenerator {
 				);
 			}
 			Self::DecimalEnum(numbers)
+		} else if s.eq("point") {
+			Self::Point {
+				lon: -180.0..180.0,
+				lat: -85.0..85.0,
+			}
+		} else if let Some(rest) = s.strip_prefix("point:") {
+			if let Some(spec) = rest.strip_prefix("clustered:") {
+				let (clusters_str, sigma_str) = match spec.split_once(':') {
+					Some((c, g)) => (c, Some(g)),
+					None => (spec, None),
+				};
+				let clusters: usize = clusters_str
+					.parse()
+					.map_err(|e| anyhow!("invalid point cluster count {clusters_str:?}: {e}"))?;
+				if clusters == 0 {
+					bail!("point cluster count must be > 0");
+				}
+				let sigma: f64 = match sigma_str {
+					Some(g) => {
+						g.parse().map_err(|e| anyhow!("invalid point cluster sigma: {e}"))?
+					}
+					None => DEFAULT_POINT_CLUSTER_SIGMA,
+				};
+				if !sigma.is_finite() || sigma <= 0.0 {
+					bail!("point cluster sigma must be a finite value > 0");
+				}
+				Self::ClusteredPoint {
+					centroids: Arc::new(point_cluster_centroids(clusters, DEFAULT_CENTROID_SEED)),
+					sigma,
+				}
+			} else {
+				let Some((lon_str, lat_str)) = rest.split_once(',') else {
+					bail!(
+						"point range must be 'point:<lon_lo>..<lon_hi>,<lat_lo>..<lat_hi>' or 'point:clustered:<n>[:<sigma>]', got {rest:?}"
+					);
+				};
+				let Length::Range(lon) = Length::<f64>::new(lon_str)? else {
+					bail!("expected longitude range <lo>..<hi>, got {lon_str:?}");
+				};
+				let Length::Range(lat) = Length::<f64>::new(lat_str)? else {
+					bail!("expected latitude range <lo>..<hi>, got {lat_str:?}");
+				};
+				if !lon.start.is_finite()
+					|| !lon.end.is_finite()
+					|| lon.end <= lon.start
+					|| lon.start < -180.0
+					|| lon.end > 180.0
+				{
+					bail!("longitude range must satisfy -180 <= lo < hi <= 180, got {lon:?}");
+				}
+				if !lat.start.is_finite()
+					|| !lat.end.is_finite()
+					|| lat.end <= lat.start
+					|| lat.start < -90.0
+					|| lat.end > 90.0
+				{
+					bail!("latitude range must satisfy -90 <= lo < hi <= 90, got {lat:?}");
+				}
+				Self::Point {
+					lon,
+					lat,
+				}
+			}
 		} else if s.eq("bool") {
 			Self::Bool
 		} else if s.eq("int") {
@@ -720,6 +818,23 @@ impl ValueGenerator {
 				normalise(&mut buf);
 				BenchValue::FloatVector(buf)
 			}
+			ValueGenerator::Point {
+				lon,
+				lat,
+			} => {
+				let x = rng.random_range(lon.clone());
+				let y = rng.random_range(lat.clone());
+				BenchValue::Point(x, y)
+			}
+			ValueGenerator::ClusteredPoint {
+				centroids,
+				sigma,
+			} => {
+				let (clon, clat) = centroids[rng.random_range(0..centroids.len())];
+				let lon = (clon + *sigma * standard_normal(rng) as f64).clamp(-180.0, 180.0);
+				let lat = (clat + *sigma * standard_normal(rng) as f64).clamp(-85.0, 85.0);
+				BenchValue::Point(lon, lat)
+			}
 		}
 	}
 }
@@ -804,6 +919,8 @@ pub(crate) enum ColumnType {
 	Bytes,
 	/// Fixed-dimension f32 vector column for vector-search backends.
 	FloatVector(usize),
+	/// 2D geographic point column (`geometry<point>` in SurrealDB, GeoJSON Point in JSON/BSON backends).
+	Point,
 }
 
 impl ColumnType {
@@ -836,6 +953,12 @@ impl ColumnType {
 				dim,
 				..
 			} => ColumnType::FloatVector(*dim),
+			ValueGenerator::Point {
+				..
+			}
+			| ValueGenerator::ClusteredPoint {
+				..
+			} => ColumnType::Point,
 		};
 		Ok(r)
 	}
@@ -948,8 +1071,36 @@ mod test {
 			r#"{ "v": "vector:8:clustered:4:0" }"#,
 			r#"{ "v": "vector:8:clustered:4:-1" }"#,
 			r#"{ "v": "vector:8:clustered:x" }"#,
+			r#"{ "p": "point:clustered:0" }"#,
+			r#"{ "p": "point:clustered:4:0" }"#,
+			r#"{ "p": "point:clustered:4:-1" }"#,
+			r#"{ "p": "point:10.0..0.0,0.0..10.0" }"#,
+			r#"{ "p": "point:-200.0..0.0,0.0..10.0" }"#,
+			r#"{ "p": "point:0.0..10.0,-95.0..10.0" }"#,
 		] {
 			assert!(ValueProvider::new(bad).is_err(), "should have rejected {bad}");
+		}
+	}
+
+	#[test]
+	fn point_generators_produce_valid_reproducible_points() {
+		for tmpl in [
+			r#"{ "location": "point" }"#,
+			r#"{ "location": "point:-10.0..40.0,35.0..60.0" }"#,
+			r#"{ "location": "point:clustered:8" }"#,
+			r#"{ "location": "point:clustered:8:0.25" }"#,
+		] {
+			let mut a = ValueProvider::new(tmpl).unwrap().with_seed(42);
+			let mut b = ValueProvider::new(tmpl).unwrap().with_seed(42);
+			assert_eq!(a.columns().0, vec![("location".to_string(), ColumnType::Point)]);
+			for sample in [0u32, 1, 15, 250] {
+				let va = a.generate_value_for(ValueStream::Create, sample);
+				let vb = b.generate_value_for(ValueStream::Create, sample);
+				assert_eq!(va, vb);
+				let (lon, lat) = va.get_field("location").unwrap().as_point().unwrap();
+				assert!((-180.0..=180.0).contains(&lon), "lon out of range: {lon}");
+				assert!((-90.0..=90.0).contains(&lat), "lat out of range: {lat}");
+			}
 		}
 	}
 

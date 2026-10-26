@@ -331,6 +331,9 @@ impl BenchmarkClient for RedisClient {
 					// systematic recall error that looks like an index fault.
 					create.arg("TAG").arg("CASESENSITIVE");
 				}
+				FilterFieldKind::Geo => {
+					create.arg("GEO");
+				}
 			}
 		}
 		let _: () = create.query_async(&mut *conn).await?;
@@ -575,6 +578,7 @@ fn redis_filter_cell(cell: &BenchValue, field: &FilterField) -> Result<String> {
 		(FilterFieldKind::Numeric, BenchValue::Float(f)) => f.to_string(),
 		(FilterFieldKind::Tag, BenchValue::String(t)) => t.clone(),
 		(FilterFieldKind::Tag, BenchValue::Bool(b)) => b.to_string(),
+		(FilterFieldKind::Geo, BenchValue::Point(lon, lat)) => format!("{lon},{lat}"),
 		(kind, other) => bail!(
 			"redis: filter field `{}` is declared {kind:?} but the row holds {other:?}",
 			field.name

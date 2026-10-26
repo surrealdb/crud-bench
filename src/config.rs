@@ -75,6 +75,8 @@ mod test {
 				.unwrap_or_else(|e| panic!("{name}: scan expansion failed: {e:#}"));
 			crate::validate_scan_index_ids(&scans)
 				.unwrap_or_else(|e| panic!("{name}: scan validation failed: {e:#}"));
+			crate::validate_spatial_indexes(&scans, &vp.columns())
+				.unwrap_or_else(|e| panic!("{name}: spatial indexes rejected: {e:#}"));
 			crate::collect_vector_filter_fields(&scans, &vp.columns())
 				.unwrap_or_else(|e| panic!("{name}: vector filters rejected: {e:#}"));
 			// A vector scan without a corpus seed can never report recall, and

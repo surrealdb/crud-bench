@@ -65,6 +65,14 @@ fn bson_to_bench_value(b: &Bson) -> BenchValue {
 		},
 		Bson::Array(a) => BenchValue::Array(a.iter().map(bson_to_bench_value).collect()),
 		Bson::Document(d) => {
+			if d.len() == 2
+				&& d.get_str("type") == Ok("Point")
+				&& let Ok(coords) = d.get_array("coordinates")
+				&& coords.len() == 2
+				&& let (Some(lon), Some(lat)) = (coords[0].as_f64(), coords[1].as_f64())
+			{
+				return BenchValue::Point(lon, lat);
+			}
 			BenchValue::Object(d.iter().map(|(k, v)| (k.clone(), bson_to_bench_value(v))).collect())
 		}
 		Bson::ObjectId(oid) => BenchValue::String(oid.to_hex()),
@@ -116,6 +124,10 @@ fn bench_to_bson(v: &BenchValue) -> Bson {
 		BenchValue::FloatVector(v) => {
 			Bson::Array(v.iter().map(|f| Bson::Double(*f as f64)).collect())
 		}
+		BenchValue::Point(lon, lat) => Bson::Document(doc! {
+			"type": "Point",
+			"coordinates": [*lon, *lat],
+		}),
 	}
 }
 
@@ -288,6 +300,18 @@ impl BenchmarkClient for MongoDBClient {
 				// Create a text index
 				for field in &fields {
 					doc.insert(field, "text");
+				}
+			}
+			Some(kind) if kind == "spatial" => {
+				// Portable spatial index: leading fields become ascending equality
+				// prefixes (1) and the trailing geometry field gets a "2dsphere" key.
+				let last = fields.len().saturating_sub(1);
+				for (i, field) in fields.iter().enumerate() {
+					if i == last {
+						doc.insert(field, "2dsphere");
+					} else {
+						doc.insert(field, 1);
+					}
 				}
 			}
 			Some(kind) => {

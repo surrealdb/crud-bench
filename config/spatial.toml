@@ -1,0 +1,453 @@
+# Spatial index benchmark workload (`DEFINE INDEX ... SPATIAL` / PostgreSQL `GiST` / MongoDB `2dsphere`).
+#
+# Usage:
+#   cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 --config config/spatial.toml
+#   cargo run -r -- -d surrealkv -s 100000 -c 12 -t 24 --config config/spatial.toml
+#   cargo run -r -- -d postgres  -s 100000 -c 12 -t 24 --config config/spatial.toml
+#   cargo run -r -- -d mongodb   -s 100000 -c 12 -t 24 --config config/spatial.toml
+#
+# Points are drawn reproducibly (`seed = 42`) across a 50 deg lon x 30 deg lat
+# European bounding window (`[-10, 40] x [35, 65]`, area = 1,500 sq deg) so that
+# queries centered on Paris `(2.3522, 48.8566)` cover narrow (~0.06%), medium
+# (~1.5%), and wide (~20-24%) selectivities.
+#
+# For every `[[scans]]` entry below, `crud-bench` runs:
+#   1. `Scan :: no-index` baseline (and combined read/write workload when `with_writes` is set)
+#   2. `BuildIndex` (creating the `SPATIAL` / `GiST` / `2dsphere` index and waiting until queryable)
+#   3. `Scan :: index` (and combined read/write workload under the spatial index)
+#   4. `DropIndex`
+#
+# Workloads covered:
+#   - Single-field spatial index: geodesic radius (`geo::distance < r`) at 50 km, 250 km, 1,000 km
+#     (SurrealDB's `geo::distance` and PostgreSQL's `earthdistance` `<@>` both use IUGG mean Earth
+#     radius R = 6,371,008.8 m; PostgreSQL pairs `<@ box` for GiST index filtering with `<@>` in
+#     statute miles `r / 1609.344`; MongoDB's `$centerSphere` radii are `r / 6371008.8` radians)
+#   - Single-field spatial index: axis-aligned bounding-box (`INSIDE` box polygon) at narrow, medium, wide boxes
+#     (SurrealDB `INSIDE` and PostgreSQL `<@ box` evaluate planar containment in (lon, lat), whereas
+#     MongoDB `$geoWithin` + `$geometry` evaluates geodesic edges on the sphere)
+#   - Single-field spatial index: non-axis-aligned polygon containment (`INSIDE` pentagon / `<@ polygon`)
+#   - Compound prefix + spatial index (`FIELDS status, location SPATIAL` and `FIELDS status, category, location SPATIAL`,
+#     using `btree_gist` on PostgreSQL and compound `2dsphere` on MongoDB)
+#   - Concurrent spatial scans under active write load (`with_writes` at 15% and 50% UPDATE ratios)
+#   - Hybrid spatial + vector KNN search (`geo::distance(location, (lon, lat)) < r AND embedding <|k, ef|> $q` on
+#     SurrealDB, `<@ box` + `<@>` + `ORDER BY embedding <=> $1 LIMIT k` on PostgreSQL/pgvector, and
+#     `(@f_location:[lon lat r m])=>[KNN k @v $q]` on Redis Stack), comparing no-spatial-index vs
+#     `filter_index = true` (`SPATIAL` Hilbert index / `GiST`) across 50 km (~0.06%), 250 km (~1.5%),
+#     and 1,000 km (~21%) radii with recall@10 scored against exact Haversine + cosine ground truth
+
+seed = 42
+
+[value]
+name = "string:12..32"
+status = "string_enum:draft,published,archived"
+category = "string_enum:restaurant,hotel,cafe,park,museum"
+rating = "float:1.0..5.0"
+location = "point:-10.0..40.0,35.0..65.0"
+embedding = "vector:128:clustered:50"
+
+# ==============================================================================
+# 1. Single-field SPATIAL index — Geodesic radius queries
+# ==============================================================================
+
+[[scans]]
+id = "spatial_radius_narrow_50km"
+iterations = 500
+
+[[scans.runs]]
+name = "select(id) where(geo::distance < 50km)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) where(geo::distance < 50km)"
+projection = "FULL"
+
+[[scans.runs]]
+name = "count(*) where(geo::distance < 50km)"
+projection = "COUNT"
+
+[scans.condition]
+surrealdb = "geo::distance(location, (2.3522, 48.8566)) < 50000"
+postgres = "\"location\" <@ box '((1.66, 48.40), (3.05, 49.31))' AND (\"location\" <@> point(2.3522, 48.8566)) < 31.0685596"
+mongodb = { location = { "$geoWithin" = { "$centerSphere" = [[2.3522, 48.8566], 0.0078480507] } } }
+
+[scans.with_index]
+fields = ["location"]
+index_type = "spatial"
+
+[[scans]]
+id = "spatial_radius_medium_250km"
+iterations = 500
+
+[[scans.runs]]
+name = "select(id) where(geo::distance < 250km)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) where(geo::distance < 250km)"
+projection = "FULL"
+
+[[scans.runs]]
+name = "count(*) where(geo::distance < 250km)"
+projection = "COUNT"
+
+[scans.condition]
+surrealdb = "geo::distance(location, (2.3522, 48.8566)) < 250000"
+postgres = "\"location\" <@ box '((-1.08, 46.60), (5.78, 51.11))' AND (\"location\" <@> point(2.3522, 48.8566)) < 155.3427981"
+mongodb = { location = { "$geoWithin" = { "$centerSphere" = [[2.3522, 48.8566], 0.0392402535] } } }
+
+[scans.with_index]
+fields = ["location"]
+index_type = "spatial"
+
+[[scans.with_writes]]
+ratio = 0.15
+mode = "interleaved"
+operation = "UPDATE"
+
+[[scans.with_writes]]
+ratio = 0.50
+mode = "interleaved"
+operation = "UPDATE"
+
+[[scans]]
+id = "spatial_radius_wide_1000km"
+iterations = 200
+
+[[scans.runs]]
+name = "select(id) where(geo::distance < 1000km)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) where(geo::distance < 1000km)"
+projection = "FULL"
+
+[[scans.runs]]
+name = "count(*) where(geo::distance < 1000km)"
+projection = "COUNT"
+
+[scans.condition]
+surrealdb = "geo::distance(location, (2.3522, 48.8566)) < 1000000"
+postgres = "\"location\" <@ box '((-11.42, 39.86), (16.12, 57.86))' AND (\"location\" <@> point(2.3522, 48.8566)) < 621.3711922"
+mongodb = { location = { "$geoWithin" = { "$centerSphere" = [[2.3522, 48.8566], 0.1569610138] } } }
+
+[scans.with_index]
+fields = ["location"]
+index_type = "spatial"
+
+# ==============================================================================
+# 2. Single-field SPATIAL index — Bounding-box containment (INSIDE box)
+# ==============================================================================
+
+[[scans]]
+id = "spatial_bbox_narrow"
+iterations = 500
+
+[[scans.runs]]
+name = "select(id) where(location INSIDE narrow_bbox)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) where(location INSIDE narrow_bbox)"
+projection = "FULL"
+
+[[scans.runs]]
+name = "count(*) where(location INSIDE narrow_bbox)"
+projection = "COUNT"
+
+[scans.condition]
+surrealdb = 'location INSIDE { type: "Polygon", coordinates: [[[2.0, 48.5], [3.0, 48.5], [3.0, 49.5], [2.0, 49.5], [2.0, 48.5]]] }'
+postgres = "\"location\" <@ box '((2.0, 48.5), (3.0, 49.5))'"
+mongodb = { location = { "$geoWithin" = { "$geometry" = { type = "Polygon", coordinates = [[[2.0, 48.5], [3.0, 48.5], [3.0, 49.5], [2.0, 49.5], [2.0, 48.5]]] } } } }
+
+[scans.with_index]
+fields = ["location"]
+index_type = "spatial"
+
+[[scans]]
+id = "spatial_bbox_medium"
+iterations = 500
+
+[[scans.runs]]
+name = "select(id) where(location INSIDE medium_bbox)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) where(location INSIDE medium_bbox)"
+projection = "FULL"
+
+[[scans.runs]]
+name = "count(*) where(location INSIDE medium_bbox)"
+projection = "COUNT"
+
+[scans.condition]
+surrealdb = 'location INSIDE { type: "Polygon", coordinates: [[[0.0, 46.0], [5.0, 46.0], [5.0, 51.0], [0.0, 51.0], [0.0, 46.0]]] }'
+postgres = "\"location\" <@ box '((0.0, 46.0), (5.0, 51.0))'"
+mongodb = { location = { "$geoWithin" = { "$geometry" = { type = "Polygon", coordinates = [[[0.0, 46.0], [5.0, 46.0], [5.0, 51.0], [0.0, 51.0], [0.0, 46.0]]] } } } }
+
+[scans.with_index]
+fields = ["location"]
+index_type = "spatial"
+
+[[scans]]
+id = "spatial_bbox_wide"
+iterations = 200
+
+[[scans.runs]]
+name = "select(id) where(location INSIDE wide_bbox)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) where(location INSIDE wide_bbox)"
+projection = "FULL"
+
+[[scans.runs]]
+name = "count(*) where(location INSIDE wide_bbox)"
+projection = "COUNT"
+
+[scans.condition]
+surrealdb = 'location INSIDE { type: "Polygon", coordinates: [[[-5.0, 40.0], [15.0, 40.0], [15.0, 55.0], [-5.0, 55.0], [-5.0, 40.0]]] }'
+postgres = "\"location\" <@ box '((-5.0, 40.0), (15.0, 55.0))'"
+mongodb = { location = { "$geoWithin" = { "$geometry" = { type = "Polygon", coordinates = [[[-5.0, 40.0], [15.0, 40.0], [15.0, 55.0], [-5.0, 55.0], [-5.0, 40.0]]] } } } }
+
+[scans.with_index]
+fields = ["location"]
+index_type = "spatial"
+
+# ==============================================================================
+# 3. Single-field SPATIAL index — Non-axis-aligned Polygon containment
+# ==============================================================================
+
+[[scans]]
+id = "spatial_polygon_pentagon"
+iterations = 500
+
+[[scans.runs]]
+name = "select(id) where(location INSIDE pentagon)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) where(location INSIDE pentagon)"
+projection = "FULL"
+
+[[scans.runs]]
+name = "count(*) where(location INSIDE pentagon)"
+projection = "COUNT"
+
+[scans.condition]
+surrealdb = 'location INSIDE { type: "Polygon", coordinates: [[[2.0, 46.0], [6.0, 47.0], [7.0, 50.0], [3.0, 51.5], [-0.5, 48.5], [2.0, 46.0]]] }'
+postgres = "\"location\" <@ polygon '((2.0, 46.0), (6.0, 47.0), (7.0, 50.0), (3.0, 51.5), (-0.5, 48.5))'"
+mongodb = { location = { "$geoWithin" = { "$geometry" = { type = "Polygon", coordinates = [[[2.0, 46.0], [6.0, 47.0], [7.0, 50.0], [3.0, 51.5], [-0.5, 48.5], [2.0, 46.0]]] } } } }
+
+[scans.with_index]
+fields = ["location"]
+index_type = "spatial"
+
+# ==============================================================================
+# 4. Compound equality prefix + SPATIAL index
+# ==============================================================================
+
+[[scans]]
+id = "spatial_compound_radius"
+iterations = 500
+
+[[scans.runs]]
+name = "select(id) where(status = published AND geo::distance < 250km)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) where(status = published AND geo::distance < 250km)"
+projection = "FULL"
+
+[[scans.runs]]
+name = "count(*) where(status = published AND geo::distance < 250km)"
+projection = "COUNT"
+
+[scans.condition]
+surrealdb = "status = 'published' AND geo::distance(location, (2.3522, 48.8566)) < 250000"
+postgres = "\"status\" = 'published' AND \"location\" <@ box '((-1.08, 46.60), (5.78, 51.11))' AND (\"location\" <@> point(2.3522, 48.8566)) < 155.3427981"
+mongodb = { status = "published", location = { "$geoWithin" = { "$centerSphere" = [[2.3522, 48.8566], 0.0392402535] } } }
+
+[scans.with_index]
+fields = ["status", "location"]
+index_type = "spatial"
+
+[[scans.with_writes]]
+ratio = 0.15
+mode = "interleaved"
+operation = "UPDATE"
+
+[[scans.with_writes]]
+ratio = 0.50
+mode = "interleaved"
+operation = "UPDATE"
+
+[[scans]]
+id = "spatial_compound_bbox"
+iterations = 500
+
+[[scans.runs]]
+name = "select(id) where(status = published AND location INSIDE medium_bbox)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) where(status = published AND location INSIDE medium_bbox)"
+projection = "FULL"
+
+[[scans.runs]]
+name = "count(*) where(status = published AND location INSIDE medium_bbox)"
+projection = "COUNT"
+
+[scans.condition]
+surrealdb = "status = 'published' AND location INSIDE { type: 'Polygon', coordinates: [[[0.0, 46.0], [5.0, 46.0], [5.0, 51.0], [0.0, 51.0], [0.0, 46.0]]] }"
+postgres = "\"status\" = 'published' AND \"location\" <@ box '((0.0, 46.0), (5.0, 51.0))'"
+mongodb = { status = "published", location = { "$geoWithin" = { "$geometry" = { type = "Polygon", coordinates = [[[0.0, 46.0], [5.0, 46.0], [5.0, 51.0], [0.0, 51.0], [0.0, 46.0]]] } } } }
+
+[scans.with_index]
+fields = ["status", "location"]
+index_type = "spatial"
+
+[[scans]]
+id = "spatial_compound_2prefix_radius"
+iterations = 500
+
+[[scans.runs]]
+name = "select(id) where(status = published AND category = restaurant AND geo::distance < 250km)"
+projection = "ID"
+
+[[scans.runs]]
+name = "select(*) where(status = published AND category = restaurant AND geo::distance < 250km)"
+projection = "FULL"
+
+[[scans.runs]]
+name = "count(*) where(status = published AND category = restaurant AND geo::distance < 250km)"
+projection = "COUNT"
+
+[scans.condition]
+surrealdb = "status = 'published' AND category = 'restaurant' AND geo::distance(location, (2.3522, 48.8566)) < 250000"
+postgres = "\"status\" = 'published' AND \"category\" = 'restaurant' AND \"location\" <@ box '((-1.08, 46.60), (5.78, 51.11))' AND (\"location\" <@> point(2.3522, 48.8566)) < 155.3427981"
+mongodb = { status = "published", category = "restaurant", location = { "$geoWithin" = { "$centerSphere" = [[2.3522, 48.8566], 0.0392402535] } } }
+
+[scans.with_index]
+fields = ["status", "category", "location"]
+index_type = "spatial"
+
+# ==============================================================================
+# 5. Hybrid spatial + vector KNN search (with and without SPATIAL / GiST index)
+# ==============================================================================
+
+[[scans]]
+id = "spatial_vector_knn"
+iterations = 500
+clients = 1
+threads = 1
+
+[[scans.runs]]
+name = "bruteforce knn(10)"
+iterations = 50
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "bruteforce" }
+holdout = { count = 100, seed = 42 }
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 64, 128, 256] }
+holdout = { count = 100, seed = 42 }
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+[[scans.runs]]
+name = "diskann knn(10) deg=64 L=100 alpha=1.2"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = [50, 200] }
+holdout = { count = 100, seed = 42 }
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+[[scans.runs]]
+name = "bruteforce knn(10) · spatial filter index"
+iterations = 50
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "bruteforce" }
+holdout = { count = 100, seed = 42 }
+filter_index = true
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200 · spatial filter index"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 64, 128, 256] }
+holdout = { count = 100, seed = 42 }
+filter_index = true
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+[[scans.runs]]
+name = "diskann knn(10) deg=64 L=100 alpha=1.2 · spatial filter index"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = [50, 200] }
+holdout = { count = 100, seed = 42 }
+filter_index = true
+filters = [
+    { name = "radius_50km", field = "location", op = "within_m", value = [2.3522, 48.8566, 50000] },
+    { name = "radius_250km", field = "location", op = "within_m", value = [2.3522, 48.8566, 250000] },
+    { name = "radius_1000km", field = "location", op = "within_m", value = [2.3522, 48.8566, 1000000] },
+]
+
+# ==============================================================================
+# 6. Batches
+# ==============================================================================
+
+[[batches]]
+name = "batch_create_100"
+operation = "CREATE"
+batch_size = 100
+iterations = 100
+
+[[batches]]
+name = "batch_read_100"
+operation = "READ"
+batch_size = 100
+iterations = 100

@@ -35,8 +35,8 @@ use surrealdb::opt::Config;
 use surrealdb::opt::Resource;
 use surrealdb::opt::auth::Root;
 use surrealdb::sql::{
-	Array, Bytes as SurrealBytes, Datetime, Id, Number, Object, Strand, Thing, Uuid as SurrealUuid,
-	Value,
+	Array, Bytes as SurrealBytes, Datetime, Geometry, Id, Number, Object, Strand, Thing,
+	Uuid as SurrealUuid, Value,
 };
 use surrealdb2 as surrealdb;
 use tokio::time::{sleep, timeout};
@@ -70,6 +70,7 @@ fn bench_to_surreal_value(v: BenchValue) -> Value {
 		BenchValue::FloatVector(v) => Value::Array(Array::from(
 			v.into_iter().map(|f| Value::Number(Number::Float(f as f64))).collect::<Vec<_>>(),
 		)),
+		BenchValue::Point(lon, lat) => Value::Geometry(Geometry::Point((lon, lat).into())),
 	}
 }
 
@@ -87,6 +88,7 @@ fn surreal_to_bench_value(v: Value) -> BenchValue {
 		Value::Bytes(b) => BenchValue::Bytes(Vec::<u8>::from(b)),
 		Value::Uuid(u) => BenchValue::Uuid(u.0),
 		Value::Datetime(dt) => BenchValue::DateTime(dt.0),
+		Value::Geometry(Geometry::Point(p)) => BenchValue::Point(p.0.x, p.0.y),
 		Value::Array(a) => BenchValue::Array(a.0.into_iter().map(surreal_to_bench_value).collect()),
 		Value::Object(o) => {
 			let mut out: Vec<(String, BenchValue)> = Vec::new();
@@ -517,6 +519,9 @@ impl BenchmarkClient for SurrealDB2Client {
 				format!(
 					"DEFINE INDEX {name} ON TABLE record FIELDS {fields} SEARCH ANALYZER {name} BM25 CONCURRENTLY"
 				)
+			}
+			Some(kind) if kind == "spatial" => {
+				bail!(NOT_SUPPORTED_ERROR)
 			}
 			_ => {
 				format!("DEFINE INDEX {name} ON TABLE record FIELDS {fields} {unique} CONCURRENTLY")
