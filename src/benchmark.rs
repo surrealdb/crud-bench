@@ -80,6 +80,29 @@ pub(crate) struct Window {
 	pub(crate) min: u32,
 	/// Samples after which the window closes even if time remains.
 	pub(crate) max: u32,
+	/// When non-zero, start at most this many samples and admit more only as
+	/// samples complete (see [`Iterations::admits`]). The warm-up runs this way,
+	/// so a leg whose queries are slow never has every worker start one at once.
+	pub(crate) ramp: u32,
+}
+
+/// How far past the warm-up's throughput times the window a leg's sample
+/// budget reaches, so a leg that speeds up once warm still fills its window.
+const WINDOW_BUDGET_HEADROOM: f64 = 1.5;
+
+impl Window {
+	/// The most samples the measured window should start: the warm-up's
+	/// throughput over the length of the window, with headroom, and within the
+	/// configured minimum and maximum. Without it every worker claims a sample
+	/// as the window opens, so a leg of queries that each take longer than the
+	/// window runs one per worker (thousands) rather than the few that fit.
+	pub(crate) fn budget(&self, warmup_ops: f64) -> u32 {
+		if !warmup_ops.is_finite() || warmup_ops <= 0.0 {
+			return self.max;
+		}
+		let fits = (warmup_ops * self.measure.as_secs_f64() * WINDOW_BUDGET_HEADROOM).ceil();
+		(fits.min(u32::MAX as f64) as u32).clamp(self.min.max(1), self.max.max(self.min.max(1)))
+	}
 }
 
 impl Iterations {
@@ -102,6 +125,20 @@ impl Iterations {
 		match self {
 			Self::Fixed(_) => None,
 			Self::Timed(w) => Some(w.measure.as_secs_f64()),
+		}
+	}
+
+	/// Whether a worker may start another sample, given how many have been
+	/// claimed and how many have completed. Always true unless the window
+	/// ramps: then at most `ramp` samples start at first, and each completion
+	/// admits two more, so a fast leg reaches every worker within a few round
+	/// trips while a slow one keeps only a handful of queries in flight.
+	fn admits(&self, claimed: u32, completed: u32) -> bool {
+		match self {
+			Self::Timed(w) if w.ramp > 0 => {
+				claimed < w.ramp.saturating_add(completed.saturating_mul(2))
+			}
+			_ => true,
 		}
 	}
 
@@ -269,6 +306,7 @@ impl Benchmark {
 				measure: Duration::from_secs_f64(args.measurement_time),
 				min: args.min_iterations,
 				max: args.max_iterations,
+				ramp: 0,
 			},
 			value_template: String::new(),
 			vector_filter_fields: Vec::new(),
@@ -1418,13 +1456,16 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
 	{
-		let iterations = iterations.into();
+		let mut iterations = iterations.into();
 		if let Iterations::Timed(window) = iterations
 			&& !window.warmup.is_zero()
 		{
+			// The warm-up ramps up from `min` queries in flight, so a slow leg
+			// does not start one query per worker just to warm up.
 			let warmup = Iterations::Timed(Window {
 				measure: window.warmup,
 				min: 1,
+				ramp: window.min.max(1),
 				..window
 			});
 			let warmed = self
@@ -1438,9 +1479,15 @@ impl Benchmark {
 					true,
 				)
 				.await?;
-			if warmed.is_none() {
+			let Some(warmed) = warmed else {
 				return Ok(None);
-			}
+			};
+			// The measured window starts no more samples than the warm-up's
+			// throughput says it can finish.
+			iterations = Iterations::Timed(Window {
+				max: window.budget(warmed.ops()),
+				..window
+			});
 		}
 		self.run_phase::<C, D>(clients, operation, kp, vp, iterations, threads, false).await
 	}
@@ -1748,8 +1795,27 @@ impl Benchmark {
 		// this is the only place the split survives. Set by build operations
 		// alone, and a build runs as a single sample.
 		let mut build_returned: Option<Duration> = None;
+		// A ramping window admits new samples only as earlier ones complete.
+		let ramp = matches!(iterations, Iterations::Timed(w) if w.ramp > 0);
 		// Check if we have encountered an error
-		while !error.load(Ordering::Relaxed) {
+		'claim: while !error.load(Ordering::Relaxed) {
+			if ramp {
+				while !iterations
+					.admits(current.load(Ordering::Relaxed), complete.load(Ordering::Relaxed))
+				{
+					// Nothing more to admit once the window is over: stop rather
+					// than wait for a slot this leg will not use.
+					if iterations.exhausted(
+						complete.load(Ordering::Relaxed),
+						Instant::now(),
+						base_instant,
+					) || error.load(Ordering::Relaxed)
+					{
+						break 'claim;
+					}
+					tokio::time::sleep(Duration::from_millis(1)).await;
+				}
+			}
 			// Get the current sample number
 			let sample = current.fetch_add(1, Ordering::Relaxed);
 			// Have we produced enough samples
@@ -1858,6 +1924,9 @@ impl Benchmark {
 				let sample = complete.fetch_add(1, Ordering::Relaxed);
 				let done = (sample + 1).min(total) as u64;
 				pb.set_position(done);
+			} else if ramp {
+				// A ramping window admits by completions, so it always counts them.
+				complete.fetch_add(1, Ordering::Relaxed);
 			}
 			histogram.record(time.elapsed().as_micros() as u64)?;
 			// Scoring happens strictly after the latency is banked, so recall
@@ -2203,7 +2272,73 @@ mod test {
 			measure: Duration::from_millis(measure_ms),
 			min,
 			max,
+			ramp: 0,
 		})
+	}
+
+	fn ramped(min: u32) -> Iterations {
+		Iterations::Timed(Window {
+			warmup: Duration::ZERO,
+			measure: Duration::from_secs(5),
+			min: 1,
+			max: u32::MAX,
+			ramp: min,
+		})
+	}
+
+	#[test]
+	fn a_window_without_a_ramp_admits_every_worker() {
+		assert!(window(100, 1, 1000).admits(6_144, 0));
+		assert!(Iterations::Fixed(10).admits(1_000_000, 0));
+	}
+
+	#[test]
+	fn a_ramp_starts_at_its_floor() {
+		let it = ramped(10);
+		assert!(it.admits(9, 0));
+		assert!(!it.admits(10, 0));
+	}
+
+	#[test]
+	fn each_completion_admits_two_more() {
+		let it = ramped(10);
+		assert!(!it.admits(12, 1));
+		assert!(it.admits(11, 1));
+		assert!(it.admits(29, 10));
+		assert!(!it.admits(30, 10));
+	}
+
+	fn budget_window(measure_secs: u64, min: u32, max: u32) -> Window {
+		Window {
+			warmup: Duration::from_secs(5),
+			measure: Duration::from_secs(measure_secs),
+			min,
+			max,
+			ramp: 0,
+		}
+	}
+
+	#[test]
+	fn a_slow_leg_is_budgeted_what_fits_its_window() {
+		// Two full scans a second over a 30 s window, with headroom: 90, not a
+		// query per worker.
+		assert_eq!(budget_window(30, 10, 10_000_000).budget(2.0), 90);
+	}
+
+	#[test]
+	fn a_budget_never_falls_below_the_minimum() {
+		assert_eq!(budget_window(30, 10, 10_000_000).budget(0.01), 10);
+	}
+
+	#[test]
+	fn a_budget_never_exceeds_the_maximum() {
+		assert_eq!(budget_window(30, 10, 1_000).budget(1_000_000.0), 1_000);
+	}
+
+	#[test]
+	fn an_unmeasured_warmup_leaves_the_maximum() {
+		assert_eq!(budget_window(30, 10, 5_000).budget(0.0), 5_000);
+		assert_eq!(budget_window(30, 10, 5_000).budget(f64::NAN), 5_000);
 	}
 
 	#[test]
