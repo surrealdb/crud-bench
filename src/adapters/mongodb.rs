@@ -144,6 +144,24 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	}
 }
 
+/// The write concern for every write: acknowledged by the node that ran it
+/// (`w: 1`), and, when `sync` is set, only once it is in the on-disk journal.
+///
+/// This is not `w: "majority"`. crud-bench runs a standalone `mongod`, and there
+/// any string `w` takes the "wait for other nodes" path, which returns at once
+/// and only signals the journal flusher: writes were acknowledged before the
+/// journal was synced, even with `j: true`. `w: 1` makes `j: true` wait for the
+/// sync, which is what `--sync` asks of every other engine.
+fn write_concern(sync: bool) -> WriteConcern {
+	WriteConcern::builder()
+		// Acknowledged by the node that applied the write
+		.w(Acknowledgment::Nodes(1))
+		// When `true`: acknowledged only once in the on-disk journal.
+		// When `false`: acknowledged once applied in memory.
+		.journal(sync)
+		.build()
+}
+
 pub(crate) struct MongoDBClientProvider {
 	sync: bool,
 	client: Client,
@@ -184,22 +202,7 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 			"crud-bench",
 			DatabaseOptions::builder()
 				// Configure the write concern options
-				.write_concern(
-					// Configure the write options
-					WriteConcern::builder()
-						// Ensure that all writes are written,
-						// replicated, and acknowledged by the
-						// majority of nodes in the cluster.
-						.w(Acknowledgment::Majority)
-						// Configure journal durability based on sync setting.
-						// When `true`: writes are acknowledged only after
-						// being written to the on-disk journal (full durability).
-						// When `false`: writes are acknowledged after being
-						// written to memory (faster, less durable).
-						.journal(self.sync)
-						// Finalise the write options
-						.build(),
-				)
+				.write_concern(write_concern(self.sync))
 				// Configure the read concern options
 				.read_concern(ReadConcern::majority())
 				// Finalise the database configuration
@@ -495,19 +498,7 @@ impl MongoDBClient {
 			.bulk_write(docs)
 			.write_concern(
 				// Configure the write options
-				WriteConcern::builder()
-					// Ensure that all writes are written,
-					// replicated, and acknowledged by the
-					// majority of nodes in the cluster.
-					.w(Acknowledgment::Majority)
-					// Configure journal durability based on sync setting.
-					// When `true`: writes are acknowledged only after
-					// being written to the on-disk journal (full durability).
-					// When `false`: writes are acknowledged after being
-					// written to memory (faster, less durable).
-					.journal(self.sync)
-					// Finalise the write options
-					.build(),
+				write_concern(self.sync),
 			)
 			.await?;
 		assert_eq!(res.matched_count, docs_len as i64);
