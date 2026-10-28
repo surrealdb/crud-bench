@@ -27,6 +27,7 @@ ELEVATED="false"
 TIMEOUT=""
 DATASTORE=""
 ENDPOINT_OVERRIDE=""
+SERVER_PID="${PID:-}"
 BUILD="true"
 DATA_DIR="$(pwd)/data"
 NAME=""
@@ -89,6 +90,10 @@ OPTIONS:
                               Options: integer, string26, string90, string250, string506
     -e, --endpoint <value>    Override the default endpoint for the chosen datastore
                               (passed through to crud-bench as -e <value>)
+    --pid <pid|auto>          Measure CPU, memory and disk of this server process instead of
+                              the crud-bench client. 'auto' finds the process listening on the
+                              --endpoint port (default: \$PID, else auto when --endpoint is set).
+                              Not needed when crud-bench starts the database in Docker.
     --name <name>             Custom name for this benchmark run (default: database name)
     --sync                    Acknowledge disk writes (default: false)
     --persisted               Enable disk persistence where supported (e.g. Redis family, SurrealMX)
@@ -184,6 +189,10 @@ parse_args() {
                 ;;
             -e|--endpoint)
                 ENDPOINT_OVERRIDE="$2"
+                shift 2
+                ;;
+            --pid)
+                SERVER_PID="$2"
                 shift 2
                 ;;
             --name)
@@ -458,6 +467,19 @@ get_all_databases() {
     echo "$DATABASE_MATRIX" | grep -v '^$' | cut -d'|' -f1 | tr '\n' ' '
 }
 
+# Find the PID of the process listening on the port of an endpoint
+# Args: $1 - endpoint (e.g. ws://127.0.0.1:8000, localhost:5432)
+# Returns: PID on stdout, or nothing when no visible process listens there
+find_endpoint_pid() {
+    local endpoint="$1"
+    local port
+    port=$(echo "$endpoint" | sed -E 's#^[a-z0-9+]+://##; s#^[^@/]*@##; s#[/?].*$##' | grep -oE ':[0-9]+$' | tr -d ':')
+    if [[ -z "$port" ]] || ! command -v ss &>/dev/null; then
+        return 0
+    fi
+    ss -ltnpH "sport = :$port" 2>/dev/null | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2
+}
+
 # ============================================================================
 # BUILD TOOLING
 # ============================================================================
@@ -722,6 +744,24 @@ run_benchmark() {
         endpoint="-e $ENDPOINT_OVERRIDE"
     fi
 
+    # Choose the server process to measure, if any
+    local pid_flag=""
+    local server_pid="$SERVER_PID"
+    # An endpoint with a port is a server; an embedded one (e.g. memory) is not
+    if [[ -z "$server_pid" && "$ENDPOINT_OVERRIDE" =~ :[0-9]+ ]]; then
+        server_pid="auto"
+    fi
+    if [[ "$server_pid" == "auto" ]]; then
+        server_pid=$(find_endpoint_pid "$ENDPOINT_OVERRIDE")
+        if [[ -z "$server_pid" ]]; then
+            log_warning "No visible process listens on '$ENDPOINT_OVERRIDE'; resource columns will measure the client"
+        fi
+    fi
+    if [[ -n "$server_pid" ]]; then
+        log_info "Measuring resources of server process $server_pid"
+        pid_flag="--pid $server_pid"
+    fi
+
     # Get number of CPUs
     local num_cpus=$(get_cpu_count)
 
@@ -787,20 +827,20 @@ run_benchmark() {
     local bench_cmd
     if [[ "$FLAMEGRAPH" == "true" ]]; then
         # Flamegraph mode: cargo flamegraph doesn't work well with sudo/nice/ionice wrappers
-        bench_cmd="$binary_path $sync_flag $persisted_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+        bench_cmd="$binary_path $sync_flag $persisted_flag $optimised_flag $pid_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
     elif [[ "$ELEVATED" == "true" ]]; then
         # Elevated mode: use sudo, nice/ionice, taskset (Linux), and --privileged
         if [[ "$IS_LINUX" == "true" ]]; then
             # Linux: use taskset for CPU affinity
             local cpu_range="0-$((num_cpus - 1))"
-            bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $persisted_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+            bench_cmd="sudo -E taskset -c $cpu_range $cli_args $binary_path --privileged $sync_flag $persisted_flag $optimised_flag $pid_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
         else
             # macOS: no taskset, just nice
-            bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $persisted_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+            bench_cmd="sudo -E $cli_args $binary_path --privileged $sync_flag $persisted_flag $optimised_flag $pid_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
         fi
     else
         # Normal mode: no sudo, no nice/ionice, no taskset, no --privileged
-        bench_cmd="$binary_path $sync_flag $persisted_flag $optimised_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
+        bench_cmd="$binary_path $sync_flag $persisted_flag $optimised_flag $pid_flag -d $db_name $endpoint -s $SAMPLES -c $CLIENTS -t $THREADS -k $KEY_TYPE -n $run_name -r $skip_flags"
     fi
 
     # Run the benchmark with timeout (if specified)

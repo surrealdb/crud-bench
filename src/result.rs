@@ -66,6 +66,11 @@ pub(crate) struct BenchmarkMetadata {
 	/// comparison viewer treats a mix of the two as a mismatch rather than
 	/// placing one definition's number beside the other's.
 	pub(crate) index_build_timing: &'static str,
+	/// The process the CPU, memory and disk columns were sampled from.
+	///
+	/// Files written before this field always sampled the crud-bench client,
+	/// which for a networked database is not the database.
+	pub(crate) resources: Option<crate::resources::ResourceTarget>,
 }
 
 /// Value of [`BenchmarkMetadata::index_build_timing`]: build rows run from the
@@ -560,12 +565,72 @@ impl StatsCollector {
 	}
 }
 
+/// CPU, memory and disk counters summed over a sampled process tree.
+#[derive(Default)]
+struct ProcessSample {
+	/// CPU usage summed over the tree, not yet divided by the number of CPUs (%).
+	cpu: f32,
+	/// Resident memory summed over the tree (bytes).
+	memory: u64,
+	/// Cumulative disk counters summed over the tree.
+	disk: DiskUsage,
+}
+
+impl ProcessSample {
+	fn add(&mut self, process: &Process) {
+		let disk = process.disk_usage();
+		self.cpu += process.cpu_usage();
+		self.memory += process.memory();
+		self.disk.total_read_bytes += disk.total_read_bytes;
+		self.disk.total_written_bytes += disk.total_written_bytes;
+	}
+}
+
+/// Refreshes `system` and sums the counters of `pid` and, when `tree` is set,
+/// every process descended from it.
+///
+/// A server is not always one process: Postgres serves each connection from a
+/// child of the postmaster, so sampling the postmaster alone would miss most
+/// of its CPU and memory. The client is sampled on its own, since its children
+/// (none, in practice) are not the database.
+///
+/// Returns [`None`] once `pid` has exited.
+fn sample_process(
+	system: &mut System,
+	pid: Pid,
+	tree: bool,
+	refresh_kind: ProcessRefreshKind,
+) -> Option<ProcessSample> {
+	let targets = if tree {
+		ProcessesToUpdate::All
+	} else {
+		ProcessesToUpdate::Some(&[pid])
+	};
+	system.refresh_processes_specifics(targets, true, refresh_kind);
+	let mut sample = ProcessSample::default();
+	sample.add(system.process(pid)?);
+	if tree {
+		let mut parents = vec![pid];
+		while let Some(parent) = parents.pop() {
+			for (child, process) in system.processes() {
+				if process.parent() == Some(parent) && process.thread_kind().is_none() {
+					sample.add(process);
+					parents.push(*child);
+				}
+			}
+		}
+	}
+	Some(sample)
+}
+
 /// Live [`sysinfo`] handle plus background polling used to build an [`OperationResult`].
 pub(super) struct OperationMetric {
 	/// Shared system state for synchronous refresh calls.
 	system: System,
 	/// Process under test (benchmark worker or explicit `--pid`).
 	pid: Pid,
+	/// Whether the descendants of `pid` are sampled along with it.
+	tree: bool,
 	/// Wall-clock start for elapsed time.
 	start_time: Instant,
 	/// Disk counters before the phase (subtracted for delta I/O).
@@ -580,10 +645,22 @@ pub(super) struct OperationMetric {
 
 impl OperationMetric {
 	/// Starts periodic polling for the given PID (defaults to current process).
+	///
+	/// Another process is sampled together with its descendants; the current
+	/// process is sampled on its own.
 	pub(super) fn new(pid: Option<u32>) -> Self {
 		// We collect the PID
-		let pid = Pid::from(pid.unwrap_or_else(process::id) as usize);
-		let refresh_kind = ProcessRefreshKind::nothing().with_memory().with_cpu().with_disk_usage();
+		let own = process::id();
+		let pid = pid.unwrap_or(own);
+		let tree = pid != own;
+		let pid = Pid::from(pid as usize);
+		// Threads are not processes of their own here: their usage is already
+		// counted in the process they belong to.
+		let refresh_kind = ProcessRefreshKind::nothing()
+			.with_memory()
+			.with_cpu()
+			.with_disk_usage()
+			.without_tasks();
 		let system =
 			System::new_with_specifics(RefreshKind::nothing().with_processes(refresh_kind));
 
@@ -592,6 +669,7 @@ impl OperationMetric {
 
 		let mut metric = Self {
 			pid,
+			tree,
 			system,
 			start_time: Instant::now(),
 			initial_disk_usage: DiskUsage::default(),
@@ -601,14 +679,15 @@ impl OperationMetric {
 		};
 
 		// We collect the disk usage before the test, so we can subtract it from the count after test
-		if let Some(process) = metric.collect_process() {
-			metric.initial_disk_usage = process.disk_usage();
+		if let Some(sample) = metric.collect_process() {
+			metric.initial_disk_usage = sample.disk;
 		}
 		metric.start_time = Instant::now();
 
 		// Spawn background monitoring task
 		let monitor_handle = tokio::spawn(Self::background_monitor(
 			pid,
+			tree,
 			refresh_kind,
 			metric.initial_disk_usage,
 			stats_collector,
@@ -618,19 +697,15 @@ impl OperationMetric {
 		metric
 	}
 
-	/// Refreshes and returns the watched [`Process`], if still alive.
-	fn collect_process(&mut self) -> Option<&Process> {
-		self.system.refresh_processes_specifics(
-			ProcessesToUpdate::Some(&[self.pid]),
-			true,
-			self.refresh_kind,
-		);
-		self.system.process(self.pid)
+	/// Refreshes and returns the watched process's counters, if it is still alive.
+	fn collect_process(&mut self) -> Option<ProcessSample> {
+		sample_process(&mut self.system, self.pid, self.tree, self.refresh_kind)
 	}
 
 	/// Polls CPU/memory/disk for `pid` on a fixed interval until the process exits.
 	async fn background_monitor(
 		pid: Pid,
+		tree: bool,
 		refresh_kind: ProcessRefreshKind,
 		initial_disk_usage: DiskUsage,
 		stats_collector: Arc<Mutex<StatsCollector>>,
@@ -643,12 +718,10 @@ impl OperationMetric {
 			interval.tick().await;
 
 			// Refresh process stats
-			system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, refresh_kind);
-
-			if let Some(process) = system.process(pid) {
-				let cpu = process.cpu_usage() / num_cpus::get() as f32;
-				let memory = process.memory();
-				let disk_usage = process.disk_usage();
+			if let Some(sample) = sample_process(&mut system, pid, tree, refresh_kind) {
+				let cpu = sample.cpu / num_cpus::get() as f32;
+				let memory = sample.memory;
+				let disk_usage = sample.disk;
 
 				// Calculate disk I/O relative to initial values
 				let disk_reads =
@@ -839,8 +912,8 @@ impl OperationResult {
 
 		// Get final process stats
 		let (mut cpu_usage, used_memory, mut disk_usage) =
-			if let Some(process) = metric.collect_process() {
-				(process.cpu_usage(), process.memory(), process.disk_usage())
+			if let Some(sample) = metric.collect_process() {
+				(sample.cpu, sample.memory, sample.disk)
 			} else {
 				(0.0, 0, DiskUsage::default())
 			};
@@ -938,8 +1011,8 @@ impl OperationResult {
 			format!("{:.2}", self.ops),
 			cpu_display,
 			memory_display,
-			format!("{}", ByteSize(self.disk_usage.total_written_bytes)),
 			format!("{}", ByteSize(self.disk_usage.total_read_bytes)),
+			format!("{}", ByteSize(self.disk_usage.total_written_bytes)),
 		]
 	}
 
@@ -998,8 +1071,8 @@ impl OperationResult {
 			format!("{:.2}", cpu_max),
 			format!("{}", memory_peak),
 			format!("{}", memory_avg),
-			format!("{}", self.disk_usage.total_written_bytes),
 			format!("{}", self.disk_usage.total_read_bytes),
+			format!("{}", self.disk_usage.total_written_bytes),
 			format!("{:.2}", self.load_avg.one),
 			format!(
 				"{:.2}/{:.2}/{:.2}",
@@ -1072,5 +1145,29 @@ impl OperationResult {
 	/// Get the disk usage
 	pub(crate) fn disk_usage(&self) -> &DiskUsage {
 		&self.disk_usage
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn process_tree_includes_children() {
+		let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+		let child_pid = Pid::from(child.id() as usize);
+		let pid = Pid::from(process::id() as usize);
+		let refresh_kind = ProcessRefreshKind::nothing().with_memory().without_tasks();
+		let mut system = System::new();
+		let alone = sample_process(&mut system, pid, false, refresh_kind).unwrap();
+		let tree = sample_process(&mut system, pid, true, refresh_kind).unwrap();
+		let sleep = system.process(child_pid).unwrap().memory();
+		child.kill().unwrap();
+		child.wait().unwrap();
+		assert!(sleep > 0);
+		// Our own memory moves between the two samples, so compare loosely
+		assert!(tree.memory >= alone.memory.saturating_sub(1 << 20) + sleep / 2);
+		// A process that has exited is reported as gone
+		assert!(sample_process(&mut system, child_pid, false, refresh_kind).is_none());
 	}
 }

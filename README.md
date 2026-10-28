@@ -159,7 +159,7 @@ Options:
       --color <COLOR>                          When to use colour in terminal output (`NO_COLOR` disables colour for `auto` and `always`) [default: auto] [possible values: auto, always, never]
   -k, --key <KEY>                              The type of the key [default: integer] [possible values: integer, string26, string90, string250, string506, uuid]
       --show-sample                            Print-out an example of a generated value
-      --pid <PID>                              Collect system information for a given pid
+      --pid <PID>                              Sample CPU, memory and disk of this process and its children instead of crud-bench itself. Use it to measure a database server that crud-bench did not start
       --store-results                          Store benchmark results in SurrealDB
       --storage-endpoint <STORAGE_ENDPOINT>    SurrealDB endpoint for storing results [env: CRUD_BENCH_STORAGE_ENDPOINT=] [default: ws://localhost:8000]
       --config <CONFIG>                        Path to the benchmark TOML (`[[scans]]`, `[[batches]]`, `[value]`) [env: CRUD_BENCH_CONFIG=] [default: config/bench.toml]
@@ -178,6 +178,47 @@ For more detailed help information run the following command:
 ```bash
 cargo run -r -- --help
 ```
+
+### Resource columns
+
+The CPU, Memory, Reads and Writes columns show the resources that one process used during each test. crud-bench
+samples that process every 250 ms. Memory is the peak resident memory (RSS). CPU is a percentage of all the CPUs
+on the host.
+
+crud-bench chooses the process as follows:
+
+| Database                                       | Process that crud-bench samples                         |
+| ---------------------------------------------- | ------------------------------------------------------- |
+| Started by crud-bench in Docker                | The main process of the container, and its children     |
+| Given with `--pid <PID>`                       | That process, and its children                          |
+| Embedded (for example `rocksdb`, `-e memory`)  | crud-bench itself, which also runs the database         |
+| Networked at `--endpoint`, without `--pid`     | crud-bench itself. The columns do not show the server   |
+
+When a process has children, crud-bench adds their values together. For example, Postgres serves each connection from
+a child process. Shared memory is counted once for each process that maps it, so the memory of a multi-process server
+can be higher than the memory that it really uses.
+
+crud-bench shows the sampled process before the benchmark starts and in the header of the results. The `result*.json`
+file records it in `metadata.resources`:
+
+```json
+"resources": { "pid": 12345, "name": "surreal", "source": "pid" }
+```
+
+The `source` value is `docker`, `pid` or `client`.
+
+Disk counters come from `/proc/<pid>/io`. Linux shows these counters only to the owner of the process or to root.
+When crud-bench cannot read them, for example for a Docker container that runs as root, the Reads and Writes columns
+show zero. Run crud-bench as root (`run.sh --elevated`) to read them.
+
+To measure a server that you started yourself, give its process ID:
+
+```bash
+cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 --pid "$(pgrep -x surreal)" -s 100000
+```
+
+`run.sh` does this for you. When you give `--endpoint` with a port, it finds the process that listens on that port.
+You can also give the process with `--pid <PID>` or the `PID` environment variable.
 
 ### Comparing `result*.json` files in the browser
 
@@ -942,8 +983,11 @@ surreal start --allow-all -u root -p root surrealkv:/tmp/db
 Then run crud-bench with the `surrealdb` database option:
 
 ```bash
-cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 --pid "$(pgrep -x surreal)" -s 100000 -c 12 -t 24 -r
 ```
+
+The `--pid` option makes the CPU, Memory, Reads and Writes columns measure the server. Without it, they measure
+crud-bench. See [Resource columns](#resource-columns).
 
 ## SurrealDB Authentication
 

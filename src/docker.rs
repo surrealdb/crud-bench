@@ -109,6 +109,18 @@ impl Container {
 		}
 	}
 
+	/// Host PID of the container's main process
+	pub(crate) fn pid(&self) -> Result<u32, String> {
+		let args = ["inspect", "--format", "{{.State.Pid}}", "crud-bench"];
+		let pid = Self::execute(Arguments::new(args))?;
+		match pid.parse() {
+			// A stopped container reports PID 0
+			Ok(0) => Err("the container is not running".to_string()),
+			Ok(pid) => Ok(pid),
+			Err(e) => Err(format!("unexpected PID '{pid}': {e}")),
+		}
+	}
+
 	/// Stop the Docker container
 	pub(crate) fn stop() -> Result<String, String> {
 		info!("Stopping Docker container 'crud-bench'");

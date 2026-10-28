@@ -31,6 +31,7 @@ mod engine;
 mod keyprovider;
 mod memory;
 mod profiling;
+mod resources;
 mod result;
 mod reuse;
 #[cfg(feature = "surrealdb")]
@@ -157,7 +158,8 @@ pub(crate) struct Args {
 	#[arg(long)]
 	pub(crate) show_sample: bool,
 
-	/// Collect system information for a given pid
+	/// Sample CPU, memory and disk of this process and its children instead of crud-bench itself.
+	/// Use it to measure a database server that crud-bench did not start
 	#[arg(long, value_parser=clap::value_parser!(u32).range(0..))]
 	pub(crate) pid: Option<u32>,
 
@@ -1148,6 +1150,9 @@ fn run(args: Args) -> Result<()> {
 		// Recorded so a result file says which definition its build rows use;
 		// see `BenchmarkMetadata::index_build_timing`.
 		index_build_timing: result::INDEX_BUILD_TIMING,
+		// Filled in once any container has started, since its process is the
+		// one to sample.
+		resources: None,
 	};
 	let mut metadata = metadata;
 	// Get database display name
@@ -1223,6 +1228,11 @@ fn run(args: Args) -> Result<()> {
 		// No Docker container needed
 		None
 	};
+	// Choose the process the resource columns sample
+	let resources = resources::resolve(args.pid, container.as_ref(), args.endpoint.as_deref())?;
+	println!("Measuring resources of {resources}");
+	benchmark.pid = Some(resources.pid);
+	metadata.resources = Some(resources.clone());
 	// Run the benchmark
 	let res = runtime.block_on(async {
 		args.database
@@ -1275,6 +1285,7 @@ fn run(args: Args) -> Result<()> {
 				args.key,
 				args.random,
 			);
+			println!("Resources: {resources}");
 			println!("--------------------------------------------------");
 			println!("{res}");
 			println!("--------------------------------------------------");
