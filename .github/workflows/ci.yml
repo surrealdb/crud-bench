@@ -36,9 +36,13 @@ permissions:
 # compiler, so a writer on another release publishes entries no self-hosted
 # leg can hit.
 
-# A push-to-main leg without a writer binds the unprotected `cache-reader`
-# environment instead, so no job of this workflow ever presents the
-# `ref:refs/heads/main` OIDC subject, which roles outside the cache may trust.
+# A push-to-main leg without a writer binds the `cache-reader` environment, so
+# its OIDC subject is `...:environment:cache-reader`, meant for the kache
+# reader alone, never `...:ref:refs/heads/main`, which roles outside the cache
+# may trust. The binding is load-bearing: `cache-reader` must exist with no
+# protection rules and no secrets. The fence assumes no workflow_dispatch or
+# schedule trigger, since a self-hosted leg one of those started from main
+# would present the main-ref subject.
 
 # Hosted writer legs get the longer timeout: they compile on 4 vCPU, cold
 # whenever the trusted prefix lacks their entries, and a job that times out
@@ -167,15 +171,17 @@ jobs:
             runner: runner-amd-32-cores-spot
             writer-runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          # No writer leg: the release build (fat LTO, one codegen unit) peaks
-          # at 17-18 GiB working set on the self-hosted pool, as measured in
-          # Mimir, above the 16 GB of a standard GitHub-hosted arm64 runner. A
-          # hosted run has not been tried.
+          # No writer leg: the release build (fat LTO, one codegen unit) needs
+          # more memory than a standard GitHub-hosted arm64 runner provides, so
+          # on every event it compiles on the self-hosted label with the reader
+          # role, read-only.
           - name: arm64
             runner: runner-arm-32-cores-spot
             writer-runner: ''
             target: aarch64-unknown-linux-gnu
     runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.writer-runner || matrix.runner }}
+    # On a push to main: `cache-writer` for the writer leg, and the load-bearing
+    # `cache-reader` for the leg without one (see the header). None otherwise.
     environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (matrix.writer-runner != '' && 'cache-writer' || 'cache-reader') || '' }}
     timeout-minutes: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.writer-runner != '' && 180 || 60 }}
     permissions:

@@ -333,6 +333,12 @@ runs:
         EXPECTED: s3://${{ steps.kache-backend.outputs.bucket }}/trusted/${{ github.repository }}/kache
       run: |
         set -euo pipefail
+        # kache-action only warns when it cannot download kache, so a missing
+        # binary is reported as an install failure, not as a remote mismatch.
+        if ! command -v kache >/dev/null; then
+          echo "::error title=kache not installed::kache is not on PATH: the kache download or install in Setup kache failed (see its warnings)."
+          exit 1
+        fi
         remote=''
         for attempt in 1 2 3; do
           stats="$(kache stats 2>&1 | sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g')" || stats=''
