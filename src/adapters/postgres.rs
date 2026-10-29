@@ -951,7 +951,9 @@ mod tests {
 
 	#[test]
 	fn shm_size_covers_parallel_work_mem() {
-		// The 62 GB box the 5M run failed on: work_mem=1472MB, maintenance 8 GB
+		// The 62 GB box the 5M run failed on: work_mem=1472MB, maintenance 5 GB
+		assert_eq!(shm_size_mb(1472, 5 * 1024, 64_000), 1472 * 2 * 9 + 5 * 1024);
+		// A larger budget than the box allows is capped at half of its memory
 		assert_eq!(shm_size_mb(1472, 8 * 1024, 62 * 1024), 31 * 1024);
 		// A box with room for the full parallel budget
 		assert_eq!(shm_size_mb(1472, 8 * 1024, 256 * 1024), 1472 * 2 * 9 + 8 * 1024);
