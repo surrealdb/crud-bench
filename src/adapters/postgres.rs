@@ -155,8 +155,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		// Postgres binaries as `postgres:*` with the `vector` extension
 		// pre-installed. Required by the vector-search benchmark; harmless
 		// for non-vector workloads (the extension is only created when the
-		// schema declares a `FloatVector` column, see `startup`).
-		image: "pgvector/pgvector:pg17",
+		// schema declares a `FloatVector` column, see `startup`). Pinned to
+		// Postgres 18 with pgvector 0.8.7, so that runs compare the same server.
+		image: "pgvector/pgvector:0.8.7-pg18",
 		pre_args: format!(
 			"--ulimit nofile=65536:65536 --shm-size={shm_mb}m -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
 		),
@@ -185,7 +186,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				-c synchronous_commit=on"
 			),
 		},
-		data_path: Some("/var/lib/postgresql/data"),
+		// From Postgres 18 the image keeps its data in a versioned directory
+		// under `/var/lib/postgresql`, and refuses a mount at the old `data` path.
+		data_path: Some("/var/lib/postgresql"),
 	}
 }
 
