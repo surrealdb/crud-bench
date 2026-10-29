@@ -1,5 +1,6 @@
 //! Serializable benchmark outcomes: CRUD/scan/batch metrics, terminal tables, CSV, and HTML charts.
 
+use crate::resources;
 use crate::system::SystemInfo;
 use crate::util::format_duration;
 use crate::value::BenchValue;
@@ -570,7 +571,8 @@ impl StatsCollector {
 struct ProcessSample {
 	/// CPU usage summed over the tree, not yet divided by the number of CPUs (%).
 	cpu: f32,
-	/// Resident memory summed over the tree (bytes).
+	/// Resident memory of the process, or of the tree with shared pages counted
+	/// once (bytes).
 	memory: u64,
 	/// Cumulative disk counters summed over the tree.
 	disk: DiskUsage,
@@ -594,6 +596,10 @@ impl ProcessSample {
 /// of its CPU and memory. The client is sampled on its own, since its children
 /// (none, in practice) are not the database.
 ///
+/// Memory is the resident set size of a single process. For a tree of several
+/// processes, summing RSS counts every shared page once per process that maps
+/// it, so the tree's memory comes from [`resources::tree_memory`] instead.
+///
 /// Returns [`None`] once `pid` has exited.
 fn sample_process(
 	system: &mut System,
@@ -610,14 +616,21 @@ fn sample_process(
 	let mut sample = ProcessSample::default();
 	sample.add(system.process(pid)?);
 	if tree {
+		let mut members = vec![pid.as_u32()];
 		let mut parents = vec![pid];
 		while let Some(parent) = parents.pop() {
 			for (child, process) in system.processes() {
 				if process.parent() == Some(parent) && process.thread_kind().is_none() {
 					sample.add(process);
+					members.push(child.as_u32());
 					parents.push(*child);
 				}
 			}
+		}
+		if members.len() > 1
+			&& let Some(memory) = resources::tree_memory(&members)
+		{
+			sample.memory = memory;
 		}
 	}
 	Some(sample)

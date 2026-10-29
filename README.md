@@ -182,7 +182,7 @@ cargo run -r -- --help
 ### Resource columns
 
 The CPU, Memory, Reads and Writes columns show the resources that one process used during each test. crud-bench
-samples that process every 250 ms. Memory is the peak resident memory (RSS). CPU is a percentage of all the CPUs
+samples that process every 250 ms. Memory is the peak resident memory (see below). CPU is a percentage of all the CPUs
 on the host.
 
 crud-bench chooses the process as follows:
@@ -195,8 +195,25 @@ crud-bench chooses the process as follows:
 | Networked at `--endpoint`, without `--pid`     | crud-bench itself. The columns do not show the server   |
 
 When a process has children, crud-bench adds their values together. For example, Postgres serves each connection from
-a child process. Shared memory is counted once for each process that maps it, so the memory of a multi-process server
-can be higher than the memory that it really uses.
+a child process.
+
+Memory means the following:
+
+| Process that crud-bench samples | Memory column                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| One process                     | Resident memory (RSS) of the process                                           |
+| A process and its children      | Proportional memory (PSS) added over the processes, from `/proc/<pid>/smaps_rollup` |
+
+The resident memory of each process includes every shared page that the process maps. For Postgres, every backend
+maps the same shared buffers, so the sum of resident memory counts those buffers once for each connection, and can be
+larger than the memory of the host. PSS divides each shared page among the processes that map it, so the sum counts
+each page once. For one process, PSS and RSS are almost the same, and crud-bench keeps RSS.
+
+Linux shows `smaps_rollup` only to the owner of the process or to root. When crud-bench cannot read it, it adds the
+private memory (`RssAnon` in `/proc/<pid>/status`) of each process, and the largest shared and file-backed memory
+(`RssShmem` and `RssFile`) of any one process. That value can be lower than the real memory of the server, because
+two processes can map different shared pages. crud-bench shows a warning when it uses this value. Run crud-bench as
+root (`run.sh --elevated`) to get PSS.
 
 crud-bench shows the sampled process before the benchmark starts and in the header of the results. The `result*.json`
 file records it in `metadata.resources`:
@@ -860,7 +877,9 @@ Postgres is a networked, object-relational, ACID-compliant, SQL-based database.
 cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
 ```
 
-The above command starts a Docker container automatically. To connect to an already-running Postgres instance use the
+The above command starts a Docker container automatically. Postgres runs parallel queries and parallel index builds
+in POSIX shared memory (`/dev/shm`). Docker limits this to 64 MB, so crud-bench sets `--shm-size` from `work_mem` and
+`maintenance_work_mem`, up to half of the memory of the host. To connect to an already-running Postgres instance use the
 following command:
 
 ```bash
