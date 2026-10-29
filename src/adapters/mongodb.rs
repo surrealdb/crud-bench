@@ -4,7 +4,6 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::MongoDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
-use crate::memory::Config;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
@@ -22,6 +21,7 @@ use mongodb::{Client, Collection, Cursor, Database};
 use std::hint::black_box;
 use std::str::FromStr;
 use std::time::Duration;
+use sysinfo::System;
 
 pub const DEFAULT: &str = "mongodb://root:root@127.0.0.1:27017";
 
@@ -121,10 +121,11 @@ fn bench_to_bson(v: &BenchValue) -> Bson {
 
 /// Calculate MongoDB specific memory allocation
 fn calculate_mongodb_memory() -> u64 {
-	// Load the system memory
-	let memory = Config::new();
-	// Use ~80% of recommended cache allocation
-	(memory.cache_gb * 4 / 5).max(1)
+	// Give WiredTiger half of system memory. This matches what SurrealDB on
+	// SurrealKV uses by default (block cache of RAM/2 - 1 GiB, plus a 1 GiB
+	// memtable on 16-64 GiB hosts), so both engines get the same budget.
+	let total_gb = System::new_all().total_memory() / (1024 * 1024 * 1024);
+	(total_gb / 2).max(1)
 }
 
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
@@ -132,7 +133,8 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	let cache_gb = calculate_mongodb_memory();
 	// Return Docker parameters
 	DockerParams {
-		image: "mongo",
+		// Pinned so every run measures the same server
+		image: "mongo:9.0.4",
 		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root".to_string(),
 		post_args: match options.optimised {
 			// Optimised configuration
@@ -182,7 +184,7 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 		// still creates 2 more connections than has
 		// been specified in the `max_pool_size` option.
 		let mut opts = ClientOptions::parse(url).await?;
-		opts.max_pool_size = Some(options.clients);
+		opts.max_pool_size = Some(options.clients * options.threads);
 		opts.min_pool_size = None;
 		// Set server selection timeout to 60 seconds (default 30s)
 		opts.server_selection_timeout = Some(Duration::from_secs(60));
@@ -278,7 +280,7 @@ impl BenchmarkClient for MongoDBClient {
 		// is approximate, not exact); the indexed scan leg runs the same query
 		// as the baseline so the row still populates.
 		if spec.index_type.as_deref() == Some("count") {
-			return Ok(());
+			bail!(NOT_SUPPORTED_ERROR);
 		}
 		// Define the index document
 		let mut doc = Document::new();
