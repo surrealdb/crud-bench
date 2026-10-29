@@ -1,10 +1,10 @@
 name: Setup kache
 description: >-
-  Compile through kache (RUSTC_WRAPPER, plus the CC/CXX wrappers for build
-  scripts), optionally backed by the shared S3 compile cache, reached through a
-  GitHub OIDC role. The repository must already be checked out, since this is a
-  local action. Unix runners only: on Windows the cc crate would prefix kache
-  to cl.exe, which kache cannot launch.
+  Compile through kache (RUSTC_WRAPPER, which cc-rs also applies to the C/C++
+  compiles of build scripts), optionally backed by the shared S3 compile cache,
+  reached through a GitHub OIDC role. The repository must already be checked
+  out, since this is a local action. Unix runners only: on Windows the cc crate
+  would prefix kache to cl.exe, which kache cannot launch.
 
 inputs:
   kache-remote:
@@ -21,10 +21,11 @@ inputs:
     description: >-
       S3 bucket backing the shared compile cache when kache-remote is 'true';
       the default is the CI account's cache bucket. Empty compiles against a
-      local, runner-lifetime store only and assumes no role. A bucket that is
-      set but unreachable FAILS the job: kache refuses to run against a
-      silently cold remote, so a backend outage reds CI rather than quietly
-      slowing every build.
+      local, runner-lifetime store only and assumes no role. A remote that is
+      misconfigured or absent from the daemon FAILS the job (the remote check
+      step below), and so does a role the job cannot assume. A bucket that
+      denies or times out a request does not: those lookups miss, kache warns,
+      and the job compiles cold.
 
       The bucket holds two prefixes per repository. Entries a build of main
       reads live under `trusted/<repository>/kache`; only the writer role
@@ -42,9 +43,11 @@ inputs:
       The reader role can put objects anywhere under the repository's `pr/`
       tree, not only under the running pull request's prefix, so one pull
       request can seed the prefix another will read and make that other's CI
-      result wrong. That is the accepted residual of the two-tier design: the
-      role's write grant cannot name a pull request, there is no privilege to
-      gain, and nothing a pull request writes reaches a build of main.
+      result wrong. That is the accepted residual of the two-tier design, as
+      the role's write grant cannot name a pull request. A poisoned entry
+      reaches whatever the other pull request builds, including the binary its
+      benchmark jobs execute with that run's Docker Hub login and token; it
+      never reaches a build of main.
 
       kache itself additionally holds every run that is not a push to a
       protected branch to reads, pull requests with their own prefix
@@ -98,11 +101,11 @@ inputs:
 
       Empty (the default) resolves it from the running repository as
       arn:aws:iam::332277436597:role/kache-reader-<owner>-<repo>, the name the
-      CI account gives each repository's role pair, with the `/` of
-      <owner>/<repo> replaced by `-`. A fork running this action therefore
-      resolves a role that does not exist and fails at the credentials step
-      rather than reaching this repository's cache. A non-empty value
-      overrides the derived ARN.
+      CI account gives each repository's role pair, with <owner>/<repo> in
+      lower case and its `/` replaced by `-`. A fork running this action
+      therefore resolves a role that does not exist and fails at the
+      credentials step rather than reaching this repository's cache. A
+      non-empty value overrides the derived ARN.
     required: false
     default: ''
   kache-writer-role-arn:
@@ -160,10 +163,14 @@ inputs:
       not spare entries fetched earlier in the same job: a store smaller than
       the build discards artifacts it has already paid to download, and the
       job recompiles them. kache's own default is 5% of the volume, which
-      sizes the store from the disk rather than from the build. The value here
-      is budgeted against the build instead, and kept within what a standard
-      GitHub-hosted runner can hold beside the build tree, because the store
-      shares a volume with the workspace.
+      sizes the store from the disk rather than from the build, so the value
+      here is budgeted against the build instead.
+
+      It is a GC budget, not a disk bound: GC never frees bytes the target
+      directory still holds, executables and test binaries are copied rather
+      than linked where the filesystem cannot reflink, and the store shares a
+      volume with the workspace. On a standard GitHub-hosted runner the
+      volume, not this budget, is the limit a job can hit.
     required: false
     default: '20GiB'
 
@@ -214,13 +221,21 @@ runs:
           echo "::notice title=Compile cache::This pull request gets no OIDC token, so kache compiles against a local store only."
           BUCKET=''
         fi
-        # IAM role names are case-sensitive and the role pair is named in lower case,
-        # so the repository name is lowered before it becomes the slug.
+        # IAM matches role names case-insensitively for uniqueness but compares
+        # ARNs exactly, and the CI account names the pair in lower case.
         slug="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]/' '[:lower:]-')"
+        # The session name ties each request in the bucket's access logs to one
+        # leg: run, attempt, job and runner architecture, within STS's 64
+        # characters and character set. Only the job part is ever shortened.
+        session_prefix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-"
+        session_suffix="-${RUNNER_ARCH}"
+        session_job="${GITHUB_JOB//[^A-Za-z0-9+=,.@_-]/-}"
+        session_job="${session_job:0:$((64 - ${#session_prefix} - ${#session_suffix}))}"
         {
           echo "bucket=$BUCKET"
           echo "reader_role_arn=${READER_ROLE_ARN:-arn:aws:iam::332277436597:role/kache-reader-${slug}}"
           echo "writer_role_arn=${WRITER_ROLE_ARN:-arn:aws:iam::332277436597:role/kache-writer-${slug}}"
+          echo "session_name=${session_prefix}${session_job}${session_suffix}"
         } >> "$GITHUB_OUTPUT"
 
     # Scopes a pull request's writes to its own prefix. kache reads the setting
@@ -255,9 +270,7 @@ runs:
         role-to-assume: ${{ inputs.kache-writer == 'true' && steps.kache-backend.outputs.writer_role_arn || steps.kache-backend.outputs.reader_role_arn }}
         aws-region: ${{ inputs.kache-region }}
         role-duration-seconds: ${{ inputs.kache-session-seconds }}
-        # The bucket's access logs record the session name, which ties every
-        # request to its run.
-        role-session-name: ${{ github.run_id }}-${{ github.run_attempt }}
+        role-session-name: ${{ steps.kache-backend.outputs.session_name }}
 
     # Installs the kache binary, points RUSTC_WRAPPER at it, and - when a bucket
     # is configured - starts the daemon that prefetches from S3 while cargo is
@@ -294,10 +307,11 @@ runs:
         # the action leaves them out by default. The dependency graph links
         # enough build scripts and proc-macros that the lookup pays for itself.
         cache-executables: 'true'
-        # Wraps CC/CXX so the C and C++ objects that build scripts compile
-        # (RocksDB, LMDB, MDBX, SQLite and the compression libraries) are
-        # cached alongside the crates that link them. RUSTC_WRAPPER alone never
-        # sees those compiles.
+        # Caches the C and C++ objects build scripts compile (RocksDB, LMDB,
+        # MDBX, SQLite and the compression libraries) alongside the crates that
+        # link them. On Linux the action sets only the CMake compiler
+        # launchers; cc-rs (cc ≥ 1.2.66) applies kache from RUSTC_WRAPPER
+        # itself, after choosing the compiler.
         cache-c-cpp: 'true'
         # The GitHub Actions cache is a fixed 10 GB per repository and holds
         # the registry caches. A kache store persisted there would evict them,
@@ -306,6 +320,32 @@ runs:
         # Every job in a workflow would post its own; the job summary carries
         # the same report, and the compile jobs grant read-only token scopes.
         pr-comment: 'false'
+
+    # Fails the job unless the daemon reports exactly the remote configured
+    # above. kache-action's own check only warns when it cannot parse the
+    # Remote row, and this kache release prints it as a padded table row
+    # (`  Remote    s3://…`); `Remote: s3://…` is accepted as well. The daemon
+    # may still be loading its config, so the row is polled a few times.
+    - name: Check the compile cache remote
+      if: steps.kache-backend.outputs.bucket != ''
+      shell: bash
+      env:
+        EXPECTED: s3://${{ steps.kache-backend.outputs.bucket }}/trusted/${{ github.repository }}/kache
+      run: |
+        set -euo pipefail
+        remote=''
+        for attempt in 1 2 3; do
+          stats="$(kache stats 2>&1 | sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g')" || stats=''
+          remote="$(awk 'match($0, /^[[:space:]]*Remote(:[[:space:]]*|[[:space:]][[:space:]]+)/) { v = substr($0, RLENGTH + 1); sub(/[[:space:]]+$/, "", v); print v; exit }' <<<"$stats")"
+          [[ "$remote" == "$EXPECTED" ]] && break
+          [[ "$attempt" == 3 ]] || sleep 2
+        done
+        if [[ "$remote" != "$EXPECTED" ]]; then
+          printf '%s\n' "$stats"
+          echo "::error title=Compile cache remote::The kache daemon reports remote '${remote:-<none>}', expected '$EXPECTED'. Refusing to compile against a cold or wrong remote."
+          exit 1
+        fi
+        echo "Compile cache remote: $remote"
 
     - name: Configure cargo for kache
       shell: bash

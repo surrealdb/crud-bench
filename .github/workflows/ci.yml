@@ -20,14 +20,38 @@ defaults:
   run:
     shell: bash
 
+# Jobs that need more (the compile jobs' `id-token: write`) say so themselves.
+permissions:
+  contents: read
+
 # Compile jobs (clippy, test, build) compile through .github/actions/kache,
 # which assumes a GitHub OIDC role, so each is granted `id-token: write`. A
 # push to main runs its writer legs on a GitHub-hosted runner of the leg's
 # architecture, bound to the `cache-writer` environment; every other run keeps
 # its self-hosted label and the reader role.
 
+# Hosted writer legs must run the Ubuntu release of the self-hosted image
+# (24.04), so their labels name it rather than `-latest`. kache keys build
+# scripts, proc-macros and C/C++ objects on libc, CRT objects, linker and
+# compiler, so a writer on another release publishes entries no self-hosted
+# leg can hit.
+
+# A push-to-main leg without a writer binds the unprotected `cache-reader`
+# environment instead, so no job of this workflow ever presents the
+# `ref:refs/heads/main` OIDC subject, which roles outside the cache may trust.
+
+# Hosted writer legs get the longer timeout: they compile on 4 vCPU, cold
+# whenever the trusted prefix lacks their entries, and a job that times out
+# skips kache's upload, so a limit a cold build cannot meet keeps the prefix
+# cold. Each job's kache-session-seconds is its timeout plus 15 minutes.
+
 # rust-cache (registry only) runs before kache: it hashes the CARGO*, CC*, CXX*
 # and RUST* environment into its key, and must not see kache's wrapper paths.
+
+# Enters the kache and rust-cache keys, so every job sets it alike. Line tables
+# keep debug and test builds within a standard hosted runner's disk.
+env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   format:
@@ -56,6 +80,7 @@ jobs:
     name: Check clippy
     runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ubuntu-24.04-arm' || 'runner-arm-16-cores-spot' }}
     environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'cache-writer' || '' }}
+    timeout-minutes: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 90 || 20 }}
     permissions:
       contents: read
       id-token: write
@@ -81,14 +106,21 @@ jobs:
         with:
           kache-remote: 'true'
           kache-writer: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          kache-session-seconds: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 6300 || 2100 }}
 
       - name: Check clippy
         run: cargo clippy --tests --all-features -- -D warnings
+
+      - name: Show disk headroom
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
+        continue-on-error: true
+        run: df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP" && du -sh target "$RUNNER_TEMP/kache"
 
   test:
     name: Check tests
     runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ubuntu-24.04-arm' || 'runner-arm-16-cores-spot' }}
     environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'cache-writer' || '' }}
+    timeout-minutes: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 120 || 30 }}
     permissions:
       contents: read
       id-token: write
@@ -113,9 +145,15 @@ jobs:
         with:
           kache-remote: 'true'
           kache-writer: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          kache-session-seconds: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 8100 || 2700 }}
 
       - name: Check tests
         run: cargo test
+
+      - name: Show disk headroom
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
+        continue-on-error: true
+        run: df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP" && du -sh target "$RUNNER_TEMP/kache"
 
   build:
     name: Build crud-bench (${{ matrix.name }})
@@ -127,17 +165,19 @@ jobs:
           # with the reader role, read-only, for pushes to main as well.
           - name: amd64
             runner: runner-amd-32-cores-spot
-            writer-runner: ubuntu-latest
+            writer-runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          # The arm64 release build (fat LTO, one codegen unit) needs more
-          # memory than a standard GitHub-hosted arm64 runner has, so it has
-          # no writer leg.
+          # No writer leg: the release build (fat LTO, one codegen unit) peaks
+          # at 17-18 GiB working set on the self-hosted pool, as measured in
+          # Mimir, above the 16 GB of a standard GitHub-hosted arm64 runner. A
+          # hosted run has not been tried.
           - name: arm64
             runner: runner-arm-32-cores-spot
             writer-runner: ''
             target: aarch64-unknown-linux-gnu
     runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.writer-runner || matrix.runner }}
-    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.writer-runner != '' && 'cache-writer' || '' }}
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (matrix.writer-runner != '' && 'cache-writer' || 'cache-reader') || '' }}
+    timeout-minutes: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.writer-runner != '' && 180 || 60 }}
     permissions:
       contents: read
       id-token: write
@@ -162,9 +202,15 @@ jobs:
         with:
           kache-remote: 'true'
           kache-writer: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.writer-runner != '' }}
+          kache-session-seconds: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.writer-runner != '' && 11700 || 4500 }}
 
       - name: Build benchmark
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Show disk headroom
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
+        continue-on-error: true
+        run: df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP" && du -sh target "$RUNNER_TEMP/kache"
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
