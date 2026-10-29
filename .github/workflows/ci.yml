@@ -20,19 +20,14 @@ defaults:
   run:
     shell: bash
 
-# sccache → S3 backend, shared across the compile jobs (clippy, test, build).
-# Set at workflow level so the values are in the environment when the
-# sccache-action daemon starts (it reads its backend config at start time).
-# The AWS credentials the daemon needs are scoped to each compile job instead
-# of here, so they don't override the docker-build job's ECR authentication.
-# Fork PRs have no secrets, so SCCACHE_BUCKET is empty there and sccache
-# transparently falls back to a local cache — builds still succeed, just
-# without the shared cache.
-env:
-  SCCACHE_BUCKET: ${{ secrets.AWS_S3_SCCACHE_BUCKET_NAME }}
-  SCCACHE_REGION: us-east-1
-  SCCACHE_S3_KEY_PREFIX: ${{ github.repository }} # scope cache to this repo
-  SCCACHE_IDLE_TIMEOUT: "0" # don't let the daemon exit mid-compile
+# Compile jobs (clippy, test, build) compile through .github/actions/kache,
+# which assumes a GitHub OIDC role, so each is granted `id-token: write`. A
+# push to main runs its writer legs on a GitHub-hosted runner of the leg's
+# architecture, bound to the `cache-writer` environment; every other run keeps
+# its self-hosted label and the reader role.
+
+# rust-cache (registry only) runs before kache: it hashes the CARGO*, CC*, CXX*
+# and RUST* environment into its key, and must not see kache's wrapper paths.
 
 jobs:
   format:
@@ -59,10 +54,11 @@ jobs:
 
   clippy:
     name: Check clippy
-    runs-on: [runner-arm-16-cores-spot]
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ubuntu-24.04-arm' || 'runner-arm-16-cores-spot' }}
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'cache-writer' || '' }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -74,17 +70,28 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup cache
-        uses: ./.github/actions/setup-cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: false
+
+      - name: Setup kache
+        uses: ./.github/actions/kache
+        with:
+          kache-remote: 'true'
+          kache-writer: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - name: Check clippy
         run: cargo clippy --tests --all-features -- -D warnings
 
   test:
     name: Check tests
-    runs-on: [runner-arm-16-cores-spot]
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ubuntu-24.04-arm' || 'runner-arm-16-cores-spot' }}
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'cache-writer' || '' }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -95,7 +102,17 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup cache
-        uses: ./.github/actions/setup-cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: false
+
+      - name: Setup kache
+        uses: ./.github/actions/kache
+        with:
+          kache-remote: 'true'
+          kache-writer: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - name: Check tests
         run: cargo test
@@ -105,16 +122,25 @@ jobs:
     strategy:
       matrix:
         include:
+          # writer-runner is the GitHub-hosted runner a push to main builds the
+          # leg on as the compile cache writer; empty keeps the leg on `runner`
+          # with the reader role, read-only, for pushes to main as well.
           - name: amd64
             runner: runner-amd-32-cores-spot
+            writer-runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          # The arm64 release build (fat LTO, one codegen unit) needs more
+          # memory than a standard GitHub-hosted arm64 runner has, so it has
+          # no writer leg.
           - name: arm64
             runner: runner-arm-32-cores-spot
+            writer-runner: ''
             target: aarch64-unknown-linux-gnu
-    runs-on: ${{ matrix.runner }}
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AMAZON_SECRET_KEY }}
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.writer-runner || matrix.runner }}
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.writer-runner != '' && 'cache-writer' || '' }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -125,7 +151,17 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup cache
-        uses: ./.github/actions/setup-cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: false
+
+      - name: Setup kache
+        uses: ./.github/actions/kache
+        with:
+          kache-remote: 'true'
+          kache-writer: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.writer-runner != '' }}
 
       - name: Build benchmark
         run: cargo build --release --target ${{ matrix.target }}

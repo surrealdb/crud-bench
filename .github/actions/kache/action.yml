@@ -1,0 +1,312 @@
+name: Setup kache
+description: >-
+  Compile through kache (RUSTC_WRAPPER, plus the CC/CXX wrappers for build
+  scripts), optionally backed by the shared S3 compile cache, reached through a
+  GitHub OIDC role. The repository must already be checked out, since this is a
+  local action. Unix runners only: on Windows the cc crate would prefix kache
+  to cl.exe, which kache cannot launch.
+
+inputs:
+  kache-remote:
+    description: >-
+      'true' backs kache with kache-bucket: the job assumes one of the cache
+      roles through GitHub OIDC, so it must be granted `id-token: write`, and
+      kache-writer chooses which. 'false' compiles against a local,
+      runner-lifetime store only and assumes no role, whatever kache-bucket
+      holds. The remote is opt-in so that a caller that does not ask for the
+      shared cache never needs an OIDC token and never fails for lack of one.
+    required: false
+    default: 'false'
+  kache-bucket:
+    description: >-
+      S3 bucket backing the shared compile cache when kache-remote is 'true';
+      the default is the CI account's cache bucket. Empty compiles against a
+      local, runner-lifetime store only and assumes no role. A bucket that is
+      set but unreachable FAILS the job: kache refuses to run against a
+      silently cold remote, so a backend outage reds CI rather than quietly
+      slowing every build.
+
+      The bucket holds two prefixes per repository. Entries a build of main
+      reads live under `trusted/<repository>/kache`; only the writer role
+      (kache-writer-role-arn) can put an object there, and only a job bound to
+      the `cache-writer` GitHub Environment on refs/heads/main can assume it.
+      A pull request reads the trusted prefix, then
+      `pr/<repository>/<pull request number>/kache` for what the trusted
+      prefix lacks, and writes only under the latter; the reader role
+      (kache-reader-role-arn), which every other job assumes, can write
+      nowhere else, and a lifecycle rule expires `pr/` objects. So a pull
+      request can warm its own later runs but cannot place an object that a
+      build of main will read, and that holds by credential rather than by
+      kache's policy.
+
+      The reader role can put objects anywhere under the repository's `pr/`
+      tree, not only under the running pull request's prefix, so one pull
+      request can seed the prefix another will read and make that other's CI
+      result wrong. That is the accepted residual of the two-tier design: the
+      role's write grant cannot name a pull request, there is no privilege to
+      gain, and nothing a pull request writes reaches a build of main.
+
+      kache itself additionally holds every run that is not a push to a
+      protected branch to reads, pull requests with their own prefix
+      excepted, so a merge-queue, dispatch or scheduled run never publishes
+      even on the writer role. A job on the reader role that is not a pull
+      request runs read-only outright and never attempts an upload.
+
+      With kache-remote 'true', a pull request GitHub issues no OIDC token to
+      (one from a fork, or one Dependabot triggered) compiles local-only, as
+      with an empty bucket, and any other job without an OIDC token fails
+      before kache starts.
+    required: false
+    default: 'surrealdb-ci-sccache-20260601131907544600000001'
+  kache-region:
+    description: >-
+      Region of kache-bucket, and of the STS endpoint the role is assumed
+      through. kache does not read AWS_REGION, so it is passed explicitly.
+    required: false
+    default: 'us-east-1'
+  kache-writer:
+    description: >-
+      With kache-remote 'true', 'true' assumes kache-writer-role-arn and
+      uploads to the trusted prefix, and 'false' assumes kache-reader-role-arn;
+      without kache-remote it has no effect. The writer role's trust admits
+      only a job bound to the `cache-writer` GitHub Environment on
+      refs/heads/main, so pass the expression
+      github.event_name == 'push' && github.ref == 'refs/heads/main' and bind
+      the environment on the same expression: on any other run the role
+      refuses the token and the job fails at the credentials step.
+
+      A job that can pass 'true' must run on a GitHub-hosted runner, never on
+      a self-hosted label: this repository is public, the self-hosted pools
+      its labels reach are shared with other repositories' jobs, fork pull
+      requests included, and a process left behind on a node could read the
+      job's OIDC request token or the session exported from it.
+
+      Binding the environment makes GitHub record a deployment, with
+      deployment_status events, for every bound job on every push the policy
+      admits. That is inherent to using an environment as the trust boundary
+      and is the accepted cost, so filter `cache-writer` out of
+      deployment-driven notifications rather than treating the records as a
+      fault.
+    required: false
+    default: 'false'
+  kache-reader-role-arn:
+    description: >-
+      Role every job that is not a kache-writer assumes through GitHub OIDC.
+      Its trust admits any job of the repository. It lists the bucket, reads
+      the trusted and pull request prefixes, and writes only the pull request
+      prefix.
+
+      Empty (the default) resolves it from the running repository as
+      arn:aws:iam::332277436597:role/kache-reader-<owner>-<repo>, the name the
+      CI account gives each repository's role pair, with the `/` of
+      <owner>/<repo> replaced by `-`. A fork running this action therefore
+      resolves a role that does not exist and fails at the credentials step
+      rather than reaching this repository's cache. A non-empty value
+      overrides the derived ARN.
+    required: false
+    default: ''
+  kache-writer-role-arn:
+    description: >-
+      Role a kache-writer job assumes through GitHub OIDC. It lists the bucket
+      and reads and writes the trusted prefix. Empty (the default) resolves it
+      from the running repository as
+      arn:aws:iam::332277436597:role/kache-writer-<owner>-<repo>, in the same
+      way as kache-reader-role-arn; a non-empty value overrides it.
+    required: false
+    default: ''
+  kache-session-seconds:
+    description: >-
+      Lifetime of the role session, in seconds. kache keeps the credentials it
+      started with for the rest of the job and treats an expired session as an
+      error, not a miss, so this must cover the job from this action to its
+      last compile: at least the job's timeout-minutes times 60. The default
+      is GitHub's default job timeout, 6 h, which is also the longest session
+      either role allows.
+    required: false
+    default: '21600'
+  kache-manifest-key:
+    description: >-
+      Scopes the build manifest kache warm-prefetches from, under the branch
+      segment every key already carries. Every build variant sharing the bucket
+      needs its own: an unscoped manifest defaults to the target triple, which
+      all of them then overwrite, and prefetch collapses to nothing. The
+      default - the job plus runner platform - separates the jobs and the
+      legs of a matrix that differ by runner architecture, so pass this
+      wherever legs of one job compile different features or cross-compile
+      different targets on one platform.
+
+      The default leaves out the runner label, so a leg that runs on a
+      GitHub-hosted runner for pushes to main and on a self-hosted one for
+      pull requests publishes the manifest those pull requests warm from. The
+      branch segment is the base branch, not the running ref, so a pull
+      request warms from the manifest its target published rather than from
+      one under a ref that only exists for the merge.
+    required: false
+    default: ''
+  kache-version:
+    description: >-
+      kache release to install, as its tag. Pinned because the credential
+      boundary relies on kache's pull-request-prefix handling (reads from the
+      trusted prefix, writes to its own, rejection of a nested value), so the
+      binary half of the control must not float with upstream and the same
+      commit must build with the same binary over time. Bump it deliberately,
+      together with the kache-action pin.
+    required: false
+    default: 'v1.2.2'
+  kache-max-size:
+    description: >-
+      Size budget for the local kache store, above which GC evicts by LRU. It
+      must exceed the artifact set a single job imports, because eviction does
+      not spare entries fetched earlier in the same job: a store smaller than
+      the build discards artifacts it has already paid to download, and the
+      job recompiles them. kache's own default is 5% of the volume, which
+      sizes the store from the disk rather than from the build. The value here
+      is budgeted against the build instead, and kept within what a standard
+      GitHub-hosted runner can hold beside the build tree, because the store
+      shares a volume with the workspace.
+    required: false
+    default: '20GiB'
+
+runs:
+  using: composite
+  steps:
+    # Decides the backend the steps below use. Without kache-remote the
+    # bucket is empty and kache compiles local-only, so no later step assumes
+    # a role. With it, the bucket stands unless the job cannot request a
+    # GitHub OIDC token: the runner sets ACTIONS_ID_TOKEN_REQUEST_URL only for
+    # a job granted `id-token: write`. A pull request GitHub issues no token
+    # to (one from a fork, or one Dependabot triggered) compiles local-only,
+    # which is all it could do without a credential. Any other job without a
+    # token fails here, naming the permission, rather than at the credentials
+    # step with an error that names none.
+    #
+    # The role pair is named after the repository, so the ARNs are derived
+    # here from GITHUB_REPOSITORY unless an input overrides them.
+    - name: Resolve the compile cache backend
+      id: kache-backend
+      shell: bash
+      env:
+        REMOTE: ${{ inputs.kache-remote }}
+        BUCKET: ${{ inputs.kache-bucket }}
+        WRITER: ${{ inputs.kache-writer }}
+        READER_ROLE_ARN: ${{ inputs.kache-reader-role-arn }}
+        WRITER_ROLE_ARN: ${{ inputs.kache-writer-role-arn }}
+        TOKENLESS_PULL_REQUEST: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]') }}
+      run: |
+        set -euo pipefail
+        if [[ "$REMOTE" != true && "$REMOTE" != false ]]; then
+          echo "::error title=Invalid kache-remote::kache-remote is '$REMOTE'; pass 'true' or 'false'."
+          exit 1
+        fi
+        if [[ "$REMOTE" != true ]]; then
+          echo "bucket=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [[ "$WRITER" != true && "$WRITER" != false ]]; then
+          echo "::error title=Invalid kache-writer::kache-writer is '$WRITER'; pass 'true' or 'false'."
+          exit 1
+        fi
+        if [[ -n "$BUCKET" && -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+          if [[ "$TOKENLESS_PULL_REQUEST" != true ]]; then
+            echo "::error title=No OIDC token for the compile cache::kache-remote is 'true' but this job cannot request an OIDC token. Grant the job 'id-token: write' (job-level permissions replace the defaults, so also list 'contents: read' and anything else it needs), or set kache-remote to 'false' to compile local-only."
+            exit 1
+          fi
+          echo "::notice title=Compile cache::This pull request gets no OIDC token, so kache compiles against a local store only."
+          BUCKET=''
+        fi
+        slug="${GITHUB_REPOSITORY//\//-}"
+        {
+          echo "bucket=$BUCKET"
+          echo "reader_role_arn=${READER_ROLE_ARN:-arn:aws:iam::332277436597:role/kache-reader-${slug}}"
+          echo "writer_role_arn=${WRITER_ROLE_ARN:-arn:aws:iam::332277436597:role/kache-writer-${slug}}"
+        } >> "$GITHUB_OUTPUT"
+
+    # Scopes a pull request's writes to its own prefix. kache reads the setting
+    # from the job environment in the daemon and in every compiler wrapper (the
+    # wrapper derives the daemon socket name from it), so it is exported to the
+    # job rather than passed to one step. kache honours it only in a
+    # pull_request job and rejects a value nested with the trusted prefix, so
+    # nothing a pull request writes can land under `trusted/`.
+    - name: Scope cache writes to the pull request
+      if: steps.kache-backend.outputs.bucket != '' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        PULL_REQUEST_PREFIX: pr/${{ github.repository }}/${{ github.event.pull_request.number }}/kache
+      run: echo "KACHE_PULL_REQUEST_PREFIX=$PULL_REQUEST_PREFIX" >> "$GITHUB_ENV"
+
+    # Exchanges the job's OIDC token for a session on the compile cache role
+    # and exports it as AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and
+    # AWS_SESSION_TOKEN, which kache signs with because its own key inputs are
+    # left unset. It must run before Setup kache: the daemon takes the
+    # credentials from the environment it starts in and keeps them for the
+    # rest of the job, with no refresh. kache-action's post step signs from the
+    # job environment too, and post steps run in reverse order, so its final
+    # upload runs before this step's post step clears the variables.
+    #
+    # The exported variables replace any ambient credential the runner has
+    # for every later step of the job. Work that needs another AWS identity
+    # belongs in another job or before this action.
+    - name: Assume the compile cache role
+      if: steps.kache-backend.outputs.bucket != ''
+      uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+      with:
+        role-to-assume: ${{ inputs.kache-writer == 'true' && steps.kache-backend.outputs.writer_role_arn || steps.kache-backend.outputs.reader_role_arn }}
+        aws-region: ${{ inputs.kache-region }}
+        role-duration-seconds: ${{ inputs.kache-session-seconds }}
+        # The bucket's access logs record the session name, which ties every
+        # request to its run.
+        role-session-name: ${{ github.run_id }}-${{ github.run_attempt }}
+
+    # Installs the kache binary, points RUSTC_WRAPPER at it, and - when a bucket
+    # is configured - starts the daemon that prefetches from S3 while cargo is
+    # still fetching. The daemon signs with the role session the step above
+    # exported, which it holds for the job's lifetime.
+    - name: Setup kache
+      uses: kunobi-ninja/kache-action@78ff455251aa37139061201a39113a1924994035 # v1
+      with:
+        version: ${{ inputs.kache-version }}
+        s3-bucket: ${{ steps.kache-backend.outputs.bucket }}
+        s3-region: ${{ inputs.kache-region }}
+        # The prefix a build of main reads. Keyed under the repository so one
+        # bucket can serve several, and under a kache/ segment so these objects
+        # stay separable from any other cache's in the same bucket. Pull
+        # requests write under the sibling `pr/` tree exported above.
+        s3-prefix: trusted/${{ github.repository }}/kache
+        # s3-access-key-id and s3-secret-access-key stay unset, so kache signs
+        # with the AWS_* role session in the job environment.
+        #
+        # Remote writes are attempted only where the role can succeed: on the
+        # writer role, or in a pull request against its own prefix. Everywhere
+        # else the action marks the remote read-only up front, so the daemon
+        # never queues an upload the bucket policy would refuse. kache-writer
+        # counts only with kache-remote: without a remote this is true in a
+        # pull request alone, as for any local-only job.
+        save-cache: ${{ (inputs.kache-remote == 'true' && inputs.kache-writer == 'true') || github.event_name == 'pull_request' }}
+        manifest-key: ${{ format('{0}/{1}', github.base_ref || github.ref_name, inputs.kache-manifest-key || format('{0}-{1}-{2}', github.job, runner.os, runner.arch)) }}
+        # Beside the workspace, because kache shares artifact bytes with the
+        # target directory by hardlink or reflink and neither can cross a
+        # mount; the runner's temp directory is on the workspace's volume.
+        cache-dir: ${{ format('{0}/kache', runner.temp) }}
+        max-size: ${{ inputs.kache-max-size }}
+        # Link outputs - binaries, dylibs and proc-macros - are cacheable, and
+        # the action leaves them out by default. The dependency graph links
+        # enough build scripts and proc-macros that the lookup pays for itself.
+        cache-executables: 'true'
+        # Wraps CC/CXX so the C and C++ objects that build scripts compile
+        # (RocksDB, LMDB, MDBX, SQLite and the compression libraries) are
+        # cached alongside the crates that link them. RUSTC_WRAPPER alone never
+        # sees those compiles.
+        cache-c-cpp: 'true'
+        # The GitHub Actions cache is a fixed 10 GB per repository and holds
+        # the registry caches. A kache store persisted there would evict them,
+        # so a job without a bucket caches locally or not at all.
+        github-cache: 'false'
+        # Every job in a workflow would post its own; the job summary carries
+        # the same report, and the compile jobs grant read-only token scopes.
+        pr-comment: 'false'
+
+    - name: Configure cargo for kache
+      shell: bash
+      # Incremental artifacts are per-machine and defeat a shared cache: they
+      # would be recompiled on every runner and stored by none.
+      run: echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
