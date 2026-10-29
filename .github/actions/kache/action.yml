@@ -214,7 +214,9 @@ runs:
           echo "::notice title=Compile cache::This pull request gets no OIDC token, so kache compiles against a local store only."
           BUCKET=''
         fi
-        slug="${GITHUB_REPOSITORY//\//-}"
+        # IAM role names are case-sensitive and the role pair is named in lower case,
+        # so the repository name is lowered before it becomes the slug.
+        slug="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]/' '[:lower:]-')"
         {
           echo "bucket=$BUCKET"
           echo "reader_role_arn=${READER_ROLE_ARN:-arn:aws:iam::332277436597:role/kache-reader-${slug}}"
