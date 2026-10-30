@@ -199,6 +199,7 @@ runs:
         READER_ROLE_ARN: ${{ inputs.kache-reader-role-arn }}
         WRITER_ROLE_ARN: ${{ inputs.kache-writer-role-arn }}
         TOKENLESS_PULL_REQUEST: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]') }}
+        DEPENDABOT_PULL_REQUEST: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' }}
       run: |
         set -euo pipefail
         if [[ "$REMOTE" != true && "$REMOTE" != false ]]; then
@@ -212,6 +213,12 @@ runs:
         if [[ "$WRITER" != true && "$WRITER" != false ]]; then
           echo "::error title=Invalid kache-writer::kache-writer is '$WRITER'; pass 'true' or 'false'."
           exit 1
+        fi
+        # A Dependabot pull request compiles local-only even when GitHub issues it a token: the
+        # dependency it updates runs its build scripts in this job, so they never hold a cache role.
+        if [[ -n "$BUCKET" && "$DEPENDABOT_PULL_REQUEST" == true ]]; then
+          echo "::notice title=Compile cache::A Dependabot pull request compiles against a local store only."
+          BUCKET=''
         fi
         if [[ -n "$BUCKET" && -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
           if [[ "$TOKENLESS_PULL_REQUEST" != true ]]; then
