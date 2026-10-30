@@ -55,10 +55,10 @@ inputs:
       even on the writer role. A job on the reader role that is not a pull
       request runs read-only outright and never attempts an upload.
 
-      With kache-remote 'true', a pull request GitHub issues no OIDC token to
-      (one from a fork, or one Dependabot triggered) compiles local-only, as
-      with an empty bucket, and any other job without an OIDC token fails
-      before kache starts.
+      With kache-remote 'true', a fork's or Dependabot's pull request
+      compiles local-only, as with an empty bucket, whether or not it holds
+      an OIDC token, and any other job without an OIDC token fails before
+      kache starts.
     required: false
     default: 'surrealdb-ci-sccache-20260601131907544600000001'
   kache-region:
@@ -179,13 +179,12 @@ runs:
   steps:
     # Decides the backend the steps below use. Without kache-remote the
     # bucket is empty and kache compiles local-only, so no later step assumes
-    # a role. With it, the bucket stands unless the job cannot request a
-    # GitHub OIDC token: the runner sets ACTIONS_ID_TOKEN_REQUEST_URL only for
-    # a job granted `id-token: write`. A pull request GitHub issues no token
-    # to (one from a fork, or one Dependabot triggered) compiles local-only,
-    # which is all it could do without a credential. Any other job without a
-    # token fails here, naming the permission, rather than at the credentials
-    # step with an error that names none.
+    # a role. With it, the bucket stands unless the job is a fork's or a
+    # Dependabot's pull request, which compiles local-only whether or not it
+    # holds an OIDC token, or the job cannot request one: the runner sets
+    # ACTIONS_ID_TOKEN_REQUEST_URL only for a job granted `id-token: write`.
+    # Any other job without a token fails here, naming the permission, rather
+    # than at the credentials step with an error that names none.
     #
     # The role pair is named after the repository, so the ARNs are derived
     # here from GITHUB_REPOSITORY unless an input overrides them.
@@ -198,8 +197,7 @@ runs:
         WRITER: ${{ inputs.kache-writer }}
         READER_ROLE_ARN: ${{ inputs.kache-reader-role-arn }}
         WRITER_ROLE_ARN: ${{ inputs.kache-writer-role-arn }}
-        TOKENLESS_PULL_REQUEST: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]') }}
-        DEPENDABOT_PULL_REQUEST: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' }}
+        TOKENLESS_PULL_REQUEST: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]') }}
       run: |
         set -euo pipefail
         if [[ "$REMOTE" != true && "$REMOTE" != false ]]; then
@@ -214,19 +212,14 @@ runs:
           echo "::error title=Invalid kache-writer::kache-writer is '$WRITER'; pass 'true' or 'false'."
           exit 1
         fi
-        # A Dependabot pull request compiles local-only even when GitHub issues it a token: the
-        # dependency it updates runs its build scripts in this job, so they never hold a cache role.
-        if [[ -n "$BUCKET" && "$DEPENDABOT_PULL_REQUEST" == true ]]; then
-          echo "::notice title=Compile cache::A Dependabot pull request compiles against a local store only."
+        # A fork's or a Dependabot's pull request never assumes a role, whatever token the job holds: a Dependabot
+        # job can be granted `id-token: write`, and its build scripts are not trusted with the cache.
+        if [[ -n "$BUCKET" && "$TOKENLESS_PULL_REQUEST" == true ]]; then
+          echo "::notice title=Compile cache::This pull request is from a fork or Dependabot, so kache compiles against a local store only."
           BUCKET=''
-        fi
-        if [[ -n "$BUCKET" && -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
-          if [[ "$TOKENLESS_PULL_REQUEST" != true ]]; then
-            echo "::error title=No OIDC token for the compile cache::kache-remote is 'true' but this job cannot request an OIDC token. Grant the job 'id-token: write' (job-level permissions replace the defaults, so also list 'contents: read' and anything else it needs), or set kache-remote to 'false' to compile local-only."
-            exit 1
-          fi
-          echo "::notice title=Compile cache::This pull request gets no OIDC token, so kache compiles against a local store only."
-          BUCKET=''
+        elif [[ -n "$BUCKET" && -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+          echo "::error title=No OIDC token for the compile cache::kache-remote is 'true' but this job cannot request an OIDC token. Grant the job 'id-token: write' (job-level permissions replace the defaults, so also list 'contents: read' and anything else it needs), or set kache-remote to 'false' to compile local-only."
+          exit 1
         fi
         # IAM matches role names case-insensitively for uniqueness but compares
         # ARNs exactly, and the CI account names the pair in lower case.
