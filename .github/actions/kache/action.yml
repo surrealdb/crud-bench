@@ -15,6 +15,10 @@ inputs:
       runner-lifetime store only and assumes no role, whatever kache-bucket
       holds. The remote is opt-in so that a caller that does not ask for the
       shared cache never needs an OIDC token and never fails for lack of one.
+
+      Whatever kache-remote is, a pull request whose description contains
+      `[no-cache]` (case-sensitive) compiles without kache: kache-action does
+      not install it, and no role is assumed.
     required: false
     default: 'false'
   kache-bucket:
@@ -179,12 +183,14 @@ runs:
   steps:
     # Decides the backend the steps below use. Without kache-remote the
     # bucket is empty and kache compiles local-only, so no later step assumes
-    # a role. With it, the bucket stands unless the job is a fork's or a
+    # a role. With it, the bucket stands unless the job's pull request
+    # description contains `[no-cache]`, for which kache-action installs
+    # nothing and the job compiles uncached, or the job is a fork's or a
     # Dependabot's pull request, which compiles local-only whether or not it
-    # holds an OIDC token, or the job cannot request one: the runner sets
-    # ACTIONS_ID_TOKEN_REQUEST_URL only for a job granted `id-token: write`.
-    # Any other job without a token fails here, naming the permission, rather
-    # than at the credentials step with an error that names none.
+    # holds an OIDC token. Any other job fails here unless it can request an
+    # OIDC token (the runner sets ACTIONS_ID_TOKEN_REQUEST_URL only for a job
+    # granted `id-token: write`), naming the permission, rather than at the
+    # credentials step with an error that names none.
     #
     # The role pair is named after the repository, so the ARNs are derived
     # here from GITHUB_REPOSITORY unless an input overrides them.
@@ -197,7 +203,8 @@ runs:
         WRITER: ${{ inputs.kache-writer }}
         READER_ROLE_ARN: ${{ inputs.kache-reader-role-arn }}
         WRITER_ROLE_ARN: ${{ inputs.kache-writer-role-arn }}
-        TOKENLESS_PULL_REQUEST: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]') }}
+        UNTRUSTED_PULL_REQUEST: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]') }}
+        PULL_REQUEST_BODY: ${{ github.event.pull_request.body }}
       run: |
         set -euo pipefail
         if [[ "$REMOTE" != true && "$REMOTE" != false ]]; then
@@ -212,9 +219,18 @@ runs:
           echo "::error title=Invalid kache-writer::kache-writer is '$WRITER'; pass 'true' or 'false'."
           exit 1
         fi
+        # kache-action skips its install when the event payload's pull request
+        # body contains `[no-cache]`, a case-sensitive substring test on any
+        # event that carries a pull request, so there is no daemon for a role
+        # session to serve. This test must stay identical to kache-action's: a
+        # looser one leaves kache running without the bucket, a stricter one
+        # fails the remote check below.
         # A fork's or a Dependabot's pull request never assumes a role, whatever token the job holds: a Dependabot
         # job can be granted `id-token: write`, and its build scripts are not trusted with the cache.
-        if [[ -n "$BUCKET" && "$TOKENLESS_PULL_REQUEST" == true ]]; then
+        if [[ -n "$BUCKET" && "$PULL_REQUEST_BODY" == *'[no-cache]'* ]]; then
+          echo "::notice title=Compile cache::The pull request description contains [no-cache], so kache is not installed and the job compiles uncached."
+          BUCKET=''
+        elif [[ -n "$BUCKET" && "$UNTRUSTED_PULL_REQUEST" == true ]]; then
           echo "::notice title=Compile cache::This pull request is from a fork or Dependabot, so kache compiles against a local store only."
           BUCKET=''
         elif [[ -n "$BUCKET" && -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
