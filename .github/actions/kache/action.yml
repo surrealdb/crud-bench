@@ -18,15 +18,18 @@ inputs:
 
       Whatever kache-remote is, a pull request whose description contains
       `[no-cache]` (case-sensitive) compiles without kache: kache-action does
-      not install it, and no role is assumed.
+      not install it, and no role is assumed. Otherwise, with kache-remote
+      'true', a pull request from a fork or Dependabot compiles local-only
+      whether or not it holds an OIDC token.
     required: false
     default: 'false'
   kache-bucket:
     description: >-
       S3 bucket backing the shared compile cache when kache-remote is 'true';
       the default is the CI account's cache bucket. Empty compiles against a
-      local, runner-lifetime store only and assumes no role. A remote that is
-      misconfigured or absent from the daemon FAILS the job (the remote check
+      local, runner-lifetime store only and assumes no role. Outside the
+      exceptions under kache-remote, a remote that is misconfigured or absent
+      from the daemon FAILS the job (the remote check
       step below), and so does a role the job cannot assume. A bucket that
       denies or times out a request does not: those lookups miss, kache warns,
       and the job compiles cold.
@@ -204,7 +207,6 @@ runs:
         READER_ROLE_ARN: ${{ inputs.kache-reader-role-arn }}
         WRITER_ROLE_ARN: ${{ inputs.kache-writer-role-arn }}
         UNTRUSTED_PULL_REQUEST: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]') }}
-        PULL_REQUEST_BODY: ${{ github.event.pull_request.body }}
       run: |
         set -euo pipefail
         if [[ "$REMOTE" != true && "$REMOTE" != false ]]; then
@@ -225,9 +227,12 @@ runs:
         # session to serve. This test must stay identical to kache-action's: a
         # looser one leaves kache running without the bucket, a stricter one
         # fails the remote check below.
+        # It reads the body from the event file, as kache-action does, because a
+        # description can exceed the size Linux allows a single environment string.
+        #
         # A fork's or a Dependabot's pull request never assumes a role, whatever token the job holds: a Dependabot
         # job can be granted `id-token: write`, and its build scripts are not trusted with the cache.
-        if [[ -n "$BUCKET" && "$PULL_REQUEST_BODY" == *'[no-cache]'* ]]; then
+        if [[ -n "$BUCKET" ]] && jq -e '.pull_request.body | type == "string" and contains("[no-cache]")' "$GITHUB_EVENT_PATH" > /dev/null; then
           echo "::notice title=Compile cache::The pull request description contains [no-cache], so kache is not installed and the job compiles uncached."
           BUCKET=''
         elif [[ -n "$BUCKET" && "$UNTRUSTED_PULL_REQUEST" == true ]]; then
