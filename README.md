@@ -136,7 +136,7 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
   -n, --name <NAME>                            An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>                    The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mariadb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, slatedb, sqlite, surrealdb, surrealkv, surrealmx, surrealds]
+  -d, --database <DATABASE>                    The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mariadb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, slatedb, sqlite, surrealdb, surrealdb2, surrealdb3, surrealkv, surrealmx, surrealds]
   -i, --image <IMAGE>                          Specify a custom Docker image
   -p, --privileged                             Whether to run Docker in privileged mode
   -e, --endpoint <ENDPOINT>                    Specify a custom endpoint to connect to
@@ -971,7 +971,7 @@ Specify a custom endpoint using `-e` or `--endpoint` to benchmark a custom deplo
 | `surrealkv:<path>` (`surrealkv:/tmp/db`) | Embedded with SurrealKV storage engine. |
 | `ws://...`, `wss://...`, `http://...`, `https://...` | Remote server you manage yourself (no Docker started by crud-bench). |
 
-The default adapter follows the latest SurrealDB release, which no longer offers the RocksDB storage engine. To benchmark SurrealDB 3.x, including RocksDB, use `-d surrealdb3`, which links the 3.x SDK and starts the `surrealdb/surrealdb:v3` image. It accepts the same endpoints as above plus `server:rocksdb` and `rocksdb:<path>`, and defaults to `server:rocksdb`.
+The `surrealdb` adapter links the 4.x SDK and only talks to SurrealDB 4, which no longer offers the RocksDB storage engine. To benchmark SurrealDB 3.x, including RocksDB, use `-d surrealdb3`, which links the 3.x SDK and starts the `surrealdb/surrealdb:v3` image. It accepts the same endpoints as above plus `server:rocksdb` and `rocksdb:<path>`, and defaults to `server:rocksdb`.
 
 ### [SurrealKV](https://surrealkv.org)
 

@@ -17,6 +17,7 @@ use log::{error, warn};
 use std::env;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
+use surrealdb3 as surrealdb;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
