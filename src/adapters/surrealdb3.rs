@@ -25,6 +25,7 @@ use surrealdb::types::{
 	Array, Bytes as SurrealBytes, Datetime, Number, Object, RecordId, RecordIdKey, SurrealValue,
 	ToSql, Uuid as SurrealUuid, Value,
 };
+use surrealdb3 as surrealdb;
 use tokio::time::{sleep, timeout};
 
 /// Convert a [`BenchValue`] to a native [`surrealdb::types::Value`]. UUID,
