@@ -17,7 +17,6 @@ use log::{error, warn};
 use std::env;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
-use surrealdb3 as surrealdb;
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect};
 use surrealdb::opt::auth::Root;
@@ -26,6 +25,7 @@ use surrealdb::types::{
 	Array, Bytes as SurrealBytes, Datetime, Number, Object, RecordId, RecordIdKey, SurrealValue,
 	ToSql, Uuid as SurrealUuid, Value,
 };
+use surrealdb3 as surrealdb;
 use tokio::time::{sleep, timeout};
 
 /// Convert a [`BenchValue`] to a native [`surrealdb::types::Value`]. UUID,
