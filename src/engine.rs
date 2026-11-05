@@ -13,7 +13,7 @@ use std::time::Duration;
 const INDEX_POLL_MIN: Duration = Duration::from_millis(10);
 
 /// Longest sleep between two readiness checks on an index.
-const INDEX_POLL_MAX: Duration = Duration::from_millis(250);
+const INDEX_POLL_MAX: Duration = Duration::from_millis(25);
 
 /// How long to sleep before re-checking whether an index is ready, given how
 /// long the caller has already been waiting.
@@ -29,7 +29,9 @@ const INDEX_POLL_MAX: Duration = Duration::from_millis(250);
 /// Sleeping a tenth of the time already waited keeps the overshoot under ~10%
 /// of the true figure. The floor stops a fresh wait from spinning, and the cap
 /// means a long one is still noticed within a quarter of a second, so the
-/// reported time is never more than `max(10ms, min(10%, 250ms))` late.
+/// reported time is never more than `max(10ms, min(10%, 25ms))` late. The cap is
+/// low because a build whose call blocks (MongoDB) reports its time with no poll
+/// at all, and 40 status checks a second is cheap.
 pub(crate) fn index_poll_interval(waited: Duration) -> Duration {
 	(waited / 10).clamp(INDEX_POLL_MIN, INDEX_POLL_MAX)
 }
@@ -807,8 +809,8 @@ mod test {
 	/// In the middle band the sleep tracks a tenth of the wait.
 	#[test]
 	fn the_sleep_scales_with_the_wait() {
-		assert_eq!(index_poll_interval(ms(1000)), ms(100));
-		assert_eq!(index_poll_interval(ms(2000)), ms(200));
+		assert_eq!(index_poll_interval(ms(150)), ms(15));
+		assert_eq!(index_poll_interval(ms(200)), ms(20));
 	}
 
 	/// An hour-long materialisation is still noticed within the cap.

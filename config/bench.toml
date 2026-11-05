@@ -413,6 +413,13 @@ operation = "UPDATE"
 # ============================================================================
 # where_field_fulltext_single
 # ============================================================================
+#
+# The three full-text scans are not like for like across engines. SurrealDB
+# builds a FULLTEXT index with an analyzer (blank,class tokenizers; lowercase,
+# ascii filters) and BM25 scoring. MongoDB builds its `text` index, with its
+# own tokenizer, stemming, stop words and text-score weighting, and matches
+# with `$text`. Report these legs as "different feature" when comparing the
+# two engines, not as a head-to-head result.
 
 [[scans]]
 id = "where_field_fulltext_single"

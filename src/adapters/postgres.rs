@@ -97,6 +97,28 @@ fn calculate_postgres_memory() -> (u64, u64, u64, u64, u64, u64) {
 	)
 }
 
+/// Parallel workers Postgres runs at once (`max_parallel_workers`, left at its
+/// default of 8).
+const MAX_PARALLEL_WORKERS: u64 = 8;
+
+/// Size of the container's `/dev/shm` in MB.
+///
+/// Postgres keeps `shared_buffers` in an anonymous mapping, but allocates the
+/// dynamic shared memory of parallel queries and parallel index builds as
+/// POSIX segments in `/dev/shm`. Docker limits that to 64 MB, which a parallel
+/// hash or sort sized by an optimised `work_mem` exceeds at once, and the query
+/// fails with `could not resize shared memory segment ... No space left on
+/// device`.
+///
+/// Each parallel process may use `work_mem` times `hash_mem_multiplier` (2 by
+/// default) for a hash, and an index build adds `maintenance_work_mem`. `/dev/shm`
+/// is a tmpfs, so the size is a limit, not a reservation: it is capped at half
+/// of the machine's memory, and never smaller than 1 GB.
+fn shm_size_mb(work_mem_mb: u64, maintenance_work_mem_mb: u64, total_mb: u64) -> u64 {
+	let needed = work_mem_mb * 2 * (MAX_PARALLEL_WORKERS + 1) + maintenance_work_mem_mb;
+	needed.min(total_mb / 2).max(1024)
+}
+
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	// Calculate memory allocation
 	let (
@@ -107,6 +129,13 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		max_wal_gb,
 		min_wal_gb,
 	) = calculate_postgres_memory();
+	// Size `/dev/shm` for the configuration the server runs with. Without
+	// `--optimised`, `work_mem` is 4 MB and `maintenance_work_mem` is 64 MB.
+	let total_mb = Config::new().total_mb;
+	let shm_mb = match options.optimised {
+		true => shm_size_mb(work_mem_mb, maintenance_work_mem_gb * 1024, total_mb),
+		false => shm_size_mb(4, 64, total_mb),
+	};
 	// `synchronous_commit=on` makes every commit force a `write(2)` of the WAL
 	// to the OS page cache before returning; `fsync` then carries the `--sync`
 	// flag: `on` fsyncs that WAL to disk per commit (full durability), `off`
@@ -126,11 +155,12 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		// Postgres binaries as `postgres:*` with the `vector` extension
 		// pre-installed. Required by the vector-search benchmark; harmless
 		// for non-vector workloads (the extension is only created when the
-		// schema declares a `FloatVector` column, see `startup`).
-		image: "pgvector/pgvector:pg17",
-		pre_args:
-			"--ulimit nofile=65536:65536 -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
-				.to_string(),
+		// schema declares a `FloatVector` column, see `startup`). Pinned to
+		// Postgres 18 with pgvector 0.8.7, so that runs compare the same server.
+		image: "pgvector/pgvector:0.8.7-pg18",
+		pre_args: format!(
+			"--ulimit nofile=65536:65536 --shm-size={shm_mb}m -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
+		),
 		post_args: match options.optimised {
 			// Optimised configuration
 			true => format!(
@@ -156,7 +186,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				-c synchronous_commit=on"
 			),
 		},
-		data_path: Some("/var/lib/postgresql/data"),
+		// From Postgres 18 the image keeps its data in a versioned directory
+		// under `/var/lib/postgresql`, and refuses a mount at the old `data` path.
+		data_path: Some("/var/lib/postgresql"),
 	}
 }
 
@@ -913,5 +945,22 @@ mod test {
 			)),
 			r#"SELECT id FROM record WHERE "status" IN ('draft', 'archived') ORDER BY "embedding" <=> $1 LIMIT 10"#
 		);
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn shm_size_covers_parallel_work_mem() {
+		// The 62 GB box the 5M run failed on: work_mem=1472MB, maintenance 5 GB
+		assert_eq!(shm_size_mb(1472, 5 * 1024, 64_000), 1472 * 2 * 9 + 5 * 1024);
+		// A larger budget than the box allows is capped at half of its memory
+		assert_eq!(shm_size_mb(1472, 8 * 1024, 62 * 1024), 31 * 1024);
+		// A box with room for the full parallel budget
+		assert_eq!(shm_size_mb(1472, 8 * 1024, 256 * 1024), 1472 * 2 * 9 + 8 * 1024);
+		// The default configuration still gets more than Docker's 64 MB
+		assert_eq!(shm_size_mb(4, 64, 62 * 1024), 1024);
 	}
 }
