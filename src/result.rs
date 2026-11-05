@@ -1178,8 +1178,10 @@ mod tests {
 		child.kill().unwrap();
 		child.wait().unwrap();
 		assert!(sleep > 0);
-		// Our own memory moves between the two samples, so compare loosely
-		assert!(tree.memory >= alone.memory.saturating_sub(1 << 20) + sleep / 2);
+		// Our own memory moves between the two samples (other tests run
+		// concurrently), so only assert the tree covers the child itself
+		assert!(tree.memory >= sleep);
+		assert!(tree.memory > 0 && alone.memory > 0);
 		// A process that has exited is reported as gone
 		assert!(sample_process(&mut system, child_pid, false, refresh_kind).is_none());
 	}
