@@ -29,10 +29,11 @@ inputs:
       the default is the CI account's cache bucket. Empty compiles against a
       local, runner-lifetime store only and assumes no role. Outside the
       exceptions under kache-remote, a remote that is misconfigured or absent
-      from the daemon FAILS the job (the remote check
-      step below), and so does a role the job cannot assume. A bucket that
-      denies or times out a request does not: those lookups miss, kache warns,
-      and the job compiles cold.
+      from the daemon FAILS the job (the remote check step below), and so does
+      a role the job cannot assume. A bucket that denies or times out a
+      request does not: those lookups miss, kache warns, and the job compiles
+      cold. Neither does a kache download that fails: the job warns and
+      compiles uncached, as with `[no-cache]`.
 
       The bucket holds two prefixes per repository. Entries a build of main
       reads live under `trusted/<repository>/kache`; only the writer role
@@ -235,8 +236,9 @@ runs:
         # It reads the body from the event file, as kache-action does, because a
         # description can exceed the size Linux allows a single environment string.
         #
-        # A fork's or a Dependabot's pull request never assumes a role, whatever token the job holds: a Dependabot
-        # job can be granted `id-token: write`, and its build scripts are not trusted with the cache.
+        # A fork's or a Dependabot's pull request never assumes a role, whatever
+        # token the job holds: a Dependabot job can be granted `id-token: write`,
+        # and its build scripts are not trusted with the cache.
         if [[ -n "$BUCKET" ]] && jq -e '.pull_request.body | type == "string" and contains("[no-cache]")' "$GITHUB_EVENT_PATH" > /dev/null; then
           echo "::notice title=Compile cache::The pull request description contains [no-cache], so kache is not installed and the job compiles uncached."
           BUCKET=''
@@ -353,8 +355,14 @@ runs:
     # row (`  Remote    s3://…`); `Remote: s3://…` is accepted as well. With no
     # daemon reachable, `kache stats` prints `Daemon    offline` (kache's
     # status views say `not running`) and fills the Remote row from its own
-    # config file, so the row counts only while the Daemon row says neither. The daemon may still be starting or loading
-    # its config, so both rows are polled a few times.
+    # config file, so the row counts only while the Daemon row says neither.
+    # The daemon may still be starting or loading its config, so both rows are
+    # polled a few times.
+    #
+    # When the kache download fails, kache-action warns and returns before it
+    # sets RUSTC_WRAPPER, so cargo compiles uncached, as under `[no-cache]`.
+    # A missing binary is therefore a warning here, not a failure: a transient
+    # download error must not fail the job.
     - name: Check the compile cache remote
       if: steps.kache-backend.outputs.bucket != ''
       shell: bash
@@ -362,11 +370,9 @@ runs:
         EXPECTED: s3://${{ steps.kache-backend.outputs.bucket }}/trusted/${{ github.repository }}/kache
       run: |
         set -euo pipefail
-        # kache-action only warns when it cannot download kache, so a missing
-        # binary is reported as an install failure, not as a remote mismatch.
         if ! command -v kache >/dev/null; then
-          echo "::error title=kache not installed::kache is not on PATH: the kache download or install in Setup kache failed (see its warnings)."
-          exit 1
+          echo "::warning title=Compile cache skipped::kache is not installed (see the warnings from Setup kache), so this job compiles uncached."
+          exit 0
         fi
         remote=''
         offline=''
