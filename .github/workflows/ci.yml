@@ -137,8 +137,8 @@ jobs:
           path: target/${{ matrix.target }}/release/crud-bench
 
   # Checks that the image assembles from the two release binaries; it publishes
-  # nothing. GitHub-hosted, because the private self-hosted runner group serves
-  # private repositories only. The Dockerfile only copies the binaries in, so the
+  # nothing. GitHub-hosted, so that no crud-bench job depends on the private
+  # self-hosted runner group. The Dockerfile only copies the binaries in, so the
   # arm64 image needs no emulated build steps.
   docker-build:
     name: Build Docker image
