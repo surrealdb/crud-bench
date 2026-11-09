@@ -23,8 +23,8 @@ defaults:
 # sccache → S3 backend, shared across the compile jobs (clippy, test, build).
 # Set at workflow level so the values are in the environment when the
 # sccache-action daemon starts (it reads its backend config at start time).
-# The AWS credentials the daemon needs are scoped to each compile job instead
-# of here.
+# The AWS credentials the daemon needs are set on each compile job, not here,
+# so jobs that compile nothing never receive them.
 # Fork PRs have no secrets, so SCCACHE_BUCKET is empty there and sccache
 # transparently falls back to a local cache — builds still succeed, just
 # without the shared cache.
@@ -144,6 +144,8 @@ jobs:
     name: Build Docker image
     runs-on: ubuntu-24.04
     needs: build
+    permissions:
+      contents: read
     steps:
       - name: Checkout sources
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
