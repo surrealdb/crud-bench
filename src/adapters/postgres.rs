@@ -120,6 +120,49 @@ fn shm_size_mb(work_mem_mb: u64, maintenance_work_mem_mb: u64, total_mb: u64) ->
 }
 
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	// `pgvector/pgvector` is the upstream pgvector image — same upstream
+	// Postgres binaries as `postgres:*` with the `vector` extension
+	// pre-installed. Required by the vector-search benchmark; harmless
+	// for non-vector workloads (the extension is only created when the
+	// schema declares a `FloatVector` column, see `startup`). Pinned to
+	// Postgres 18 with pgvector 0.8.7, so that runs compare the same server.
+	// From Postgres 18 the image keeps its data in a versioned directory
+	// under `/var/lib/postgresql`, and refuses a mount at the old `data` path.
+	docker_params(options, "pgvector/pgvector:0.8.7-pg18", "", "", "/var/lib/postgresql")
+}
+
+/// The Postgres server with pgvectorscale, for its `diskann` index.
+///
+/// `timescale/timescaledb-ha` is the image Timescale publishes pgvectorscale in.
+/// It is pinned to the tag carrying the same Postgres 18.6 and pgvector 0.8.7 as
+/// [`docker`], plus pgvectorscale 0.9.1, so the HNSW legs of the two databases
+/// compare the same server. The image adds what the plain one does not run, and
+/// both are turned off so that only the extension differs:
+/// - its init scripts tune the server's memory with `timescaledb-tune` and create
+///   the `timescaledb` extension; an empty directory is mounted over them, so the
+///   server takes the settings below and nothing else;
+/// - its `postgresql.conf` preloads `timescaledb` and `pg_textsearch`, whose
+///   background workers the plain server does not run; the preload is emptied.
+///   pgvectorscale needs no preload.
+pub(crate) fn docker_vectorscale(options: &Benchmark) -> DockerParams {
+	docker_params(
+		options,
+		"timescale/timescaledb-ha:pg18.6-ts2.31.0",
+		"--tmpfs /docker-entrypoint-initdb.d",
+		"-c shared_preload_libraries=",
+		"/home/postgres/pgdata",
+	)
+}
+
+/// Docker parameters for a Postgres `image`, with `pre` and `post` added to the
+/// arguments every Postgres server runs with, and its data kept at `data_path`.
+fn docker_params(
+	options: &Benchmark,
+	image: &'static str,
+	pre: &str,
+	post: &str,
+	data_path: &'static str,
+) -> DockerParams {
 	// Calculate memory allocation
 	let (
 		shared_buffers_gb,
@@ -151,15 +194,9 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	};
 	// Return Docker parameters
 	DockerParams {
-		// `pgvector/pgvector` is the upstream pgvector image — same upstream
-		// Postgres binaries as `postgres:*` with the `vector` extension
-		// pre-installed. Required by the vector-search benchmark; harmless
-		// for non-vector workloads (the extension is only created when the
-		// schema declares a `FloatVector` column, see `startup`). Pinned to
-		// Postgres 18 with pgvector 0.8.7, so that runs compare the same server.
-		image: "pgvector/pgvector:0.8.7-pg18",
+		image,
 		pre_args: format!(
-			"--ulimit nofile=65536:65536 --shm-size={shm_mb}m -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
+			"--ulimit nofile=65536:65536 --shm-size={shm_mb}m -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres {pre}"
 		),
 		post_args: match options.optimised {
 			// Optimised configuration
@@ -177,22 +214,28 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				-c min_wal_size={min_wal_gb}GB \
 				-c max_wal_size={max_wal_gb}GB \
 				-c fsync={fsync_setting} \
-				-c synchronous_commit=on"
+				-c synchronous_commit=on {post}"
 			),
 			// Default configuration
 			false => format!(
 				"postgres -N 1024 \
 				-c fsync={fsync_setting} \
-				-c synchronous_commit=on"
+				-c synchronous_commit=on {post}"
 			),
 		},
-		// From Postgres 18 the image keeps its data in a versioned directory
-		// under `/var/lib/postgresql`, and refuses a mount at the old `data` path.
-		data_path: Some("/var/lib/postgresql"),
+		data_path: Some(data_path),
 	}
 }
 
-pub(crate) struct PostgresClientProvider(KeyType, Columns, String);
+pub(crate) struct PostgresClientProvider(KeyType, Columns, String, bool);
+
+impl PostgresClientProvider {
+	/// Serves DiskANN legs with pgvectorscale's `diskann` index, which the server
+	/// must have installed (see [`docker_vectorscale`]).
+	pub(crate) fn with_vectorscale(self) -> Self {
+		Self(self.0, self.1, self.2, true)
+	}
+}
 
 impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 	/// Initiates a new datastore benchmarking engine
@@ -200,7 +243,7 @@ impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 		// Get the custom endpoint if specified
 		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
 		// Create the client provider
-		Ok(Self(kt, columns, url))
+		Ok(Self(kt, columns, url, false))
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<PostgresClient> {
@@ -217,6 +260,7 @@ impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 			client,
 			kt: self.0,
 			columns: self.1.clone(),
+			vectorscale: self.3,
 		})
 	}
 }
@@ -225,6 +269,8 @@ pub(crate) struct PostgresClient {
 	client: Client,
 	kt: KeyType,
 	columns: Columns,
+	/// Whether DiskANN legs run on pgvectorscale's `diskann` index.
+	vectorscale: bool,
 }
 
 impl BenchmarkClient for PostgresClient {
@@ -237,6 +283,9 @@ impl BenchmarkClient for PostgresClient {
 		// when the extension is already present.
 		if self.columns.0.iter().any(|(_, t)| matches!(t, ColumnType::FloatVector(_))) {
 			self.client.batch_execute("CREATE EXTENSION IF NOT EXISTS vector;").await?;
+			if self.vectorscale {
+				self.client.batch_execute("CREATE EXTENSION IF NOT EXISTS vectorscale;").await?;
+			}
 		}
 		let id_type = match self.kt {
 			KeyType::Integer => "SERIAL",
@@ -424,9 +473,23 @@ impl BenchmarkClient for PostgresClient {
 			} => format!(
 				"CREATE INDEX {name} ON record USING hnsw ({fields} {ops}) WITH (m = {m}, ef_construction = {ef_construction})"
 			),
+			// pgvectorscale has no operator class for L1.
 			VectorIndexStrategy::DiskAnn {
 				..
-			} => bail!(crate::benchmark::NOT_SUPPORTED_ERROR),
+			} if !self.vectorscale || vq.distance == VectorDistance::Manhattan => {
+				bail!(crate::benchmark::NOT_SUPPORTED_ERROR)
+			}
+			// The index keeps pgvectorscale's default `memory_optimized` layout,
+			// which searches over binary-quantised vectors and rescores the
+			// candidates against the full vectors.
+			VectorIndexStrategy::DiskAnn {
+				degree,
+				l_build,
+				alpha,
+				..
+			} => format!(
+				"CREATE INDEX {name} ON record USING diskann ({fields} {ops}) WITH (num_neighbors = {degree}, search_list_size = {l_build}, max_alpha = {alpha})"
+			),
 		};
 		self.client.execute(&stmt, &[]).await?;
 		// `hnsw.ef_search` is deliberately not set here. It is a per-session
@@ -442,9 +505,23 @@ impl BenchmarkClient for PostgresClient {
 	/// connection before the leg runs, and lets a sweep change it between legs
 	/// without rebuilding the index.
 	async fn prepare_vector_search(&self, vq: &VectorQuerySpec) -> Result<()> {
-		if matches!(vq.index_strategy, VectorIndexStrategy::Hnsw { .. }) {
-			let ef_search = vq.index_strategy.search_value();
-			self.client.execute(&format!("SET hnsw.ef_search = {ef_search}"), &[]).await?;
+		let search = vq.index_strategy.search_value();
+		match vq.index_strategy {
+			VectorIndexStrategy::Hnsw {
+				..
+			} => {
+				self.client.execute(&format!("SET hnsw.ef_search = {search}"), &[]).await?;
+			}
+			// pgvectorscale takes the DiskANN search list from its own per-session
+			// GUC, and keeps its default rescore count.
+			VectorIndexStrategy::DiskAnn {
+				..
+			} if self.vectorscale => {
+				self.client
+					.execute(&format!("SET diskann.query_search_list_size = {search}"), &[])
+					.await?;
+			}
+			_ => {}
 		}
 		Ok(())
 	}

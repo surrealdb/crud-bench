@@ -336,6 +336,7 @@ mongodb|mongodb|networked|MongoDB|
 mysql|mysql|networked|MySQL|
 neo4j|neo4j|networked|Neo4j|
 postgres|postgres|networked|Postgres|
+pgvectorscale|pgvectorscale|networked|Postgres with pgvectorscale|
 redb|redb|embedded|ReDB|
 redis|redis|networked|Redis|
 rocksdb|rocksdb|embedded|RocksDB|

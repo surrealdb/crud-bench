@@ -45,6 +45,9 @@ pub(crate) enum Database {
 	Neo4j,
 	#[cfg(feature = "postgres")]
 	Postgres,
+	/// Postgres with pgvectorscale, whose `diskann` index serves DiskANN legs.
+	#[cfg(feature = "postgres")]
+	Pgvectorscale,
 	#[cfg(feature = "redb")]
 	Redb,
 	#[cfg(feature = "redis")]
@@ -134,6 +137,8 @@ impl Database {
 			Self::Neo4j => crate::adapters::neo4j::docker(options),
 			#[cfg(feature = "postgres")]
 			Self::Postgres => crate::adapters::postgres::docker(options),
+			#[cfg(feature = "postgres")]
+			Self::Pgvectorscale => crate::adapters::postgres::docker_vectorscale(options),
 			#[cfg(feature = "redis")]
 			Self::Redis => crate::adapters::redis::docker(options),
 			#[cfg(feature = "scylladb")]
@@ -409,6 +414,27 @@ impl Database {
 							benchmark,
 						)
 						.await?,
+						kp,
+						vp,
+						scans,
+						batches,
+						database.clone(),
+						system.clone(),
+						metadata.clone(),
+					)
+					.await
+			}
+			#[cfg(feature = "postgres")]
+			Database::Pgvectorscale => {
+				benchmark
+					.run::<_, AnsiSqlDialect, _>(
+						crate::adapters::postgres::PostgresClientProvider::setup(
+							kt,
+							vp.columns(),
+							benchmark,
+						)
+						.await?
+						.with_vectorscale(),
 						kp,
 						vp,
 						scans,
@@ -767,6 +793,8 @@ impl Database {
 			Database::Mysql => "MySQL",
 			#[cfg(feature = "postgres")]
 			Database::Postgres => "PostgreSQL",
+			#[cfg(feature = "postgres")]
+			Database::Pgvectorscale => "PostgreSQL (pgvectorscale)",
 			#[cfg(feature = "sqlite")]
 			Database::Sqlite => "SQLite",
 			#[cfg(feature = "neo4j")]
