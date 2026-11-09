@@ -149,8 +149,9 @@ inputs:
       GitHub-hosted runner for pushes to main and on a self-hosted one for
       pull requests publishes the manifest those pull requests warm from. The
       branch segment is the base branch, not the running ref, so a pull
-      request warms from the manifest its target published rather than from
-      one under a ref that only exists for the merge.
+      request or merge queue run warms from the manifest its target
+      published rather than from one under a ref that only exists for the
+      merge.
     required: false
     default: ''
   kache-version:
@@ -207,8 +208,12 @@ runs:
         READER_ROLE_ARN: ${{ inputs.kache-reader-role-arn }}
         WRITER_ROLE_ARN: ${{ inputs.kache-writer-role-arn }}
         UNTRUSTED_PULL_REQUEST: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]') }}
+        # The branch whose manifest the build warms from: a pull request's or
+        # a merge queue's target (the latter a full ref), else the running ref.
+        MANIFEST_BRANCH: ${{ github.base_ref || github.event.merge_group.base_ref || github.ref_name }}
       run: |
         set -euo pipefail
+        echo "manifest_branch=${MANIFEST_BRANCH#refs/heads/}" >> "$GITHUB_OUTPUT"
         if [[ "$REMOTE" != true && "$REMOTE" != false ]]; then
           echo "::error title=Invalid kache-remote::kache-remote is '$REMOTE'; pass 'true' or 'false'."
           exit 1
@@ -318,7 +323,7 @@ runs:
         # counts only with kache-remote: without a remote this is true in a
         # pull request alone, as for any local-only job.
         save-cache: ${{ (inputs.kache-remote == 'true' && inputs.kache-writer == 'true') || github.event_name == 'pull_request' }}
-        manifest-key: ${{ format('{0}/{1}', github.base_ref || github.ref_name, inputs.kache-manifest-key || format('{0}-{1}-{2}', github.job, runner.os, runner.arch)) }}
+        manifest-key: ${{ format('{0}/{1}', steps.kache-backend.outputs.manifest_branch, inputs.kache-manifest-key || format('{0}-{1}-{2}', github.job, runner.os, runner.arch)) }}
         # Beside the workspace, because kache shares artifact bytes with the
         # target directory by hardlink or reflink and neither can cross a
         # mount; the runner's temp directory is on the workspace's volume.
@@ -342,11 +347,14 @@ runs:
         # the same report, and the compile jobs grant read-only token scopes.
         pr-comment: 'false'
 
-    # Fails the job unless the daemon reports exactly the remote configured
-    # above. kache-action's own check only warns when it cannot parse the
-    # Remote row, and this kache release prints it as a padded table row
-    # (`  Remote    s3://…`); `Remote: s3://…` is accepted as well. The daemon
-    # may still be loading its config, so the row is polled a few times.
+    # Fails the job unless a running daemon reports exactly the remote
+    # configured above. kache-action's own check only warns when it cannot
+    # parse the Remote row, and this kache release prints it as a padded table
+    # row (`  Remote    s3://…`); `Remote: s3://…` is accepted as well. With no
+    # daemon reachable, `kache stats` prints `Daemon    offline` (kache's
+    # status views say `not running`) and fills the Remote row from its own
+    # config file, so the row counts only while the Daemon row says neither. The daemon may still be starting or loading
+    # its config, so both rows are polled a few times.
     - name: Check the compile cache remote
       if: steps.kache-backend.outputs.bucket != ''
       shell: bash
@@ -361,12 +369,19 @@ runs:
           exit 1
         fi
         remote=''
-        for attempt in 1 2 3; do
+        offline=''
+        for attempt in 1 2 3 4 5; do
           stats="$(kache stats 2>&1 | sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g')" || stats=''
           remote="$(awk 'match($0, /^[[:space:]]*Remote(:[[:space:]]*|[[:space:]][[:space:]]+)/) { v = substr($0, RLENGTH + 1); sub(/[[:space:]]+$/, "", v); print v; exit }' <<<"$stats")"
-          [[ "$remote" == "$EXPECTED" ]] && break
-          [[ "$attempt" == 3 ]] || sleep 2
+          offline="$(grep -E '^[[:space:]]*Daemon(:[[:space:]]*|[[:space:]][[:space:]]+)(offline|not running)' <<<"$stats" || true)"
+          [[ -z "$offline" && "$remote" == "$EXPECTED" ]] && break
+          [[ "$attempt" == 5 ]] || sleep 2
         done
+        if [[ -n "$offline" ]]; then
+          printf '%s\n' "$stats"
+          echo "::error title=Compile cache daemon offline::kache stats cannot reach the kache daemon, so the remote it would compile against is unknown. See Setup kache for why the daemon did not start."
+          exit 1
+        fi
         if [[ "$remote" != "$EXPECTED" ]]; then
           printf '%s\n' "$stats"
           echo "::error title=Compile cache remote::The kache daemon reports remote '${remote:-<none>}', expected '$EXPECTED'. Refusing to compile against a cold or wrong remote."
