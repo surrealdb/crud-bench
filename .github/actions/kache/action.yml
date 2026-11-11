@@ -29,7 +29,7 @@ inputs:
       the default is the CI account's cache bucket. Empty compiles against a
       local, runner-lifetime store only and assumes no role. Outside the
       exceptions under kache-remote, a remote that is misconfigured or absent
-      from the daemon FAILS the job (the remote check step below), and so does
+      from the daemon FAILS the job (Setup kache checks it), and so does
       a role the job cannot assume. A bucket that denies or times out a
       request does not: those lookups miss, kache warns, and the job compiles
       cold. Neither does a kache download that fails: the job warns and
@@ -232,7 +232,7 @@ runs:
         # event that carries a pull request, so there is no daemon for a role
         # session to serve. This test must stay identical to kache-action's: a
         # looser one leaves kache running without the bucket, a stricter one
-        # fails the remote check below.
+        # fails Setup kache's remote check.
         # It reads the body from the event file, as kache-action does, because a
         # description can exceed the size Linux allows a single environment string.
         #
@@ -308,7 +308,7 @@ runs:
     # still fetching. The daemon signs with the role session the step above
     # exported, which it holds for the job's lifetime.
     - name: Setup kache
-      uses: kunobi-ninja/kache-action@78ff455251aa37139061201a39113a1924994035 # v1
+      uses: kunobi-ninja/kache-action@96e5a8e6ce1344fd9604eadf8c85a5288f50ba90 # main, after v1
       with:
         version: ${{ inputs.kache-version }}
         s3-bucket: ${{ steps.kache-backend.outputs.bucket }}
@@ -351,52 +351,6 @@ runs:
         # Every job in a workflow would post its own; the job summary carries
         # the same report, and the compile jobs grant read-only token scopes.
         pr-comment: 'false'
-
-    # Fails the job unless a running daemon reports exactly the remote
-    # configured above. kache-action's own check only warns when it cannot
-    # parse the Remote row, and this kache release prints it as a padded table
-    # row (`  Remote    s3://…`); `Remote: s3://…` is accepted as well. With no
-    # daemon reachable, `kache stats` prints `Daemon    offline` (kache's
-    # status views say `not running`) and fills the Remote row from its own
-    # config file, so the row counts only while the Daemon row says neither.
-    # The daemon may still be starting or loading its config, so both rows are
-    # polled a few times.
-    #
-    # When the kache download fails, kache-action warns and returns before it
-    # sets RUSTC_WRAPPER, so cargo compiles uncached, as under `[no-cache]`.
-    # A missing binary is therefore a warning here, not a failure: a transient
-    # download error must not fail the job.
-    - name: Check the compile cache remote
-      if: steps.kache-backend.outputs.bucket != ''
-      shell: bash
-      env:
-        EXPECTED: s3://${{ steps.kache-backend.outputs.bucket }}/trusted/${{ github.repository }}/kache
-      run: |
-        set -euo pipefail
-        if ! command -v kache >/dev/null; then
-          echo "::warning title=Compile cache skipped::kache is not installed (see the warnings from Setup kache), so this job compiles uncached."
-          exit 0
-        fi
-        remote=''
-        offline=''
-        for attempt in 1 2 3 4 5; do
-          stats="$(kache stats 2>&1 | sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g')" || stats=''
-          remote="$(awk 'match($0, /^[[:space:]]*Remote(:[[:space:]]*|[[:space:]][[:space:]]+)/) { v = substr($0, RLENGTH + 1); sub(/[[:space:]]+$/, "", v); print v; exit }' <<<"$stats")"
-          offline="$(grep -E '^[[:space:]]*Daemon(:[[:space:]]*|[[:space:]][[:space:]]+)(offline|not running)' <<<"$stats" || true)"
-          [[ -z "$offline" && "$remote" == "$EXPECTED" ]] && break
-          [[ "$attempt" == 5 ]] || sleep 2
-        done
-        if [[ -n "$offline" ]]; then
-          printf '%s\n' "$stats"
-          echo "::error title=Compile cache daemon offline::kache stats cannot reach the kache daemon, so the remote it would compile against is unknown. See Setup kache for why the daemon did not start."
-          exit 1
-        fi
-        if [[ "$remote" != "$EXPECTED" ]]; then
-          printf '%s\n' "$stats"
-          echo "::error title=Compile cache remote::The kache daemon reports remote '${remote:-<none>}', expected '$EXPECTED'. Refusing to compile against a cold or wrong remote."
-          exit 1
-        fi
-        echo "Compile cache remote: $remote"
 
     - name: Configure cargo for kache
       shell: bash
