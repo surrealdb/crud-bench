@@ -610,6 +610,13 @@ impl Benchmark {
 		D: Dialect,
 		E: BenchmarkEngine<C> + Send + Sync,
 	{
+		// Every row of a `vector_file:` column comes from its file, which has to
+		// hold the whole corpus.
+		if let Some(rows) = vp.vector_file_rows()
+			&& self.samples as usize > rows
+		{
+			bail!("{} samples were asked for, but the vector file holds {rows} rows", self.samples);
+		}
 		// Generate a value sample for the report
 		let sample = vp.generate_value();
 		// Setup the datastore
@@ -1316,6 +1323,18 @@ impl Benchmark {
 		let queries = vp
 			.generate_vectors(&vq.field, count, seed)
 			.with_context(|| format!("scan `{}`: building the vector query set", scan.name))?;
+		// Queries come from the end of a vector file, and must not reach back
+		// into the rows the corpus took from its start.
+		if let Some(rows) = vp.vector_file_rows()
+			&& self.samples as usize + count > rows
+		{
+			bail!(
+				"scan `{}`: {} samples and {count} queries need {} rows, but the vector file holds {rows}",
+				scan.name,
+				self.samples,
+				self.samples as usize + count
+			);
+		}
 		// `VectorQuerySet::pick` indexes modulo the query count, so an empty set
 		// would panic inside the timed window. The validator already rejects
 		// `holdout.count == 0`; this covers anything else that reaches zero.
