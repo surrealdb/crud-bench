@@ -479,16 +479,18 @@ impl BenchmarkClient for PostgresClient {
 			} if !self.vectorscale || vq.distance == VectorDistance::Manhattan => {
 				bail!(crate::benchmark::NOT_SUPPORTED_ERROR)
 			}
-			// The index keeps pgvectorscale's default `memory_optimized` layout,
-			// which searches over binary-quantised vectors and rescores the
-			// candidates against the full vectors.
+			// The index uses the `plain` layout, which searches over the full
+			// vectors, so recall follows `l_search`. The default
+			// `memory_optimized` layout searches over 2-bit codes, and its
+			// recall is set by `diskann.query_rescore` instead, which caps at
+			// 1000: at 1M x 768 that reaches only 0.72 recall@10.
 			VectorIndexStrategy::DiskAnn {
 				degree,
 				l_build,
 				alpha,
 				..
 			} => format!(
-				"CREATE INDEX {name} ON record USING diskann ({fields} {ops}) WITH (num_neighbors = {degree}, search_list_size = {l_build}, max_alpha = {alpha})"
+				"CREATE INDEX {name} ON record USING diskann ({fields} {ops}) WITH (num_neighbors = {degree}, search_list_size = {l_build}, max_alpha = {alpha}, storage_layout = plain)"
 			),
 		};
 		self.client.execute(&stmt, &[]).await?;
@@ -513,7 +515,7 @@ impl BenchmarkClient for PostgresClient {
 				self.client.execute(&format!("SET hnsw.ef_search = {search}"), &[]).await?;
 			}
 			// pgvectorscale takes the DiskANN search list from its own per-session
-			// GUC, and keeps its default rescore count.
+			// GUC. The rescore count does not apply to the `plain` layout.
 			VectorIndexStrategy::DiskAnn {
 				..
 			} if self.vectorscale => {
