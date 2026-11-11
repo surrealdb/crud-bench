@@ -271,13 +271,16 @@ runs:
     # wrapper derives the daemon socket name from it), so it is exported to the
     # job rather than passed to one step. kache honours it only in a
     # pull_request job and rejects a value nested with the trusted prefix, so
-    # nothing a pull request writes can land under `trusted/`.
+    # nothing a pull request writes can land under `trusted/`. The value is
+    # the repository name and the pull request number, neither of which the
+    # pull request's author controls, so writing it to GITHUB_ENV injects
+    # nothing.
     - name: Scope cache writes to the pull request
       if: steps.kache-backend.outputs.bucket != '' && github.event_name == 'pull_request'
       shell: bash
       env:
         PULL_REQUEST_PREFIX: pr/${{ github.repository }}/${{ github.event.pull_request.number }}/kache
-      run: echo "KACHE_PULL_REQUEST_PREFIX=$PULL_REQUEST_PREFIX" >> "$GITHUB_ENV"
+      run: echo "KACHE_PULL_REQUEST_PREFIX=$PULL_REQUEST_PREFIX" >> "$GITHUB_ENV" # zizmor: ignore[github-env]
 
     # Exchanges the job's OIDC token for a session on the compile cache role
     # and exports it as AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and
