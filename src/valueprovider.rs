@@ -10,6 +10,7 @@ use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Display};
 use std::fs::File;
+use std::hash::Hasher;
 use std::io::{BufReader, Read};
 use std::ops::Range;
 use std::str::FromStr;
@@ -187,21 +188,36 @@ impl ValueProvider {
 		Ok(out)
 	}
 
-	/// The fewest rows held by any top-level `vector_file:` column, or `None`
-	/// when the template reads no file.
+	/// The fewest rows held by any `vector_file:` generator anywhere in the
+	/// template, or `None` when the template reads no file. The corpus takes
+	/// row `n` of every file for sample `n`, so each must hold every sample.
 	pub(crate) fn vector_file_rows(&self) -> Option<usize> {
-		let ValueGenerator::Object(fields) = &self.generator else {
-			return None;
-		};
-		fields
-			.iter()
-			.filter_map(|(_, g)| match g {
-				ValueGenerator::FileVector {
-					data,
-				} => Some(data.rows),
-				_ => None,
-			})
-			.min()
+		self.generator.min_file_rows()
+	}
+
+	/// The rows held by the file behind the top-level vector column `field`,
+	/// or `None` when `field` is not a `vector_file:` column. Its queries come
+	/// from the end of that file, and must stay clear of the corpus rows.
+	pub(crate) fn vector_file_rows_for(&self, field: &str) -> Option<usize> {
+		match self.vector_generator(field).ok()? {
+			ValueGenerator::FileVector {
+				data,
+			} => Some(data.rows),
+			_ => None,
+		}
+	}
+
+	/// The path and content digest of every `vector_file:` generator, in
+	/// template order, or an empty string when the template reads no file.
+	///
+	/// The template names a file only by its path, so anything that identifies
+	/// the corpus by the template — the split-run manifest, the result's
+	/// template digest, the ground-truth cache — also takes this, and a file
+	/// replaced under the same path is a different corpus.
+	pub(crate) fn vector_file_digests(&self) -> String {
+		let mut out = String::new();
+		self.generator.file_digests(&mut out);
+		out
 	}
 
 	/// Locate the generator for a top-level `vector:<dim>` column.
@@ -304,6 +320,8 @@ struct VectorFile {
 	dim: usize,
 	rows: usize,
 	values: Arc<Vec<f32>>,
+	/// XxHash64 of the whole file, header included.
+	digest: u64,
 }
 
 impl Debug for VectorFile {
@@ -317,34 +335,58 @@ impl VectorFile {
 	/// Read a file in the `.fbin` layout used by big-ann-benchmarks: the row
 	/// count and the dimension as little-endian `u32`s, then every row's `f32`
 	/// components, little-endian, row after row.
+	///
+	/// Every component must be finite: a `NaN` would break the ordering the
+	/// ground truth is ranked by.
 	fn load(path: &str) -> Result<Self> {
-		let file = File::open(path).map_err(|e| anyhow!("vector file {path:?}: {e}"))?;
-		let len = file.metadata()?.len();
+		let context = |e: std::io::Error| anyhow!("vector file {path:?}: {e}");
+		let file = File::open(path).map_err(context)?;
+		let len = file.metadata().map_err(context)?.len();
 		let mut reader = BufReader::with_capacity(1 << 20, file);
 		let mut header = [0u8; 8];
-		reader.read_exact(&mut header).map_err(|e| anyhow!("vector file {path:?}: {e}"))?;
-		let rows = u32::from_le_bytes(header[..4].try_into()?) as usize;
-		let dim = u32::from_le_bytes(header[4..].try_into()?) as usize;
+		reader.read_exact(&mut header).map_err(context)?;
+		let rows = u32::from_le_bytes(header[..4].try_into()?);
+		let dim = u32::from_le_bytes(header[4..].try_into()?);
 		if rows == 0 || dim == 0 {
 			bail!("vector file {path:?} holds {rows} rows of dimension {dim}");
 		}
-		let expected = 8 + (rows as u64) * (dim as u64) * 4;
+		// Both factors fit in a `u32`, so their product fits in a `u64`; the
+		// byte count after it may not.
+		let components = rows as u64 * dim as u64;
+		let Some(expected) = components.checked_mul(4).and_then(|b| b.checked_add(8)) else {
+			bail!("vector file {path:?}: a header of {rows} rows x {dim} dimensions is too large");
+		};
 		if len != expected {
 			bail!(
 				"vector file {path:?} is {len} bytes, but a header of {rows} rows x {dim} dimensions needs {expected}"
 			);
 		}
-		let mut values = Vec::with_capacity(rows * dim);
+		let (Ok(rows), Ok(dim), Ok(components)) =
+			(usize::try_from(rows), usize::try_from(dim), usize::try_from(components))
+		else {
+			bail!("vector file {path:?} is too large for this platform");
+		};
+		let mut digest = twox_hash::XxHash64::with_seed(0);
+		digest.write(&header);
+		let mut values = Vec::with_capacity(components);
 		let mut chunk = vec![0u8; dim * 4];
-		for _ in 0..rows {
-			reader.read_exact(&mut chunk)?;
-			values.extend(chunk.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)));
+		for r in 0..rows {
+			reader.read_exact(&mut chunk).map_err(context)?;
+			digest.write(&chunk);
+			for (c, b) in chunk.as_chunks::<4>().0.iter().enumerate() {
+				let v = f32::from_le_bytes(*b);
+				if !v.is_finite() {
+					bail!("vector file {path:?}: row {r}, component {c} is {v}");
+				}
+				values.push(v);
+			}
 		}
 		Ok(Self {
 			path: path.to_string(),
 			dim,
 			rows,
 			values: Arc::new(values),
+			digest: digest.finish(),
 		})
 	}
 
@@ -472,6 +514,41 @@ fn bytes_range(rng: &mut SmallRng, range: Range<usize>) -> Vec<u8> {
 impl ValueGenerator {
 	/// Re-draw cluster centres from the corpus seed, in place, throughout the
 	/// template tree.
+	/// The fewest rows held by any `vector_file:` generator in this subtree.
+	fn min_file_rows(&self) -> Option<usize> {
+		match self {
+			ValueGenerator::FileVector {
+				data,
+			} => Some(data.rows),
+			ValueGenerator::Array(items) => items.iter().filter_map(Self::min_file_rows).min(),
+			ValueGenerator::Object(fields) => {
+				fields.iter().filter_map(|(_, g)| g.min_file_rows()).min()
+			}
+			_ => None,
+		}
+	}
+
+	/// Append the path and digest of every `vector_file:` generator in this
+	/// subtree to `out`.
+	fn file_digests(&self, out: &mut String) {
+		match self {
+			ValueGenerator::FileVector {
+				data,
+			} => out.push_str(&format!("\u{1f}{}\u{1f}{:016x}", data.path, data.digest)),
+			ValueGenerator::Array(items) => {
+				for g in items {
+					g.file_digests(out);
+				}
+			}
+			ValueGenerator::Object(fields) => {
+				for (_, g) in fields {
+					g.file_digests(out);
+				}
+			}
+			_ => {}
+		}
+	}
+
 	fn reseed_clusters(&mut self, seed: u64) {
 		match self {
 			ValueGenerator::ClusteredVector {
@@ -511,8 +588,14 @@ impl ValueGenerator {
 	}
 
 	fn new_string(s: String) -> Result<Self> {
-		// A path keeps its case, so this is matched before the rest is lowercased.
-		if let Some(path) = s.strip_prefix("vector_file:") {
+		// A path keeps its case, so this is matched before the rest is
+		// lowercased. The tag itself is matched in any case, as every other is.
+		if let Some((tag, path)) = s.split_once(':')
+			&& tag.eq_ignore_ascii_case("vector_file")
+		{
+			if path.is_empty() {
+				bail!("`vector_file:` needs a file path");
+			}
 			return Ok(Self::FileVector {
 				data: VectorFile::load(path)?,
 			});
@@ -1128,6 +1211,62 @@ mod test {
 		assert!(ValueProvider::new(&template).is_err());
 		std::fs::remove_file(path).unwrap();
 		assert!(ValueProvider::new(&template).is_err(), "a missing file should be rejected");
+	}
+
+	#[test]
+	fn vector_file_rejects_bad_headers_and_values() {
+		// A header whose byte count overflows `u64` must not pass the length check.
+		let path = write_fbin("huge", 1, 1);
+		let mut bytes = std::fs::read(&path).unwrap();
+		bytes[..4].copy_from_slice(&0x8000_0000u32.to_le_bytes());
+		bytes[4..8].copy_from_slice(&0x8000_0000u32.to_le_bytes());
+		std::fs::write(&path, &bytes[..8]).unwrap();
+		let template = format!(r#"{{ "v": "vector_file:{}" }}"#, path.display());
+		assert!(ValueProvider::new(&template).is_err());
+		// A non-finite component is refused.
+		let path = write_fbin("nan", 2, 2);
+		let mut bytes = std::fs::read(&path).unwrap();
+		bytes[12..16].copy_from_slice(&f32::NAN.to_le_bytes());
+		std::fs::write(&path, bytes).unwrap();
+		let template = format!(r#"{{ "v": "vector_file:{}" }}"#, path.display());
+		let err = ValueProvider::new(&template).err().unwrap().to_string();
+		assert!(err.contains("row 0, component 1"), "{err}");
+		std::fs::remove_file(path).unwrap();
+		std::fs::remove_file(write_fbin("huge", 1, 1)).unwrap();
+		// An empty path is refused.
+		assert!(ValueProvider::new(r#"{ "v": "vector_file:" }"#).is_err());
+	}
+
+	#[test]
+	fn vector_file_tag_is_case_insensitive_and_rows_are_per_field() {
+		let short = write_fbin("short-field", 4, 2);
+		let long = write_fbin("long-field", 9, 2);
+		let template = format!(
+			r#"{{ "a": "VECTOR_FILE:{}", "b": "vector_file:{}", "c": "vector:2", "d": {{ "e": "vector_file:{}" }} }}"#,
+			short.display(),
+			long.display(),
+			short.display(),
+		);
+		let vp = ValueProvider::new(&template).unwrap();
+		assert_eq!(vp.vector_file_rows(), Some(4));
+		assert_eq!(vp.vector_file_rows_for("a"), Some(4));
+		assert_eq!(vp.vector_file_rows_for("b"), Some(9));
+		assert_eq!(vp.vector_file_rows_for("c"), None);
+		// A nested file still bounds the corpus.
+		let nested = format!(r#"{{ "d": {{ "e": "vector_file:{}" }} }}"#, short.display());
+		assert_eq!(ValueProvider::new(&nested).unwrap().vector_file_rows(), Some(4));
+		// The digest follows the contents, not the path.
+		let before = vp.vector_file_digests();
+		assert!(before.contains(&short.display().to_string()));
+		std::fs::write(&short, std::fs::read(write_fbin("other", 4, 2)).unwrap()).unwrap();
+		let mut bytes = std::fs::read(&short).unwrap();
+		bytes[8..12].copy_from_slice(&7.5f32.to_le_bytes());
+		std::fs::write(&short, bytes).unwrap();
+		assert_ne!(ValueProvider::new(&template).unwrap().vector_file_digests(), before);
+		assert_eq!(ValueProvider::new(r#"{ "c": "vector:2" }"#).unwrap().vector_file_digests(), "");
+		for p in [short, long, write_fbin("other", 1, 1)] {
+			std::fs::remove_file(p).unwrap();
+		}
 	}
 
 	#[tokio::test]

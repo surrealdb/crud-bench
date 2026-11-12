@@ -474,9 +474,15 @@ count and the dimension as little-endian `u32`s, then each row's `f32` component
 - Query `i` takes row `rows - 1 - i`, counting back from the end of the file. The holdout `seed` does
   not apply. With `-s N`, the file must hold at least `N` plus the holdout `count` rows, so the queries
   stay out of the corpus. crud-bench checks this before it starts.
-- The whole file is read into memory once, at startup: 1M 768-d rows take 3 GB.
-- The ground-truth cache keys on the path, not on the contents. Replace a file under a new name, or
-  clear the cache.
+- An unfiltered leg on a file column reports recall without a corpus `seed`, because the file sets
+  every row and every query. A filtered leg still needs the `seed`, to rebuild the columns it filters on.
+- Every component must be a finite number. crud-bench refuses a file with a `NaN` or an infinity.
+- crud-bench hashes the contents of the file. The ground-truth cache, the split-run manifest and the
+  template digest in the results all change when the file changes, even under the same path.
+- The whole file is read into memory once, at startup: 1M 768-d rows take 3 GB. This memory belongs to
+  the crud-bench process. For an embedded engine, the Memory column measures that process, so it
+  includes the file. For a server or a Docker engine, it measures the server only. Do not compare the
+  Memory column of an embedded run with a server run that reads the same file.
 
 For example, VectorDBBench's Cohere dataset of 1M 768-d Wikipedia embeddings ships as Parquet. Append
 its 1,000 test vectors after its 1M training vectors to get one file, then run with `-s 1000000`:

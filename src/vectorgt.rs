@@ -387,7 +387,10 @@ pub(crate) fn compute(
 	if queries.is_empty() {
 		bail!("ground truth: query set is empty");
 	}
-	if vp.seed().is_none() {
+	// An unfiltered leg on a `vector_file:` column reads only the file, so it
+	// needs no seed; anything else rebuilds generated columns, which do.
+	let from_file = request.filter.is_none() && vp.vector_file_rows_for(&request.field).is_some();
+	if vp.seed().is_none() && !from_file {
 		bail!(
 			"ground truth needs a reproducible corpus: set `seed` in the benchmark TOML or pass --corpus-seed"
 		);

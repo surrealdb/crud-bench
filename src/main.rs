@@ -470,6 +470,38 @@ fn is_fieldless_index_type(kind: Option<&str>) -> bool {
 /// `with_index` is reserved for non-vector indexed scans and rejected on vector entries.
 /// `with_index.fields` must be non-empty unless `index_type` is one of [`FIELDLESS_INDEX_TYPES`] —
 /// otherwise the per-backend DDL builders emit broken `FIELDS ` clauses and fail at runtime.
+/// Check every `vector_file:` column holds the rows a run takes from it: one
+/// per sample, and for a scanned column, its queries after those.
+pub(crate) fn validate_vector_files(
+	samples: u32,
+	scans: &[Scan],
+	vp: &ValueProvider,
+) -> Result<()> {
+	if let Some(rows) = vp.vector_file_rows()
+		&& samples as usize > rows
+	{
+		bail!(
+			"{samples} samples were asked for, but a vector file in the template holds {rows} rows"
+		);
+	}
+	for scan in scans {
+		if let Some(vq) = &scan.vector_query
+			&& let Some(rows) = vp.vector_file_rows_for(&vq.field)
+		{
+			let needed = (samples as usize).saturating_add(vq.holdout.count);
+			if needed > rows {
+				bail!(
+					"scan `{}`: {samples} samples and {} queries need {needed} rows, but the vector file of `{}` holds {rows}",
+					scan.name,
+					vq.holdout.count,
+					vq.field,
+				);
+			}
+		}
+	}
+	Ok(())
+}
+
 fn validate_scan_index_ids(scans: &[Scan]) -> Result<()> {
 	for scan in scans {
 		// Zero workers spawns no tasks, but the phase still builds an
@@ -1165,13 +1197,16 @@ fn run(args: Args) -> Result<()> {
 	// editing the workload file.
 	let corpus_seed = args.corpus_seed.or(bench_toml.seed);
 	metadata.corpus_seed = corpus_seed;
-	metadata.template_digest =
-		Some(format!("{:016x}", twox_hash::XxHash64::oneshot(0, value_json.as_bytes())));
 	let vp = match corpus_seed {
 		Some(seed) => ValueProvider::new(&value_json)?.with_seed(seed),
 		None => ValueProvider::new(&value_json)?,
 	};
-	benchmark.set_value_template(value_json.clone());
+	// A `vector_file:` column names its file only by path, so the contents
+	// join the template wherever it stands for the corpus.
+	let corpus = format!("{value_json}{}", vp.vector_file_digests());
+	metadata.template_digest =
+		Some(format!("{:016x}", twox_hash::XxHash64::oneshot(0, corpus.as_bytes())));
+	benchmark.set_value_template(corpus);
 	let mut batches = bench_toml.batches;
 	if args.skip_batches {
 		batches.clear();
@@ -1189,6 +1224,9 @@ fn run(args: Args) -> Result<()> {
 		// a scan is ever looked at.
 		benchmark.set_vector_filter_fields(collect_vector_filter_fields(&scans, &vp.columns())?);
 	}
+	// A vector file too short for the run would otherwise fail after the load,
+	// or never, on a load-only run, so it is checked before anything starts.
+	validate_vector_files(args.samples, &scans, &vp)?;
 	// A split run is only sound against the dataset it was configured for, so
 	// this is settled before anything is started: a refused query run must not
 	// leave a container behind.

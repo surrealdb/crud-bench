@@ -610,13 +610,8 @@ impl Benchmark {
 		D: Dialect,
 		E: BenchmarkEngine<C> + Send + Sync,
 	{
-		// Every row of a `vector_file:` column comes from its file, which has to
-		// hold the whole corpus.
-		if let Some(rows) = vp.vector_file_rows()
-			&& self.samples as usize > rows
-		{
-			bail!("{} samples were asked for, but the vector file holds {rows} rows", self.samples);
-		}
+		// Checked at startup too; kept here for any caller that skips that.
+		crate::validate_vector_files(self.samples, &[], &vp)?;
 		// Generate a value sample for the report
 		let sample = vp.generate_value();
 		// Setup the datastore
@@ -1324,16 +1319,17 @@ impl Benchmark {
 			.generate_vectors(&vq.field, count, seed)
 			.with_context(|| format!("scan `{}`: building the vector query set", scan.name))?;
 		// Queries come from the end of a vector file, and must not reach back
-		// into the rows the corpus took from its start.
-		if let Some(rows) = vp.vector_file_rows()
-			&& self.samples as usize + count > rows
-		{
-			bail!(
-				"scan `{}`: {} samples and {count} queries need {} rows, but the vector file holds {rows}",
-				scan.name,
-				self.samples,
-				self.samples as usize + count
-			);
+		// into the rows the corpus took from its start. Checked at startup too.
+		if let Some(rows) = vp.vector_file_rows_for(&vq.field) {
+			let needed = (self.samples as usize).saturating_add(count);
+			if needed > rows {
+				bail!(
+					"scan `{}`: {} samples and {count} queries need {needed} rows, but the vector file of `{}` holds {rows}",
+					scan.name,
+					self.samples,
+					vq.field,
+				);
+			}
 		}
 		// `VectorQuerySet::pick` indexes modulo the query count, so an empty set
 		// would panic inside the timed window. The validator already rejects
@@ -1364,7 +1360,16 @@ impl Benchmark {
 		query_set: &mut VectorQuerySet,
 		filter: Option<&VectorFilter>,
 	) -> Result<()> {
-		let Some(corpus_seed) = vp.seed() else {
+		// A `vector_file:` column takes its rows and its queries from the file,
+		// whatever the seeds, so an unfiltered leg on one is reproducible without
+		// a seed, and its answer key is the same for every seed. A filter still
+		// needs the seed, to rebuild the generated columns it reads.
+		let from_file = filter.is_none() && vp.vector_file_rows_for(&vq.field).is_some();
+		let Some(corpus_seed) = (if from_file {
+			Some(0)
+		} else {
+			vp.seed()
+		}) else {
 			// Recall needs a reconstructible corpus. Without a seed the scan is
 			// still perfectly valid as a latency measurement, so say what is
 			// missing and carry on rather than failing the run.
@@ -1384,7 +1389,11 @@ impl Benchmark {
 			top_k: vq.top_k,
 			metric: vq.distance,
 			corpus_seed,
-			query_seed: vq.holdout.seed,
+			query_seed: if vp.vector_file_rows_for(&vq.field).is_some() {
+				0
+			} else {
+				vq.holdout.seed
+			},
 			query_count: query_set.queries.len(),
 			template: self.value_template.clone(),
 			filter: filter.cloned(),
