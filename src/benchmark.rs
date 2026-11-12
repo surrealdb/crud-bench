@@ -611,7 +611,12 @@ impl Benchmark {
 		E: BenchmarkEngine<C> + Send + Sync,
 	{
 		// Checked at startup too; kept here for any caller that skips that.
-		crate::validate_vector_files(self.samples, &[], &vp)?;
+		let checked_scans: &[Scan] = if self.mode.queries() {
+			&scans
+		} else {
+			&[]
+		};
+		crate::validate_vector_files(self.samples, checked_scans, &vp)?;
 		// Generate a value sample for the report
 		let sample = vp.generate_value();
 		// Setup the datastore
@@ -761,7 +766,7 @@ impl Benchmark {
 					})
 					.ok_or_else(|| {
 						anyhow::anyhow!(
-							"scan `{}`: vector_query.field `{}` must be a `vector:<dim>` column in the schema",
+							"scan `{}`: vector_query.field `{}` must be a `vector:<dim>` or `vector_file:<path>` column in the schema",
 							name,
 							vq.field
 						)
@@ -1318,19 +1323,6 @@ impl Benchmark {
 		let queries = vp
 			.generate_vectors(&vq.field, count, seed)
 			.with_context(|| format!("scan `{}`: building the vector query set", scan.name))?;
-		// Queries come from the end of a vector file, and must not reach back
-		// into the rows the corpus took from its start. Checked at startup too.
-		if let Some(rows) = vp.vector_file_rows_for(&vq.field) {
-			let needed = (self.samples as usize).saturating_add(count);
-			if needed > rows {
-				bail!(
-					"scan `{}`: {} samples and {count} queries need {needed} rows, but the vector file of `{}` holds {rows}",
-					scan.name,
-					self.samples,
-					vq.field,
-				);
-			}
-		}
 		// `VectorQuerySet::pick` indexes modulo the query count, so an empty set
 		// would panic inside the timed window. The validator already rejects
 		// `holdout.count == 0`; this covers anything else that reaches zero.
@@ -1364,7 +1356,8 @@ impl Benchmark {
 		// whatever the seeds, so an unfiltered leg on one is reproducible without
 		// a seed, and its answer key is the same for every seed. A filter still
 		// needs the seed, to rebuild the generated columns it reads.
-		let from_file = filter.is_none() && vp.vector_file_rows_for(&vq.field).is_some();
+		let file_field = vp.vector_file_rows_for(&vq.field)?.is_some();
+		let from_file = filter.is_none() && file_field;
 		let Some(corpus_seed) = (if from_file {
 			Some(0)
 		} else {
@@ -1389,7 +1382,7 @@ impl Benchmark {
 			top_k: vq.top_k,
 			metric: vq.distance,
 			corpus_seed,
-			query_seed: if vp.vector_file_rows_for(&vq.field).is_some() {
+			query_seed: if file_field {
 				0
 			} else {
 				vq.holdout.seed

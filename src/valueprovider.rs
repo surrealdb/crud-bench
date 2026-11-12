@@ -196,15 +196,16 @@ impl ValueProvider {
 	}
 
 	/// The rows held by the file behind the top-level vector column `field`,
-	/// or `None` when `field` is not a `vector_file:` column. Its queries come
-	/// from the end of that file, and must stay clear of the corpus rows.
-	pub(crate) fn vector_file_rows_for(&self, field: &str) -> Option<usize> {
-		match self.vector_generator(field).ok()? {
+	/// or `None` when it is a generated vector column. Its queries come from
+	/// the end of that file, and must stay clear of the corpus rows. An error
+	/// when `field` is not a top-level vector column at all.
+	pub(crate) fn vector_file_rows_for(&self, field: &str) -> Result<Option<usize>> {
+		Ok(match self.vector_generator(field)? {
 			ValueGenerator::FileVector {
 				data,
 			} => Some(data.rows),
 			_ => None,
-		}
+		})
 	}
 
 	/// The path and content digest of every `vector_file:` generator, in
@@ -238,7 +239,9 @@ impl ValueProvider {
 			| ValueGenerator::FileVector {
 				..
 			} => Ok(generator),
-			other => bail!("field {field:?} is {other:?}, not a `vector:<dim>` column"),
+			other => bail!(
+				"field {field:?} is {other:?}, not a `vector:<dim>` or `vector_file:<path>` column"
+			),
 		}
 	}
 }
@@ -512,8 +515,6 @@ fn bytes_range(rng: &mut SmallRng, range: Range<usize>) -> Vec<u8> {
 }
 
 impl ValueGenerator {
-	/// Re-draw cluster centres from the corpus seed, in place, throughout the
-	/// template tree.
 	/// The fewest rows held by any `vector_file:` generator in this subtree.
 	fn min_file_rows(&self) -> Option<usize> {
 		match self {
@@ -549,6 +550,8 @@ impl ValueGenerator {
 		}
 	}
 
+	/// Re-draw cluster centres from the corpus seed, in place, throughout the
+	/// template tree.
 	fn reseed_clusters(&mut self, seed: u64) {
 		match self {
 			ValueGenerator::ClusteredVector {
@@ -1051,7 +1054,7 @@ impl ColumnType {
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
 	use super::*;
 	use tokio::task;
 
@@ -1165,7 +1168,7 @@ mod test {
 	/// Write `rows` rows of dimension `dim` in the `.fbin` layout, where row `r`
 	/// component `c` holds `r * 10 + c`. The name keeps an upper-case letter to
 	/// check the path is not lowercased.
-	fn write_fbin(tag: &str, rows: u32, dim: u32) -> std::path::PathBuf {
+	pub(crate) fn write_fbin(tag: &str, rows: u32, dim: u32) -> std::path::PathBuf {
 		let path = std::env::temp_dir()
 			.join(format!("crud-bench-Vectors-{tag}-{}.fbin", std::process::id()));
 		let mut bytes = Vec::new();
@@ -1216,23 +1219,29 @@ mod test {
 	#[test]
 	fn vector_file_rejects_bad_headers_and_values() {
 		// A header whose byte count overflows `u64` must not pass the length check.
-		let path = write_fbin("huge", 1, 1);
-		let mut bytes = std::fs::read(&path).unwrap();
-		bytes[..4].copy_from_slice(&0x8000_0000u32.to_le_bytes());
-		bytes[4..8].copy_from_slice(&0x8000_0000u32.to_le_bytes());
-		std::fs::write(&path, &bytes[..8]).unwrap();
-		let template = format!(r#"{{ "v": "vector_file:{}" }}"#, path.display());
+		let huge = write_fbin("huge", 1, 1);
+		let mut header = 0x8000_0000u32.to_le_bytes().to_vec();
+		header.extend(0x8000_0000u32.to_le_bytes());
+		std::fs::write(&huge, header).unwrap();
+		let template = format!(r#"{{ "v": "vector_file:{}" }}"#, huge.display());
 		assert!(ValueProvider::new(&template).is_err());
-		// A non-finite component is refused.
+		std::fs::remove_file(huge).unwrap();
+		// A non-finite component is refused, wherever it is.
 		let path = write_fbin("nan", 2, 2);
-		let mut bytes = std::fs::read(&path).unwrap();
-		bytes[12..16].copy_from_slice(&f32::NAN.to_le_bytes());
-		std::fs::write(&path, bytes).unwrap();
+		let clean = std::fs::read(&path).unwrap();
 		let template = format!(r#"{{ "v": "vector_file:{}" }}"#, path.display());
-		let err = ValueProvider::new(&template).err().unwrap().to_string();
-		assert!(err.contains("row 0, component 1"), "{err}");
+		for (bad, at, place) in [
+			(f32::NAN, 12, "row 0, component 1"),
+			(f32::INFINITY, 16, "row 1, component 0"),
+			(f32::NEG_INFINITY, 20, "row 1, component 1"),
+		] {
+			let mut bytes = clean.clone();
+			bytes[at..at + 4].copy_from_slice(&bad.to_le_bytes());
+			std::fs::write(&path, bytes).unwrap();
+			let err = ValueProvider::new(&template).err().unwrap().to_string();
+			assert!(err.contains(place), "{bad}: {err}");
+		}
 		std::fs::remove_file(path).unwrap();
-		std::fs::remove_file(write_fbin("huge", 1, 1)).unwrap();
 		// An empty path is refused.
 		assert!(ValueProvider::new(r#"{ "v": "vector_file:" }"#).is_err());
 	}
@@ -1249,22 +1258,24 @@ mod test {
 		);
 		let vp = ValueProvider::new(&template).unwrap();
 		assert_eq!(vp.vector_file_rows(), Some(4));
-		assert_eq!(vp.vector_file_rows_for("a"), Some(4));
-		assert_eq!(vp.vector_file_rows_for("b"), Some(9));
-		assert_eq!(vp.vector_file_rows_for("c"), None);
+		assert_eq!(vp.vector_file_rows_for("a").unwrap(), Some(4));
+		assert_eq!(vp.vector_file_rows_for("b").unwrap(), Some(9));
+		assert_eq!(vp.vector_file_rows_for("c").unwrap(), None);
+		// A nested column, or one that is missing, is not a scannable field.
+		assert!(vp.vector_file_rows_for("d.e").is_err());
+		assert!(vp.vector_file_rows_for("missing").is_err());
 		// A nested file still bounds the corpus.
 		let nested = format!(r#"{{ "d": {{ "e": "vector_file:{}" }} }}"#, short.display());
 		assert_eq!(ValueProvider::new(&nested).unwrap().vector_file_rows(), Some(4));
 		// The digest follows the contents, not the path.
 		let before = vp.vector_file_digests();
 		assert!(before.contains(&short.display().to_string()));
-		std::fs::write(&short, std::fs::read(write_fbin("other", 4, 2)).unwrap()).unwrap();
 		let mut bytes = std::fs::read(&short).unwrap();
 		bytes[8..12].copy_from_slice(&7.5f32.to_le_bytes());
 		std::fs::write(&short, bytes).unwrap();
 		assert_ne!(ValueProvider::new(&template).unwrap().vector_file_digests(), before);
 		assert_eq!(ValueProvider::new(r#"{ "c": "vector:2" }"#).unwrap().vector_file_digests(), "");
-		for p in [short, long, write_fbin("other", 1, 1)] {
+		for p in [short, long] {
 			std::fs::remove_file(p).unwrap();
 		}
 	}
