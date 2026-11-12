@@ -882,8 +882,8 @@ or package build.
 | `postgres+pgvector` | `pgvector/pgvector:0.8.7-pg18` | `18.6-1.pgdg12+2` (Debian 12) | pgvector 0.8.7 | HNSW |
 | `postgres+pgvectorscale` | built by crud-bench from the `postgres+pgvector` image | `18.6-1.pgdg12+2` (Debian 12) | pgvector 0.8.7, pgvectorscale 0.9.1 | HNSW, DiskANN |
 
-`postgres` is stock Postgres. It has no vector type, so a run with a vector column stops with an error that
-names the other two variants.
+`postgres` is stock Postgres. It has no vector type, so it stores a vector column as `REAL[]` and skips
+vector scans, as MySQL and SQLite do.
 
 `postgres+pgvector` uses the image that the pgvector project publishes. This image is not built on the
 official `postgres:18.6` image: it uses the Debian 12 build of Postgres 18.6, and the official image uses the

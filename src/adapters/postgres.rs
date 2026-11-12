@@ -300,10 +300,8 @@ impl BenchmarkClient for PostgresClient {
 		// already present.
 		if self.columns.0.iter().any(|(_, t)| matches!(t, ColumnType::FloatVector(_))) {
 			match self.extensions {
-				Extensions::None => bail!(
-					"`-d postgres` is stock Postgres, which has no vector type: \
-					use `-d postgres+pgvector` or `-d postgres+pgvectorscale`"
-				),
+				// Stock Postgres stores vectors as `REAL[]`, and declines vector scans
+				Extensions::None => {}
 				Extensions::Pgvector => {
 					self.client.batch_execute("CREATE EXTENSION IF NOT EXISTS vector;").await?;
 				}
@@ -342,6 +340,9 @@ impl BenchmarkClient for PostgresClient {
 					ColumnType::Decimal => format!("{n} NUMERIC(38, 10) NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} BYTEA NOT NULL"),
+					ColumnType::FloatVector(_) if self.extensions == Extensions::None => {
+						format!("{n} REAL[] NOT NULL")
+					}
 					ColumnType::FloatVector(dim) => format!("{n} vector({dim}) NOT NULL"),
 				}
 			})
@@ -490,6 +491,10 @@ impl BenchmarkClient for PostgresClient {
 		_dim: usize,
 		name: &str,
 	) -> Result<()> {
+		// Stock Postgres has no vector index
+		if self.extensions == Extensions::None {
+			bail!(crate::benchmark::NOT_SUPPORTED_ERROR)
+		}
 		let fields = spec.fields.join(", ");
 		let ops = pgvector_ops_for(vq.distance);
 		let stmt = match vq.index_strategy {
@@ -622,6 +627,40 @@ impl BenchmarkClient for PostgresClient {
 }
 
 impl PostgresClient {
+	/// Bind a value to a parameter of `column_type`. Stock Postgres stores a
+	/// vector as `REAL[]`, so the vector is bound as a `float4` array there.
+	fn param(
+		&self,
+		column: &str,
+		column_type: &ColumnType,
+		v: &BenchValue,
+	) -> Result<Box<dyn ToSql + Sync + Send>> {
+		match (column_type, v) {
+			(ColumnType::FloatVector(dim), BenchValue::FloatVector(vec))
+				if self.extensions == Extensions::None =>
+			{
+				if vec.len() != *dim {
+					bail!("column {column}: vector dim mismatch ({} != {dim})", vec.len());
+				}
+				Ok(Box::new(vec.clone()))
+			}
+			(ColumnType::FloatVector(dim), BenchValue::Bytes(b))
+				if self.extensions == Extensions::None && b.len() == dim * 4 =>
+			{
+				Ok(Box::new(bytemuck::cast_slice::<u8, f32>(b).to_vec()))
+			}
+			_ => bench_to_postgres_param(column, column_type, v),
+		}
+	}
+
+	/// The type a parameter of `column_type` is cast to
+	fn column_type(&self, column_type: &ColumnType) -> &'static str {
+		match column_type {
+			ColumnType::FloatVector(_) if self.extensions == Extensions::None => "REAL[]",
+			_ => get_column_type(column_type),
+		}
+	}
+
 	fn consume(&self, row: Row, columns: bool) -> Result<BenchValue> {
 		let mut val: Vec<(String, BenchValue)> = Vec::new();
 		match self.kt {
@@ -677,6 +716,10 @@ impl PostgresClient {
 						let v: Json<serde_json::Value> = row.try_get(n.as_str())?;
 						BenchValue::from(&v.0)
 					}
+					ColumnType::FloatVector(_) if self.extensions == Extensions::None => {
+						let v: Vec<f32> = row.try_get(n.as_str())?;
+						BenchValue::FloatVector(v)
+					}
 					ColumnType::FloatVector(_) => {
 						let v: pgvector::Vector = row.try_get(n.as_str())?;
 						BenchValue::FloatVector(v.to_vec())
@@ -702,7 +745,7 @@ impl PostgresClient {
 				.find(|(k, _)| k == column)
 				.map(|(_, v)| v)
 				.ok_or_else(|| anyhow!("Missing value for column {column}"))?;
-			owned.push(bench_to_postgres_param(column, column_type, v)?);
+			owned.push(self.param(column, column_type, v)?);
 		}
 		let params: Vec<&(dyn ToSql + Sync)> =
 			owned.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
@@ -735,7 +778,7 @@ impl PostgresClient {
 				.find(|(k, _)| k == column)
 				.map(|(_, v)| v)
 				.ok_or_else(|| anyhow!("Missing value for column {column}"))?;
-			owned.push(bench_to_postgres_param(column, column_type, v)?);
+			owned.push(self.param(column, column_type, v)?);
 		}
 		let params: Vec<&(dyn ToSql + Sync)> =
 			owned.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
@@ -805,6 +848,10 @@ impl PostgresClient {
 			.vector_query
 			.as_ref()
 			.ok_or_else(|| anyhow!("knn_scan: scan `{}` missing vector_query", scan.name))?;
+		// Stock Postgres has no vector distance operators
+		if self.extensions == Extensions::None {
+			bail!(crate::benchmark::NOT_SUPPORTED_ERROR)
+		}
 		let stm = pgvector_knn_sql(vq);
 		let q = pgvector::Vector::from(query.to_vec());
 		let res = self.client.query(&stm, &[&q]).await?;
@@ -845,7 +892,7 @@ impl PostgresClient {
 					index += 1;
 					// Add the column value with proper type conversion
 					if let Some(value) = obj.iter().find(|(k, _)| k == column).map(|(_, v)| v) {
-						let value = bench_to_postgres_param(column, column_type, value)?;
+						let value = self.param(column, column_type, value)?;
 						values.push(value);
 					} else {
 						return Err(anyhow::anyhow!("Missing value for column {column}"));
@@ -926,11 +973,11 @@ impl PostgresClient {
 			if let BenchValue::Object(obj) = val {
 				for (column, column_type) in &self.columns.0 {
 					// Add parameter placeholder for this column
-					row.push(format!("${index}::{}", get_column_type(column_type)));
+					row.push(format!("${index}::{}", self.column_type(column_type)));
 					index += 1;
 					// Add the column value with proper type conversion
 					if let Some(value) = obj.iter().find(|(k, _)| k == column).map(|(_, v)| v) {
-						let value = bench_to_postgres_param(column, column_type, value)?;
+						let value = self.param(column, column_type, value)?;
 						values.push(value);
 					} else {
 						return Err(anyhow::anyhow!("Missing value for column {column}"));
