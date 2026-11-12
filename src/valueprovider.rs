@@ -338,9 +338,7 @@ impl VectorFile {
 		let mut chunk = vec![0u8; dim * 4];
 		for _ in 0..rows {
 			reader.read_exact(&mut chunk)?;
-			values.extend(
-				chunk.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
-			);
+			values.extend(chunk.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)));
 		}
 		Ok(Self {
 			path: path.to_string(),
