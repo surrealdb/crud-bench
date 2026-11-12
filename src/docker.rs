@@ -1,7 +1,8 @@
 use crate::benchmark::Benchmark;
 use log::{debug, error, info};
 use std::fmt;
-use std::process::{Command, exit};
+use std::io::Write;
+use std::process::{Command, Stdio, exit};
 use std::time::Duration;
 
 const RETRIES: i32 = 10;
@@ -15,6 +16,9 @@ pub(crate) struct DockerParams {
 	/// Where the image keeps its data. Mounted from a named volume when a run
 	/// splits loading from querying, so the dataset outlives the container.
 	pub(crate) data_path: Option<&'static str>,
+	/// A Dockerfile for `image`, when crud-bench builds the image locally
+	/// rather than pulling it. It must need no build context.
+	pub(crate) dockerfile: Option<&'static str>,
 }
 
 pub(crate) struct Container {
@@ -39,8 +43,17 @@ impl Container {
 		pre: &str,
 		post: &str,
 		data_path: Option<&str>,
+		dockerfile: Option<&str>,
 		options: &Benchmark,
 	) -> Self {
+		// Build the image first if it is not pulled from a registry
+		if let Some(dockerfile) = dockerfile
+			&& let Err(e) = Self::build(&image, dockerfile)
+		{
+			error!("Docker build failure for image '{image}'");
+			error!("{e}");
+			exit(1);
+		}
 		// Output debug information to the logs
 		info!("Starting Docker image '{image}'");
 		// A load run starts from an empty volume; a query run mounts the one a
@@ -72,7 +85,15 @@ impl Container {
 			// Configure the Docker container options
 			args.add(["--rm"]);
 			args.add(["--quiet"]);
-			args.add(["--pull", "always"]);
+			// A locally built image has no registry to pull from
+			args.add([
+				"--pull",
+				if dockerfile.is_some() {
+					"never"
+				} else {
+					"always"
+				},
+			]);
 			args.add(["--name", "crud-bench"]);
 			args.add(["--net", "host"]);
 			args.add(["-d", &image]);
@@ -106,6 +127,31 @@ impl Container {
 		// Return the container name
 		Self {
 			image,
+		}
+	}
+
+	/// Build the Docker image `image` from `dockerfile`, passed on standard input
+	fn build(image: &str, dockerfile: &str) -> Result<String, String> {
+		// Output debug information to the logs
+		info!("Building Docker image '{image}'");
+		println!("Running command: `docker build --quiet --tag {image} -`");
+		// Start the build with the Dockerfile on standard input
+		let mut child = Command::new("docker")
+			.args(["build", "--quiet", "--tag", image, "-"])
+			.stdin(Stdio::piped())
+			.stdout(Stdio::piped())
+			.stderr(Stdio::piped())
+			.spawn()
+			.map_err(|e| e.to_string())?;
+		// Closing standard input after writing ends the Dockerfile
+		let mut stdin = child.stdin.take().expect("standard input is piped");
+		stdin.write_all(dockerfile.as_bytes()).map_err(|e| e.to_string())?;
+		drop(stdin);
+		// Wait for the build to finish
+		let output = child.wait_with_output().map_err(|e| e.to_string())?;
+		match output.status.success() {
+			false => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+			true => Ok(String::from_utf8_lossy(&output.stdout).trim().to_string()),
 		}
 	}
 

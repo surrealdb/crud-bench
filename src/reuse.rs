@@ -164,11 +164,20 @@ pub(crate) fn data_dir(root: &str, database: &str, name: Option<&str>) -> PathBu
 }
 
 /// Name of the Docker volume holding a database's data between runs.
+///
+/// Docker allows only `[a-zA-Z0-9_.-]` in a volume name, so any other character,
+/// such as the `+` in `postgres+pgvector`, becomes `-`.
 pub(crate) fn volume_name(database: &str, name: Option<&str>) -> String {
-	match name {
+	let name = match name {
 		Some(n) => format!("crud-bench-{database}-{n}"),
 		None => format!("crud-bench-{database}"),
-	}
+	};
+	name.chars()
+		.map(|c| match c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
+			true => c,
+			false => '-',
+		})
+		.collect()
 }
 
 /// Records a finished load run so later query runs can check it.
@@ -301,6 +310,7 @@ mod test {
 	fn names_are_scoped_by_database_and_run_name() {
 		assert_eq!(volume_name("postgres", None), "crud-bench-postgres");
 		assert_eq!(volume_name("postgres", Some("a")), "crud-bench-postgres-a");
+		assert_eq!(volume_name("postgres+pgvector", None), "crud-bench-postgres-pgvector");
 		assert_eq!(data_dir(".d", "mysql", Some("x")), Path::new(".d").join("mysql-x"));
 	}
 }

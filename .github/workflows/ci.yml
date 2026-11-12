@@ -349,6 +349,16 @@ jobs:
             database: postgres
             enabled: true
             description: Postgres
+          # Postgres with pgvector
+          - name: postgres-pgvector
+            database: postgres+pgvector
+            enabled: true
+            description: Postgres with pgvector
+          # Postgres with pgvectorscale
+          - name: postgres-pgvectorscale
+            database: postgres+pgvectorscale
+            enabled: true
+            description: Postgres with pgvectorscale
           # Redb
           - name: redb
             database: redb

@@ -101,6 +101,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			),
 		},
 		data_path: Some("/var/lib/mysql"),
+		dockerfile: None,
 	}
 }
 
