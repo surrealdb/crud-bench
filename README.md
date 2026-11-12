@@ -441,8 +441,8 @@ block describes one KNN benchmark:
 |---|---|---|---|---|---|
 | SurrealDB (3.x) | ✓ | ✓ | ✓ | ✓ (HNSW + DiskANN) | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL; HNSW and DiskANN legs need a server that reports `building.compacting` (see [Index build time](#index-build-time)) |
 | SurrealDB (2.x) | ✓ | ✓ | — | — | 2.6 has no DiskANN; filtered legs are declined, not answered unfiltered |
-| PostgreSQL | ✓ | ✓ | — | ✓ | pgvector |
-| PostgreSQL (pgvectorscale) | ✓ | ✓ | ✓ | ✓ | `-d pgvectorscale`: pgvector for HNSW, pgvectorscale's `diskann` for DiskANN, in its `plain` layout; no L1/Manhattan DiskANN |
+| PostgreSQL (pgvector) | ✓ | ✓ | — | ✓ | `-d postgres+pgvector`: pgvector's `hnsw` |
+| PostgreSQL (pgvectorscale) | ✓ | ✓ | ✓ | ✓ | `-d postgres+pgvectorscale`: pgvector's `hnsw` for HNSW, pgvectorscale's `diskann` for DiskANN, in its `plain` layout; no L1/Manhattan DiskANN |
 | Redis Stack | ✓ (FLAT) | ✓ | — | ✓ | no native L1/Manhattan metric |
 | everything else | — | — | — | — | the run is skipped, not failed |
 
@@ -872,7 +872,32 @@ cargo run -r -- -d neo4j -e '127.0.0.1:7687' -s 100000 -c 12 -t 24 -r
 
 ### [Postgres](https://www.postgresql.org/)
 
-Postgres is a networked, object-relational, ACID-compliant, SQL-based database.
+Postgres is a networked, object-relational, ACID-compliant, SQL-based database. crud-bench runs it in three
+variants. Each one uses an image pinned by digest, because an image tag can be rebuilt with a different base
+or package build.
+
+| `-d` | Image | Postgres package | Extensions | Vector indexes |
+|---|---|---|---|---|
+| `postgres` | `postgres:18.6`, the official image | `18.6-1.pgdg13+2` (Debian 13) | none | none |
+| `postgres+pgvector` | `pgvector/pgvector:0.8.7-pg18` | `18.6-1.pgdg12+2` (Debian 12) | pgvector 0.8.7 | HNSW |
+| `postgres+pgvectorscale` | built by crud-bench from the `postgres+pgvector` image | `18.6-1.pgdg12+2` (Debian 12) | pgvector 0.8.7, pgvectorscale 0.9.1 | HNSW, DiskANN |
+
+`postgres` is stock Postgres. It has no vector type, so a run with a vector column stops with an error that
+names the other two variants.
+
+`postgres+pgvector` uses the image that the pgvector project publishes. This image is not built on the
+official `postgres:18.6` image: it uses the Debian 12 build of Postgres 18.6, and the official image uses the
+Debian 13 build. Do not compare `postgres` with `postgres+pgvector` as if only the extension is different.
+
+`postgres+pgvectorscale` is the `postgres+pgvector` image with only the official pgvectorscale 0.9.1 package
+added. Timescale publishes pgvectorscale only in its `timescaledb-ha` image, which has a different build of
+Postgres and more extensions. crud-bench builds this image from
+[`docker/postgres-pgvectorscale.Dockerfile`](docker/postgres-pgvectorscale.Dockerfile) before the run, and
+checks the release archive against its SHA-256. HNSW legs therefore run on the same server as on
+`postgres+pgvector`.
+
+All three variants run the same client, SQL and server settings. The server variants differ only in the
+image.
 
 ```bash
 cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
@@ -887,13 +912,14 @@ following command:
 cargo run -r -- -d postgres -e 'host=127.0.0.1 user=postgres password=postgres' -s 100000 -c 12 -t 24 -r
 ```
 
-### [Postgres with pgvectorscale](https://github.com/timescale/pgvectorscale)
+With `-e`, the `-d` variant tells crud-bench which extensions the server has installed.
 
-pgvectorscale adds a DiskANN index, `diskann`, to Postgres and pgvector. `-d pgvectorscale` runs the same
-client and SQL as `-d postgres`, against Postgres 18.6 with pgvector 0.8.7 and pgvectorscale 0.9.1 from the
-`timescale/timescaledb-ha` image. Its DiskANN legs build a `diskann` index (`num_neighbors`, `search_list_size`
-and `max_alpha` from `degree`, `l_build` and `alpha`) and search with `diskann.query_search_list_size` set from
-`l_search`; HNSW legs use pgvector, as on `-d postgres`.
+#### DiskANN with pgvectorscale
+
+pgvectorscale adds a DiskANN index, `diskann`, to Postgres and pgvector. On `-d postgres+pgvectorscale`, DiskANN
+legs build a `diskann` index (`num_neighbors`, `search_list_size` and `max_alpha` from `degree`, `l_build` and
+`alpha`) and search with `diskann.query_search_list_size` set from `l_search`. HNSW legs use pgvector, as on
+`-d postgres+pgvector`.
 
 The index uses the `plain` storage layout, which searches over the full vectors, so its recall follows
 `l_search` as SurrealDB's DiskANN does. The default `memory_optimized` layout searches over 2-bit codes
@@ -902,12 +928,8 @@ and sets its recall by the rescore count, `diskann.query_rescore`, which has a m
 builds about four times slower.
 
 ```bash
-cargo run -r -- -d pgvectorscale -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d postgres+pgvectorscale -s 100000 -c 12 -t 24 -r
 ```
-
-The image tunes its memory settings, creates the TimescaleDB extension and preloads TimescaleDB and
-pg_textsearch. crud-bench turns all three off, so the server runs with the same settings as `-d postgres` and
-differs only by the extension.
 
 ### [ReDB](https://www.redb.org/)
 

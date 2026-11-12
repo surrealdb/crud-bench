@@ -92,6 +92,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			 {persistence} {memory}"
 		),
 		data_path: Some("/data"),
+		dockerfile: None,
 	}
 }
 

@@ -28,6 +28,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		pre_args: "-p 127.0.0.1:6379:6379 --ulimit memlock=-1".to_string(),
 		post_args: format!("--requirepass root{persistence}"),
 		data_path: Some("/data"),
+		dockerfile: None,
 	}
 }
 

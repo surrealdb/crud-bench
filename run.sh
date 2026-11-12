@@ -139,7 +139,8 @@ EXAMPLES:
 
 AVAILABLE DATASTORES:
     arangodb, dragonfly, dry, fjall, keydb, lmdb, map, mdbx, mongodb,
-    mysql, neo4j, postgres, redb, redis, rocksdb, sqlite,
+    mysql, neo4j, postgres, postgres+pgvector, postgres+pgvectorscale,
+    redb, redis, rocksdb, sqlite,
     surrealdb, surrealdb-memory, surrealdb-surrealkv,
     surrealdb-embedded-memory, surrealdb-embedded-surrealkv,
     surrealdb2, surrealdb2-memory, surrealdb2-rocksdb, surrealdb2-surrealkv,
@@ -336,7 +337,8 @@ mongodb|mongodb|networked|MongoDB|
 mysql|mysql|networked|MySQL|
 neo4j|neo4j|networked|Neo4j|
 postgres|postgres|networked|Postgres|
-pgvectorscale|pgvectorscale|networked|Postgres with pgvectorscale|
+postgres+pgvector|postgres+pgvector|networked|Postgres with pgvector|
+postgres+pgvectorscale|postgres+pgvectorscale|networked|Postgres with pgvectorscale|
 redb|redb|embedded|ReDB|
 redis|redis|networked|Redis|
 rocksdb|rocksdb|embedded|RocksDB|
