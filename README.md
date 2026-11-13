@@ -275,6 +275,8 @@ Within the JSON structure, the following values are replaced by randomly generat
 - Every `vector:X:LO..HI` will be replaced by an `X`-dimension vector with uniform components in `[LO, HI]`.
 - Every `vector:X:clustered:N` will be replaced by an `X`-dimension unit vector drawn from a mixture
   of `N` clusters. Add `:SIGMA` (default `0.35`) to widen or tighten the clusters.
+- Every `vector_file:PATH` will be replaced by a row of real embeddings read from the `.fbin` file at `PATH`:
+  sample `n` takes row `n`. See [Vector data](#vector-data).
 
 ```json
 {
@@ -461,6 +463,41 @@ sits at 65% of a random pair's distance under `vector:128`, and at 8% under
 Clusters are drawn from the corpus seed, so two seeds give two genuinely different datasets rather
 than one structure populated differently. Query vectors come from the same generator, so they follow
 the corpus distribution by construction.
+
+Synthetic clusters do not behave like real embeddings in every index. Quantised indexes, which search
+over compressed vectors, can lose far more recall on one than on the other. To measure on real
+embeddings, use `vector_file:<path>`. The file uses the `.fbin` layout from big-ann-benchmarks: the row
+count and the dimension as little-endian `u32`s, then each row's `f32` components, little-endian.
+
+- Sample `n` takes row `n`, in both the create and the update phase, so the update phase rewrites each
+  vector unchanged.
+- Query `i` takes row `rows - 1 - i`, counting back from the end of the file. The holdout `seed` does
+  not apply. With `-s N`, the file must hold at least `N` plus the holdout `count` rows, so the queries
+  stay out of the corpus. crud-bench checks this before it starts.
+- An unfiltered leg on a file column reports recall without a corpus `seed`, because the file sets
+  every row and every query. A filtered leg still needs the `seed`, to rebuild the columns it filters on.
+- Every component must be a finite number. crud-bench refuses a file with a `NaN` or an infinity.
+- crud-bench hashes the contents of the file. The ground-truth cache, the split-run manifest and the
+  template digest in the results all change when the file changes, even under the same path.
+- The whole file is read into memory once, at startup: 1M 768-d rows take 3 GB. This memory belongs to
+  the crud-bench process. For an embedded engine, the Memory column measures that process, so it
+  includes the file. For a server or a Docker engine, it measures the server only. Do not compare the
+  Memory column of an embedded run with a server run that reads the same file.
+
+For example, VectorDBBench's Cohere dataset of 1M 768-d Wikipedia embeddings ships as Parquet. Append
+its 1,000 test vectors after its 1M training vectors to get one file, then run with `-s 1000000`:
+
+```python
+import numpy as np, pyarrow.parquet as pq
+
+def emb(path):
+    return np.stack(pq.read_table(path, columns=["emb"])["emb"].to_numpy(zero_copy_only=False)).astype("<f4")
+
+rows = np.concatenate([emb("train.parquet"), emb("test.parquet")])
+with open("cohere-1m.fbin", "wb") as f:
+    np.array(rows.shape, dtype="<u4").tofile(f)
+    rows.tofile(f)
+```
 
 Corpus size matters more than dimension. Dimension scales cost linearly without making the search
 harder; rows add candidates that can confuse a graph. Measured against embedded SurrealDB at 128
