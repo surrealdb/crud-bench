@@ -10,7 +10,7 @@ use crate::reuse::{Manifest, RunMode, Shape};
 use crate::terminal::ColorChoice;
 use crate::valueprovider::{Columns, ValueProvider};
 use crate::vectorfilter::{FilterField, VectorFilter};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use docker::Container;
 use serde::{Deserialize, Serialize};
@@ -463,6 +463,45 @@ const FIELDLESS_INDEX_TYPES: &[&str] = &["count"];
 
 fn is_fieldless_index_type(kind: Option<&str>) -> bool {
 	matches!(kind, Some(k) if FIELDLESS_INDEX_TYPES.contains(&k))
+}
+
+/// Check every `vector_file:` column holds the rows a run takes from it: one
+/// per sample, and for a scanned column, its queries after those. Every KNN
+/// scan must also name a top-level vector column.
+pub(crate) fn validate_vector_files(
+	samples: u32,
+	scans: &[Scan],
+	vp: &ValueProvider,
+) -> Result<()> {
+	if let Some(rows) = vp.vector_file_rows()
+		&& samples as usize > rows
+	{
+		bail!(
+			"{samples} samples were asked for, but a vector file in the template holds {rows} rows"
+		);
+	}
+	for scan in scans {
+		let Some(vq) = &scan.vector_query else {
+			continue;
+		};
+		// A KNN scan on anything but a top-level vector column would fail only
+		// once the load is done, so it is refused here, file or not.
+		if let Some(rows) = vp
+			.vector_file_rows_for(&vq.field)
+			.with_context(|| format!("scan `{}`: vector_query.field", scan.name))?
+		{
+			let needed = (samples as usize).saturating_add(vq.holdout.count);
+			if needed > rows {
+				bail!(
+					"scan `{}`: {samples} samples and {} queries need {needed} rows, but the vector file of `{}` holds {rows}",
+					scan.name,
+					vq.holdout.count,
+					vq.field,
+				);
+			}
+		}
+	}
+	Ok(())
 }
 
 /// Every scan with a non-skipped `with_index` must supply a non-empty `id` for datastore index names.
@@ -1165,13 +1204,16 @@ fn run(args: Args) -> Result<()> {
 	// editing the workload file.
 	let corpus_seed = args.corpus_seed.or(bench_toml.seed);
 	metadata.corpus_seed = corpus_seed;
-	metadata.template_digest =
-		Some(format!("{:016x}", twox_hash::XxHash64::oneshot(0, value_json.as_bytes())));
 	let vp = match corpus_seed {
 		Some(seed) => ValueProvider::new(&value_json)?.with_seed(seed),
 		None => ValueProvider::new(&value_json)?,
 	};
-	benchmark.set_value_template(value_json.clone());
+	// A `vector_file:` column names its file only by path, so the contents
+	// join the template wherever it stands for the corpus.
+	let corpus = format!("{value_json}{}", vp.vector_file_digests());
+	metadata.template_digest =
+		Some(format!("{:016x}", twox_hash::XxHash64::oneshot(0, corpus.as_bytes())));
+	benchmark.set_value_template(corpus);
 	let mut batches = bench_toml.batches;
 	if args.skip_batches {
 		batches.clear();
@@ -1189,6 +1231,9 @@ fn run(args: Args) -> Result<()> {
 		// a scan is ever looked at.
 		benchmark.set_vector_filter_fields(collect_vector_filter_fields(&scans, &vp.columns())?);
 	}
+	// A vector file too short for the run would otherwise fail after the load,
+	// or never, on a load-only run, so it is checked before anything starts.
+	validate_vector_files(args.samples, &scans, &vp)?;
 	// A split run is only sound against the dataset it was configured for, so
 	// this is settled before anything is started: a refused query run must not
 	// leave a container behind.
@@ -1452,6 +1497,56 @@ mod test {
 		let columns = ValueProvider::new(FILTER_TEMPLATE).unwrap().columns();
 		let err = collect_vector_filter_fields(&scans, &columns).unwrap_err().to_string();
 		assert!(err.contains("filter_index") && err.contains("no `filters`"), "{err}");
+	}
+
+	/// A run that a vector file cannot hold, or a KNN scan on a field that is
+	/// not a top-level vector column, is refused before anything starts.
+	#[test]
+	fn vector_files_are_checked_before_the_run() {
+		use crate::valueprovider::test::write_fbin;
+		let scan = |name: &str, field: &str, count: usize| {
+			let json = format!(
+				r#"[{{ "id": "{name}", "name": "{name}", "iterations": 1,
+				   "vector_query": {{ "field": "{field}", "top_k": 1, "distance": "cosine",
+				   "index_strategy": {{ "kind": "bruteforce" }}, "holdout": {{ "count": {count} }} }} }}]"#
+			);
+			expand_scan_specs(serde_json::from_str(&json).unwrap()).unwrap()
+		};
+		let short = write_fbin("validate-short", 10, 2);
+		let long = write_fbin("validate-long", 30, 2);
+		let template = format!(
+			r#"{{ "a": "vector_file:{}", "b": "vector_file:{}", "g": "vector:2", "d": {{ "e": "vector_file:{}" }} }}"#,
+			short.display(),
+			long.display(),
+			short.display(),
+		);
+		let vp = ValueProvider::new(&template).unwrap();
+		// The corpus takes one row of every file per sample, nested ones too.
+		assert!(super::validate_vector_files(10, &[], &vp).is_ok());
+		let err = super::validate_vector_files(11, &[], &vp).unwrap_err().to_string();
+		assert!(err.contains("holds 10 rows"), "{err}");
+		let nested = format!(r#"{{ "d": {{ "e": "vector_file:{}" }} }}"#, short.display());
+		let nested = ValueProvider::new(&nested).unwrap();
+		assert!(super::validate_vector_files(11, &[], &nested).is_err());
+		// Queries come after the corpus, in the file of the scanned field only.
+		assert!(super::validate_vector_files(8, &scan("a", "a", 2), &vp).is_ok());
+		let err = super::validate_vector_files(8, &scan("a", "a", 3), &vp).unwrap_err().to_string();
+		assert!(err.contains("need 11 rows") && err.contains("holds 10"), "{err}");
+		assert!(super::validate_vector_files(8, &scan("b", "b", 22), &vp).is_ok());
+		assert!(super::validate_vector_files(8, &scan("b", "b", 23), &vp).is_err());
+		// A generated column beside a file takes nothing from it.
+		assert!(super::validate_vector_files(10, &scan("g", "g", 1000), &vp).is_ok());
+		// A nested, missing or non-vector field is refused, file or not.
+		for field in ["d.e", "missing"] {
+			let err = super::validate_vector_files(1, &scan("x", field, 1), &vp).unwrap_err();
+			assert!(format!("{err:#}").contains("scan `x`"), "{err:#}");
+		}
+		let plain = ValueProvider::new(r#"{ "n": "int", "g": "vector:2" }"#).unwrap();
+		let err = super::validate_vector_files(1, &scan("x", "n", 1), &plain).unwrap_err();
+		assert!(format!("{err:#}").contains("not a `vector:<dim>`"), "{err:#}");
+		for p in [short, long] {
+			std::fs::remove_file(p).unwrap();
+		}
 	}
 
 	/// Two predicates on one column need that column prepared once, not twice —

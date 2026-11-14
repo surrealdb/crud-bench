@@ -77,6 +77,8 @@ mod test {
 				.unwrap_or_else(|e| panic!("{name}: scan validation failed: {e:#}"));
 			crate::collect_vector_filter_fields(&scans, &vp.columns())
 				.unwrap_or_else(|e| panic!("{name}: vector filters rejected: {e:#}"));
+			crate::validate_vector_files(1, &scans, &vp)
+				.unwrap_or_else(|e| panic!("{name}: vector fields rejected: {e:#}"));
 			// A vector scan without a corpus seed can never report recall, and
 			// that is the axis these configs exist to measure.
 			if scans.iter().any(|s| s.vector_query.is_some()) {
