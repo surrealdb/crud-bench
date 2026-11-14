@@ -63,6 +63,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		),
 		post_args: "".to_string(),
 		data_path: Some("/data"),
+		dockerfile: None,
 	}
 }
 

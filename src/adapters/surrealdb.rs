@@ -463,6 +463,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				}
 			},
 			data_path: None,
+			dockerfile: None,
 		},
 		Endpoint::Docker(Docker::Surrealkv) => DockerParams {
 			image: "surrealdb/surrealdb:nightly",
@@ -476,6 +477,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db?sync={sync}",
 			),
 			data_path: Some("/data"),
+			dockerfile: None,
 		},
 	}
 }

@@ -34,6 +34,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			 --seed-provider-parameters seeds=127.0.0.1 {commitlog}"
 		),
 		data_path: Some("/var/lib/scylla"),
+		dockerfile: None,
 	}
 }
 

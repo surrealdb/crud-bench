@@ -306,6 +306,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			pre_args: format!("--ulimit nofile=65536:65536 -p 8000:8000{sync_env} --user root"),
 			post_args: format!("start --user {username} --pass {password} memory"),
 			data_path: None,
+			dockerfile: None,
 		},
 		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
 			image: "surrealdb/surrealdb:v2",
@@ -319,6 +320,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db",
 			),
 			data_path: Some("/data"),
+			dockerfile: None,
 		},
 		Endpoint::Docker(Docker::Surrealkv) => DockerParams {
 			image: "surrealdb/surrealdb:v2",
@@ -332,6 +334,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db",
 			),
 			data_path: Some("/data"),
+			dockerfile: None,
 		},
 	}
 }

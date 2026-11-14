@@ -51,6 +51,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		pre_args: "-p 127.0.0.1:6379:6379".to_string(),
 		post_args: format!("keydb-server --requirepass root {threading} {persistence} {memory}"),
 		data_path: Some("/data"),
+		dockerfile: None,
 	}
 }
 
