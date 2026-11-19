@@ -701,7 +701,10 @@ impl Benchmark {
 		let mut scan_results = Vec::with_capacity(scans.len());
 		let mut prev_spec_group: Option<u32> = None;
 		let mut prev_run_key: Option<(u32, String)> = None;
-		for scan in scans {
+		// The index kept standing for the next scan, which shares it, by name.
+		let mut live_index: Option<(String, Index)> = None;
+		let mut scans = scans.into_iter().peekable();
+		while let Some(scan) = scans.next() {
 			// New section in the TOML/config → new heading in the CLI output
 			if prev_spec_group != Some(scan.spec_group) {
 				self.bench_ui.section_header(&format!("Scan · {}", scan.id));
@@ -779,6 +782,8 @@ impl Benchmark {
 				// index for the chosen strategy ignore `idx_spec` and return
 				// NotSupported from build.
 				let idx_spec = Index {
+					name: None,
+					indexed_only: false,
 					skip: false,
 					fields: vec![vq.field.clone()],
 					unique: None,
@@ -999,9 +1004,14 @@ impl Benchmark {
 			} else if let Some(index_spec) = index_spec {
 				// Indexed scan: heap legs → build index → indexed legs → drop index
 				let mut runs = Vec::with_capacity(2 + 2 * w);
+				let index_id = scan.index_name().to_string();
+				// A named index the next scan declares alike stays standing for it.
+				let shared_with_next = scans.peek().is_some_and(|next| shares_index(&scan, next));
 				// Table-scan / heap query (no physical index)
-				let without_index = self
-					.run_operation::<C, D>(
+				let without_index = if index_spec.indexed_only {
+					None
+				} else {
+					self.run_operation::<C, D>(
 						leg_clients,
 						BenchmarkOperation::Scan(scan.clone(), ScanContext::WithoutIndex),
 						kp,
@@ -1009,7 +1019,8 @@ impl Benchmark {
 						iterations,
 						leg_threads,
 					)
-					.await?;
+					.await?
+				};
 				runs.push(ScanRun {
 					workload: ScanWorkload::Read,
 					indexed: false,
@@ -1018,8 +1029,10 @@ impl Benchmark {
 				});
 				// Optional mixed read+write legs on the heap path (one per `with_writes` entry)
 				for spec in write_specs {
-					let mixed_without_index = self
-						.run_operation::<C, D>(
+					let mixed_without_index = if index_spec.indexed_only {
+						None
+					} else {
+						self.run_operation::<C, D>(
 							leg_clients,
 							BenchmarkOperation::ScanWithWrites(
 								scan.clone(),
@@ -1031,7 +1044,8 @@ impl Benchmark {
 							iterations,
 							leg_threads,
 						)
-						.await?;
+						.await?
+					};
 					runs.push(ScanRun {
 						workload: ScanWorkload::ReadWrite {
 							write_ratio_percent: writes_ratio_percent(spec),
@@ -1041,13 +1055,17 @@ impl Benchmark {
 						label: None,
 					});
 				}
+				// An index the previous scan left standing for this one is not built again.
+				let reused = reuses_index(live_index.as_ref(), &scan);
 				// BuildIndex uses a single client to avoid races on DDL
-				let index_build = self
-					.run_operation::<C, D>(
+				let index_build = if reused {
+					None
+				} else {
+					self.run_operation::<C, D>(
 						&clients[..1],
 						BenchmarkOperation::BuildIndex(
 							index_spec.clone(),
-							id.clone(),
+							index_id.clone(),
 							name.clone(),
 						),
 						kp,
@@ -1055,14 +1073,19 @@ impl Benchmark {
 						1,
 						leg_threads,
 					)
-					.await?;
-				let (with_index, index_remove, indexed_write_results) = if index_build.is_some() {
-					// Compact the datastore so the indexed-scan phases benchmark a compacted index.
-					self.maybe_compact_datastore::<C, E>(&engine).await?;
+					.await?
+				};
+				let built = reused || index_build.is_some();
+				let (with_index, index_remove, indexed_write_results) = if built {
+					if !reused {
+						// Compact the datastore so the indexed-scan phases benchmark a compacted
+						// index.
+						self.maybe_compact_datastore::<C, E>(&engine).await?;
+					}
 					// The timed build already waited until the index was
 					// queryable; this is the untimed re-check every indexed leg
 					// gets, and here it normally returns after one status check.
-					self.await_index_queryable(&clients[0], &id).await?;
+					self.await_index_queryable(&clients[0], &index_id).await?;
 					// Same query shape using the new index
 					let with_index = self
 						.run_operation::<C, D>(
@@ -1079,7 +1102,7 @@ impl Benchmark {
 						// The previous leg's writes leave a queue behind; drain
 						// it so each leg is timed from the same index state
 						// instead of inheriting whatever ran before it.
-						self.await_index_queryable(&clients[0], &id).await?;
+						self.await_index_queryable(&clients[0], &index_id).await?;
 						iw.push(
 							self.run_operation::<C, D>(
 								leg_clients,
@@ -1096,22 +1119,28 @@ impl Benchmark {
 							.await?,
 						);
 					}
-					let index_remove = self
-						.run_operation::<C, D>(
+					let index_remove = if shared_with_next {
+						live_index = Some((index_id.clone(), index_spec.clone()));
+						None
+					} else {
+						live_index = None;
+						self.run_operation::<C, D>(
 							&clients[..1],
-							BenchmarkOperation::RemoveIndex(id.clone(), name.clone()),
+							BenchmarkOperation::RemoveIndex(index_id.clone(), name.clone()),
 							kp,
 							vp.clone(),
 							1,
 							leg_threads,
 						)
-						.await?;
+						.await?
+					};
 					(with_index, index_remove, iw)
 				} else {
 					// BuildIndex unsupported or skipped → no indexed timings to merge
+					live_index = None;
 					(None, None, Vec::new())
 				};
-				if index_build.is_some() {
+				if built {
 					runs.push(ScanRun {
 						workload: ScanWorkload::Read,
 						indexed: true,
@@ -1979,6 +2008,31 @@ const QUERYABLE_DEADLINE_MARGIN: Duration = Duration::from_secs(1);
 /// Name for the index on a filter column: scoped by scan so two scans never
 /// share one, and reduced to characters every engine accepts in an identifier
 /// (a nested column such as `geography.code` would not be).
+/// Whether `next`, run straight after `scan`, reads the index `scan` built: both
+/// name it alike in `with_index`, and define it alike.
+fn shares_index(scan: &Scan, next: &Scan) -> bool {
+	let (Some(index), Some(after)) = (
+		scan.with_index.as_ref().filter(|i| !i.skip),
+		next.with_index.as_ref().filter(|i| !i.skip),
+	) else {
+		return false;
+	};
+	index.name.is_some()
+		&& scan.vector_query.is_none()
+		&& next.vector_query.is_none()
+		&& scan.index_name() == next.index_name()
+		&& index == after
+}
+
+/// Whether `scan` reads the index left standing, `live`, by its name and
+/// definition, rather than building its own.
+fn reuses_index(live: Option<&(String, Index)>, scan: &Scan) -> bool {
+	let Some(index) = scan.with_index.as_ref().filter(|i| !i.skip) else {
+		return false;
+	};
+	live.is_some_and(|(name, spec)| name == scan.index_name() && spec == index)
+}
+
 fn filter_index_name(scan_id: &str, column: &str) -> String {
 	let column: String = column
 		.chars()
@@ -2456,6 +2510,46 @@ mod test {
 		assert!(warmup_has_plateaued(&recent(&[100, 102, 98, 101]), ms(140)));
 	}
 
+	fn scan_of(id: &str, index: Option<&str>) -> crate::Scan {
+		let mut json = serde_json::json!({
+			"id": id,
+			"name": id,
+			"condition": { "surrealdb": "t @@ 'x'" },
+		});
+		if let Some(index) = index {
+			json["with_index"] = serde_json::from_str(index).expect("index parses");
+		}
+		serde_json::from_value(json).expect("scan parses")
+	}
+
+	/// Consecutive scans naming the same index alike share it; a scan with no
+	/// name, another name or another definition builds its own.
+	#[test]
+	fn named_indexes_alike_are_shared_by_consecutive_scans() {
+		let shared = r#"{ "name": "body", "fields": ["t"], "index_type": "fulltext" }"#;
+		let a = scan_of("a", Some(shared));
+		let b = scan_of("b", Some(shared));
+		assert!(super::shares_index(&a, &b));
+		assert_eq!(b.index_name(), "body");
+		let live = ("body".to_string(), b.with_index.clone().unwrap());
+		assert!(super::reuses_index(Some(&live), &b));
+		// No name: each scan builds and drops its own.
+		let unnamed = r#"{ "fields": ["t"], "index_type": "fulltext" }"#;
+		assert!(!super::shares_index(&scan_of("a", Some(unnamed)), &scan_of("b", Some(unnamed))));
+		// Another definition under the same name is not the same index.
+		let other = r#"{ "name": "body", "fields": ["u"], "index_type": "fulltext" }"#;
+		assert!(!super::shares_index(&a, &scan_of("c", Some(other))));
+		assert!(!super::reuses_index(Some(&live), &scan_of("c", Some(other))));
+		// Another name, a skipped index, or no index at all.
+		let renamed = r#"{ "name": "title", "fields": ["t"], "index_type": "fulltext" }"#;
+		assert!(!super::shares_index(&a, &scan_of("d", Some(renamed))));
+		let skipped =
+			r#"{ "name": "body", "fields": ["t"], "index_type": "fulltext", "skip": true }"#;
+		assert!(!super::shares_index(&a, &scan_of("e", Some(skipped))));
+		assert!(!super::shares_index(&a, &scan_of("f", None)));
+		assert!(!super::reuses_index(None, &b));
+	}
+
 	/// Index names are scoped by scan and reduced to identifier characters, so
 	/// a nested column cannot produce DDL an engine rejects.
 	#[test]
@@ -2555,6 +2649,8 @@ mod test {
 
 	fn index() -> Index {
 		Index {
+			name: None,
+			indexed_only: false,
 			skip: false,
 			fields: vec!["e".to_string()],
 			unique: None,

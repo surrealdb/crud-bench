@@ -717,6 +717,8 @@ impl BenchmarkClient for SurrealDBClient {
 		let sql = surreal_filter_field_sql(column, ty);
 		self.db.query(&sql).await.map_err(log_sql_err(&sql))?.check().map_err(log_sql_err(&sql))?;
 		let spec = Index {
+			name: None,
+			indexed_only: false,
 			skip: false,
 			fields: vec![column.to_string()],
 			unique: None,
@@ -1221,7 +1223,8 @@ impl SurrealDBClient {
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let sql = format!("SELECT id FROM record {c} {o} {s} {l}");
+				let x = SurrealDBDialect::extra_fields(scan);
+				let sql = format!("SELECT id{x} FROM record {c} {o} {s} {l}");
 				let res: surrealdb::types::Value = self
 					.db
 					.query(&sql)
@@ -1235,7 +1238,8 @@ impl SurrealDBClient {
 				Ok(arr.len())
 			}
 			Projection::Full => {
-				let sql = format!("SELECT * FROM record {c} {o} {s} {l}");
+				let x = SurrealDBDialect::extra_fields(scan);
+				let sql = format!("SELECT *{x} FROM record {c} {o} {s} {l}");
 				let res: surrealdb::types::Value = self
 					.db
 					.query(&sql)

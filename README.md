@@ -277,6 +277,31 @@ Within the JSON structure, the following values are replaced by randomly generat
   of `N` clusters. Add `:SIGMA` (default `0.35`) to widen or tighten the clusters.
 - Every `vector_file:PATH` will be replaced by a row of real embeddings read from the `.fbin` file at `PATH`:
   sample `n` takes row `n`. See [Vector data](#vector-data).
+- Every `corpus:WORDS;VOCABULARY;EXPONENT;term@p,...` will be replaced by a text for full-text search. See
+  [Text corpus](#text-corpus).
+
+#### Text corpus
+
+`words:` draws every word from a short list with equal chance, so each word is in nearly every document and no query
+can be selective. `corpus:` spreads words the way natural text does, and plants named terms at document frequencies the
+configuration sets:
+
+```toml
+body = "corpus:100;20000;1.0;kolvak@0.92,trimbol@0.6,quorlat@0.07,vexin@0.006"
+```
+
+- `WORDS`: words per document, or a range (`80..120`).
+- `VOCABULARY`: how many distinct filler words there are. They are spelled from consonant-vowel syllables (`baba`,
+  `babe`, …), the same words for every seed.
+- `EXPONENT`: the Zipf exponent. The rank-`r` word is drawn with probability proportional to `1 / r^EXPONENT`, so at
+  `1.0` the commonest words are in nearly every document and most of the vocabulary is in few.
+- `term@p` (optional): a planted term, inserted one to three times into a document with probability `p`. Its
+  document frequency is `p`, whatever the vocabulary does, which is what lets a query be written against a known
+  selectivity. A planted term must not spell a vocabulary word. For engines that stem (Postgres and MySQL with
+  English configurations, MongoDB), choose terms stemming leaves unchanged.
+
+With `seed` set, the text of each row is a pure function of the seed and the row, like every other value.
+`config/fulltext.toml` uses this corpus.
 
 ```json
 {
@@ -328,6 +353,19 @@ Each scan object can make use of the following values:
 - `start`: Skips the specified number of rows before starting to return rows.
 - `limit`: Specifies the maximum number of rows to return.
 - `expect`: (optional) Asserts the expected number of rows returned.
+- `order_by`: (optional) Per-dialect `ORDER BY` fragments, without the keyword.
+- `extra_fields`: (optional) Per-dialect fields added to an `ID` or `FULL` projection, after the id or the whole
+  record. An `order_by` can name one by its alias: a SurrealQL `ORDER BY` takes a field or a function call, so a
+  ranked `OR` orders by `search::score(1) + search::score(2) AS score` as `score DESC`. Only `surrealdb` is read; an
+  engine whose dialect has no entry runs the scan without them.
+- `with_index`: (optional) The index the scan's indexed legs read:
+    - `fields`, `index_type` (e.g. `fulltext`, `count`) and `unique` define it.
+    - `skip`: run only the legs without an index.
+    - `indexed_only`: run only the legs with the index. The legs without it are reported as not run, which matters
+      for full-text predicates: without its index, a full-text match tokenises every row.
+    - `name`: share the index under this name. Consecutive scans that name the same index, with the same
+      definition, build it once before the first and drop it after the last; the build time is reported on the
+      first. Without a name, each scan builds and drops its own index, named by its `id`.
 - `clients` / `threads`: (optional) Concurrency for this scan's timed legs, overriding `--clients`
   and `--threads`. `clients` is capped at the pool `--clients` created. Index DDL is unaffected — it
   always runs on a single client.
