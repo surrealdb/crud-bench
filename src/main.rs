@@ -328,6 +328,9 @@ pub(crate) struct ScanSpec {
 	projection: Option<String>,
 	/// Index definition for indexed-scan legs; omit for heap/table scans only.
 	with_index: Option<Index>,
+	/// Further named indexes the indexed legs read beside `with_index`.
+	#[serde(default)]
+	with_indexes: Vec<Index>,
 	/// Mixed read/write legs after each scan sample; omitted in config deserializes as empty (read-only).
 	#[serde(default)]
 	with_writes: Vec<ScanWithWrites>,
@@ -357,12 +360,19 @@ impl ScanSpec {
 			expect,
 			projection,
 			with_index,
+			with_indexes,
 			with_writes,
 			vector_query,
 		} = self;
 
 		if id.trim().is_empty() {
 			bail!("each scan entry must have a non-empty `id`");
+		}
+		if !with_indexes.is_empty() && with_index.is_none() {
+			bail!("scan `{id}`: `with_indexes` needs a `with_index` beside it");
+		}
+		if with_indexes.iter().any(|index| index.name.as_deref().is_none_or(str::is_empty)) {
+			bail!("scan `{id}`: each `with_indexes` entry needs a `name`");
 		}
 
 		match (name, runs) {
@@ -397,6 +407,7 @@ impl ScanSpec {
 					expect,
 					projection,
 					with_index,
+					with_indexes,
 					with_writes,
 					vector_query,
 				}])
@@ -430,6 +441,7 @@ impl ScanSpec {
 						expect,
 						projection: run_projection,
 						with_index: with_index.clone(),
+						with_indexes: with_indexes.clone(),
 						with_writes: with_writes.clone(),
 						vector_query: run_vq,
 					});
@@ -1000,6 +1012,11 @@ pub(crate) struct Scan {
 	projection: Option<String>,
 	/// Optional index specification for indexed scan legs (`skip`, `fields`, etc.).
 	pub(crate) with_index: Option<Index>,
+	/// Further named indexes the indexed legs read beside `with_index`, built
+	/// after it and dropped with it: a query over two fields each holding
+	/// their own full-text index. A skipped entry is not built.
+	#[serde(default)]
+	pub(crate) with_indexes: Vec<Index>,
 	/// Read+write workloads (ratio / mode / operation); omit or use `[]` for read-only scans.
 	#[serde(default)]
 	pub(crate) with_writes: Vec<ScanWithWrites>,

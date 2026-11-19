@@ -366,6 +366,11 @@ Each scan object can make use of the following values:
     - `name`: share the index under this name. Consecutive scans that name the same index, with the same
       definition, build it once before the first and drop it after the last; the build time is reported on the
       first. Without a name, each scan builds and drops its own index, named by its `id`.
+- `with_indexes`: (optional) Further indexes the indexed legs read beside `with_index`, each with a `name`: a query
+  over two fields that each hold their own full-text index. They are built after `with_index`, in order, and dropped
+  with it, and they are shared with the next scan only when it declares the same list. Only the build of
+  `with_index` is timed in the results. If one of them cannot be built on an engine (MongoDB keeps one text index a
+  collection), every index built for the scan is dropped and its indexed legs are reported as not run.
 - `clients` / `threads`: (optional) Concurrency for this scan's timed legs, overriding `--clients`
   and `--threads`. `clients` is capped at the pool `--clients` created. Index DDL is unaffected — it
   always runs on a single client.

@@ -701,8 +701,11 @@ impl Benchmark {
 		let mut scan_results = Vec::with_capacity(scans.len());
 		let mut prev_spec_group: Option<u32> = None;
 		let mut prev_run_key: Option<(u32, String)> = None;
-		// The index kept standing for the next scan, which shares it, by name.
-		let mut live_index: Option<(String, Index)> = None;
+		// The indexes kept standing for the next scan, which shares them, by name.
+		let mut live_index: Vec<(String, Index)> = Vec::new();
+		// The index sets this engine could not build, which a later scan declaring the same set
+		// does not try to build again.
+		let mut unbuildable: Vec<Vec<(String, Index)>> = Vec::new();
 		let mut scans = scans.into_iter().peekable();
 		while let Some(scan) = scans.next() {
 			// New section in the TOML/config → new heading in the CLI output
@@ -1056,9 +1059,10 @@ impl Benchmark {
 					});
 				}
 				// An index the previous scan left standing for this one is not built again.
-				let reused = reuses_index(live_index.as_ref(), &scan);
+				let reused = reuses_index(&live_index, &scan);
+				let known_unbuildable = unbuildable.contains(&standing_indexes(&scan));
 				// BuildIndex uses a single client to avoid races on DDL
-				let index_build = if reused {
+				let index_build = if reused || known_unbuildable {
 					None
 				} else {
 					self.run_operation::<C, D>(
@@ -1075,7 +1079,55 @@ impl Benchmark {
 					)
 					.await?
 				};
-				let built = reused || index_build.is_some();
+				// The indexes standing for this scan, by name: the main one and then each further
+				// one, built after it; should one of those not build, every one built is dropped
+				// and the indexed legs are not run.
+				let mut standing = Vec::new();
+				let mut built = reused || index_build.is_some();
+				if !built && !known_unbuildable {
+					unbuildable.push(standing_indexes(&scan));
+				}
+				if built && !reused {
+					standing.push(index_id.clone());
+					for extra in scan.with_indexes.iter().filter(|i| !i.skip) {
+						let extra_id = extra.name.clone().unwrap_or_default();
+						let extra_build = self
+							.run_operation::<C, D>(
+								&clients[..1],
+								BenchmarkOperation::BuildIndex(
+									extra.clone(),
+									extra_id.clone(),
+									name.clone(),
+								),
+								kp,
+								vp.clone(),
+								1,
+								leg_threads,
+							)
+							.await?;
+						if extra_build.is_none() {
+							built = false;
+							break;
+						}
+						standing.push(extra_id);
+					}
+					if !built {
+						unbuildable.push(standing_indexes(&scan));
+						for id in standing.drain(..) {
+							self.run_operation::<C, D>(
+								&clients[..1],
+								BenchmarkOperation::RemoveIndex(id, name.clone()),
+								kp,
+								vp.clone(),
+								1,
+								leg_threads,
+							)
+							.await?;
+						}
+					}
+				} else if reused {
+					standing.extend(live_index.iter().map(|(id, _)| id.clone()));
+				}
 				let (with_index, index_remove, indexed_write_results) = if built {
 					if !reused {
 						// Compact the datastore so the indexed-scan phases benchmark a compacted
@@ -1085,7 +1137,9 @@ impl Benchmark {
 					// The timed build already waited until the index was
 					// queryable; this is the untimed re-check every indexed leg
 					// gets, and here it normally returns after one status check.
-					self.await_index_queryable(&clients[0], &index_id).await?;
+					for id in &standing {
+						self.await_index_queryable(&clients[0], id).await?;
+					}
 					// Same query shape using the new index
 					let with_index = self
 						.run_operation::<C, D>(
@@ -1102,7 +1156,9 @@ impl Benchmark {
 						// The previous leg's writes leave a queue behind; drain
 						// it so each leg is timed from the same index state
 						// instead of inheriting whatever ran before it.
-						self.await_index_queryable(&clients[0], &index_id).await?;
+						for id in &standing {
+							self.await_index_queryable(&clients[0], id).await?;
+						}
 						iw.push(
 							self.run_operation::<C, D>(
 								leg_clients,
@@ -1120,24 +1176,33 @@ impl Benchmark {
 						);
 					}
 					let index_remove = if shared_with_next {
-						live_index = Some((index_id.clone(), index_spec.clone()));
+						live_index = standing_indexes(&scan);
 						None
 					} else {
-						live_index = None;
-						self.run_operation::<C, D>(
-							&clients[..1],
-							BenchmarkOperation::RemoveIndex(index_id.clone(), name.clone()),
-							kp,
-							vp.clone(),
-							1,
-							leg_threads,
-						)
-						.await?
+						live_index.clear();
+						// The main index's removal is the one reported.
+						let mut removed = None;
+						for (at, id) in standing.iter().enumerate() {
+							let remove = self
+								.run_operation::<C, D>(
+									&clients[..1],
+									BenchmarkOperation::RemoveIndex(id.clone(), name.clone()),
+									kp,
+									vp.clone(),
+									1,
+									leg_threads,
+								)
+								.await?;
+							if at == 0 {
+								removed = remove;
+							}
+						}
+						removed
 					};
 					(with_index, index_remove, iw)
 				} else {
 					// BuildIndex unsupported or skipped → no indexed timings to merge
-					live_index = None;
+					live_index.clear();
 					(None, None, Vec::new())
 				};
 				if built {
@@ -2008,29 +2073,39 @@ const QUERYABLE_DEADLINE_MARGIN: Duration = Duration::from_secs(1);
 /// Name for the index on a filter column: scoped by scan so two scans never
 /// share one, and reduced to characters every engine accepts in an identifier
 /// (a nested column such as `geography.code` would not be).
-/// Whether `next`, run straight after `scan`, reads the index `scan` built: both
-/// name it alike in `with_index`, and define it alike.
-fn shares_index(scan: &Scan, next: &Scan) -> bool {
-	let (Some(index), Some(after)) = (
-		scan.with_index.as_ref().filter(|i| !i.skip),
-		next.with_index.as_ref().filter(|i| !i.skip),
-	) else {
-		return false;
+/// The indexes `scan`'s indexed legs read, by name: `with_index`, then each of
+/// `with_indexes` not skipped. Empty where `with_index` is absent or skipped.
+fn standing_indexes(scan: &Scan) -> Vec<(String, Index)> {
+	let Some(index) = scan.with_index.as_ref().filter(|i| !i.skip) else {
+		return Vec::new();
 	};
-	index.name.is_some()
-		&& scan.vector_query.is_none()
-		&& next.vector_query.is_none()
-		&& scan.index_name() == next.index_name()
-		&& index == after
+	let mut out = vec![(scan.index_name().to_string(), index.clone())];
+	out.extend(
+		scan.with_indexes
+			.iter()
+			.filter(|i| !i.skip)
+			.map(|i| (i.name.clone().unwrap_or_default(), i.clone())),
+	);
+	out
 }
 
-/// Whether `scan` reads the index left standing, `live`, by its name and
-/// definition, rather than building its own.
-fn reuses_index(live: Option<&(String, Index)>, scan: &Scan) -> bool {
-	let Some(index) = scan.with_index.as_ref().filter(|i| !i.skip) else {
-		return false;
-	};
-	live.is_some_and(|(name, spec)| name == scan.index_name() && spec == index)
+/// Whether `next`, run straight after `scan`, reads the indexes `scan` built:
+/// both name the main index alike in `with_index`, and both declare the same
+/// indexes, alike.
+fn shares_index(scan: &Scan, next: &Scan) -> bool {
+	let named = scan.with_index.as_ref().is_some_and(|i| !i.skip && i.name.is_some());
+	let standing = standing_indexes(scan);
+	named
+		&& scan.vector_query.is_none()
+		&& next.vector_query.is_none()
+		&& !standing.is_empty()
+		&& standing == standing_indexes(next)
+}
+
+/// Whether `scan` reads the indexes left standing, `live`, by their names and
+/// definitions, rather than building its own.
+fn reuses_index(live: &[(String, Index)], scan: &Scan) -> bool {
+	!live.is_empty() && live == standing_indexes(scan).as_slice()
 }
 
 fn filter_index_name(scan_id: &str, column: &str) -> String {
@@ -2531,15 +2606,15 @@ mod test {
 		let b = scan_of("b", Some(shared));
 		assert!(super::shares_index(&a, &b));
 		assert_eq!(b.index_name(), "body");
-		let live = ("body".to_string(), b.with_index.clone().unwrap());
-		assert!(super::reuses_index(Some(&live), &b));
+		let live = vec![("body".to_string(), b.with_index.clone().unwrap())];
+		assert!(super::reuses_index(&live, &b));
 		// No name: each scan builds and drops its own.
 		let unnamed = r#"{ "fields": ["t"], "index_type": "fulltext" }"#;
 		assert!(!super::shares_index(&scan_of("a", Some(unnamed)), &scan_of("b", Some(unnamed))));
 		// Another definition under the same name is not the same index.
 		let other = r#"{ "name": "body", "fields": ["u"], "index_type": "fulltext" }"#;
 		assert!(!super::shares_index(&a, &scan_of("c", Some(other))));
-		assert!(!super::reuses_index(Some(&live), &scan_of("c", Some(other))));
+		assert!(!super::reuses_index(&live, &scan_of("c", Some(other))));
 		// Another name, a skipped index, or no index at all.
 		let renamed = r#"{ "name": "title", "fields": ["t"], "index_type": "fulltext" }"#;
 		assert!(!super::shares_index(&a, &scan_of("d", Some(renamed))));
@@ -2547,7 +2622,22 @@ mod test {
 			r#"{ "name": "body", "fields": ["t"], "index_type": "fulltext", "skip": true }"#;
 		assert!(!super::shares_index(&a, &scan_of("e", Some(skipped))));
 		assert!(!super::shares_index(&a, &scan_of("f", None)));
-		assert!(!super::reuses_index(None, &b));
+		assert!(!super::reuses_index(&[], &b));
+		// Further indexes are part of what is shared: the same list shares, another does not.
+		let with_title = |id: &str, title: &str| {
+			let mut scan = scan_of(id, Some(shared));
+			scan.with_indexes = vec![serde_json::from_str(title).expect("index parses")];
+			scan
+		};
+		let title = r#"{ "name": "title", "fields": ["title"], "index_type": "fulltext" }"#;
+		let (g, h) = (with_title("g", title), with_title("h", title));
+		assert!(super::shares_index(&g, &h));
+		assert_eq!(super::standing_indexes(&g).len(), 2);
+		assert!(super::reuses_index(&super::standing_indexes(&g), &h));
+		assert!(!super::shares_index(&a, &g));
+		assert!(!super::reuses_index(&live, &g));
+		let other_title = r#"{ "name": "title", "fields": ["heading"], "index_type": "fulltext" }"#;
+		assert!(!super::shares_index(&g, &with_title("i", other_title)));
 	}
 
 	/// Index names are scoped by scan and reduced to identifier characters, so

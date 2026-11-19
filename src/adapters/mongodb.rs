@@ -291,6 +291,17 @@ impl BenchmarkClient for MongoDBClient {
 		// Check if an index type is specified
 		match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
+				// A collection holds one text index, over every field it covers, and `$text`
+				// cannot name a field: a scan asking for a second text index, to search two
+				// fields apart, has no MongoDB equivalent.
+				let existing =
+					self.collection().list_indexes().await?.try_collect::<Vec<_>>().await?;
+				if existing.iter().any(|index| {
+					index.keys.values().any(|kind| kind.as_str() == Some("text"))
+						|| index.keys.contains_key("_fts")
+				}) {
+					bail!(NOT_SUPPORTED_ERROR);
+				}
 				// Create a text index
 				for field in &fields {
 					doc.insert(field, "text");
