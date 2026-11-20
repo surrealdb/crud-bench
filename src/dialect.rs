@@ -14,6 +14,13 @@ pub(crate) trait Dialect {
 	fn escape_field(field: String) -> String {
 		field
 	}
+
+	/// A full-text match of the single-word string `literal` against the text
+	/// column `field`, already escaped: SurrealQL's `@@`, served by a full-text
+	/// index on the column.
+	fn full_text_match(field: String, literal: String) -> String {
+		format!("{field} @@ {literal}")
+	}
 }
 
 // --------------------------------------------------
@@ -33,6 +40,12 @@ pub(crate) struct AnsiSqlDialect();
 impl Dialect for AnsiSqlDialect {
 	fn escape_field(field: String) -> String {
 		format!("\"{field}\"")
+	}
+
+	/// The `english` text-search configuration the full-text index on the
+	/// column is built with, so the GIN index serves the match.
+	fn full_text_match(field: String, literal: String) -> String {
+		format!("to_tsvector('english', {field}) @@ plainto_tsquery('english', {literal})")
 	}
 }
 

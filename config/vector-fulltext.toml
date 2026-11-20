@@ -1,0 +1,105 @@
+# Vector search restricted by a full-text match: the ten nearest neighbours of
+# a query vector among the rows whose `body` holds a given word. This is the
+# retrieval step of a hybrid search, where a keyword narrows the candidates and
+# the embedding ranks them.
+#
+# Each leg filters on a word planted at a known document frequency (`corpus:`
+# value type), from one in nearly every row to one in fewer than one in a
+# hundred, so the ladder runs from a filter that barely restricts the search to
+# one that leaves the index few candidates:
+#
+#   leg       word      rows
+#   fts~92%   kolvak    92%
+#   fts~60%   trimbol   60%
+#   fts~7%    quorlat    7%
+#   fts~0.6%  vexin      0.6%
+#
+# The full-text index the match needs on `body` is built before the legs,
+# untimed, and dropped after them. The answer key tests the generated text for
+# the word, whole and in any case, and the selectivity reported is the share of
+# rows that held it.
+#
+# Engines: SurrealDB (`<|k, ef|>` with `body @@ 'word'`, over a FULLTEXT index)
+# and PostgreSQL (pgvector ordering with `to_tsvector(...) @@ plainto_tsquery(...)`,
+# over a GIN index). Redis mirrors filter columns as tags, which match a whole
+# value rather than a word in it, and skips the scan.
+#
+# To run on real embeddings, point `embedding` at a `.fbin` file, such as the
+# VectorDBBench Cohere 1M × 768d set (see README, Vector data):
+#
+#   embedding = "vector_file:/data/cohere-1m.fbin"
+
+# Corpus seed: the same rows for every engine and every run.
+seed = 20261119
+
+# ============================================================================
+# value
+# ============================================================================
+
+[value]
+body = "corpus:100;20000;1.0;kolvak@0.92,trimbol@0.6,quorlat@0.07,vexin@0.006"
+number = "int:1..5000"
+embedding = "vector:768:clustered:200"
+
+# ============================================================================
+# vector_knn_fulltext
+# ============================================================================
+
+[[scans]]
+id = "vector_knn_fulltext"
+iterations = 1000
+# KNN answers in well under a millisecond once the index is warm, so at the
+# default concurrency these legs measure queueing rather than search.
+clients = 1
+threads = 1
+
+[[scans.runs]]
+name = "bruteforce knn(10) · full-text filter"
+# Exact search is the reference point, a full table scan per query, so it needs
+# far fewer samples.
+iterations = 50
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "bruteforce" }
+holdout = { count = 200, seed = 42 }
+filters = [
+    { name = "fts~92%", field = "body", op = "matches", value = "kolvak" },
+    { name = "fts~60%", field = "body", op = "matches", value = "trimbol" },
+    { name = "fts~7%", field = "body", op = "matches", value = "quorlat" },
+    { name = "fts~0.6%", field = "body", op = "matches", value = "vexin" },
+]
+
+[[scans.runs]]
+name = "hnsw knn(10) m=16 efc=200 · full-text filter"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "hnsw", m = 16, ef_construction = 200, ef_search = [16, 64, 128, 256] }
+holdout = { count = 200, seed = 42 }
+filters = [
+    { name = "fts~92%", field = "body", op = "matches", value = "kolvak" },
+    { name = "fts~60%", field = "body", op = "matches", value = "trimbol" },
+    { name = "fts~7%", field = "body", op = "matches", value = "quorlat" },
+    { name = "fts~0.6%", field = "body", op = "matches", value = "vexin" },
+]
+
+[[scans.runs]]
+name = "diskann knn(10) deg=64 L=100 alpha=1.2 · full-text filter"
+
+[scans.runs.vector_query]
+field = "embedding"
+top_k = 10
+distance = "cosine"
+index_strategy = { kind = "diskann", degree = 64, l_build = 100, alpha = 1.2, l_search = [50, 200] }
+holdout = { count = 200, seed = 42 }
+filters = [
+    { name = "fts~92%", field = "body", op = "matches", value = "kolvak" },
+    { name = "fts~60%", field = "body", op = "matches", value = "trimbol" },
+    { name = "fts~7%", field = "body", op = "matches", value = "quorlat" },
+    { name = "fts~0.6%", field = "body", op = "matches", value = "vexin" },
+]

@@ -689,8 +689,15 @@ A filter is `{ name, field, op, value }`:
 - `field`: an `integer`, `float`, `string` or `bool` column from the value template. Other column
   types are rejected — a datetime or decimal filter would need per-engine literal formats and
   collation rules, and getting either subtly wrong leaves two engines answering different questions.
-- `op`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, or `in`. The ordering operators require a numeric
-  column; `in` takes a list and is the natural way to dial selectivity on a categorical column.
+- `op`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `in` or `matches`. The ordering operators require a
+  numeric column; `in` takes a list and is the natural way to dial selectivity on a categorical column.
+  `matches` is a full-text match of one word, of letters and digits, in a string column: a row matches
+  when the column holds the word whole, in any case. The scan builds a full-text index on the column
+  before its legs (untimed) and drops it after, whatever `filter_index` says, since SurrealDB answers
+  `@@` only through one. SurrealDB renders it as `field @@ 'word'`, Postgres as
+  `to_tsvector('english', field) @@ plainto_tsquery('english', 'word')`; Redis, which mirrors filter
+  columns as tags, skips it. A `corpus:` column with planted words gives each word a known
+  selectivity; `config/vector-fulltext.toml` runs a ladder of them.
 - `value`: a literal, or a list for `in`. Text literals are restricted to letters, digits, space and
   `_-./+:@` — every engine here quotes strings differently, and a mis-escaped literal does not fail
   loudly, it silently selects a different set of rows in one engine than in another.
