@@ -37,7 +37,7 @@ seed = 20261119
 # ============================================================================
 
 [value]
-body = "corpus:100;20000;1.0;kolvak@0.92,trimbol@0.6,quorlat@0.07,vexin@0.006"
+body = "corpus:20..200;20000;1.0;kolvak@0.92,trimbol@0.6,quorlat@0.07,vexin@0.006"
 number = "int:1..5000"
 embedding = "vector:768:clustered:200"
 
