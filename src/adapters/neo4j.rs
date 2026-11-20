@@ -554,7 +554,7 @@ impl Neo4jClient {
 		let c = Neo4jDialect::filter_clause(scan)?;
 		let o = Neo4jDialect::order_by_clause(scan)?;
 		let p = scan.projection()?;
-		let n = &scan.id;
+		let n = scan.index_name();
 		// Check if this is a fulltext scan
 		let fts = scan
 			.with_index

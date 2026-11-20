@@ -454,6 +454,8 @@ impl BenchmarkClient for PostgresClient {
 		// bitmap scan of the matching rows plus an exact sort over the HNSW scan
 		// when the predicate is selective enough.
 		let spec = Index {
+			name: None,
+			indexed_only: false,
 			skip: false,
 			fields: vec![column.to_string()],
 			unique: None,

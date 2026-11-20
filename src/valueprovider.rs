@@ -263,6 +263,9 @@ enum ValueGenerator {
 	String(Length<usize>),
 	Text(Length<usize>),
 	Words(Length<usize>, Vec<String>),
+	/// A text of words drawn from a Zipf-distributed vocabulary, with planted
+	/// terms at fixed document frequencies ([`Corpus`]).
+	Corpus(Arc<Corpus>),
 	Integer,
 	Float,
 	DateTime,
@@ -481,6 +484,140 @@ fn text_range(rng: &mut SmallRng, range: Range<usize>) -> String {
 	text(rng, l)
 }
 
+/// The syllables vocabulary words are built from: a consonant and a vowel each.
+const SYLLABLES: [&str; 70] = [
+	"ba", "be", "bi", "bo", "bu", "da", "de", "di", "do", "du", "fa", "fe", "fi", "fo", "fu", "ga",
+	"ge", "gi", "go", "gu", "ka", "ke", "ki", "ko", "ku", "la", "le", "li", "lo", "lu", "ma", "me",
+	"mi", "mo", "mu", "na", "ne", "ni", "no", "nu", "pa", "pe", "pi", "po", "pu", "ra", "re", "ri",
+	"ro", "ru", "sa", "se", "si", "so", "su", "ta", "te", "ti", "to", "tu", "va", "ve", "vi", "vo",
+	"vu", "za", "ze", "zi", "zo", "zu",
+];
+
+/// The vocabulary word of rank `rank`: its digits in base 70, at least two, each
+/// spelled as a syllable. Distinct ranks spell distinct words.
+fn vocabulary_word(rank: usize) -> String {
+	let mut digits = Vec::new();
+	let mut n = rank;
+	loop {
+		digits.push(n % SYLLABLES.len());
+		n /= SYLLABLES.len();
+		if n == 0 && digits.len() >= 2 {
+			break;
+		}
+	}
+	digits.iter().rev().map(|d| SYLLABLES[*d]).collect()
+}
+
+/// A text corpus: each document holds `words` words drawn from `vocabulary`,
+/// rank `r` (from 1) with probability proportional to `1 / r^exponent`, so a
+/// few words are carried by nearly every document and most by few. Each
+/// `planted` term is then placed in a document with its given probability,
+/// one to three times, inserted at random positions: the document
+/// frequency a query term has is set by the configuration, not left to the
+/// draw.
+///
+/// `corpus:WORDS;VOCABULARY;EXPONENT;term@probability,...`, for example
+/// `corpus:100;20000;1.0;kolvak@0.92,trimbol@0.6,quorlat@0.07,vexin@0.006`.
+/// `WORDS` is a word count, or a range of them (`80..120`). The planted terms
+/// are optional; none may spell a vocabulary word.
+#[derive(Debug)]
+struct Corpus {
+	words: Length<usize>,
+	vocabulary: Vec<String>,
+	/// The cumulative probability of each rank, the last 1.0.
+	cumulative: Vec<f64>,
+	planted: Vec<(String, f64)>,
+}
+
+impl Corpus {
+	fn parse(spec: &str) -> Result<Self> {
+		let parts: Vec<&str> = spec.split(';').collect();
+		if !(3..=4).contains(&parts.len()) {
+			bail!(
+				"corpus format is corpus:WORDS;VOCABULARY;EXPONENT[;term@probability,...], got `corpus:{spec}`"
+			);
+		}
+		let words = Length::new(parts[0])?;
+		let size: usize =
+			parts[1].parse().map_err(|e| anyhow!("corpus vocabulary size `{}`: {e}", parts[1]))?;
+		if size == 0 {
+			bail!("corpus vocabulary size must be at least 1");
+		}
+		let exponent: f64 =
+			parts[2].parse().map_err(|e| anyhow!("corpus exponent `{}`: {e}", parts[2]))?;
+		if !exponent.is_finite() || exponent < 0.0 {
+			bail!("corpus exponent must be a finite number of at least 0, got {exponent}");
+		}
+		let vocabulary: Vec<String> = (0..size).map(vocabulary_word).collect();
+		let weights: Vec<f64> = (1..=size).map(|rank| (rank as f64).powf(-exponent)).collect();
+		let total: f64 = weights.iter().sum();
+		let mut running = 0.0;
+		let mut cumulative: Vec<f64> = weights
+			.iter()
+			.map(|weight| {
+				running += weight / total;
+				running
+			})
+			.collect();
+		if let Some(last) = cumulative.last_mut() {
+			*last = 1.0;
+		}
+		let mut planted = Vec::new();
+		if let Some(terms) = parts.get(3).filter(|terms| !terms.is_empty()) {
+			for term in terms.split(',') {
+				let Some((word, probability)) = term.split_once('@') else {
+					bail!("corpus planted term `{term}` needs a probability: term@0.5");
+				};
+				let probability: f64 = probability
+					.parse()
+					.map_err(|e| anyhow!("corpus planted term `{term}`: {e}"))?;
+				if !(0.0..=1.0).contains(&probability) {
+					bail!("corpus planted term `{term}`: the probability must be in 0..=1");
+				}
+				if word.is_empty() || word.contains(char::is_whitespace) {
+					bail!("corpus planted term `{term}` must be one word");
+				}
+				// A planted word the vocabulary also draws would carry more documents than its
+				// probability says.
+				if vocabulary.iter().any(|w| w == word) {
+					bail!("corpus planted term `{word}` spells a vocabulary word; choose another");
+				}
+				planted.push((word.to_string(), probability));
+			}
+		}
+		Ok(Self {
+			words,
+			vocabulary,
+			cumulative,
+			planted,
+		})
+	}
+
+	fn generate(&self, rng: &mut SmallRng) -> String {
+		let count = match &self.words {
+			Length::Range(r) => rng.random_range(r.clone()),
+			Length::Fixed(n) => *n,
+		};
+		let mut words: Vec<&str> = (0..count)
+			.map(|_| {
+				let draw: f64 = rng.random_range(0.0..1.0);
+				let rank = self.cumulative.partition_point(|c| *c <= draw);
+				self.vocabulary[rank.min(self.vocabulary.len() - 1)].as_str()
+			})
+			.collect();
+		// Inserted rather than written over a word, so one planted term never removes another.
+		for (word, probability) in &self.planted {
+			if rng.random_range(0.0..1.0) < *probability {
+				for _ in 0..rng.random_range(1..=3usize) {
+					let at = rng.random_range(0..=words.len());
+					words.insert(at, word);
+				}
+			}
+		}
+		words.join(" ")
+	}
+}
+
 fn words(rng: &mut SmallRng, size: usize, dictionary: &[String]) -> String {
 	let mut l = 0;
 	let mut words = Vec::with_capacity(size / 5);
@@ -608,6 +745,8 @@ impl ValueGenerator {
 			Self::String(Length::new(i)?)
 		} else if let Some(i) = s.strip_prefix("text:") {
 			Self::Text(Length::new(i)?)
+		} else if let Some(i) = s.strip_prefix("corpus:") {
+			Self::Corpus(Arc::new(Corpus::parse(i)?))
 		} else if let Some(i) = s.strip_prefix("words:") {
 			// Parse format: "words:50;word1,word2,word3"
 			let parts: Vec<&str> = i.splitn(2, ';').collect();
@@ -791,6 +930,7 @@ impl ValueGenerator {
 				};
 				BenchValue::String(val)
 			}
+			ValueGenerator::Corpus(corpus) => BenchValue::String(corpus.generate(rng)),
 			ValueGenerator::Words(l, dictionary) => {
 				let val = match l {
 					Length::Range(r) => words_range(rng, r.clone(), dictionary),
@@ -1023,7 +1163,8 @@ impl ColumnType {
 			ValueGenerator::StringEnum(_)
 			| ValueGenerator::String(_)
 			| ValueGenerator::Text(_)
-			| ValueGenerator::Words(_, _) => ColumnType::String,
+			| ValueGenerator::Words(_, _)
+			| ValueGenerator::Corpus(_) => ColumnType::String,
 			ValueGenerator::Integer
 			| ValueGenerator::IntegerRange(_)
 			| ValueGenerator::IntegerEnum(_) => ColumnType::Integer,
@@ -1278,6 +1419,75 @@ pub(crate) mod test {
 		for p in [short, long] {
 			std::fs::remove_file(p).unwrap();
 		}
+	}
+
+	fn corpus_text(template: &str, seed: u64, sample: u32) -> String {
+		match ValueProvider::new(template)
+			.unwrap()
+			.with_seed(seed)
+			.generate_value_for(ValueStream::Create, sample)
+			.get_field("t")
+		{
+			Some(BenchValue::String(text)) => text.clone(),
+			other => panic!("expected a string, got {other:?}"),
+		}
+	}
+
+	/// Vocabulary words are distinct, so a rank's frequency is the word's.
+	#[test]
+	fn corpus_vocabulary_words_are_distinct() {
+		let words: Vec<String> = (0..20_000).map(vocabulary_word).collect();
+		let distinct: std::collections::HashSet<&String> = words.iter().collect();
+		assert_eq!(distinct.len(), words.len());
+		assert_eq!(vocabulary_word(0), "baba");
+		assert!(words.iter().all(|w| w.len() >= 4));
+	}
+
+	/// A planted term is carried by the share of documents its probability
+	/// gives, the most common words by many and the rarest by few, and a seeded
+	/// corpus is the same text for the same sample.
+	#[test]
+	fn corpus_plants_terms_at_their_document_frequencies() {
+		let template =
+			r#"{ "t": "corpus:60;5000;1.0;kolvak@0.9,trimbol@0.5,quorlat@0.05,vexin@0.005" }"#;
+		let docs = 20_000u32;
+		let mut carrying = [0u32; 4];
+		let (mut first, mut last) = (0u32, 0u32);
+		for n in 0..docs {
+			let text = corpus_text(template, 7, n);
+			let words: Vec<&str> = text.split(' ').collect();
+			assert!((60..=72).contains(&words.len()), "{}", words.len());
+			for (at, term) in ["kolvak", "trimbol", "quorlat", "vexin"].iter().enumerate() {
+				if words.contains(term) {
+					carrying[at] += 1;
+				}
+			}
+			first += u32::from(words.contains(&"baba"));
+			last += u32::from(words.contains(&vocabulary_word(4_999).as_str()));
+		}
+		for (at, share) in [0.9, 0.5, 0.05, 0.005].iter().enumerate() {
+			let found = carrying[at] as f64 / docs as f64;
+			assert!((found - share).abs() <= share * 0.1 + 0.002, "term {at}: {found} vs {share}");
+		}
+		assert!(first > docs * 9 / 10, "the commonest word is in most documents: {first}");
+		assert!(last < docs / 50, "the rarest word is in few documents: {last}");
+		assert_eq!(corpus_text(template, 7, 11), corpus_text(template, 7, 11));
+		assert_ne!(corpus_text(template, 7, 11), corpus_text(template, 8, 11));
+	}
+
+	#[test]
+	fn corpus_rejects_bad_specs() {
+		for template in [
+			r#"{ "t": "corpus:60;5000" }"#,
+			r#"{ "t": "corpus:60;0;1.0" }"#,
+			r#"{ "t": "corpus:60;100;-1" }"#,
+			r#"{ "t": "corpus:60;100;1.0;kolvak" }"#,
+			r#"{ "t": "corpus:60;100;1.0;kolvak@1.5" }"#,
+			r#"{ "t": "corpus:60;100;1.0;baba@0.5" }"#,
+		] {
+			assert!(ValueProvider::new(template).is_err(), "{template}");
+		}
+		assert!(ValueProvider::new(r#"{ "t": "corpus:40..60;100;0.8" }"#).is_ok());
 	}
 
 	#[tokio::test]

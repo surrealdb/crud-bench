@@ -886,7 +886,8 @@ impl SurrealDB2Client {
 		let p = scan.projection()?;
 		match p {
 			Projection::Id => {
-				let sql = format!("SELECT id FROM record {c} {o} {s} {l}");
+				let x = SurrealDBDialect::extra_fields(scan);
+				let sql = format!("SELECT id{x} FROM record {c} {o} {s} {l}");
 				let res: surrealdb::Value = self
 					.db
 					.query(&sql)
@@ -900,7 +901,8 @@ impl SurrealDB2Client {
 				}
 			}
 			Projection::Full => {
-				let sql = format!("SELECT * FROM record {c} {o} {s} {l}");
+				let x = SurrealDBDialect::extra_fields(scan);
+				let sql = format!("SELECT *{x} FROM record {c} {o} {s} {l}");
 				let res: surrealdb::Value = self
 					.db
 					.query(&sql)

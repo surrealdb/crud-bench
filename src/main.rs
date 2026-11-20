@@ -314,6 +314,10 @@ pub(crate) struct ScanSpec {
 	condition: Option<Condition>,
 	/// Per-dialect `ORDER BY` fragments; omit for unordered scans.
 	order_by: Option<OrderByClause>,
+	/// Per-dialect fields added to an `ID` or `FULL` projection, such as a
+	/// score an `order_by` names by its alias; omit for none.
+	#[serde(default)]
+	extra_fields: Option<ExtraFields>,
 	/// Row offset before returning results (`OFFSET` / `SKIP`).
 	start: Option<usize>,
 	/// Maximum rows to return (`LIMIT`).
@@ -347,6 +351,7 @@ impl ScanSpec {
 			warmup_time,
 			condition,
 			order_by,
+			extra_fields,
 			start,
 			limit,
 			expect,
@@ -386,6 +391,7 @@ impl ScanSpec {
 					warmup_time,
 					condition,
 					order_by,
+					extra_fields,
 					start,
 					limit,
 					expect,
@@ -418,6 +424,7 @@ impl ScanSpec {
 						warmup_time,
 						condition: condition.clone(),
 						order_by: order_by.clone(),
+						extra_fields: extra_fields.clone(),
 						start,
 						limit,
 						expect,
@@ -670,13 +677,25 @@ fn collect_vector_filter_fields(scans: &[Scan], columns: &Columns) -> Result<Vec
 	Ok(fields)
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 /// Physical or logical index attached to a scan (fulltext, field btree, etc.).
 pub(crate) struct Index {
 	/// When true, skip index create/drop but still run the query leg (table scan).
 	#[serde(default)]
 	pub(crate) skip: bool,
+	/// A name the index is shared under. Consecutive scans naming the same
+	/// index with the same definition build it once, before the first of
+	/// them, and drop it after the last; the build is reported on the first.
+	/// Without a name, each scan builds its own index, named by the scan id.
+	#[serde(default)]
+	pub(crate) name: Option<String>,
+	/// When true, the scan runs only with its index: the legs without it are
+	/// reported as not run. A full-text predicate without its index reads and
+	/// tokenises every row, which at a large corpus costs more than the rest
+	/// of the scan together.
+	#[serde(default)]
+	pub(crate) indexed_only: bool,
 	/// Columns or paths included in the index. Optional for index types that
 	/// don't take field arguments (e.g. SurrealDB COUNT indexes apply to the
 	/// whole table).
@@ -968,6 +987,9 @@ pub(crate) struct Scan {
 	/// Optional `ORDER BY` per datastore (omit for unordered scans).
 	#[serde(default)]
 	order_by: Option<OrderByClause>,
+	/// Optional fields per datastore added to an `ID` or `FULL` projection.
+	#[serde(default)]
+	pub(crate) extra_fields: Option<ExtraFields>,
 	/// Row offset (`OFFSET` / `SKIP`) before returning rows.
 	start: Option<usize>,
 	/// Maximum rows to return (`LIMIT`).
@@ -1038,6 +1060,12 @@ impl Scan {
 		Ok(id)
 	}
 
+	/// The name of the index the scan's indexed legs read: the shared name of
+	/// its `with_index`, or else the scan id.
+	pub(crate) fn index_name(&self) -> &str {
+		self.with_index.as_ref().and_then(|index| index.name.as_deref()).unwrap_or(&self.id)
+	}
+
 	/// Returns the scan projection type for adapter code.
 	fn projection(&self) -> Result<Projection> {
 		match self.projection.as_deref() {
@@ -1082,6 +1110,18 @@ pub(crate) struct Condition {
 	arangodb: Option<String>,
 	/// SurrealQL predicate fragment.
 	surrealdb: Option<String>,
+}
+
+/// Per-dialect fields a scan adds to its `ID` or `FULL` projection, after the
+/// id or the whole record, for an `order_by` to name by alias or a result to
+/// carry: a SurrealQL `ORDER BY` takes a field or a function call, not an
+/// expression such as a sum of scores. A datastore whose dialect has no entry
+/// runs the scan without them; a `COUNT` projection ignores them.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExtraFields {
+	/// SurrealQL fields, e.g. `search::score(1) + search::score(2) AS score`.
+	pub(crate) surrealdb: Option<String>,
 }
 
 /// Per-dialect `ORDER BY` fragments for scans (same shape as [`Condition`]).
