@@ -670,6 +670,11 @@ fn collect_vector_filter_fields(scans: &[Scan], columns: &Columns) -> Result<Vec
 					filter.name
 				);
 			}
+			// A full-text match reads the column through a full-text index the scan builds, so
+			// the column is not mirrored beside the vector.
+			if filter.op == crate::vectorfilter::FilterOp::Matches {
+				continue;
+			}
 			let Some(kind) = filter.field_kind(columns) else {
 				// `validate` above accepts only the types `field_kind` maps.
 				bail!(

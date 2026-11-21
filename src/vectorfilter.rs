@@ -180,6 +180,11 @@ pub(crate) enum FilterOp {
 	/// Membership in a list — the natural way to dial selectivity on a
 	/// categorical column, where each additional label adds its own share.
 	In,
+	/// A full-text match of one term in a text column: the column holds the
+	/// term as a whole word, whatever its case. Engines answer it through a
+	/// full-text index on the column, which the scan builds; the answer key
+	/// tests the generated text for the word.
+	Matches,
 }
 
 impl FilterOp {
@@ -199,6 +204,7 @@ impl FilterOp {
 			FilterOp::Gt => ">",
 			FilterOp::Gte => ">=",
 			FilterOp::In => "IN",
+			FilterOp::Matches => "@@",
 		}
 	}
 }
@@ -344,6 +350,25 @@ impl VectorFilter {
 					bail!("vector filter `{}`: `in` takes a list, e.g. value = [0, 1]", self.name);
 				}
 			}
+			FilterOp::Matches => {
+				let term = match &self.value {
+					FilterValue::One(FilterScalar::Text(term)) => term,
+					_ => bail!(
+						"vector filter `{}`: `matches` takes one word, e.g. value = \"quorlat\"",
+						self.name
+					),
+				};
+				if !matches!(column, ColumnType::String)
+					|| term.is_empty()
+					|| !term.chars().all(|c| c.is_ascii_alphanumeric())
+				{
+					bail!(
+						"vector filter `{}`: `matches` takes one word of letters and digits, \
+						 over a string column",
+						self.name
+					);
+				}
+			}
 			op if op.is_ordering() => {
 				if matches!(self.value, FilterValue::Many(_)) {
 					bail!(
@@ -427,6 +452,12 @@ impl VectorFilter {
 		};
 		let values = self.value.scalars();
 		Ok(match self.op {
+			FilterOp::Matches => match (cell, &values[0]) {
+				(BenchValue::String(text), FilterScalar::Text(term)) => {
+					text.split_whitespace().any(|word| word.eq_ignore_ascii_case(term))
+				}
+				_ => false,
+			},
 			FilterOp::Eq => equals(cell, &values[0]),
 			FilterOp::Ne => !equals(cell, &values[0]),
 			FilterOp::In => values.iter().any(|v| equals(cell, v)),
@@ -466,6 +497,9 @@ impl VectorFilter {
 				let (open, close) = list.brackets();
 				format!("{field} IN {open}{items}{close}")
 			}
+			FilterOp::Matches => {
+				D::full_text_match(field, self.value.scalars()[0].to_sql_literal())
+			}
 			op => {
 				format!("{field} {} {}", op.to_sql(), self.value.scalars()[0].to_sql_literal())
 			}
@@ -475,6 +509,10 @@ impl VectorFilter {
 	/// Render as a RediSearch query expression, over the HASH field a vector
 	/// row's filter columns are mirrored into.
 	pub(crate) fn to_redis(&self, kind: FilterFieldKind) -> Result<String> {
+		// A text column is mirrored as a tag, which matches the whole value, not a word in it.
+		if self.op == FilterOp::Matches {
+			bail!(crate::benchmark::NOT_SUPPORTED_ERROR);
+		}
 		let field = redis_field_name(&self.field);
 		let values = self.value.scalars();
 		Ok(match kind {
@@ -517,6 +555,7 @@ impl VectorFilter {
 						out.push(')');
 						out
 					}
+					FilterOp::Matches => bail!(crate::benchmark::NOT_SUPPORTED_ERROR),
 				}
 			}
 		})
@@ -618,6 +657,40 @@ mod test {
 
 	fn row(pairs: Vec<(&str, BenchValue)>) -> BenchValue {
 		BenchValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+	}
+
+	/// A full-text match tests a text column for the word, whole and in any
+	/// case, and renders as each engine's full-text predicate.
+	#[test]
+	fn matches_a_word_in_a_text_column() {
+		let cols = ValueProvider::new(r#"{ "body": "corpus:10;100;1.0", "number": "int:1..9" }"#)
+			.unwrap()
+			.columns();
+		let f = filter(r#"{"name":"t","field":"body","op":"matches","value":"quorlat"}"#);
+		f.validate(&cols).unwrap();
+		let text = |t: &str| row(vec![("body", BenchValue::String(t.to_string()))]);
+		assert!(f.matches(&text("baba quorlat bebe")).unwrap());
+		assert!(f.matches(&text("QUORLAT")).unwrap());
+		assert!(!f.matches(&text("baba quorlats bebe")).unwrap());
+		assert!(!f.matches(&text("xquorlat")).unwrap());
+		assert_eq!(f.to_sql::<SurrealDBDialect>(ListSyntax::Brackets), "body @@ 'quorlat'");
+		assert_eq!(
+			f.to_sql::<AnsiSqlDialect>(ListSyntax::Parens),
+			"to_tsvector('english', \"body\") @@ plainto_tsquery('english', 'quorlat')"
+		);
+		assert!(f.to_redis(FilterFieldKind::Tag).is_err());
+		// One word over a text column, nothing else.
+		for bad in [
+			r#"{"name":"t","field":"body","op":"matches","value":"two words"}"#,
+			r#"{"name":"t","field":"body","op":"matches","value":["a","b"]}"#,
+			r#"{"name":"t","field":"body","op":"matches","value":5}"#,
+			r#"{"name":"t","field":"number","op":"matches","value":"x"}"#,
+		] {
+			assert!(filter(bad).validate(&cols).is_err(), "{bad}");
+		}
+		// The predicate selects other rows than an equality on the same column and value.
+		let eq = filter(r#"{"name":"t","field":"body","op":"eq","value":"quorlat"}"#);
+		assert_ne!(f.fingerprint(), eq.fingerprint());
 	}
 
 	#[test]

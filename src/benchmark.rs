@@ -16,7 +16,7 @@ use crate::terminal::BenchUi;
 use crate::util::format_duration;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::valueprovider::{ValueProvider, ValueStream};
-use crate::vectorfilter::{FilterField, VectorFilter};
+use crate::vectorfilter::{FilterField, FilterOp, VectorFilter};
 use crate::vectorgt::{self, GroundTruth, RecallTally, VectorAnswer};
 use crate::workloads;
 use crate::{
@@ -511,42 +511,76 @@ impl Benchmark {
 		Ok(())
 	}
 
-	/// Index each distinct filter column of a `filter_index` vector scan.
+	/// Index each distinct filter column of a vector scan: every column a
+	/// `matches` filter reads, with a full-text index, which the match needs,
+	/// and with `filter_index`, every other one.
 	///
 	/// Untimed: it is schema setup for the legs, not the index under test. The
-	/// engine returns once the index serves queries. Returns the `(column,
-	/// index name)` pairs built, or `None` when the engine cannot index a
-	/// filter column — the scan is then reported as skipped, since measuring it
-	/// without the index would repeat the default scan under a misleading name.
+	/// engine returns once the index serves queries. Returns the indexes
+	/// built, or `None` when the engine cannot index a filter column — the
+	/// scan is then reported as skipped, since measuring it without the index
+	/// would repeat the default scan under a misleading name, or not run.
 	async fn build_filter_indexes<C>(
 		&self,
 		client: &Arc<C>,
 		scan_id: &str,
 		vq: &VectorQuerySpec,
 		columns: &Columns,
-	) -> Result<Option<Vec<(String, String)>>>
+	) -> Result<Option<Vec<FilterIndex>>>
 	where
 		C: BenchmarkClient + Send + Sync,
 	{
-		let mut built: Vec<(String, String)> = Vec::new();
+		let mut built: Vec<FilterIndex> = Vec::new();
 		for filter in &vq.filters {
-			if built.iter().any(|(column, _)| column == &filter.field) {
+			let full_text = filter.op == FilterOp::Matches;
+			if (!full_text && !vq.filter_index)
+				|| built.iter().any(|b| b.column == filter.field && b.full_text == full_text)
+			{
 				continue;
 			}
 			let Some(ty) = filter.column_type(columns) else {
 				// `validate` accepts only the types `column_type` maps.
 				bail!("vector filter `{}` has no usable column type", filter.name);
 			};
-			let name = filter_index_name(scan_id, &filter.field);
+			let name = if full_text {
+				format!("{}_fulltext", filter_index_name(scan_id, &filter.field))
+			} else {
+				filter_index_name(scan_id, &filter.field)
+			};
 			let started = Instant::now();
-			match client.build_filter_index(&filter.field, ty, &name).await {
+			let result = if full_text {
+				let spec = Index {
+					skip: false,
+					name: None,
+					indexed_only: false,
+					fields: vec![filter.field.clone()],
+					unique: None,
+					index_type: Some("fulltext".to_string()),
+				};
+				match client.build_index(&spec, &name).await {
+					Ok(()) => client.await_index_queryable(&name, self.operation_timeout).await,
+					Err(e) => Err(e),
+				}
+			} else {
+				client.build_filter_index(&filter.field, ty, &name).await
+			};
+			match result {
 				Ok(()) => {
 					self.bench_ui.println_muted(&format!(
-						"  filter index on `{}` built in {}",
+						"  {} index on `{}` built in {}",
+						if full_text {
+							"full-text"
+						} else {
+							"filter"
+						},
 						filter.field,
 						format_duration(started.elapsed())
 					));
-					built.push((filter.field.clone(), name));
+					built.push(FilterIndex {
+						column: filter.field.clone(),
+						name,
+						full_text,
+					});
 				}
 				Err(e) if e.to_string() == NOT_SUPPORTED_ERROR => {
 					self.drop_filter_indexes(client, &built).await?;
@@ -562,16 +596,16 @@ impl Benchmark {
 	}
 
 	/// Drop what [`Self::build_filter_indexes`] built.
-	async fn drop_filter_indexes<C>(
-		&self,
-		client: &Arc<C>,
-		built: &[(String, String)],
-	) -> Result<()>
+	async fn drop_filter_indexes<C>(&self, client: &Arc<C>, built: &[FilterIndex]) -> Result<()>
 	where
 		C: BenchmarkClient + Send + Sync,
 	{
-		for (column, name) in built {
-			client.drop_filter_index(column, name).await?;
+		for index in built {
+			if index.full_text {
+				client.drop_index(&index.name).await?;
+			} else {
+				client.drop_filter_index(&index.column, &index.name).await?;
+			}
 		}
 		Ok(())
 	}
@@ -812,7 +846,8 @@ impl Benchmark {
 				// index and before any leg, so every leg — the unfiltered
 				// baseline included — runs against the same schema. Not built
 				// when the legs will not run.
-				let filter_indexes = if vq.filter_index
+				let filter_indexes = if (vq.filter_index
+					|| vq.filters.iter().any(|f| f.op == FilterOp::Matches))
 					&& (!vq.index_strategy.requires_index() || vec_index_build.is_some())
 				{
 					self.build_filter_indexes(&clients[0], &id, &vq, &vp.columns()).await?
@@ -2106,6 +2141,14 @@ fn shares_index(scan: &Scan, next: &Scan) -> bool {
 /// definitions, rather than building its own.
 fn reuses_index(live: &[(String, Index)], scan: &Scan) -> bool {
 	!live.is_empty() && live == standing_indexes(scan).as_slice()
+}
+
+/// An index [`Benchmark::build_filter_indexes`] built for a vector scan's filters.
+struct FilterIndex {
+	column: String,
+	name: String,
+	/// A full-text index, for a `matches` filter, rather than a filter column's.
+	full_text: bool,
 }
 
 fn filter_index_name(scan_id: &str, column: &str) -> String {

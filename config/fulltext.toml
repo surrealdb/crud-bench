@@ -2,10 +2,13 @@
 # over a corpus whose terms are spread the way natural text spreads them: a
 # few words in nearly every document, most in few.
 #
-# Corpus — `body` holds 100 words drawn from a 20,000-word vocabulary whose
-# rank-r word is drawn with probability proportional to 1/r (`corpus:` value
-# type), and four planted terms at fixed document frequencies, which the
-# queries below search for:
+# Corpus — `body` holds 20 to 200 words drawn from a 20,000-word vocabulary
+# whose rank-r word is drawn with probability proportional to 1/r (`corpus:`
+# value type), and four planted terms at fixed document frequencies, which the
+# queries below search for. Documents differ in length, as text does, so BM25
+# spreads a term's scores across them; at one length a term's score would take
+# only as many values as its frequency does, and a ranked query's top k would
+# end in a tie of thousands, flattering any engine that stops at its k-th score.
 #
 #   tier     term      documents
 #   stop     kolvak    92%   (a stop-word-like term: almost every document)
@@ -13,7 +16,7 @@
 #   mid      quorlat    7%
 #   rare     vexin      0.6%
 #
-# `title` holds 8 words of the same vocabulary, with its own planted terms:
+# `title` holds 4 to 12 words of the same vocabulary, with its own planted terms:
 # zelmor in 30% of titles, quorlat in 5% and vexin in 1%. The cross-field
 # scans at the end search both fields, each through its own index.
 #
@@ -54,9 +57,9 @@ seed = 20261119
 # ============================================================================
 
 [value]
-body = "corpus:100;20000;1.0;kolvak@0.92,trimbol@0.6,quorlat@0.07,vexin@0.006"
+body = "corpus:20..200;20000;1.0;kolvak@0.92,trimbol@0.6,quorlat@0.07,vexin@0.006"
 n = "int:1..1000"
-title = "corpus:8;20000;1.0;zelmor@0.3,quorlat@0.05,vexin@0.01"
+title = "corpus:4..12;20000;1.0;zelmor@0.3,quorlat@0.05,vexin@0.01"
 # ============================================================================
 # fulltext_stop_count
 # ============================================================================
