@@ -13,17 +13,24 @@
 #   mid      quorlat    7%
 #   rare     vexin      0.6%
 #
+# `title` holds 8 words of the same vocabulary, with its own planted terms:
+# zelmor in 30% of titles, quorlat in 5% and vexin in 1%. The cross-field
+# scans at the end search both fields, each through its own index.
+#
 # The planted terms spell no vocabulary word and survive English stemming
 # unchanged, so every engine indexes them as written.
 #
-# Index — every scan reads one full-text index on `body`, shared by name
-# (`with_index.name`), so it is built once before the first scan and dropped
-# after the last. `indexed_only` skips the legs without it: a full-text
-# predicate without its index tokenises every row.
+# Index — every single-field scan reads one full-text index on `body`, shared
+# by name (`with_index.name`), so it is built once before the first scan and
+# dropped after the last. The cross-field scans share it with a second index on
+# `title` (`with_indexes`). `indexed_only` skips the legs without them: a
+# full-text predicate without its index tokenises every row.
 #
 # Engines — SurrealDB (BM25, `search::score`), PostgreSQL (`tsvector`, GIN,
 # `ts_rank`), MySQL (InnoDB FULLTEXT, `MATCH ... AGAINST` relevance), MongoDB
-# (`text` index, `textScore`) and Neo4j (unranked shapes only). Each engine
+# (`text` index, `textScore`; one text index a collection, which `$text`
+# cannot point at one field of, so no cross-field scans) and Neo4j (unranked
+# single-field shapes only). Each engine
 # scores with its own model, analyzer and stemming; compare an engine with
 # itself across shapes and builds, and read cross-engine numbers as different
 # features answering the same question, not a head-to-head of one algorithm.
@@ -32,7 +39,8 @@
 # ten best matches by score. For the common term, also the hundred best, the
 # ten best after the first thousand, the ten best of a filtered match, and the
 # ten best while 15% and 50% of iterations also write. Then ranked AND and OR
-# of two terms, across tiers.
+# of two terms, across tiers, and ranked AND and OR of one term in `body` and
+# one in `title`, ordered by the sum of the two fields' scores.
 #
 # Ranked shapes answer in well under a millisecond with a warm index, so they
 # run at one client and one thread: at the default concurrency their latency
@@ -48,6 +56,7 @@ seed = 20261119
 [value]
 body = "corpus:100;20000;1.0;kolvak@0.92,trimbol@0.6,quorlat@0.07,vexin@0.006"
 n = "int:1..1000"
+title = "corpus:8;20000;1.0;zelmor@0.3,quorlat@0.05,vexin@0.01"
 # ============================================================================
 # fulltext_stop_count
 # ============================================================================
@@ -668,4 +677,139 @@ name = "body_fulltext"
 fields = ["body"]
 index_type = "fulltext"
 indexed_only = true
+
+# ============================================================================
+# fulltext_cross_and_common_title_top10
+# ============================================================================
+[[scans]]
+id = "fulltext_cross_and_common_title_top10"
+name = "select(id) where(body @@ common AND title @@ 30%) order(score DESC) limit(10)"
+projection = "ID"
+iterations = 1000
+clients = 1
+threads = 1
+limit = 10
+
+[scans.condition]
+sql = "to_tsvector('english', body) @@ to_tsquery('english', 'trimbol') AND to_tsvector('english', title) @@ to_tsquery('english', 'zelmor')"
+mysql = "MATCH(body) AGAINST('trimbol' IN NATURAL LANGUAGE MODE) AND MATCH(title) AGAINST('zelmor' IN NATURAL LANGUAGE MODE)"
+surrealdb = "body @1@ 'trimbol' AND title @2@ 'zelmor'"
+
+[scans.order_by]
+sql = "ts_rank(to_tsvector('english', body), to_tsquery('english', 'trimbol')) + ts_rank(to_tsvector('english', title), to_tsquery('english', 'zelmor')) DESC"
+mysql = "MATCH(body) AGAINST('trimbol' IN NATURAL LANGUAGE MODE) + MATCH(title) AGAINST('zelmor' IN NATURAL LANGUAGE MODE) DESC"
+surrealdb = "score DESC"
+
+[scans.extra_fields]
+surrealdb = "search::score(1) + search::score(2) AS score"
+
+[scans.with_index]
+name = "body_fulltext"
+fields = ["body"]
+index_type = "fulltext"
+indexed_only = true
+
+[[scans.with_indexes]]
+name = "title_fulltext"
+fields = ["title"]
+index_type = "fulltext"
+
+# ============================================================================
+# fulltext_cross_and_mid_title_rare_top10
+# ============================================================================
+[[scans]]
+id = "fulltext_cross_and_mid_title_rare_top10"
+name = "select(id) where(body @@ mid AND title @@ 1%) order(score DESC) limit(10)"
+projection = "ID"
+iterations = 1000
+clients = 1
+threads = 1
+limit = 10
+
+[scans.condition]
+sql = "to_tsvector('english', body) @@ to_tsquery('english', 'quorlat') AND to_tsvector('english', title) @@ to_tsquery('english', 'vexin')"
+mysql = "MATCH(body) AGAINST('quorlat' IN NATURAL LANGUAGE MODE) AND MATCH(title) AGAINST('vexin' IN NATURAL LANGUAGE MODE)"
+surrealdb = "body @1@ 'quorlat' AND title @2@ 'vexin'"
+
+[scans.order_by]
+sql = "ts_rank(to_tsvector('english', body), to_tsquery('english', 'quorlat')) + ts_rank(to_tsvector('english', title), to_tsquery('english', 'vexin')) DESC"
+mysql = "MATCH(body) AGAINST('quorlat' IN NATURAL LANGUAGE MODE) + MATCH(title) AGAINST('vexin' IN NATURAL LANGUAGE MODE) DESC"
+surrealdb = "score DESC"
+
+[scans.extra_fields]
+surrealdb = "search::score(1) + search::score(2) AS score"
+
+[scans.with_index]
+name = "body_fulltext"
+fields = ["body"]
+index_type = "fulltext"
+indexed_only = true
+
+[[scans.with_indexes]]
+name = "title_fulltext"
+fields = ["title"]
+index_type = "fulltext"
+
+# ============================================================================
+# fulltext_cross_or_mid_top10
+# ============================================================================
+[[scans]]
+id = "fulltext_cross_or_mid_top10"
+name = "select(id) where(body @@ mid OR title @@ mid) order(score DESC) limit(10)"
+projection = "ID"
+iterations = 1000
+clients = 1
+threads = 1
+limit = 10
+
+[scans.condition]
+sql = "to_tsvector('english', body) @@ to_tsquery('english', 'quorlat') OR to_tsvector('english', title) @@ to_tsquery('english', 'quorlat')"
+mysql = "MATCH(body) AGAINST('quorlat' IN NATURAL LANGUAGE MODE) OR MATCH(title) AGAINST('quorlat' IN NATURAL LANGUAGE MODE)"
+surrealdb = "body @1@ 'quorlat' OR title @2@ 'quorlat'"
+
+[scans.order_by]
+sql = "ts_rank(to_tsvector('english', body), to_tsquery('english', 'quorlat')) + ts_rank(to_tsvector('english', title), to_tsquery('english', 'quorlat')) DESC"
+mysql = "MATCH(body) AGAINST('quorlat' IN NATURAL LANGUAGE MODE) + MATCH(title) AGAINST('quorlat' IN NATURAL LANGUAGE MODE) DESC"
+surrealdb = "score DESC"
+
+[scans.extra_fields]
+surrealdb = "search::score(1) + search::score(2) AS score"
+
+[scans.with_index]
+name = "body_fulltext"
+fields = ["body"]
+index_type = "fulltext"
+indexed_only = true
+
+[[scans.with_indexes]]
+name = "title_fulltext"
+fields = ["title"]
+index_type = "fulltext"
+
+# ============================================================================
+# fulltext_cross_or_mid_count
+# ============================================================================
+[[scans]]
+id = "fulltext_cross_or_mid_count"
+name = "count() where(body @@ mid OR title @@ mid)"
+projection = "COUNT"
+iterations = 200
+clients = 1
+threads = 1
+
+[scans.condition]
+sql = "to_tsvector('english', body) @@ to_tsquery('english', 'quorlat') OR to_tsvector('english', title) @@ to_tsquery('english', 'quorlat')"
+mysql = "MATCH(body) AGAINST('quorlat' IN NATURAL LANGUAGE MODE) OR MATCH(title) AGAINST('quorlat' IN NATURAL LANGUAGE MODE)"
+surrealdb = "body @1@ 'quorlat' OR title @2@ 'quorlat'"
+
+[scans.with_index]
+name = "body_fulltext"
+fields = ["body"]
+index_type = "fulltext"
+indexed_only = true
+
+[[scans.with_indexes]]
+name = "title_fulltext"
+fields = ["title"]
+index_type = "fulltext"
 
