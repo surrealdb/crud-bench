@@ -21,8 +21,13 @@ pub(crate) fn sample_includes_writes(sample: u32, ratio: f64) -> bool {
 	(sample.wrapping_mul(2654435761) % 1000) < threshold
 }
 
-fn indexed_field_name(scan: &Scan) -> &str {
-	scan.with_index.as_ref().and_then(|i| i.fields.first()).map(|s| s.as_str()).unwrap_or("number")
+const DEFAULT_SWAP_FIELDS: &[&str] = &["number"];
+
+fn indexed_field_names(scan: &Scan) -> Vec<&str> {
+	match scan.with_index.as_ref() {
+		Some(i) if !i.fields.is_empty() => i.fields.iter().map(|s| s.as_str()).collect(),
+		_ => DEFAULT_SWAP_FIELDS.to_vec(),
+	}
 }
 
 /// Run one mixed sample: full scan (including `expect` assertion), then optional compensating swaps.
@@ -90,7 +95,7 @@ async fn compensating_swap_u32<C: BenchmarkClient>(
 	if ka == kb {
 		return Ok(());
 	}
-	let field = indexed_field_name(scan);
+	let fields = indexed_field_names(scan);
 
 	let va_res = client.read_u32(ka).await;
 	let vb_res = client.read_u32(kb).await;
@@ -103,11 +108,17 @@ async fn compensating_swap_u32<C: BenchmarkClient>(
 		(Ok(va), Ok(vb)) => (va.into(), vb.into()),
 	};
 
-	let a_val = va.get_field(field).cloned();
-	let b_val = vb.get_field(field).cloned();
-	if let (Some(a), Some(b)) = (a_val, b_val) {
-		replace_field(&mut va, field, b);
-		replace_field(&mut vb, field, a);
+	let mut swapped = false;
+	for field in fields {
+		let a_val = va.get_field(field).cloned();
+		let b_val = vb.get_field(field).cloned();
+		if let (Some(a), Some(b)) = (a_val, b_val) {
+			replace_field(&mut va, field, b);
+			replace_field(&mut vb, field, a);
+			swapped = true;
+		}
+	}
+	if swapped {
 		client.update_u32(ka, va).await?;
 		client.update_u32(kb, vb).await?;
 	}
@@ -123,7 +134,7 @@ async fn compensating_swap_string<C: BenchmarkClient>(
 	if ka == kb {
 		return Ok(());
 	}
-	let field = indexed_field_name(scan);
+	let fields = indexed_field_names(scan);
 
 	let va_res = client.read_string(ka.clone()).await;
 	let vb_res = client.read_string(kb.clone()).await;
@@ -136,11 +147,17 @@ async fn compensating_swap_string<C: BenchmarkClient>(
 		(Ok(va), Ok(vb)) => (va.into(), vb.into()),
 	};
 
-	let a_val = va.get_field(field).cloned();
-	let b_val = vb.get_field(field).cloned();
-	if let (Some(a), Some(b)) = (a_val, b_val) {
-		replace_field(&mut va, field, b);
-		replace_field(&mut vb, field, a);
+	let mut swapped = false;
+	for field in fields {
+		let a_val = va.get_field(field).cloned();
+		let b_val = vb.get_field(field).cloned();
+		if let (Some(a), Some(b)) = (a_val, b_val) {
+			replace_field(&mut va, field, b);
+			replace_field(&mut vb, field, a);
+			swapped = true;
+		}
+	}
+	if swapped {
 		client.update_string(ka, va).await?;
 		client.update_string(kb, vb).await?;
 	}
