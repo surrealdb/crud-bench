@@ -14,6 +14,13 @@ pub(crate) trait Dialect {
 	fn escape_field(field: String) -> String {
 		field
 	}
+
+	/// A full-text match of the single-word string `literal` against the text
+	/// column `field`, already escaped: SurrealQL's `@@`, served by a full-text
+	/// index on the column.
+	fn full_text_match(field: String, literal: String) -> String {
+		format!("{field} @@ {literal}")
+	}
 }
 
 // --------------------------------------------------
@@ -33,6 +40,12 @@ pub(crate) struct AnsiSqlDialect();
 impl Dialect for AnsiSqlDialect {
 	fn escape_field(field: String) -> String {
 		format!("\"{field}\"")
+	}
+
+	/// The `english` text-search configuration the full-text index on the
+	/// column is built with, so the GIN index serves the match.
+	fn full_text_match(field: String, literal: String) -> String {
+		format!("to_tsvector('english', {field}) @@ plainto_tsquery('english', {literal})")
 	}
 }
 
@@ -436,6 +449,14 @@ impl SurrealDBDialect {
 		Ok(String::new())
 	}
 
+	/// The fields a scan adds to its projection, each after a comma; empty for none.
+	pub fn extra_fields(scan: &Scan) -> String {
+		match scan.extra_fields.as_ref().and_then(|f| f.surrealdb.as_deref()) {
+			Some(fields) if !fields.trim().is_empty() => format!(", {fields}"),
+			_ => String::new(),
+		}
+	}
+
 	/// Constructs the ORDER BY clause for [S]can tests
 	pub fn order_by_clause(scan: &Scan) -> Result<String> {
 		match &scan.order_by {
@@ -532,6 +553,8 @@ mod mongodb_tests {
 
 	fn index(fields: &[&str]) -> Index {
 		Index {
+			name: None,
+			indexed_only: false,
 			skip: false,
 			fields: fields.iter().map(|s| s.to_string()).collect(),
 			unique: None,
@@ -568,6 +591,8 @@ mod tests {
 
 	fn index(fields: &[&str]) -> Index {
 		Index {
+			name: None,
+			indexed_only: false,
 			skip: false,
 			fields: fields.iter().map(|s| s.to_string()).collect(),
 			unique: None,

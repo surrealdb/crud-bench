@@ -387,7 +387,10 @@ pub(crate) fn compute(
 	if queries.is_empty() {
 		bail!("ground truth: query set is empty");
 	}
-	if vp.seed().is_none() {
+	// An unfiltered leg on a `vector_file:` column reads only the file, so it
+	// needs no seed; anything else rebuilds generated columns, which do.
+	let from_file = request.filter.is_none() && vp.vector_file_rows_for(&request.field)?.is_some();
+	if vp.seed().is_none() && !from_file {
 		bail!(
 			"ground truth needs a reproducible corpus: set `seed` in the benchmark TOML or pass --corpus-seed"
 		);
@@ -639,11 +642,53 @@ mod test {
 		assert_eq!(few.as_slice(), &many[..3]);
 	}
 
+	/// An unfiltered leg on a `vector_file:` column reads only the file, so it
+	/// needs no seed; a filter reads generated columns, so it still does.
+	#[test]
+	fn file_vectors_need_a_seed_only_when_filtered() {
+		let path = crate::valueprovider::test::write_fbin("gt-seedless", 20, 3);
+		let template = format!(
+			r#"{{ "tier": "int_enum:0,1", "embedding": "vector_file:{}" }}"#,
+			path.display()
+		);
+		let vp = ValueProvider::new(&template).unwrap();
+		assert!(vp.seed().is_none());
+		let queries = vp.generate_vectors("embedding", 2, 0).unwrap();
+		let request = Request {
+			field: "embedding".to_string(),
+			samples: 10,
+			top_k: 3,
+			metric: VectorDistance::Euclidean,
+			corpus_seed: 0,
+			query_seed: 0,
+			query_count: queries.len(),
+			template: template.clone(),
+			filter: None,
+		};
+		// Rows grow along every axis, so the nearest corpus rows to any query
+		// from the end of the file are the last ones the corpus took.
+		let gt = compute(&request, &vp, &queries).unwrap();
+		for (qi, row) in gt.neighbours.iter().enumerate() {
+			let got: Vec<u32> = row.iter().take(3).map(|n| n.sample).collect();
+			assert_eq!(got, vec![9, 8, 7], "query {qi}");
+		}
+		let filtered = Request {
+			filter: Some(
+				serde_json::from_str(r#"{"name":"t0","field":"tier","op":"eq","value":0}"#)
+					.unwrap(),
+			),
+			..request
+		};
+		let err = compute(&filtered, &vp, &queries).unwrap_err().to_string();
+		assert!(err.contains("ground truth needs a reproducible corpus"), "{err}");
+		std::fs::remove_file(path).unwrap();
+	}
+
 	#[test]
 	fn rejects_non_vector_field() {
 		let vp = provider();
 		let err = vp.generate_vectors("name", 1, 7).unwrap_err().to_string();
-		assert!(err.contains("not a `vector:<dim>` column"), "{err}");
+		assert!(err.contains("not a `vector:<dim>` or `vector_file:<path>` column"), "{err}");
 	}
 
 	/// The parallel path partitions the corpus, so it has to agree with a

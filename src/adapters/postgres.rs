@@ -98,7 +98,75 @@ fn calculate_postgres_memory() -> (u64, u64, u64, u64, u64, u64) {
 	)
 }
 
+/// Parallel workers Postgres runs at once (`max_parallel_workers`, left at its
+/// default of 8).
+const MAX_PARALLEL_WORKERS: u64 = 8;
+
+/// Size of the container's `/dev/shm` in MB.
+///
+/// Postgres keeps `shared_buffers` in an anonymous mapping, but allocates the
+/// dynamic shared memory of parallel queries and parallel index builds as
+/// POSIX segments in `/dev/shm`. Docker limits that to 64 MB, which a parallel
+/// hash or sort sized by an optimised `work_mem` exceeds at once, and the query
+/// fails with `could not resize shared memory segment ... No space left on
+/// device`.
+///
+/// Each parallel process may use `work_mem` times `hash_mem_multiplier` (2 by
+/// default) for a hash, and an index build adds `maintenance_work_mem`. `/dev/shm`
+/// is a tmpfs, so the size is a limit, not a reservation: it is capped at half
+/// of the machine's memory, and never smaller than 1 GB.
+fn shm_size_mb(work_mem_mb: u64, maintenance_work_mem_mb: u64, total_mb: u64) -> u64 {
+	let needed = work_mem_mb * 2 * (MAX_PARALLEL_WORKERS + 1) + maintenance_work_mem_mb;
+	needed.min(total_mb / 2).max(1024)
+}
+
+/// Stock Postgres: the official image, with no extensions.
+///
+/// Every image is pinned by digest, because a tag can be rebuilt in place on a
+/// new base or package build, and would then run a different server.
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
+	docker_params(
+		options,
+		"postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42",
+		None,
+	)
+}
+
+/// Postgres with pgvector: the image the pgvector project publishes, with
+/// Postgres 18.6 and pgvector 0.8.7.
+///
+/// It is not built on the `postgres:18.6` image above. Its Postgres 18.6
+/// package is the Debian 12 build (`18.6-1.pgdg12+2`), where the official
+/// image's is the Debian 13 build (`18.6-1.pgdg13+2`).
+pub(crate) fn docker_pgvector(options: &Benchmark) -> DockerParams {
+	docker_params(
+		options,
+		"pgvector/pgvector:0.8.7-pg18@sha256:c29f30688a9ad961691bdf0ec1650717cc132a5814619d80f80463d6e4c42e47",
+		None,
+	)
+}
+
+/// Postgres with pgvector and pgvectorscale: the [`docker_pgvector`] image,
+/// with the official pgvectorscale 0.9.1 package installed and nothing else.
+///
+/// Timescale publishes pgvectorscale only in its `timescaledb-ha` image, whose
+/// Postgres is a different build, so crud-bench builds this image itself from
+/// `docker/postgres-pgvectorscale.Dockerfile`. HNSW legs then run on the same
+/// server as on `postgres+pgvector`. pgvectorscale needs no preload.
+pub(crate) fn docker_pgvectorscale(options: &Benchmark) -> DockerParams {
+	docker_params(
+		options,
+		"crud-bench/postgres-pgvectorscale:0.9.1-pg18",
+		Some(include_str!("../../docker/postgres-pgvectorscale.Dockerfile")),
+	)
+}
+
+/// Docker parameters for a Postgres `image`, built from `dockerfile` if given.
+fn docker_params(
+	options: &Benchmark,
+	image: &'static str,
+	dockerfile: Option<&'static str>,
+) -> DockerParams {
 	// Calculate memory allocation
 	let (
 		shared_buffers_gb,
@@ -108,6 +176,13 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		max_wal_gb,
 		min_wal_gb,
 	) = calculate_postgres_memory();
+	// Size `/dev/shm` for the configuration the server runs with. Without
+	// `--optimised`, `work_mem` is 4 MB and `maintenance_work_mem` is 64 MB.
+	let total_mb = Config::new().total_mb;
+	let shm_mb = match options.optimised {
+		true => shm_size_mb(work_mem_mb, maintenance_work_mem_gb * 1024, total_mb),
+		false => shm_size_mb(4, 64, total_mb),
+	};
 	// `synchronous_commit=on` makes every commit force a `write(2)` of the WAL
 	// to the OS page cache before returning; `fsync` then carries the `--sync`
 	// flag: `on` fsyncs that WAL to disk per commit (full durability), `off`
@@ -123,15 +198,10 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	};
 	// Return Docker parameters
 	DockerParams {
-		// `pgvector/pgvector` is the upstream pgvector image — same upstream
-		// Postgres binaries as `postgres:*` with the `vector` extension
-		// pre-installed. Required by the vector-search benchmark; harmless
-		// for non-vector workloads (the extension is only created when the
-		// schema declares a `FloatVector` column, see `startup`).
-		image: "pgvector/pgvector:pg17",
-		pre_args:
-			"--ulimit nofile=65536:65536 --shm-size=4g -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
-				.to_string(),
+		image,
+		pre_args: format!(
+			"--ulimit nofile=65536:65536 --shm-size={shm_mb}m -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres"
+		),
 		post_args: match options.optimised {
 			// Optimised configuration
 			true => format!(
@@ -157,11 +227,33 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				-c synchronous_commit=on"
 			),
 		},
-		data_path: Some("/var/lib/postgresql/data"),
+		// From Postgres 18 the images keep their data in a versioned directory
+		// under `/var/lib/postgresql`, and refuse a mount at the old `data` path.
+		data_path: Some("/var/lib/postgresql"),
+		dockerfile,
 	}
 }
 
-pub(crate) struct PostgresClientProvider(KeyType, Columns, String);
+/// The extensions a Postgres server has installed, which set the vector
+/// indexes it can serve.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Extensions {
+	/// Stock Postgres, which has no vector type.
+	None,
+	/// pgvector, whose `hnsw` index serves HNSW legs.
+	Pgvector,
+	/// pgvector and pgvectorscale, whose `diskann` index serves DiskANN legs.
+	Pgvectorscale,
+}
+
+pub(crate) struct PostgresClientProvider(KeyType, Columns, String, Extensions);
+
+impl PostgresClientProvider {
+	/// Sets the extensions the server has installed.
+	pub(crate) fn with_extensions(self, extensions: Extensions) -> Self {
+		Self(self.0, self.1, self.2, extensions)
+	}
+}
 
 impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 	/// Initiates a new datastore benchmarking engine
@@ -169,7 +261,7 @@ impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 		// Get the custom endpoint if specified
 		let url = options.endpoint.as_deref().unwrap_or(DEFAULT).to_owned();
 		// Create the client provider
-		Ok(Self(kt, columns, url))
+		Ok(Self(kt, columns, url, Extensions::None))
 	}
 	/// Creates a new client for this benchmarking engine
 	async fn create_client(&self) -> Result<PostgresClient> {
@@ -186,6 +278,7 @@ impl BenchmarkEngine<PostgresClient> for PostgresClientProvider {
 			client,
 			kt: self.0,
 			columns: self.1.clone(),
+			extensions: self.3,
 		})
 	}
 }
@@ -194,6 +287,8 @@ pub(crate) struct PostgresClient {
 	client: Client,
 	kt: KeyType,
 	columns: Columns,
+	/// The extensions the server has installed.
+	extensions: Extensions,
 }
 
 impl BenchmarkClient for PostgresClient {
@@ -201,11 +296,23 @@ impl BenchmarkClient for PostgresClient {
 	type ReadRow = BenchValue;
 
 	async fn startup(&self) -> Result<()> {
-		// Ensure pgvector is installed when the schema declares a vector column.
-		// Safe to issue unconditionally; CREATE EXTENSION IF NOT EXISTS is a no-op
-		// when the extension is already present.
+		// Create the extensions when the schema declares a vector column.
+		// CREATE EXTENSION IF NOT EXISTS is a no-op when the extension is
+		// already present.
 		if self.columns.0.iter().any(|(_, t)| matches!(t, ColumnType::FloatVector(_))) {
-			self.client.batch_execute("CREATE EXTENSION IF NOT EXISTS vector;").await?;
+			match self.extensions {
+				// Stock Postgres stores vectors as `REAL[]`, and declines vector scans
+				Extensions::None => {}
+				Extensions::Pgvector => {
+					self.client.batch_execute("CREATE EXTENSION IF NOT EXISTS vector;").await?;
+				}
+				Extensions::Pgvectorscale => {
+					self.client.batch_execute("CREATE EXTENSION IF NOT EXISTS vector;").await?;
+					self.client
+						.batch_execute("CREATE EXTENSION IF NOT EXISTS vectorscale;")
+						.await?;
+				}
+			}
 		}
 		if self.columns.0.iter().any(|(_, t)| matches!(t, ColumnType::Point)) {
 			self.client
@@ -243,6 +350,9 @@ impl BenchmarkClient for PostgresClient {
 					ColumnType::Decimal => format!("{n} NUMERIC(38, 10) NOT NULL"),
 					ColumnType::Bool => format!("{n} BOOL NOT NULL"),
 					ColumnType::Bytes => format!("{n} BYTEA NOT NULL"),
+					ColumnType::FloatVector(_) if self.extensions == Extensions::None => {
+						format!("{n} REAL[] NOT NULL")
+					}
 					ColumnType::FloatVector(dim) => format!("{n} vector({dim}) NOT NULL"),
 					ColumnType::Point => format!("{n} POINT NOT NULL"),
 				}
@@ -368,6 +478,8 @@ impl BenchmarkClient for PostgresClient {
 			_ => None,
 		};
 		let spec = Index {
+			name: None,
+			indexed_only: false,
 			skip: false,
 			fields: vec![column.to_string()],
 			unique: None,
@@ -405,6 +517,10 @@ impl BenchmarkClient for PostgresClient {
 		_dim: usize,
 		name: &str,
 	) -> Result<()> {
+		// Stock Postgres has no vector index
+		if self.extensions == Extensions::None {
+			bail!(crate::benchmark::NOT_SUPPORTED_ERROR)
+		}
 		let fields = spec.fields.join(", ");
 		let ops = pgvector_ops_for(vq.distance);
 		let stmt = match vq.index_strategy {
@@ -416,9 +532,27 @@ impl BenchmarkClient for PostgresClient {
 			} => format!(
 				"CREATE INDEX {name} ON record USING hnsw ({fields} {ops}) WITH (m = {m}, ef_construction = {ef_construction})"
 			),
+			// pgvectorscale has no operator class for L1.
 			VectorIndexStrategy::DiskAnn {
 				..
-			} => bail!(crate::benchmark::NOT_SUPPORTED_ERROR),
+			} if self.extensions != Extensions::Pgvectorscale
+				|| vq.distance == VectorDistance::Manhattan =>
+			{
+				bail!(crate::benchmark::NOT_SUPPORTED_ERROR)
+			}
+			// The index uses the `plain` layout, which searches over the full
+			// vectors, so recall follows `l_search`. The default
+			// `memory_optimized` layout searches over 2-bit codes, and its
+			// recall is set by `diskann.query_rescore` instead, which caps at
+			// 1000: at 1M x 768 that reaches only 0.72 recall@10.
+			VectorIndexStrategy::DiskAnn {
+				degree,
+				l_build,
+				alpha,
+				..
+			} => format!(
+				"CREATE INDEX {name} ON record USING diskann ({fields} {ops}) WITH (num_neighbors = {degree}, search_list_size = {l_build}, max_alpha = {alpha}, storage_layout = plain)"
+			),
 		};
 		self.client.execute(&stmt, &[]).await?;
 		// `hnsw.ef_search` is deliberately not set here. It is a per-session
@@ -434,9 +568,23 @@ impl BenchmarkClient for PostgresClient {
 	/// connection before the leg runs, and lets a sweep change it between legs
 	/// without rebuilding the index.
 	async fn prepare_vector_search(&self, vq: &VectorQuerySpec) -> Result<()> {
-		if matches!(vq.index_strategy, VectorIndexStrategy::Hnsw { .. }) {
-			let ef_search = vq.index_strategy.search_value();
-			self.client.execute(&format!("SET hnsw.ef_search = {ef_search}"), &[]).await?;
+		let search = vq.index_strategy.search_value();
+		match vq.index_strategy {
+			VectorIndexStrategy::Hnsw {
+				..
+			} => {
+				self.client.execute(&format!("SET hnsw.ef_search = {search}"), &[]).await?;
+			}
+			// pgvectorscale takes the DiskANN search list from its own per-session
+			// GUC. The rescore count does not apply to the `plain` layout.
+			VectorIndexStrategy::DiskAnn {
+				..
+			} if self.extensions == Extensions::Pgvectorscale => {
+				self.client
+					.execute(&format!("SET diskann.query_search_list_size = {search}"), &[])
+					.await?;
+			}
+			_ => {}
 		}
 		Ok(())
 	}
@@ -505,6 +653,40 @@ impl BenchmarkClient for PostgresClient {
 }
 
 impl PostgresClient {
+	/// Bind a value to a parameter of `column_type`. Stock Postgres stores a
+	/// vector as `REAL[]`, so the vector is bound as a `float4` array there.
+	fn param(
+		&self,
+		column: &str,
+		column_type: &ColumnType,
+		v: &BenchValue,
+	) -> Result<Box<dyn ToSql + Sync + Send>> {
+		match (column_type, v) {
+			(ColumnType::FloatVector(dim), BenchValue::FloatVector(vec))
+				if self.extensions == Extensions::None =>
+			{
+				if vec.len() != *dim {
+					bail!("column {column}: vector dim mismatch ({} != {dim})", vec.len());
+				}
+				Ok(Box::new(vec.clone()))
+			}
+			(ColumnType::FloatVector(dim), BenchValue::Bytes(b))
+				if self.extensions == Extensions::None && b.len() == dim * 4 =>
+			{
+				Ok(Box::new(bytemuck::cast_slice::<u8, f32>(b).to_vec()))
+			}
+			_ => bench_to_postgres_param(column, column_type, v),
+		}
+	}
+
+	/// The type a parameter of `column_type` is cast to
+	fn column_type(&self, column_type: &ColumnType) -> &'static str {
+		match column_type {
+			ColumnType::FloatVector(_) if self.extensions == Extensions::None => "REAL[]",
+			_ => get_column_type(column_type),
+		}
+	}
+
 	fn consume(&self, row: Row, columns: bool) -> Result<BenchValue> {
 		let mut val: Vec<(String, BenchValue)> = Vec::new();
 		match self.kt {
@@ -564,6 +746,10 @@ impl PostgresClient {
 						let v: PgPoint = row.try_get(n.as_str())?;
 						BenchValue::Point(v.0, v.1)
 					}
+					ColumnType::FloatVector(_) if self.extensions == Extensions::None => {
+						let v: Vec<f32> = row.try_get(n.as_str())?;
+						BenchValue::FloatVector(v)
+					}
 					ColumnType::FloatVector(_) => {
 						let v: pgvector::Vector = row.try_get(n.as_str())?;
 						BenchValue::FloatVector(v.to_vec())
@@ -589,7 +775,7 @@ impl PostgresClient {
 				.find(|(k, _)| k == column)
 				.map(|(_, v)| v)
 				.ok_or_else(|| anyhow!("Missing value for column {column}"))?;
-			owned.push(bench_to_postgres_param(column, column_type, v)?);
+			owned.push(self.param(column, column_type, v)?);
 		}
 		let params: Vec<&(dyn ToSql + Sync)> =
 			owned.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
@@ -622,7 +808,7 @@ impl PostgresClient {
 				.find(|(k, _)| k == column)
 				.map(|(_, v)| v)
 				.ok_or_else(|| anyhow!("Missing value for column {column}"))?;
-			owned.push(bench_to_postgres_param(column, column_type, v)?);
+			owned.push(self.param(column, column_type, v)?);
 		}
 		let params: Vec<&(dyn ToSql + Sync)> =
 			owned.iter().map(|b| b.as_ref() as &(dyn ToSql + Sync)).collect();
@@ -692,6 +878,10 @@ impl PostgresClient {
 			.vector_query
 			.as_ref()
 			.ok_or_else(|| anyhow!("knn_scan: scan `{}` missing vector_query", scan.name))?;
+		// Stock Postgres has no vector distance operators
+		if self.extensions == Extensions::None {
+			bail!(crate::benchmark::NOT_SUPPORTED_ERROR)
+		}
 		let stm = pgvector_knn_sql(vq);
 		let q = pgvector::Vector::from(query.to_vec());
 		let res = self.client.query(&stm, &[&q]).await?;
@@ -732,7 +922,7 @@ impl PostgresClient {
 					index += 1;
 					// Add the column value with proper type conversion
 					if let Some(value) = obj.iter().find(|(k, _)| k == column).map(|(_, v)| v) {
-						let value = bench_to_postgres_param(column, column_type, value)?;
+						let value = self.param(column, column_type, value)?;
 						values.push(value);
 					} else {
 						return Err(anyhow::anyhow!("Missing value for column {column}"));
@@ -813,11 +1003,11 @@ impl PostgresClient {
 			if let BenchValue::Object(obj) = val {
 				for (column, column_type) in &self.columns.0 {
 					// Add parameter placeholder for this column
-					row.push(format!("${index}::{}", get_column_type(column_type)));
+					row.push(format!("${index}::{}", self.column_type(column_type)));
 					index += 1;
 					// Add the column value with proper type conversion
 					if let Some(value) = obj.iter().find(|(k, _)| k == column).map(|(_, v)| v) {
-						let value = bench_to_postgres_param(column, column_type, value)?;
+						let value = self.param(column, column_type, value)?;
 						values.push(value);
 					} else {
 						return Err(anyhow::anyhow!("Missing value for column {column}"));
@@ -942,5 +1132,22 @@ mod test {
 			)),
 			r#"SELECT id FROM record WHERE "status" IN ('draft', 'archived') ORDER BY "embedding" <=> $1 LIMIT 10"#
 		);
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn shm_size_covers_parallel_work_mem() {
+		// The 62 GB box the 5M run failed on: work_mem=1472MB, maintenance 5 GB
+		assert_eq!(shm_size_mb(1472, 5 * 1024, 64_000), 1472 * 2 * 9 + 5 * 1024);
+		// A larger budget than the box allows is capped at half of its memory
+		assert_eq!(shm_size_mb(1472, 8 * 1024, 62 * 1024), 31 * 1024);
+		// A box with room for the full parallel budget
+		assert_eq!(shm_size_mb(1472, 8 * 1024, 256 * 1024), 1472 * 2 * 9 + 8 * 1024);
+		// The default configuration still gets more than Docker's 64 MB
+		assert_eq!(shm_size_mb(4, 64, 62 * 1024), 1024);
 	}
 }

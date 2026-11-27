@@ -4,6 +4,8 @@ use sysinfo::System;
 pub(crate) struct Config {
 	/// Recommended memory allocation for database cache/buffer pools in GB
 	pub cache_gb: u64,
+	/// Total system memory in MB
+	pub total_mb: u64,
 }
 
 impl Config {
@@ -29,6 +31,7 @@ impl Config {
 		// Return configuration
 		Self {
 			cache_gb,
+			total_mb: total_memory / (1024 * 1024),
 		}
 	}
 }

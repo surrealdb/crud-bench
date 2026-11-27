@@ -34,6 +34,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			 --seed-provider-parameters seeds=127.0.0.1 {commitlog}"
 		),
 		data_path: Some("/var/lib/scylla"),
+		dockerfile: None,
 	}
 }
 
@@ -145,7 +146,6 @@ impl BenchmarkClient for ScylladbClient {
 		self.scan(scan).await
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.update_row(CqlValue::Int(key as i32), val).await
 	}
@@ -154,7 +154,6 @@ impl BenchmarkClient for ScylladbClient {
 		self.update_row(CqlValue::Text(key), val).await
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
 		self.delete(key as i32).await
 	}

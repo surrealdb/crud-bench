@@ -16,7 +16,7 @@ use crate::terminal::BenchUi;
 use crate::util::format_duration;
 use crate::valueprovider::{ColumnType, Columns};
 use crate::valueprovider::{ValueProvider, ValueStream};
-use crate::vectorfilter::{FilterField, VectorFilter};
+use crate::vectorfilter::{FilterField, FilterOp, VectorFilter};
 use crate::vectorgt::{self, GroundTruth, RecallTally, VectorAnswer};
 use crate::workloads;
 use crate::{
@@ -80,6 +80,29 @@ pub(crate) struct Window {
 	pub(crate) min: u32,
 	/// Samples after which the window closes even if time remains.
 	pub(crate) max: u32,
+	/// When non-zero, start at most this many samples and admit more only as
+	/// samples complete (see [`Iterations::admits`]). The warm-up runs this way,
+	/// so a leg whose queries are slow never has every worker start one at once.
+	pub(crate) ramp: u32,
+}
+
+/// How far past the warm-up's throughput times the window a leg's sample
+/// budget reaches, so a leg that speeds up once warm still fills its window.
+const WINDOW_BUDGET_HEADROOM: f64 = 1.5;
+
+impl Window {
+	/// The most samples the measured window should start: the warm-up's
+	/// throughput over the length of the window, with headroom, and within the
+	/// configured minimum and maximum. Without it every worker claims a sample
+	/// as the window opens, so a leg of queries that each take longer than the
+	/// window runs one per worker (thousands) rather than the few that fit.
+	pub(crate) fn budget(&self, warmup_ops: f64) -> u32 {
+		if !warmup_ops.is_finite() || warmup_ops <= 0.0 {
+			return self.max;
+		}
+		let fits = (warmup_ops * self.measure.as_secs_f64() * WINDOW_BUDGET_HEADROOM).ceil();
+		(fits.min(u32::MAX as f64) as u32).clamp(self.min.max(1), self.max.max(self.min.max(1)))
+	}
 }
 
 impl Iterations {
@@ -102,6 +125,20 @@ impl Iterations {
 		match self {
 			Self::Fixed(_) => None,
 			Self::Timed(w) => Some(w.measure.as_secs_f64()),
+		}
+	}
+
+	/// Whether a worker may start another sample, given how many have been
+	/// claimed and how many have completed. Always true unless the window
+	/// ramps: then at most `ramp` samples start at first, and each completion
+	/// admits two more, so a fast leg reaches every worker within a few round
+	/// trips while a slow one keeps only a handful of queries in flight.
+	fn admits(&self, claimed: u32, completed: u32) -> bool {
+		match self {
+			Self::Timed(w) if w.ramp > 0 => {
+				claimed < w.ramp.saturating_add(completed.saturating_mul(2))
+			}
+			_ => true,
 		}
 	}
 
@@ -269,6 +306,7 @@ impl Benchmark {
 				measure: Duration::from_secs_f64(args.measurement_time),
 				min: args.min_iterations,
 				max: args.max_iterations,
+				ramp: 0,
 			},
 			value_template: String::new(),
 			vector_filter_fields: Vec::new(),
@@ -473,42 +511,76 @@ impl Benchmark {
 		Ok(())
 	}
 
-	/// Index each distinct filter column of a `filter_index` vector scan.
+	/// Index each distinct filter column of a vector scan: every column a
+	/// `matches` filter reads, with a full-text index, which the match needs,
+	/// and with `filter_index`, every other one.
 	///
 	/// Untimed: it is schema setup for the legs, not the index under test. The
-	/// engine returns once the index serves queries. Returns the `(column,
-	/// index name)` pairs built, or `None` when the engine cannot index a
-	/// filter column — the scan is then reported as skipped, since measuring it
-	/// without the index would repeat the default scan under a misleading name.
+	/// engine returns once the index serves queries. Returns the indexes
+	/// built, or `None` when the engine cannot index a filter column — the
+	/// scan is then reported as skipped, since measuring it without the index
+	/// would repeat the default scan under a misleading name, or not run.
 	async fn build_filter_indexes<C>(
 		&self,
 		client: &Arc<C>,
 		scan_id: &str,
 		vq: &VectorQuerySpec,
 		columns: &Columns,
-	) -> Result<Option<Vec<(String, String)>>>
+	) -> Result<Option<Vec<FilterIndex>>>
 	where
 		C: BenchmarkClient + Send + Sync,
 	{
-		let mut built: Vec<(String, String)> = Vec::new();
+		let mut built: Vec<FilterIndex> = Vec::new();
 		for filter in &vq.filters {
-			if built.iter().any(|(column, _)| column == &filter.field) {
+			let full_text = filter.op == FilterOp::Matches;
+			if (!full_text && !vq.filter_index)
+				|| built.iter().any(|b| b.column == filter.field && b.full_text == full_text)
+			{
 				continue;
 			}
 			let Some(ty) = filter.column_type(columns) else {
 				// `validate` accepts only the types `column_type` maps.
 				bail!("vector filter `{}` has no usable column type", filter.name);
 			};
-			let name = filter_index_name(scan_id, &filter.field);
+			let name = if full_text {
+				format!("{}_fulltext", filter_index_name(scan_id, &filter.field))
+			} else {
+				filter_index_name(scan_id, &filter.field)
+			};
 			let started = Instant::now();
-			match client.build_filter_index(&filter.field, ty, &name).await {
+			let result = if full_text {
+				let spec = Index {
+					skip: false,
+					name: None,
+					indexed_only: false,
+					fields: vec![filter.field.clone()],
+					unique: None,
+					index_type: Some("fulltext".to_string()),
+				};
+				match client.build_index(&spec, &name).await {
+					Ok(()) => client.await_index_queryable(&name, self.operation_timeout).await,
+					Err(e) => Err(e),
+				}
+			} else {
+				client.build_filter_index(&filter.field, ty, &name).await
+			};
+			match result {
 				Ok(()) => {
 					self.bench_ui.println_muted(&format!(
-						"  filter index on `{}` built in {}",
+						"  {} index on `{}` built in {}",
+						if full_text {
+							"full-text"
+						} else {
+							"filter"
+						},
 						filter.field,
 						format_duration(started.elapsed())
 					));
-					built.push((filter.field.clone(), name));
+					built.push(FilterIndex {
+						column: filter.field.clone(),
+						name,
+						full_text,
+					});
 				}
 				Err(e) if e.to_string() == NOT_SUPPORTED_ERROR => {
 					self.drop_filter_indexes(client, &built).await?;
@@ -524,16 +596,16 @@ impl Benchmark {
 	}
 
 	/// Drop what [`Self::build_filter_indexes`] built.
-	async fn drop_filter_indexes<C>(
-		&self,
-		client: &Arc<C>,
-		built: &[(String, String)],
-	) -> Result<()>
+	async fn drop_filter_indexes<C>(&self, client: &Arc<C>, built: &[FilterIndex]) -> Result<()>
 	where
 		C: BenchmarkClient + Send + Sync,
 	{
-		for (column, name) in built {
-			client.drop_filter_index(column, name).await?;
+		for index in built {
+			if index.full_text {
+				client.drop_index(&index.name).await?;
+			} else {
+				client.drop_filter_index(&index.column, &index.name).await?;
+			}
 		}
 		Ok(())
 	}
@@ -572,6 +644,13 @@ impl Benchmark {
 		D: Dialect,
 		E: BenchmarkEngine<C> + Send + Sync,
 	{
+		// Checked at startup too; kept here for any caller that skips that.
+		let checked_scans: &[Scan] = if self.mode.queries() {
+			&scans
+		} else {
+			&[]
+		};
+		crate::validate_vector_files(self.samples, checked_scans, &vp)?;
 		// Generate a value sample for the report
 		let sample = vp.generate_value();
 		// Setup the datastore
@@ -656,7 +735,13 @@ impl Benchmark {
 		let mut scan_results = Vec::with_capacity(scans.len());
 		let mut prev_spec_group: Option<u32> = None;
 		let mut prev_run_key: Option<(u32, String)> = None;
-		for scan in scans {
+		// The indexes kept standing for the next scan, which shares them, by name.
+		let mut live_index: Vec<(String, Index)> = Vec::new();
+		// The index sets this engine could not build, which a later scan declaring the same set
+		// does not try to build again.
+		let mut unbuildable: Vec<Vec<(String, Index)>> = Vec::new();
+		let mut scans = scans.into_iter().peekable();
+		while let Some(scan) = scans.next() {
 			// New section in the TOML/config → new heading in the CLI output
 			if prev_spec_group != Some(scan.spec_group) {
 				self.bench_ui.section_header(&format!("Scan · {}", scan.id));
@@ -721,7 +806,7 @@ impl Benchmark {
 					})
 					.ok_or_else(|| {
 						anyhow::anyhow!(
-							"scan `{}`: vector_query.field `{}` must be a `vector:<dim>` column in the schema",
+							"scan `{}`: vector_query.field `{}` must be a `vector:<dim>` or `vector_file:<path>` column in the schema",
 							name,
 							vq.field
 						)
@@ -734,6 +819,8 @@ impl Benchmark {
 				// index for the chosen strategy ignore `idx_spec` and return
 				// NotSupported from build.
 				let idx_spec = Index {
+					name: None,
+					indexed_only: false,
 					skip: false,
 					fields: vec![vq.field.clone()],
 					unique: None,
@@ -759,7 +846,8 @@ impl Benchmark {
 				// index and before any leg, so every leg — the unfiltered
 				// baseline included — runs against the same schema. Not built
 				// when the legs will not run.
-				let filter_indexes = if vq.filter_index
+				let filter_indexes = if (vq.filter_index
+					|| vq.filters.iter().any(|f| f.op == FilterOp::Matches))
 					&& (!vq.index_strategy.requires_index() || vec_index_build.is_some())
 				{
 					self.build_filter_indexes(&clients[0], &id, &vq, &vp.columns()).await?
@@ -954,9 +1042,14 @@ impl Benchmark {
 			} else if let Some(index_spec) = index_spec {
 				// Indexed scan: heap legs → build index → indexed legs → drop index
 				let mut runs = Vec::with_capacity(2 + 2 * w);
+				let index_id = scan.index_name().to_string();
+				// A named index the next scan declares alike stays standing for it.
+				let shared_with_next = scans.peek().is_some_and(|next| shares_index(&scan, next));
 				// Table-scan / heap query (no physical index)
-				let without_index = self
-					.run_operation::<C, D>(
+				let without_index = if index_spec.indexed_only {
+					None
+				} else {
+					self.run_operation::<C, D>(
 						leg_clients,
 						BenchmarkOperation::Scan(scan.clone(), ScanContext::WithoutIndex),
 						kp,
@@ -964,7 +1057,8 @@ impl Benchmark {
 						iterations,
 						leg_threads,
 					)
-					.await?;
+					.await?
+				};
 				runs.push(ScanRun {
 					workload: ScanWorkload::Read,
 					indexed: false,
@@ -973,8 +1067,10 @@ impl Benchmark {
 				});
 				// Optional mixed read+write legs on the heap path (one per `with_writes` entry)
 				for spec in write_specs {
-					let mixed_without_index = self
-						.run_operation::<C, D>(
+					let mixed_without_index = if index_spec.indexed_only {
+						None
+					} else {
+						self.run_operation::<C, D>(
 							leg_clients,
 							BenchmarkOperation::ScanWithWrites(
 								scan.clone(),
@@ -986,7 +1082,8 @@ impl Benchmark {
 							iterations,
 							leg_threads,
 						)
-						.await?;
+						.await?
+					};
 					runs.push(ScanRun {
 						workload: ScanWorkload::ReadWrite {
 							write_ratio_percent: writes_ratio_percent(spec),
@@ -996,13 +1093,18 @@ impl Benchmark {
 						label: None,
 					});
 				}
+				// An index the previous scan left standing for this one is not built again.
+				let reused = reuses_index(&live_index, &scan);
+				let known_unbuildable = unbuildable.contains(&standing_indexes(&scan));
 				// BuildIndex uses a single client to avoid races on DDL
-				let index_build = self
-					.run_operation::<C, D>(
+				let index_build = if reused || known_unbuildable {
+					None
+				} else {
+					self.run_operation::<C, D>(
 						&clients[..1],
 						BenchmarkOperation::BuildIndex(
 							index_spec.clone(),
-							id.clone(),
+							index_id.clone(),
 							name.clone(),
 						),
 						kp,
@@ -1010,14 +1112,69 @@ impl Benchmark {
 						1,
 						leg_threads,
 					)
-					.await?;
-				let (with_index, index_remove, indexed_write_results) = if index_build.is_some() {
-					// Compact the datastore so the indexed-scan phases benchmark a compacted index.
-					self.maybe_compact_datastore::<C, E>(&engine).await?;
+					.await?
+				};
+				// The indexes standing for this scan, by name: the main one and then each further
+				// one, built after it; should one of those not build, every one built is dropped
+				// and the indexed legs are not run.
+				let mut standing = Vec::new();
+				let mut built = reused || index_build.is_some();
+				if !built && !known_unbuildable {
+					unbuildable.push(standing_indexes(&scan));
+				}
+				if built && !reused {
+					standing.push(index_id.clone());
+					for extra in scan.with_indexes.iter().filter(|i| !i.skip) {
+						let extra_id = extra.name.clone().unwrap_or_default();
+						let extra_build = self
+							.run_operation::<C, D>(
+								&clients[..1],
+								BenchmarkOperation::BuildIndex(
+									extra.clone(),
+									extra_id.clone(),
+									name.clone(),
+								),
+								kp,
+								vp.clone(),
+								1,
+								leg_threads,
+							)
+							.await?;
+						if extra_build.is_none() {
+							built = false;
+							break;
+						}
+						standing.push(extra_id);
+					}
+					if !built {
+						unbuildable.push(standing_indexes(&scan));
+						for id in standing.drain(..) {
+							self.run_operation::<C, D>(
+								&clients[..1],
+								BenchmarkOperation::RemoveIndex(id, name.clone()),
+								kp,
+								vp.clone(),
+								1,
+								leg_threads,
+							)
+							.await?;
+						}
+					}
+				} else if reused {
+					standing.extend(live_index.iter().map(|(id, _)| id.clone()));
+				}
+				let (with_index, index_remove, indexed_write_results) = if built {
+					if !reused {
+						// Compact the datastore so the indexed-scan phases benchmark a compacted
+						// index.
+						self.maybe_compact_datastore::<C, E>(&engine).await?;
+					}
 					// The timed build already waited until the index was
 					// queryable; this is the untimed re-check every indexed leg
 					// gets, and here it normally returns after one status check.
-					self.await_index_queryable(&clients[0], &id).await?;
+					for id in &standing {
+						self.await_index_queryable(&clients[0], id).await?;
+					}
 					// Same query shape using the new index
 					let with_index = self
 						.run_operation::<C, D>(
@@ -1034,7 +1191,9 @@ impl Benchmark {
 						// The previous leg's writes leave a queue behind; drain
 						// it so each leg is timed from the same index state
 						// instead of inheriting whatever ran before it.
-						self.await_index_queryable(&clients[0], &id).await?;
+						for id in &standing {
+							self.await_index_queryable(&clients[0], id).await?;
+						}
 						iw.push(
 							self.run_operation::<C, D>(
 								leg_clients,
@@ -1051,22 +1210,37 @@ impl Benchmark {
 							.await?,
 						);
 					}
-					let index_remove = self
-						.run_operation::<C, D>(
-							&clients[..1],
-							BenchmarkOperation::RemoveIndex(id.clone(), name.clone()),
-							kp,
-							vp.clone(),
-							1,
-							leg_threads,
-						)
-						.await?;
+					let index_remove = if shared_with_next {
+						live_index = standing_indexes(&scan);
+						None
+					} else {
+						live_index.clear();
+						// The main index's removal is the one reported.
+						let mut removed = None;
+						for (at, id) in standing.iter().enumerate() {
+							let remove = self
+								.run_operation::<C, D>(
+									&clients[..1],
+									BenchmarkOperation::RemoveIndex(id.clone(), name.clone()),
+									kp,
+									vp.clone(),
+									1,
+									leg_threads,
+								)
+								.await?;
+							if at == 0 {
+								removed = remove;
+							}
+						}
+						removed
+					};
 					(with_index, index_remove, iw)
 				} else {
 					// BuildIndex unsupported or skipped → no indexed timings to merge
+					live_index.clear();
 					(None, None, Vec::new())
 				};
-				if index_build.is_some() {
+				if built {
 					runs.push(ScanRun {
 						workload: ScanWorkload::Read,
 						indexed: true,
@@ -1307,7 +1481,17 @@ impl Benchmark {
 		query_set: &mut VectorQuerySet,
 		filter: Option<&VectorFilter>,
 	) -> Result<()> {
-		let Some(corpus_seed) = vp.seed() else {
+		// A `vector_file:` column takes its rows and its queries from the file,
+		// whatever the seeds, so an unfiltered leg on one is reproducible without
+		// a seed, and its answer key is the same for every seed. A filter still
+		// needs the seed, to rebuild the generated columns it reads.
+		let file_field = vp.vector_file_rows_for(&vq.field)?.is_some();
+		let from_file = filter.is_none() && file_field;
+		let Some(corpus_seed) = (if from_file {
+			Some(0)
+		} else {
+			vp.seed()
+		}) else {
 			// Recall needs a reconstructible corpus. Without a seed the scan is
 			// still perfectly valid as a latency measurement, so say what is
 			// missing and carry on rather than failing the run.
@@ -1327,7 +1511,11 @@ impl Benchmark {
 			top_k: vq.top_k,
 			metric: vq.distance,
 			corpus_seed,
-			query_seed: vq.holdout.seed,
+			query_seed: if file_field {
+				0
+			} else {
+				vq.holdout.seed
+			},
 			query_count: query_set.queries.len(),
 			template: self.value_template.clone(),
 			filter: filter.cloned(),
@@ -1418,13 +1606,16 @@ impl Benchmark {
 		C: BenchmarkClient + Send + Sync,
 		D: Dialect,
 	{
-		let iterations = iterations.into();
+		let mut iterations = iterations.into();
 		if let Iterations::Timed(window) = iterations
 			&& !window.warmup.is_zero()
 		{
+			// The warm-up ramps up from `min` queries in flight, so a slow leg
+			// does not start one query per worker just to warm up.
 			let warmup = Iterations::Timed(Window {
 				measure: window.warmup,
 				min: 1,
+				ramp: window.min.max(1),
 				..window
 			});
 			let warmed = self
@@ -1438,9 +1629,15 @@ impl Benchmark {
 					true,
 				)
 				.await?;
-			if warmed.is_none() {
+			let Some(warmed) = warmed else {
 				return Ok(None);
-			}
+			};
+			// The measured window starts no more samples than the warm-up's
+			// throughput says it can finish.
+			iterations = Iterations::Timed(Window {
+				max: window.budget(warmed.ops()),
+				..window
+			});
 		}
 		self.run_phase::<C, D>(clients, operation, kp, vp, iterations, threads, false).await
 	}
@@ -1748,8 +1945,27 @@ impl Benchmark {
 		// this is the only place the split survives. Set by build operations
 		// alone, and a build runs as a single sample.
 		let mut build_returned: Option<Duration> = None;
+		// A ramping window admits new samples only as earlier ones complete.
+		let ramp = matches!(iterations, Iterations::Timed(w) if w.ramp > 0);
 		// Check if we have encountered an error
-		while !error.load(Ordering::Relaxed) {
+		'claim: while !error.load(Ordering::Relaxed) {
+			if ramp {
+				while !iterations
+					.admits(current.load(Ordering::Relaxed), complete.load(Ordering::Relaxed))
+				{
+					// Nothing more to admit once the window is over: stop rather
+					// than wait for a slot this leg will not use.
+					if iterations.exhausted(
+						complete.load(Ordering::Relaxed),
+						Instant::now(),
+						base_instant,
+					) || error.load(Ordering::Relaxed)
+					{
+						break 'claim;
+					}
+					tokio::time::sleep(Duration::from_millis(1)).await;
+				}
+			}
 			// Get the current sample number
 			let sample = current.fetch_add(1, Ordering::Relaxed);
 			// Have we produced enough samples
@@ -1858,6 +2074,9 @@ impl Benchmark {
 				let sample = complete.fetch_add(1, Ordering::Relaxed);
 				let done = (sample + 1).min(total) as u64;
 				pb.set_position(done);
+			} else if ramp {
+				// A ramping window admits by completions, so it always counts them.
+				complete.fetch_add(1, Ordering::Relaxed);
 			}
 			histogram.record(time.elapsed().as_micros() as u64)?;
 			// Scoring happens strictly after the latency is banked, so recall
@@ -1889,6 +2108,49 @@ const QUERYABLE_DEADLINE_MARGIN: Duration = Duration::from_secs(1);
 /// Name for the index on a filter column: scoped by scan so two scans never
 /// share one, and reduced to characters every engine accepts in an identifier
 /// (a nested column such as `geography.code` would not be).
+/// The indexes `scan`'s indexed legs read, by name: `with_index`, then each of
+/// `with_indexes` not skipped. Empty where `with_index` is absent or skipped.
+fn standing_indexes(scan: &Scan) -> Vec<(String, Index)> {
+	let Some(index) = scan.with_index.as_ref().filter(|i| !i.skip) else {
+		return Vec::new();
+	};
+	let mut out = vec![(scan.index_name().to_string(), index.clone())];
+	out.extend(
+		scan.with_indexes
+			.iter()
+			.filter(|i| !i.skip)
+			.map(|i| (i.name.clone().unwrap_or_default(), i.clone())),
+	);
+	out
+}
+
+/// Whether `next`, run straight after `scan`, reads the indexes `scan` built:
+/// both name the main index alike in `with_index`, and both declare the same
+/// indexes, alike.
+fn shares_index(scan: &Scan, next: &Scan) -> bool {
+	let named = scan.with_index.as_ref().is_some_and(|i| !i.skip && i.name.is_some());
+	let standing = standing_indexes(scan);
+	named
+		&& scan.vector_query.is_none()
+		&& next.vector_query.is_none()
+		&& !standing.is_empty()
+		&& standing == standing_indexes(next)
+}
+
+/// Whether `scan` reads the indexes left standing, `live`, by their names and
+/// definitions, rather than building its own.
+fn reuses_index(live: &[(String, Index)], scan: &Scan) -> bool {
+	!live.is_empty() && live == standing_indexes(scan).as_slice()
+}
+
+/// An index [`Benchmark::build_filter_indexes`] built for a vector scan's filters.
+struct FilterIndex {
+	column: String,
+	name: String,
+	/// A full-text index, for a `matches` filter, rather than a filter column's.
+	full_text: bool,
+}
+
 fn filter_index_name(scan_id: &str, column: &str) -> String {
 	let column: String = column
 		.chars()
@@ -2203,7 +2465,73 @@ mod test {
 			measure: Duration::from_millis(measure_ms),
 			min,
 			max,
+			ramp: 0,
 		})
+	}
+
+	fn ramped(min: u32) -> Iterations {
+		Iterations::Timed(Window {
+			warmup: Duration::ZERO,
+			measure: Duration::from_secs(5),
+			min: 1,
+			max: u32::MAX,
+			ramp: min,
+		})
+	}
+
+	#[test]
+	fn a_window_without_a_ramp_admits_every_worker() {
+		assert!(window(100, 1, 1000).admits(6_144, 0));
+		assert!(Iterations::Fixed(10).admits(1_000_000, 0));
+	}
+
+	#[test]
+	fn a_ramp_starts_at_its_floor() {
+		let it = ramped(10);
+		assert!(it.admits(9, 0));
+		assert!(!it.admits(10, 0));
+	}
+
+	#[test]
+	fn each_completion_admits_two_more() {
+		let it = ramped(10);
+		assert!(!it.admits(12, 1));
+		assert!(it.admits(11, 1));
+		assert!(it.admits(29, 10));
+		assert!(!it.admits(30, 10));
+	}
+
+	fn budget_window(measure_secs: u64, min: u32, max: u32) -> Window {
+		Window {
+			warmup: Duration::from_secs(5),
+			measure: Duration::from_secs(measure_secs),
+			min,
+			max,
+			ramp: 0,
+		}
+	}
+
+	#[test]
+	fn a_slow_leg_is_budgeted_what_fits_its_window() {
+		// Two full scans a second over a 30 s window, with headroom: 90, not a
+		// query per worker.
+		assert_eq!(budget_window(30, 10, 10_000_000).budget(2.0), 90);
+	}
+
+	#[test]
+	fn a_budget_never_falls_below_the_minimum() {
+		assert_eq!(budget_window(30, 10, 10_000_000).budget(0.01), 10);
+	}
+
+	#[test]
+	fn a_budget_never_exceeds_the_maximum() {
+		assert_eq!(budget_window(30, 10, 1_000).budget(1_000_000.0), 1_000);
+	}
+
+	#[test]
+	fn an_unmeasured_warmup_leaves_the_maximum() {
+		assert_eq!(budget_window(30, 10, 5_000).budget(0.0), 5_000);
+		assert_eq!(budget_window(30, 10, 5_000).budget(f64::NAN), 5_000);
 	}
 
 	#[test]
@@ -2298,6 +2626,61 @@ mod test {
 	#[test]
 	fn a_slower_window_counts_as_settled() {
 		assert!(warmup_has_plateaued(&recent(&[100, 102, 98, 101]), ms(140)));
+	}
+
+	fn scan_of(id: &str, index: Option<&str>) -> crate::Scan {
+		let mut json = serde_json::json!({
+			"id": id,
+			"name": id,
+			"condition": { "surrealdb": "t @@ 'x'" },
+		});
+		if let Some(index) = index {
+			json["with_index"] = serde_json::from_str(index).expect("index parses");
+		}
+		serde_json::from_value(json).expect("scan parses")
+	}
+
+	/// Consecutive scans naming the same index alike share it; a scan with no
+	/// name, another name or another definition builds its own.
+	#[test]
+	fn named_indexes_alike_are_shared_by_consecutive_scans() {
+		let shared = r#"{ "name": "body", "fields": ["t"], "index_type": "fulltext" }"#;
+		let a = scan_of("a", Some(shared));
+		let b = scan_of("b", Some(shared));
+		assert!(super::shares_index(&a, &b));
+		assert_eq!(b.index_name(), "body");
+		let live = vec![("body".to_string(), b.with_index.clone().unwrap())];
+		assert!(super::reuses_index(&live, &b));
+		// No name: each scan builds and drops its own.
+		let unnamed = r#"{ "fields": ["t"], "index_type": "fulltext" }"#;
+		assert!(!super::shares_index(&scan_of("a", Some(unnamed)), &scan_of("b", Some(unnamed))));
+		// Another definition under the same name is not the same index.
+		let other = r#"{ "name": "body", "fields": ["u"], "index_type": "fulltext" }"#;
+		assert!(!super::shares_index(&a, &scan_of("c", Some(other))));
+		assert!(!super::reuses_index(&live, &scan_of("c", Some(other))));
+		// Another name, a skipped index, or no index at all.
+		let renamed = r#"{ "name": "title", "fields": ["t"], "index_type": "fulltext" }"#;
+		assert!(!super::shares_index(&a, &scan_of("d", Some(renamed))));
+		let skipped =
+			r#"{ "name": "body", "fields": ["t"], "index_type": "fulltext", "skip": true }"#;
+		assert!(!super::shares_index(&a, &scan_of("e", Some(skipped))));
+		assert!(!super::shares_index(&a, &scan_of("f", None)));
+		assert!(!super::reuses_index(&[], &b));
+		// Further indexes are part of what is shared: the same list shares, another does not.
+		let with_title = |id: &str, title: &str| {
+			let mut scan = scan_of(id, Some(shared));
+			scan.with_indexes = vec![serde_json::from_str(title).expect("index parses")];
+			scan
+		};
+		let title = r#"{ "name": "title", "fields": ["title"], "index_type": "fulltext" }"#;
+		let (g, h) = (with_title("g", title), with_title("h", title));
+		assert!(super::shares_index(&g, &h));
+		assert_eq!(super::standing_indexes(&g).len(), 2);
+		assert!(super::reuses_index(&super::standing_indexes(&g), &h));
+		assert!(!super::shares_index(&a, &g));
+		assert!(!super::reuses_index(&live, &g));
+		let other_title = r#"{ "name": "title", "fields": ["heading"], "index_type": "fulltext" }"#;
+		assert!(!super::shares_index(&g, &with_title("i", other_title)));
 	}
 
 	/// Index names are scoped by scan and reduced to identifier characters, so
@@ -2399,6 +2782,8 @@ mod test {
 
 	fn index() -> Index {
 		Index {
+			name: None,
+			indexed_only: false,
 			skip: false,
 			fields: vec!["e".to_string()],
 			unique: None,

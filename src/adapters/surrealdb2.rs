@@ -308,6 +308,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			pre_args: format!("--ulimit nofile=65536:65536 -p 8000:8000{sync_env} --user root"),
 			post_args: format!("start --user {username} --pass {password} memory"),
 			data_path: None,
+			dockerfile: None,
 		},
 		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
 			image: "surrealdb/surrealdb:v2",
@@ -321,6 +322,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db",
 			),
 			data_path: Some("/data"),
+			dockerfile: None,
 		},
 		Endpoint::Docker(Docker::Surrealkv) => DockerParams {
 			image: "surrealdb/surrealdb:v2",
@@ -334,6 +336,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db",
 			),
 			data_path: Some("/data"),
+			dockerfile: None,
 		},
 	}
 }
@@ -888,7 +891,8 @@ impl SurrealDB2Client {
 		let p = scan.projection()?;
 		match p {
 			Projection::Id => {
-				let sql = format!("SELECT id FROM record {c} {o} {s} {l}");
+				let x = SurrealDBDialect::extra_fields(scan);
+				let sql = format!("SELECT id{x} FROM record {c} {o} {s} {l}");
 				let res: surrealdb::Value = self
 					.db
 					.query(&sql)
@@ -902,7 +906,8 @@ impl SurrealDB2Client {
 				}
 			}
 			Projection::Full => {
-				let sql = format!("SELECT * FROM record {c} {o} {s} {l}");
+				let x = SurrealDBDialect::extra_fields(scan);
+				let sql = format!("SELECT *{x} FROM record {c} {o} {s} {l}");
 				let res: surrealdb::Value = self
 					.db
 					.query(&sql)

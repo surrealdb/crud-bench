@@ -92,6 +92,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			 {persistence} {memory}"
 		),
 		data_path: Some("/data"),
+		dockerfile: None,
 	}
 }
 
@@ -151,7 +152,6 @@ impl BenchmarkClient for RedisClient {
 	// The return type when reading a row
 	type ReadRow = BenchValue;
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.maybe_write_vector(&key.to_string(), &val).await?;
 		let val = val.encode()?;
@@ -159,7 +159,6 @@ impl BenchmarkClient for RedisClient {
 		Ok(())
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.maybe_write_vector(&key, &val).await?;
 		let val = val.encode()?;
@@ -174,7 +173,6 @@ impl BenchmarkClient for RedisClient {
 		Ok(black_box(val))
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		let val: Vec<u8> = self.conn_record.lock().await.get(key).await?;
 		assert!(!val.is_empty());
@@ -182,7 +180,6 @@ impl BenchmarkClient for RedisClient {
 		Ok(black_box(val))
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		self.maybe_write_vector(&key.to_string(), &val).await?;
 		let val = val.encode()?;
@@ -190,7 +187,6 @@ impl BenchmarkClient for RedisClient {
 		Ok(())
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		self.maybe_write_vector(&key, &val).await?;
 		let val = val.encode()?;
@@ -198,14 +194,12 @@ impl BenchmarkClient for RedisClient {
 		Ok(())
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
 		self.maybe_delete_vector(&key.to_string()).await?;
 		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_string(&self, key: String) -> Result<()> {
 		self.maybe_delete_vector(&key).await?;
 		let _: () = self.conn_record.lock().await.del(key).await?;

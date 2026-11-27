@@ -27,6 +27,7 @@ use surrealdb::types::{
 	Array, Bytes as SurrealBytes, Datetime, Geometry, Number, Object, RecordId, RecordIdKey,
 	SurrealValue, ToSql, Uuid as SurrealUuid, Value,
 };
+use surrealdb3 as surrealdb;
 use tokio::time::{sleep, timeout};
 
 /// Convert a [`BenchValue`] to a native [`surrealdb::types::Value`]. UUID,
@@ -470,6 +471,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				}
 			},
 			data_path: None,
+			dockerfile: None,
 		},
 		Endpoint::Docker(Docker::Rocksdb) => DockerParams {
 			image: "surrealdb/surrealdb:v3",
@@ -483,6 +485,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"start --user {username} --pass {password} rocksdb:/data/crud-bench.db?sync={sync}",
 			),
 			data_path: Some("/data"),
+			dockerfile: None,
 		},
 		Endpoint::Docker(Docker::Surrealkv) => DockerParams {
 			image: "surrealdb/surrealdb:v3",
@@ -496,6 +499,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 				"start --user {username} --pass {password} surrealkv:/data/crud-bench.db?sync={sync}",
 			),
 			data_path: Some("/data"),
+			dockerfile: None,
 		},
 	}
 }
@@ -813,6 +817,8 @@ impl BenchmarkClient for SurrealDB3Client {
 			_ => None,
 		};
 		let spec = Index {
+			name: None,
+			indexed_only: false,
 			skip: false,
 			fields: vec![column.to_string()],
 			unique: None,
@@ -1326,7 +1332,8 @@ impl SurrealDB3Client {
 		// Perform the relevant projection scan type
 		match p {
 			Projection::Id => {
-				let sql = format!("SELECT id FROM record {c} {o} {s} {l}");
+				let x = SurrealDBDialect::extra_fields(scan);
+				let sql = format!("SELECT id{x} FROM record {c} {o} {s} {l}");
 				let res: surrealdb::types::Value = self
 					.db
 					.query(&sql)
@@ -1340,7 +1347,8 @@ impl SurrealDB3Client {
 				Ok(arr.len())
 			}
 			Projection::Full => {
-				let sql = format!("SELECT * FROM record {c} {o} {s} {l}");
+				let x = SurrealDBDialect::extra_fields(scan);
+				let sql = format!("SELECT *{x} FROM record {c} {o} {s} {l}");
 				let res: surrealdb::types::Value = self
 					.db
 					.query(&sql)

@@ -43,8 +43,19 @@ pub(crate) enum Database {
 	Mysql,
 	#[cfg(feature = "neo4j")]
 	Neo4j,
+	/// Stock Postgres, from the official image, with no extensions.
 	#[cfg(feature = "postgres")]
 	Postgres,
+	/// Postgres with pgvector, whose `hnsw` index serves HNSW legs.
+	#[cfg(feature = "postgres")]
+	#[value(name = "postgres+pgvector")]
+	PostgresPgvector,
+	/// Postgres with pgvector and pgvectorscale, whose `diskann` index serves
+	/// DiskANN legs. The server is the `postgres+pgvector` one with only the
+	/// extension added.
+	#[cfg(feature = "postgres")]
+	#[value(name = "postgres+pgvectorscale")]
+	PostgresPgvectorscale,
 	#[cfg(feature = "redb")]
 	Redb,
 	#[cfg(feature = "redis")]
@@ -134,6 +145,10 @@ impl Database {
 			Self::Neo4j => crate::adapters::neo4j::docker(options),
 			#[cfg(feature = "postgres")]
 			Self::Postgres => crate::adapters::postgres::docker(options),
+			#[cfg(feature = "postgres")]
+			Self::PostgresPgvector => crate::adapters::postgres::docker_pgvector(options),
+			#[cfg(feature = "postgres")]
+			Self::PostgresPgvectorscale => crate::adapters::postgres::docker_pgvectorscale(options),
 			#[cfg(feature = "redis")]
 			Self::Redis => crate::adapters::redis::docker(options),
 			#[cfg(feature = "scylladb")]
@@ -147,11 +162,20 @@ impl Database {
 			#[allow(unreachable_patterns)]
 			_ => return None,
 		};
-		// Check if a custom image has been specified
-		let image = options.image.clone().unwrap_or(params.image.to_string());
+		// A custom image is pulled as given, so it replaces any Dockerfile
+		let (image, dockerfile) = match &options.image {
+			Some(image) => (image.clone(), None),
+			None => (params.image.to_string(), params.dockerfile),
+		};
 		// Start the specified container with arguments
-		let container =
-			Container::start(image, &params.pre_args, &params.post_args, params.data_path, options);
+		let container = Container::start(
+			image,
+			&params.pre_args,
+			&params.post_args,
+			params.data_path,
+			dockerfile,
+			options,
+		);
 		// Return the container reference
 		Some(container)
 	}
@@ -400,7 +424,14 @@ impl Database {
 					.await
 			}
 			#[cfg(feature = "postgres")]
-			Database::Postgres => {
+			Database::Postgres | Database::PostgresPgvector | Database::PostgresPgvectorscale => {
+				use crate::adapters::postgres::Extensions;
+				// The extensions the server has, which set the vector indexes it serves
+				let extensions = match self {
+					Database::PostgresPgvector => Extensions::Pgvector,
+					Database::PostgresPgvectorscale => Extensions::Pgvectorscale,
+					_ => Extensions::None,
+				};
 				benchmark
 					.run::<_, AnsiSqlDialect, _>(
 						crate::adapters::postgres::PostgresClientProvider::setup(
@@ -408,7 +439,8 @@ impl Database {
 							vp.columns(),
 							benchmark,
 						)
-						.await?,
+						.await?
+						.with_extensions(extensions),
 						kp,
 						vp,
 						scans,
@@ -767,6 +799,10 @@ impl Database {
 			Database::Mysql => "MySQL",
 			#[cfg(feature = "postgres")]
 			Database::Postgres => "PostgreSQL",
+			#[cfg(feature = "postgres")]
+			Database::PostgresPgvector => "PostgreSQL (pgvector)",
+			#[cfg(feature = "postgres")]
+			Database::PostgresPgvectorscale => "PostgreSQL (pgvectorscale)",
 			#[cfg(feature = "sqlite")]
 			Database::Sqlite => "SQLite",
 			#[cfg(feature = "neo4j")]

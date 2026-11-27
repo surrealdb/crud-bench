@@ -3,7 +3,8 @@
 # Usage:
 #   cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 --config config/spatial.toml
 #   cargo run -r -- -d surrealkv -s 100000 -c 12 -t 24 --config config/spatial.toml
-#   cargo run -r -- -d postgres  -s 100000 -c 12 -t 24 --config config/spatial.toml
+#   cargo run -r -- -d postgres+pgvector -s 100000 -c 12 -t 24 --config config/spatial.toml
+#     (stock `-d postgres` runs the spatial legs; the hybrid spatial + vector legs need pgvector)
 #   cargo run -r -- -d mongodb   -s 100000 -c 12 -t 24 --config config/spatial.toml
 #
 # Points are drawn reproducibly (`seed = 42`) across a 50 deg lon x 30 deg lat

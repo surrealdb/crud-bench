@@ -8,7 +8,10 @@ use rand::prelude::SmallRng;
 use rust_decimal::Decimal;
 use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
+use std::fs::File;
+use std::hash::Hasher;
+use std::io::{BufReader, Read};
 use std::ops::Range;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -118,7 +121,7 @@ impl ValueProvider {
 
 	/// Produce a single randomised [`BenchValue`] payload.
 	pub(crate) fn generate_value(&mut self) -> BenchValue {
-		self.generator.generate(&mut self.rng)
+		self.generator.generate(&mut self.rng, None)
 	}
 
 	/// Produce the payload for sample `n` of `stream`.
@@ -127,13 +130,17 @@ impl ValueProvider {
 	/// Without one it draws from the provider's own stream and behaves exactly
 	/// like [`Self::generate_value`], which keeps unseeded runs — every
 	/// non-vector config — byte-for-byte unchanged.
+	///
+	/// A `vector_file:` column takes row `n` of its file either way, in both
+	/// streams, so the update phase rewrites each row's vector unchanged.
 	pub(crate) fn generate_value_for(&mut self, stream: ValueStream, n: u32) -> BenchValue {
+		let row = Some(n as usize);
 		match self.seed {
 			Some(seed) => {
 				let mut rng = SmallRng::seed_from_u64(sample_seed(seed, stream, n));
-				self.generator.generate(&mut rng)
+				self.generator.generate(&mut rng, row)
 			}
-			None => self.generator.generate(&mut self.rng),
+			None => self.generator.generate(&mut self.rng, row),
 		}
 	}
 
@@ -144,6 +151,10 @@ impl ValueProvider {
 	/// corpus distribution by construction rather than by a parallel
 	/// implementation that could drift from it. Each query is seeded on its own
 	/// index, so raising `count` extends the set instead of reshuffling it.
+	///
+	/// A `vector_file:` column ignores `seed` and takes query `i` from row
+	/// `rows - 1 - i`, counting back from the end of the file, so the queries
+	/// stay disjoint from a corpus that leaves `count` rows unused.
 	pub(crate) fn generate_vectors(
 		&self,
 		field: &str,
@@ -151,15 +162,63 @@ impl ValueProvider {
 		seed: u64,
 	) -> Result<Vec<Vec<f32>>> {
 		let generator = self.vector_generator(field)?;
+		let file_rows = match generator {
+			ValueGenerator::FileVector {
+				data,
+				..
+			} => {
+				if count > data.rows {
+					bail!(
+						"field {field:?} asks for {count} queries, but its file holds {} rows",
+						data.rows
+					);
+				}
+				Some(data.rows)
+			}
+			_ => None,
+		};
 		let mut out = Vec::with_capacity(count);
 		for i in 0..count {
 			let mut rng = SmallRng::seed_from_u64(sample_seed(seed, ValueStream::Query, i as u32));
-			match generator.generate(&mut rng) {
+			match generator.generate(&mut rng, file_rows.map(|rows| rows - 1 - i)) {
 				BenchValue::FloatVector(v) => out.push(v),
 				_ => bail!("field {field:?} did not generate a vector"),
 			}
 		}
 		Ok(out)
+	}
+
+	/// The fewest rows held by any `vector_file:` generator anywhere in the
+	/// template, or `None` when the template reads no file. The corpus takes
+	/// row `n` of every file for sample `n`, so each must hold every sample.
+	pub(crate) fn vector_file_rows(&self) -> Option<usize> {
+		self.generator.min_file_rows()
+	}
+
+	/// The rows held by the file behind the top-level vector column `field`,
+	/// or `None` when it is a generated vector column. Its queries come from
+	/// the end of that file, and must stay clear of the corpus rows. An error
+	/// when `field` is not a top-level vector column at all.
+	pub(crate) fn vector_file_rows_for(&self, field: &str) -> Result<Option<usize>> {
+		Ok(match self.vector_generator(field)? {
+			ValueGenerator::FileVector {
+				data,
+			} => Some(data.rows),
+			_ => None,
+		})
+	}
+
+	/// The path and content digest of every `vector_file:` generator, in
+	/// template order, or an empty string when the template reads no file.
+	///
+	/// The template names a file only by its path, so anything that identifies
+	/// the corpus by the template — the split-run manifest, the result's
+	/// template digest, the ground-truth cache — also takes this, and a file
+	/// replaced under the same path is a different corpus.
+	pub(crate) fn vector_file_digests(&self) -> String {
+		let mut out = String::new();
+		self.generator.file_digests(&mut out);
+		out
 	}
 
 	/// Locate the generator for a top-level `vector:<dim>` column.
@@ -176,8 +235,13 @@ impl ValueProvider {
 			}
 			| ValueGenerator::ClusteredVector {
 				..
+			}
+			| ValueGenerator::FileVector {
+				..
 			} => Ok(generator),
-			other => bail!("field {field:?} is {other:?}, not a `vector:<dim>` column"),
+			other => bail!(
+				"field {field:?} is {other:?}, not a `vector:<dim>` or `vector_file:<path>` column"
+			),
 		}
 	}
 }
@@ -199,6 +263,9 @@ enum ValueGenerator {
 	String(Length<usize>),
 	Text(Length<usize>),
 	Words(Length<usize>, Vec<String>),
+	/// A text of words drawn from a Zipf-distributed vocabulary, with planted
+	/// terms at fixed document frequencies ([`Corpus`]).
+	Corpus(Arc<Corpus>),
 	Integer,
 	Float,
 	DateTime,
@@ -253,6 +320,13 @@ enum ValueGenerator {
 		centroids: Arc<Vec<(f64, f64)>>,
 		sigma: f64,
 	},
+	/// Fixed-dimension f32 vectors read from a file of real embeddings: sample
+	/// `n` is the file's row `n`. Synthetic vectors cannot stand in for real
+	/// embeddings everywhere; quantised indexes in particular can lose far more
+	/// recall on one than on the other.
+	FileVector {
+		data: VectorFile,
+	},
 }
 
 /// Default standard deviation (in degrees, ~55 km at the equator) when
@@ -269,6 +343,92 @@ fn point_cluster_centroids(clusters: usize, seed: u64) -> Vec<(f64, f64)> {
 			(lon, lat)
 		})
 		.collect()
+}
+
+/// The rows of a `vector_file:` column, loaded once and shared by every clone
+/// of the provider.
+#[derive(Clone)]
+struct VectorFile {
+	path: String,
+	dim: usize,
+	rows: usize,
+	values: Arc<Vec<f32>>,
+	/// XxHash64 of the whole file, header included.
+	digest: u64,
+}
+
+impl Debug for VectorFile {
+	// The derived form would print every component of every row.
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "VectorFile({:?}, {} x {})", self.path, self.rows, self.dim)
+	}
+}
+
+impl VectorFile {
+	/// Read a file in the `.fbin` layout used by big-ann-benchmarks: the row
+	/// count and the dimension as little-endian `u32`s, then every row's `f32`
+	/// components, little-endian, row after row.
+	///
+	/// Every component must be finite: a `NaN` would break the ordering the
+	/// ground truth is ranked by.
+	fn load(path: &str) -> Result<Self> {
+		let context = |e: std::io::Error| anyhow!("vector file {path:?}: {e}");
+		let file = File::open(path).map_err(context)?;
+		let len = file.metadata().map_err(context)?.len();
+		let mut reader = BufReader::with_capacity(1 << 20, file);
+		let mut header = [0u8; 8];
+		reader.read_exact(&mut header).map_err(context)?;
+		let rows = u32::from_le_bytes(header[..4].try_into()?);
+		let dim = u32::from_le_bytes(header[4..].try_into()?);
+		if rows == 0 || dim == 0 {
+			bail!("vector file {path:?} holds {rows} rows of dimension {dim}");
+		}
+		// Both factors fit in a `u32`, so their product fits in a `u64`; the
+		// byte count after it may not.
+		let components = rows as u64 * dim as u64;
+		let Some(expected) = components.checked_mul(4).and_then(|b| b.checked_add(8)) else {
+			bail!("vector file {path:?}: a header of {rows} rows x {dim} dimensions is too large");
+		};
+		if len != expected {
+			bail!(
+				"vector file {path:?} is {len} bytes, but a header of {rows} rows x {dim} dimensions needs {expected}"
+			);
+		}
+		let (Ok(rows), Ok(dim), Ok(components)) =
+			(usize::try_from(rows), usize::try_from(dim), usize::try_from(components))
+		else {
+			bail!("vector file {path:?} is too large for this platform");
+		};
+		let mut digest = twox_hash::XxHash64::with_seed(0);
+		digest.write(&header);
+		let mut values = Vec::with_capacity(components);
+		let mut chunk = vec![0u8; dim * 4];
+		for r in 0..rows {
+			reader.read_exact(&mut chunk).map_err(context)?;
+			digest.write(&chunk);
+			for (c, b) in chunk.as_chunks::<4>().0.iter().enumerate() {
+				let v = f32::from_le_bytes(*b);
+				if !v.is_finite() {
+					bail!("vector file {path:?}: row {r}, component {c} is {v}");
+				}
+				values.push(v);
+			}
+		}
+		Ok(Self {
+			path: path.to_string(),
+			dim,
+			rows,
+			values: Arc::new(values),
+			digest: digest.finish(),
+		})
+	}
+
+	/// Row `n` of the file. Callers check `n` against the row count first; the
+	/// modulo only keeps an unchecked caller from panicking.
+	fn row(&self, n: usize) -> Vec<f32> {
+		let start = (n % self.rows) * self.dim;
+		self.values[start..start + self.dim].to_vec()
+	}
 }
 
 /// Cluster spread when `vector:<dim>:clustered:<n>` omits it.
@@ -351,6 +511,140 @@ fn text_range(rng: &mut SmallRng, range: Range<usize>) -> String {
 	text(rng, l)
 }
 
+/// The syllables vocabulary words are built from: a consonant and a vowel each.
+const SYLLABLES: [&str; 70] = [
+	"ba", "be", "bi", "bo", "bu", "da", "de", "di", "do", "du", "fa", "fe", "fi", "fo", "fu", "ga",
+	"ge", "gi", "go", "gu", "ka", "ke", "ki", "ko", "ku", "la", "le", "li", "lo", "lu", "ma", "me",
+	"mi", "mo", "mu", "na", "ne", "ni", "no", "nu", "pa", "pe", "pi", "po", "pu", "ra", "re", "ri",
+	"ro", "ru", "sa", "se", "si", "so", "su", "ta", "te", "ti", "to", "tu", "va", "ve", "vi", "vo",
+	"vu", "za", "ze", "zi", "zo", "zu",
+];
+
+/// The vocabulary word of rank `rank`: its digits in base 70, at least two, each
+/// spelled as a syllable. Distinct ranks spell distinct words.
+fn vocabulary_word(rank: usize) -> String {
+	let mut digits = Vec::new();
+	let mut n = rank;
+	loop {
+		digits.push(n % SYLLABLES.len());
+		n /= SYLLABLES.len();
+		if n == 0 && digits.len() >= 2 {
+			break;
+		}
+	}
+	digits.iter().rev().map(|d| SYLLABLES[*d]).collect()
+}
+
+/// A text corpus: each document holds `words` words drawn from `vocabulary`,
+/// rank `r` (from 1) with probability proportional to `1 / r^exponent`, so a
+/// few words are carried by nearly every document and most by few. Each
+/// `planted` term is then placed in a document with its given probability,
+/// one to three times, inserted at random positions: the document
+/// frequency a query term has is set by the configuration, not left to the
+/// draw.
+///
+/// `corpus:WORDS;VOCABULARY;EXPONENT;term@probability,...`, for example
+/// `corpus:100;20000;1.0;kolvak@0.92,trimbol@0.6,quorlat@0.07,vexin@0.006`.
+/// `WORDS` is a word count, or a range of them (`80..120`). The planted terms
+/// are optional; none may spell a vocabulary word.
+#[derive(Debug)]
+struct Corpus {
+	words: Length<usize>,
+	vocabulary: Vec<String>,
+	/// The cumulative probability of each rank, the last 1.0.
+	cumulative: Vec<f64>,
+	planted: Vec<(String, f64)>,
+}
+
+impl Corpus {
+	fn parse(spec: &str) -> Result<Self> {
+		let parts: Vec<&str> = spec.split(';').collect();
+		if !(3..=4).contains(&parts.len()) {
+			bail!(
+				"corpus format is corpus:WORDS;VOCABULARY;EXPONENT[;term@probability,...], got `corpus:{spec}`"
+			);
+		}
+		let words = Length::new(parts[0])?;
+		let size: usize =
+			parts[1].parse().map_err(|e| anyhow!("corpus vocabulary size `{}`: {e}", parts[1]))?;
+		if size == 0 {
+			bail!("corpus vocabulary size must be at least 1");
+		}
+		let exponent: f64 =
+			parts[2].parse().map_err(|e| anyhow!("corpus exponent `{}`: {e}", parts[2]))?;
+		if !exponent.is_finite() || exponent < 0.0 {
+			bail!("corpus exponent must be a finite number of at least 0, got {exponent}");
+		}
+		let vocabulary: Vec<String> = (0..size).map(vocabulary_word).collect();
+		let weights: Vec<f64> = (1..=size).map(|rank| (rank as f64).powf(-exponent)).collect();
+		let total: f64 = weights.iter().sum();
+		let mut running = 0.0;
+		let mut cumulative: Vec<f64> = weights
+			.iter()
+			.map(|weight| {
+				running += weight / total;
+				running
+			})
+			.collect();
+		if let Some(last) = cumulative.last_mut() {
+			*last = 1.0;
+		}
+		let mut planted = Vec::new();
+		if let Some(terms) = parts.get(3).filter(|terms| !terms.is_empty()) {
+			for term in terms.split(',') {
+				let Some((word, probability)) = term.split_once('@') else {
+					bail!("corpus planted term `{term}` needs a probability: term@0.5");
+				};
+				let probability: f64 = probability
+					.parse()
+					.map_err(|e| anyhow!("corpus planted term `{term}`: {e}"))?;
+				if !(0.0..=1.0).contains(&probability) {
+					bail!("corpus planted term `{term}`: the probability must be in 0..=1");
+				}
+				if word.is_empty() || word.contains(char::is_whitespace) {
+					bail!("corpus planted term `{term}` must be one word");
+				}
+				// A planted word the vocabulary also draws would carry more documents than its
+				// probability says.
+				if vocabulary.iter().any(|w| w == word) {
+					bail!("corpus planted term `{word}` spells a vocabulary word; choose another");
+				}
+				planted.push((word.to_string(), probability));
+			}
+		}
+		Ok(Self {
+			words,
+			vocabulary,
+			cumulative,
+			planted,
+		})
+	}
+
+	fn generate(&self, rng: &mut SmallRng) -> String {
+		let count = match &self.words {
+			Length::Range(r) => rng.random_range(r.clone()),
+			Length::Fixed(n) => *n,
+		};
+		let mut words: Vec<&str> = (0..count)
+			.map(|_| {
+				let draw: f64 = rng.random_range(0.0..1.0);
+				let rank = self.cumulative.partition_point(|c| *c <= draw);
+				self.vocabulary[rank.min(self.vocabulary.len() - 1)].as_str()
+			})
+			.collect();
+		// Inserted rather than written over a word, so one planted term never removes another.
+		for (word, probability) in &self.planted {
+			if rng.random_range(0.0..1.0) < *probability {
+				for _ in 0..rng.random_range(1..=3usize) {
+					let at = rng.random_range(0..=words.len());
+					words.insert(at, word);
+				}
+			}
+		}
+		words.join(" ")
+	}
+}
+
 fn words(rng: &mut SmallRng, size: usize, dictionary: &[String]) -> String {
 	let mut l = 0;
 	let mut words = Vec::with_capacity(size / 5);
@@ -385,6 +679,41 @@ fn bytes_range(rng: &mut SmallRng, range: Range<usize>) -> Vec<u8> {
 }
 
 impl ValueGenerator {
+	/// The fewest rows held by any `vector_file:` generator in this subtree.
+	fn min_file_rows(&self) -> Option<usize> {
+		match self {
+			ValueGenerator::FileVector {
+				data,
+			} => Some(data.rows),
+			ValueGenerator::Array(items) => items.iter().filter_map(Self::min_file_rows).min(),
+			ValueGenerator::Object(fields) => {
+				fields.iter().filter_map(|(_, g)| g.min_file_rows()).min()
+			}
+			_ => None,
+		}
+	}
+
+	/// Append the path and digest of every `vector_file:` generator in this
+	/// subtree to `out`.
+	fn file_digests(&self, out: &mut String) {
+		match self {
+			ValueGenerator::FileVector {
+				data,
+			} => out.push_str(&format!("\u{1f}{}\u{1f}{:016x}", data.path, data.digest)),
+			ValueGenerator::Array(items) => {
+				for g in items {
+					g.file_digests(out);
+				}
+			}
+			ValueGenerator::Object(fields) => {
+				for (_, g) in fields {
+					g.file_digests(out);
+				}
+			}
+			_ => {}
+		}
+	}
+
 	/// Re-draw cluster centres from the corpus seed, in place, throughout the
 	/// template tree.
 	fn reseed_clusters(&mut self, seed: u64) {
@@ -434,11 +763,25 @@ impl ValueGenerator {
 	}
 
 	fn new_string(s: String) -> Result<Self> {
+		// A path keeps its case, so this is matched before the rest is
+		// lowercased. The tag itself is matched in any case, as every other is.
+		if let Some((tag, path)) = s.split_once(':')
+			&& tag.eq_ignore_ascii_case("vector_file")
+		{
+			if path.is_empty() {
+				bail!("`vector_file:` needs a file path");
+			}
+			return Ok(Self::FileVector {
+				data: VectorFile::load(path)?,
+			});
+		}
 		let s = s.to_lowercase();
 		let r = if let Some(i) = s.strip_prefix("string:") {
 			Self::String(Length::new(i)?)
 		} else if let Some(i) = s.strip_prefix("text:") {
 			Self::Text(Length::new(i)?)
+		} else if let Some(i) = s.strip_prefix("corpus:") {
+			Self::Corpus(Arc::new(Corpus::parse(i)?))
 		} else if let Some(i) = s.strip_prefix("words:") {
 			// Parse format: "words:50;word1,word2,word3"
 			let parts: Vec<&str> = i.splitn(2, ';').collect();
@@ -663,7 +1006,9 @@ impl ValueGenerator {
 		Ok(Self::Object(map))
 	}
 
-	fn generate(&self, rng: &mut SmallRng) -> BenchValue {
+	/// Generate one value. `row` is the sample index, which only a
+	/// `vector_file:` column reads; it takes row 0 when there is none.
+	fn generate(&self, rng: &mut SmallRng, row: Option<usize>) -> BenchValue {
 		match self {
 			ValueGenerator::Bool => {
 				let v = RandGen::random_bool(&mut *rng, 0.5);
@@ -683,6 +1028,7 @@ impl ValueGenerator {
 				};
 				BenchValue::String(val)
 			}
+			ValueGenerator::Corpus(corpus) => BenchValue::String(corpus.generate(rng)),
 			ValueGenerator::Words(l, dictionary) => {
 				let val = match l {
 					Length::Range(r) => words_range(rng, r.clone(), dictionary),
@@ -779,14 +1125,14 @@ impl ValueGenerator {
 			ValueGenerator::Array(a) => {
 				let mut vec = Vec::with_capacity(a.len());
 				for v in a {
-					vec.push(v.generate(rng));
+					vec.push(v.generate(rng, row));
 				}
 				BenchValue::Array(vec)
 			}
 			ValueGenerator::Object(o) => {
 				let mut vec = Vec::with_capacity(o.len());
 				for (k, v) in o {
-					vec.push((k.clone(), v.generate(rng)));
+					vec.push((k.clone(), v.generate(rng, row)));
 				}
 				BenchValue::Object(vec)
 			}
@@ -835,6 +1181,9 @@ impl ValueGenerator {
 				let lat = (clat + *sigma * standard_normal(rng) as f64).clamp(-85.0, 85.0);
 				BenchValue::Point(lon, lat)
 			}
+			ValueGenerator::FileVector {
+				data,
+			} => BenchValue::FloatVector(data.row(row.unwrap_or(0))),
 		}
 	}
 }
@@ -931,7 +1280,8 @@ impl ColumnType {
 			ValueGenerator::StringEnum(_)
 			| ValueGenerator::String(_)
 			| ValueGenerator::Text(_)
-			| ValueGenerator::Words(_, _) => ColumnType::String,
+			| ValueGenerator::Words(_, _)
+			| ValueGenerator::Corpus(_) => ColumnType::String,
 			ValueGenerator::Integer
 			| ValueGenerator::IntegerRange(_)
 			| ValueGenerator::IntegerEnum(_) => ColumnType::Integer,
@@ -959,13 +1309,16 @@ impl ColumnType {
 			| ValueGenerator::ClusteredPoint {
 				..
 			} => ColumnType::Point,
+			ValueGenerator::FileVector {
+				data,
+			} => ColumnType::FloatVector(data.dim),
 		};
 		Ok(r)
 	}
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
 	use super::*;
 	use tokio::task;
 
@@ -1102,6 +1455,190 @@ mod test {
 				assert!((-90.0..=90.0).contains(&lat), "lat out of range: {lat}");
 			}
 		}
+	}
+
+	/// Write `rows` rows of dimension `dim` in the `.fbin` layout, where row `r`
+	/// component `c` holds `r * 10 + c`. The name keeps an upper-case letter to
+	/// check the path is not lowercased.
+	pub(crate) fn write_fbin(tag: &str, rows: u32, dim: u32) -> std::path::PathBuf {
+		let path = std::env::temp_dir()
+			.join(format!("crud-bench-Vectors-{tag}-{}.fbin", std::process::id()));
+		let mut bytes = Vec::new();
+		bytes.extend(rows.to_le_bytes());
+		bytes.extend(dim.to_le_bytes());
+		for r in 0..rows {
+			for c in 0..dim {
+				bytes.extend(((r * 10 + c) as f32).to_le_bytes());
+			}
+		}
+		std::fs::write(&path, bytes).unwrap();
+		path
+	}
+
+	#[test]
+	fn vector_file_rows_follow_the_sample_index() {
+		let path = write_fbin("rows", 5, 3);
+		let template = format!(r#"{{ "v": "vector_file:{}" }}"#, path.display());
+		let vp = ValueProvider::new(&template).unwrap();
+		assert_eq!(vp.vector_file_rows(), Some(5));
+		assert_eq!(vp.columns().0[0].1, ColumnType::FloatVector(3));
+		// Seeded or not, and in either stream, sample `n` is row `n`.
+		assert_eq!(vector_of(&template, 7, 2), vec![20.0, 21.0, 22.0]);
+		let mut unseeded = ValueProvider::new(&template).unwrap();
+		let row = unseeded.generate_value_for(ValueStream::Update, 4);
+		assert_eq!(
+			row.get_field("v").and_then(|v| v.as_float_vector()).unwrap(),
+			&[40.0, 41.0, 42.0]
+		);
+		// Queries count back from the last row.
+		let queries = vp.generate_vectors("v", 2, 7).unwrap();
+		assert_eq!(queries, vec![vec![40.0, 41.0, 42.0], vec![30.0, 31.0, 32.0]]);
+		assert!(vp.generate_vectors("v", 6, 7).is_err());
+		std::fs::remove_file(path).unwrap();
+	}
+
+	#[test]
+	fn vector_file_rejects_a_truncated_file() {
+		let path = write_fbin("short", 5, 3);
+		let bytes = std::fs::read(&path).unwrap();
+		std::fs::write(&path, &bytes[..bytes.len() - 4]).unwrap();
+		let template = format!(r#"{{ "v": "vector_file:{}" }}"#, path.display());
+		assert!(ValueProvider::new(&template).is_err());
+		std::fs::remove_file(path).unwrap();
+		assert!(ValueProvider::new(&template).is_err(), "a missing file should be rejected");
+	}
+
+	#[test]
+	fn vector_file_rejects_bad_headers_and_values() {
+		// A header whose byte count overflows `u64` must not pass the length check.
+		let huge = write_fbin("huge", 1, 1);
+		let mut header = 0x8000_0000u32.to_le_bytes().to_vec();
+		header.extend(0x8000_0000u32.to_le_bytes());
+		std::fs::write(&huge, header).unwrap();
+		let template = format!(r#"{{ "v": "vector_file:{}" }}"#, huge.display());
+		assert!(ValueProvider::new(&template).is_err());
+		std::fs::remove_file(huge).unwrap();
+		// A non-finite component is refused, wherever it is.
+		let path = write_fbin("nan", 2, 2);
+		let clean = std::fs::read(&path).unwrap();
+		let template = format!(r#"{{ "v": "vector_file:{}" }}"#, path.display());
+		for (bad, at, place) in [
+			(f32::NAN, 12, "row 0, component 1"),
+			(f32::INFINITY, 16, "row 1, component 0"),
+			(f32::NEG_INFINITY, 20, "row 1, component 1"),
+		] {
+			let mut bytes = clean.clone();
+			bytes[at..at + 4].copy_from_slice(&bad.to_le_bytes());
+			std::fs::write(&path, bytes).unwrap();
+			let err = ValueProvider::new(&template).err().unwrap().to_string();
+			assert!(err.contains(place), "{bad}: {err}");
+		}
+		std::fs::remove_file(path).unwrap();
+		// An empty path is refused.
+		assert!(ValueProvider::new(r#"{ "v": "vector_file:" }"#).is_err());
+	}
+
+	#[test]
+	fn vector_file_tag_is_case_insensitive_and_rows_are_per_field() {
+		let short = write_fbin("short-field", 4, 2);
+		let long = write_fbin("long-field", 9, 2);
+		let template = format!(
+			r#"{{ "a": "VECTOR_FILE:{}", "b": "vector_file:{}", "c": "vector:2", "d": {{ "e": "vector_file:{}" }} }}"#,
+			short.display(),
+			long.display(),
+			short.display(),
+		);
+		let vp = ValueProvider::new(&template).unwrap();
+		assert_eq!(vp.vector_file_rows(), Some(4));
+		assert_eq!(vp.vector_file_rows_for("a").unwrap(), Some(4));
+		assert_eq!(vp.vector_file_rows_for("b").unwrap(), Some(9));
+		assert_eq!(vp.vector_file_rows_for("c").unwrap(), None);
+		// A nested column, or one that is missing, is not a scannable field.
+		assert!(vp.vector_file_rows_for("d.e").is_err());
+		assert!(vp.vector_file_rows_for("missing").is_err());
+		// A nested file still bounds the corpus.
+		let nested = format!(r#"{{ "d": {{ "e": "vector_file:{}" }} }}"#, short.display());
+		assert_eq!(ValueProvider::new(&nested).unwrap().vector_file_rows(), Some(4));
+		// The digest follows the contents, not the path.
+		let before = vp.vector_file_digests();
+		assert!(before.contains(&short.display().to_string()));
+		let mut bytes = std::fs::read(&short).unwrap();
+		bytes[8..12].copy_from_slice(&7.5f32.to_le_bytes());
+		std::fs::write(&short, bytes).unwrap();
+		assert_ne!(ValueProvider::new(&template).unwrap().vector_file_digests(), before);
+		assert_eq!(ValueProvider::new(r#"{ "c": "vector:2" }"#).unwrap().vector_file_digests(), "");
+		for p in [short, long] {
+			std::fs::remove_file(p).unwrap();
+		}
+	}
+
+	fn corpus_text(template: &str, seed: u64, sample: u32) -> String {
+		match ValueProvider::new(template)
+			.unwrap()
+			.with_seed(seed)
+			.generate_value_for(ValueStream::Create, sample)
+			.get_field("t")
+		{
+			Some(BenchValue::String(text)) => text.clone(),
+			other => panic!("expected a string, got {other:?}"),
+		}
+	}
+
+	/// Vocabulary words are distinct, so a rank's frequency is the word's.
+	#[test]
+	fn corpus_vocabulary_words_are_distinct() {
+		let words: Vec<String> = (0..20_000).map(vocabulary_word).collect();
+		let distinct: std::collections::HashSet<&String> = words.iter().collect();
+		assert_eq!(distinct.len(), words.len());
+		assert_eq!(vocabulary_word(0), "baba");
+		assert!(words.iter().all(|w| w.len() >= 4));
+	}
+
+	/// A planted term is carried by the share of documents its probability
+	/// gives, the most common words by many and the rarest by few, and a seeded
+	/// corpus is the same text for the same sample.
+	#[test]
+	fn corpus_plants_terms_at_their_document_frequencies() {
+		let template =
+			r#"{ "t": "corpus:60;5000;1.0;kolvak@0.9,trimbol@0.5,quorlat@0.05,vexin@0.005" }"#;
+		let docs = 20_000u32;
+		let mut carrying = [0u32; 4];
+		let (mut first, mut last) = (0u32, 0u32);
+		for n in 0..docs {
+			let text = corpus_text(template, 7, n);
+			let words: Vec<&str> = text.split(' ').collect();
+			assert!((60..=72).contains(&words.len()), "{}", words.len());
+			for (at, term) in ["kolvak", "trimbol", "quorlat", "vexin"].iter().enumerate() {
+				if words.contains(term) {
+					carrying[at] += 1;
+				}
+			}
+			first += u32::from(words.contains(&"baba"));
+			last += u32::from(words.contains(&vocabulary_word(4_999).as_str()));
+		}
+		for (at, share) in [0.9, 0.5, 0.05, 0.005].iter().enumerate() {
+			let found = carrying[at] as f64 / docs as f64;
+			assert!((found - share).abs() <= share * 0.1 + 0.002, "term {at}: {found} vs {share}");
+		}
+		assert!(first > docs * 9 / 10, "the commonest word is in most documents: {first}");
+		assert!(last < docs / 50, "the rarest word is in few documents: {last}");
+		assert_eq!(corpus_text(template, 7, 11), corpus_text(template, 7, 11));
+		assert_ne!(corpus_text(template, 7, 11), corpus_text(template, 8, 11));
+	}
+
+	#[test]
+	fn corpus_rejects_bad_specs() {
+		for template in [
+			r#"{ "t": "corpus:60;5000" }"#,
+			r#"{ "t": "corpus:60;0;1.0" }"#,
+			r#"{ "t": "corpus:60;100;-1" }"#,
+			r#"{ "t": "corpus:60;100;1.0;kolvak" }"#,
+			r#"{ "t": "corpus:60;100;1.0;kolvak@1.5" }"#,
+			r#"{ "t": "corpus:60;100;1.0;baba@0.5" }"#,
+		] {
+			assert!(ValueProvider::new(template).is_err(), "{template}");
+		}
+		assert!(ValueProvider::new(r#"{ "t": "corpus:40..60;100;0.8" }"#).is_ok());
 	}
 
 	#[tokio::test]

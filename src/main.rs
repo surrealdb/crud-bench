@@ -10,7 +10,7 @@ use crate::reuse::{Manifest, RunMode, Shape};
 use crate::terminal::ColorChoice;
 use crate::valueprovider::{Columns, ValueProvider};
 use crate::vectorfilter::{FilterField, VectorFilter};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use docker::Container;
 use serde::{Deserialize, Serialize};
@@ -31,6 +31,7 @@ mod engine;
 mod keyprovider;
 mod memory;
 mod profiling;
+mod resources;
 mod result;
 mod reuse;
 #[cfg(feature = "surrealdb")]
@@ -157,7 +158,8 @@ pub(crate) struct Args {
 	#[arg(long)]
 	pub(crate) show_sample: bool,
 
-	/// Collect system information for a given pid
+	/// Sample CPU, memory and disk of this process and its children instead of crud-bench itself.
+	/// Use it to measure a database server that crud-bench did not start
 	#[arg(long, value_parser=clap::value_parser!(u32).range(0..))]
 	pub(crate) pid: Option<u32>,
 
@@ -312,6 +314,10 @@ pub(crate) struct ScanSpec {
 	condition: Option<Condition>,
 	/// Per-dialect `ORDER BY` fragments; omit for unordered scans.
 	order_by: Option<OrderByClause>,
+	/// Per-dialect fields added to an `ID` or `FULL` projection, such as a
+	/// score an `order_by` names by its alias; omit for none.
+	#[serde(default)]
+	extra_fields: Option<ExtraFields>,
 	/// Row offset before returning results (`OFFSET` / `SKIP`).
 	start: Option<usize>,
 	/// Maximum rows to return (`LIMIT`).
@@ -322,6 +328,9 @@ pub(crate) struct ScanSpec {
 	projection: Option<String>,
 	/// Index definition for indexed-scan legs; omit for heap/table scans only.
 	with_index: Option<Index>,
+	/// Further named indexes the indexed legs read beside `with_index`.
+	#[serde(default)]
+	with_indexes: Vec<Index>,
 	/// Mixed read/write legs after each scan sample; omitted in config deserializes as empty (read-only).
 	#[serde(default)]
 	with_writes: Vec<ScanWithWrites>,
@@ -345,17 +354,25 @@ impl ScanSpec {
 			warmup_time,
 			condition,
 			order_by,
+			extra_fields,
 			start,
 			limit,
 			expect,
 			projection,
 			with_index,
+			with_indexes,
 			with_writes,
 			vector_query,
 		} = self;
 
 		if id.trim().is_empty() {
 			bail!("each scan entry must have a non-empty `id`");
+		}
+		if !with_indexes.is_empty() && with_index.is_none() {
+			bail!("scan `{id}`: `with_indexes` needs a `with_index` beside it");
+		}
+		if with_indexes.iter().any(|index| index.name.as_deref().is_none_or(str::is_empty)) {
+			bail!("scan `{id}`: each `with_indexes` entry needs a `name`");
 		}
 
 		match (name, runs) {
@@ -384,11 +401,13 @@ impl ScanSpec {
 					warmup_time,
 					condition,
 					order_by,
+					extra_fields,
 					start,
 					limit,
 					expect,
 					projection,
 					with_index,
+					with_indexes,
 					with_writes,
 					vector_query,
 				}])
@@ -416,11 +435,13 @@ impl ScanSpec {
 						warmup_time,
 						condition: condition.clone(),
 						order_by: order_by.clone(),
+						extra_fields: extra_fields.clone(),
 						start,
 						limit,
 						expect,
 						projection: run_projection,
 						with_index: with_index.clone(),
+						with_indexes: with_indexes.clone(),
 						with_writes: with_writes.clone(),
 						vector_query: run_vq,
 					});
@@ -461,6 +482,45 @@ const FIELDLESS_INDEX_TYPES: &[&str] = &["count"];
 
 fn is_fieldless_index_type(kind: Option<&str>) -> bool {
 	matches!(kind, Some(k) if FIELDLESS_INDEX_TYPES.contains(&k))
+}
+
+/// Check every `vector_file:` column holds the rows a run takes from it: one
+/// per sample, and for a scanned column, its queries after those. Every KNN
+/// scan must also name a top-level vector column.
+pub(crate) fn validate_vector_files(
+	samples: u32,
+	scans: &[Scan],
+	vp: &ValueProvider,
+) -> Result<()> {
+	if let Some(rows) = vp.vector_file_rows()
+		&& samples as usize > rows
+	{
+		bail!(
+			"{samples} samples were asked for, but a vector file in the template holds {rows} rows"
+		);
+	}
+	for scan in scans {
+		let Some(vq) = &scan.vector_query else {
+			continue;
+		};
+		// A KNN scan on anything but a top-level vector column would fail only
+		// once the load is done, so it is refused here, file or not.
+		if let Some(rows) = vp
+			.vector_file_rows_for(&vq.field)
+			.with_context(|| format!("scan `{}`: vector_query.field", scan.name))?
+		{
+			let needed = (samples as usize).saturating_add(vq.holdout.count);
+			if needed > rows {
+				bail!(
+					"scan `{}`: {samples} samples and {} queries need {needed} rows, but the vector file of `{}` holds {rows}",
+					scan.name,
+					vq.holdout.count,
+					vq.field,
+				);
+			}
+		}
+	}
+	Ok(())
 }
 
 /// Every scan with a non-skipped `with_index` must supply a non-empty `id` for datastore index names.
@@ -616,6 +676,11 @@ fn collect_vector_filter_fields(scans: &[Scan], columns: &Columns) -> Result<Vec
 					filter.name
 				);
 			}
+			// A full-text match reads the column through a full-text index the scan builds, so
+			// the column is not mirrored beside the vector.
+			if filter.op == crate::vectorfilter::FilterOp::Matches {
+				continue;
+			}
 			let Some(kind) = filter.field_kind(columns) else {
 				// `validate` above accepts only the types `field_kind` maps.
 				bail!(
@@ -681,13 +746,25 @@ fn validate_spatial_indexes(scans: &[Scan], columns: &Columns) -> Result<()> {
 	Ok(())
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 /// Physical or logical index attached to a scan (fulltext, field btree, etc.).
 pub(crate) struct Index {
 	/// When true, skip index create/drop but still run the query leg (table scan).
 	#[serde(default)]
 	pub(crate) skip: bool,
+	/// A name the index is shared under. Consecutive scans naming the same
+	/// index with the same definition build it once, before the first of
+	/// them, and drop it after the last; the build is reported on the first.
+	/// Without a name, each scan builds its own index, named by the scan id.
+	#[serde(default)]
+	pub(crate) name: Option<String>,
+	/// When true, the scan runs only with its index: the legs without it are
+	/// reported as not run. A full-text predicate without its index reads and
+	/// tokenises every row, which at a large corpus costs more than the rest
+	/// of the scan together.
+	#[serde(default)]
+	pub(crate) indexed_only: bool,
 	/// Columns or paths included in the index. Optional for index types that
 	/// don't take field arguments (e.g. SurrealDB COUNT indexes apply to the
 	/// whole table).
@@ -979,6 +1056,9 @@ pub(crate) struct Scan {
 	/// Optional `ORDER BY` per datastore (omit for unordered scans).
 	#[serde(default)]
 	order_by: Option<OrderByClause>,
+	/// Optional fields per datastore added to an `ID` or `FULL` projection.
+	#[serde(default)]
+	pub(crate) extra_fields: Option<ExtraFields>,
 	/// Row offset (`OFFSET` / `SKIP`) before returning rows.
 	start: Option<usize>,
 	/// Maximum rows to return (`LIMIT`).
@@ -989,6 +1069,11 @@ pub(crate) struct Scan {
 	projection: Option<String>,
 	/// Optional index specification for indexed scan legs (`skip`, `fields`, etc.).
 	pub(crate) with_index: Option<Index>,
+	/// Further named indexes the indexed legs read beside `with_index`, built
+	/// after it and dropped with it: a query over two fields each holding
+	/// their own full-text index. A skipped entry is not built.
+	#[serde(default)]
+	pub(crate) with_indexes: Vec<Index>,
 	/// Read+write workloads (ratio / mode / operation); omit or use `[]` for read-only scans.
 	#[serde(default)]
 	pub(crate) with_writes: Vec<ScanWithWrites>,
@@ -1049,6 +1134,12 @@ impl Scan {
 		Ok(id)
 	}
 
+	/// The name of the index the scan's indexed legs read: the shared name of
+	/// its `with_index`, or else the scan id.
+	pub(crate) fn index_name(&self) -> &str {
+		self.with_index.as_ref().and_then(|index| index.name.as_deref()).unwrap_or(&self.id)
+	}
+
 	/// Returns the scan projection type for adapter code.
 	fn projection(&self) -> Result<Projection> {
 		match self.projection.as_deref() {
@@ -1093,6 +1184,18 @@ pub(crate) struct Condition {
 	arangodb: Option<String>,
 	/// SurrealQL predicate fragment.
 	surrealdb: Option<String>,
+}
+
+/// Per-dialect fields a scan adds to its `ID` or `FULL` projection, after the
+/// id or the whole record, for an `order_by` to name by alias or a result to
+/// carry: a SurrealQL `ORDER BY` takes a field or a function call, not an
+/// expression such as a sum of scores. A datastore whose dialect has no entry
+/// runs the scan without them; a `COUNT` projection ignores them.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExtraFields {
+	/// SurrealQL fields, e.g. `search::score(1) + search::score(2) AS score`.
+	pub(crate) surrealdb: Option<String>,
 }
 
 /// Per-dialect `ORDER BY` fragments for scans (same shape as [`Condition`]).
@@ -1200,6 +1303,9 @@ fn run(args: Args) -> Result<()> {
 		// Recorded so a result file says which definition its build rows use;
 		// see `BenchmarkMetadata::index_build_timing`.
 		index_build_timing: result::INDEX_BUILD_TIMING,
+		// Filled in once any container has started, since its process is the
+		// one to sample.
+		resources: None,
 	};
 	let mut metadata = metadata;
 	// Get database display name
@@ -1212,13 +1318,16 @@ fn run(args: Args) -> Result<()> {
 	// editing the workload file.
 	let corpus_seed = args.corpus_seed.or(bench_toml.seed);
 	metadata.corpus_seed = corpus_seed;
-	metadata.template_digest =
-		Some(format!("{:016x}", twox_hash::XxHash64::oneshot(0, value_json.as_bytes())));
 	let vp = match corpus_seed {
 		Some(seed) => ValueProvider::new(&value_json)?.with_seed(seed),
 		None => ValueProvider::new(&value_json)?,
 	};
-	benchmark.set_value_template(value_json.clone());
+	// A `vector_file:` column names its file only by path, so the contents
+	// join the template wherever it stands for the corpus.
+	let corpus = format!("{value_json}{}", vp.vector_file_digests());
+	metadata.template_digest =
+		Some(format!("{:016x}", twox_hash::XxHash64::oneshot(0, corpus.as_bytes())));
+	benchmark.set_value_template(corpus);
 	let mut batches = bench_toml.batches;
 	if args.skip_batches {
 		batches.clear();
@@ -1237,6 +1346,9 @@ fn run(args: Args) -> Result<()> {
 		// a scan is ever looked at.
 		benchmark.set_vector_filter_fields(collect_vector_filter_fields(&scans, &vp.columns())?);
 	}
+	// A vector file too short for the run would otherwise fail after the load,
+	// or never, on a load-only run, so it is checked before anything starts.
+	validate_vector_files(args.samples, &scans, &vp)?;
 	// A split run is only sound against the dataset it was configured for, so
 	// this is settled before anything is started: a refused query run must not
 	// leave a container behind.
@@ -1276,6 +1388,11 @@ fn run(args: Args) -> Result<()> {
 		// No Docker container needed
 		None
 	};
+	// Choose the process the resource columns sample
+	let resources = resources::resolve(args.pid, container.as_ref(), args.endpoint.as_deref())?;
+	println!("Measuring resources of {resources}");
+	benchmark.pid = Some(resources.pid);
+	metadata.resources = Some(resources.clone());
 	// Run the benchmark
 	let res = runtime.block_on(async {
 		args.database
@@ -1328,6 +1445,7 @@ fn run(args: Args) -> Result<()> {
 				args.key,
 				args.random,
 			);
+			println!("Resources: {resources}");
 			println!("--------------------------------------------------");
 			println!("{res}");
 			println!("--------------------------------------------------");
@@ -1494,6 +1612,56 @@ mod test {
 		let columns = ValueProvider::new(FILTER_TEMPLATE).unwrap().columns();
 		let err = collect_vector_filter_fields(&scans, &columns).unwrap_err().to_string();
 		assert!(err.contains("filter_index") && err.contains("no `filters`"), "{err}");
+	}
+
+	/// A run that a vector file cannot hold, or a KNN scan on a field that is
+	/// not a top-level vector column, is refused before anything starts.
+	#[test]
+	fn vector_files_are_checked_before_the_run() {
+		use crate::valueprovider::test::write_fbin;
+		let scan = |name: &str, field: &str, count: usize| {
+			let json = format!(
+				r#"[{{ "id": "{name}", "name": "{name}", "iterations": 1,
+				   "vector_query": {{ "field": "{field}", "top_k": 1, "distance": "cosine",
+				   "index_strategy": {{ "kind": "bruteforce" }}, "holdout": {{ "count": {count} }} }} }}]"#
+			);
+			expand_scan_specs(serde_json::from_str(&json).unwrap()).unwrap()
+		};
+		let short = write_fbin("validate-short", 10, 2);
+		let long = write_fbin("validate-long", 30, 2);
+		let template = format!(
+			r#"{{ "a": "vector_file:{}", "b": "vector_file:{}", "g": "vector:2", "d": {{ "e": "vector_file:{}" }} }}"#,
+			short.display(),
+			long.display(),
+			short.display(),
+		);
+		let vp = ValueProvider::new(&template).unwrap();
+		// The corpus takes one row of every file per sample, nested ones too.
+		assert!(super::validate_vector_files(10, &[], &vp).is_ok());
+		let err = super::validate_vector_files(11, &[], &vp).unwrap_err().to_string();
+		assert!(err.contains("holds 10 rows"), "{err}");
+		let nested = format!(r#"{{ "d": {{ "e": "vector_file:{}" }} }}"#, short.display());
+		let nested = ValueProvider::new(&nested).unwrap();
+		assert!(super::validate_vector_files(11, &[], &nested).is_err());
+		// Queries come after the corpus, in the file of the scanned field only.
+		assert!(super::validate_vector_files(8, &scan("a", "a", 2), &vp).is_ok());
+		let err = super::validate_vector_files(8, &scan("a", "a", 3), &vp).unwrap_err().to_string();
+		assert!(err.contains("need 11 rows") && err.contains("holds 10"), "{err}");
+		assert!(super::validate_vector_files(8, &scan("b", "b", 22), &vp).is_ok());
+		assert!(super::validate_vector_files(8, &scan("b", "b", 23), &vp).is_err());
+		// A generated column beside a file takes nothing from it.
+		assert!(super::validate_vector_files(10, &scan("g", "g", 1000), &vp).is_ok());
+		// A nested, missing or non-vector field is refused, file or not.
+		for field in ["d.e", "missing"] {
+			let err = super::validate_vector_files(1, &scan("x", field, 1), &vp).unwrap_err();
+			assert!(format!("{err:#}").contains("scan `x`"), "{err:#}");
+		}
+		let plain = ValueProvider::new(r#"{ "n": "int", "g": "vector:2" }"#).unwrap();
+		let err = super::validate_vector_files(1, &scan("x", "n", 1), &plain).unwrap_err();
+		assert!(format!("{err:#}").contains("not a `vector:<dim>`"), "{err:#}");
+		for p in [short, long] {
+			std::fs::remove_file(p).unwrap();
+		}
 	}
 
 	/// Two predicates on one column need that column prepared once, not twice —

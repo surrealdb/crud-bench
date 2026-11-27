@@ -140,7 +140,7 @@ Usage: crud-bench [OPTIONS] --database <DATABASE> --samples <SAMPLES>
 
 Options:
   -n, --name <NAME>                            An optional name for the test, used as a suffix for the JSON result file name
-  -d, --database <DATABASE>                    The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mariadb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, slatedb, sqlite, surrealdb, surrealkv, surrealmx, surrealds]
+  -d, --database <DATABASE>                    The database to benchmark [possible values: dry, map, arangodb, dragonfly, fjall, keydb, mdbx, lmdb, mariadb, mongodb, mysql, neo4j, postgres, redb, redis, rocksdb, scylladb, slatedb, sqlite, surrealdb, surrealdb2, surrealdb3, surrealkv, surrealmx, surrealds]
   -i, --image <IMAGE>                          Specify a custom Docker image
   -p, --privileged                             Whether to run Docker in privileged mode
   -e, --endpoint <ENDPOINT>                    Specify a custom endpoint to connect to
@@ -163,7 +163,7 @@ Options:
       --color <COLOR>                          When to use colour in terminal output (`NO_COLOR` disables colour for `auto` and `always`) [default: auto] [possible values: auto, always, never]
   -k, --key <KEY>                              The type of the key [default: integer] [possible values: integer, string26, string90, string250, string506, uuid]
       --show-sample                            Print-out an example of a generated value
-      --pid <PID>                              Collect system information for a given pid
+      --pid <PID>                              Sample CPU, memory and disk of this process and its children instead of crud-bench itself. Use it to measure a database server that crud-bench did not start
       --store-results                          Store benchmark results in SurrealDB
       --storage-endpoint <STORAGE_ENDPOINT>    SurrealDB endpoint for storing results [env: CRUD_BENCH_STORAGE_ENDPOINT=] [default: ws://localhost:8000]
       --config <CONFIG>                        Path to the benchmark TOML (`[[scans]]`, `[[batches]]`, `[value]`) [env: CRUD_BENCH_CONFIG=] [default: config/bench.toml]
@@ -182,6 +182,64 @@ For more detailed help information run the following command:
 ```bash
 cargo run -r -- --help
 ```
+
+### Resource columns
+
+The CPU, Memory, Reads and Writes columns show the resources that one process used during each test. crud-bench
+samples that process every 250 ms. Memory is the peak resident memory (see below). CPU is a percentage of all the CPUs
+on the host.
+
+crud-bench chooses the process as follows:
+
+| Database                                       | Process that crud-bench samples                         |
+| ---------------------------------------------- | ------------------------------------------------------- |
+| Started by crud-bench in Docker                | The main process of the container, and its children     |
+| Given with `--pid <PID>`                       | That process, and its children                          |
+| Embedded (for example `rocksdb`, `-e memory`)  | crud-bench itself, which also runs the database         |
+| Networked at `--endpoint`, without `--pid`     | crud-bench itself. The columns do not show the server   |
+
+When a process has children, crud-bench adds their values together. For example, Postgres serves each connection from
+a child process.
+
+Memory means the following:
+
+| Process that crud-bench samples | Memory column                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| One process                     | Resident memory (RSS) of the process                                           |
+| A process and its children      | Proportional memory (PSS) added over the processes, from `/proc/<pid>/smaps_rollup` |
+
+The resident memory of each process includes every shared page that the process maps. For Postgres, every backend
+maps the same shared buffers, so the sum of resident memory counts those buffers once for each connection, and can be
+larger than the memory of the host. PSS divides each shared page among the processes that map it, so the sum counts
+each page once. For one process, PSS and RSS are almost the same, and crud-bench keeps RSS.
+
+Linux shows `smaps_rollup` only to the owner of the process or to root. When crud-bench cannot read it, it adds the
+private memory (`RssAnon` in `/proc/<pid>/status`) of each process, and the largest shared and file-backed memory
+(`RssShmem` and `RssFile`) of any one process. That value can be lower than the real memory of the server, because
+two processes can map different shared pages. crud-bench shows a warning when it uses this value. Run crud-bench as
+root (`run.sh --elevated`) to get PSS.
+
+crud-bench shows the sampled process before the benchmark starts and in the header of the results. The `result*.json`
+file records it in `metadata.resources`:
+
+```json
+"resources": { "pid": 12345, "name": "surreal", "source": "pid" }
+```
+
+The `source` value is `docker`, `pid` or `client`.
+
+Disk counters come from `/proc/<pid>/io`. Linux shows these counters only to the owner of the process or to root.
+When crud-bench cannot read them, for example for a Docker container that runs as root, the Reads and Writes columns
+show zero. Run crud-bench as root (`run.sh --elevated`) to read them.
+
+To measure a server that you started yourself, give its process ID:
+
+```bash
+cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 --pid "$(pgrep -x surreal)" -s 100000
+```
+
+`run.sh` does this for you. When you give `--endpoint` with a port, it finds the process that listens on that port.
+You can also give the process with `--pid <PID>` or the `PID` environment variable.
 
 ### Comparing `result*.json` files in the browser
 
@@ -224,6 +282,35 @@ Within the JSON structure, the following values are replaced by randomly generat
 - Every `point` will be replaced by a 2D geographic point `(lon, lat)` with uniform longitude in `[-180, 180]` and latitude in `[-85, 85]`.
 - Every `point:LON_MIN..LON_MAX,LAT_MIN..LAT_MAX` will be replaced by a 2D geographic point in the given longitude/latitude window (e.g. `point:-10.0..40.0,35.0..65.0`).
 - Every `point:clustered:N` (or `point:clustered:N:SIGMA`, default `0.5` degrees) will be replaced by a 2D geographic point drawn from a Gaussian mixture of `N` seeded cluster centres.
+- Every `vector_file:PATH` will be replaced by a row of real embeddings read from the `.fbin` file at `PATH`:
+  sample `n` takes row `n`. See [Vector data](#vector-data).
+- Every `corpus:WORDS;VOCABULARY;EXPONENT;term@p,...` will be replaced by a text for full-text search. See
+  [Text corpus](#text-corpus).
+
+#### Text corpus
+
+`words:` draws every word from a short list with equal chance, so each word is in nearly every document and no query
+can be selective. `corpus:` spreads words the way natural text does, and plants named terms at document frequencies the
+configuration sets:
+
+```toml
+body = "corpus:20..200;20000;1.0;kolvak@0.92,trimbol@0.6,quorlat@0.07,vexin@0.006"
+```
+
+- `WORDS`: words per document, or a range (`20..200`). Prefer a range for ranked queries. BM25 normalises a term's
+  frequency by document length, so at one length a term's score takes only as many values as its frequency does, and
+  a top-k ends in a tie of thousands of documents. That flatters any engine that stops at its k-th score.
+- `VOCABULARY`: how many distinct filler words there are. They are spelled from consonant-vowel syllables (`baba`,
+  `babe`, …), the same words for every seed.
+- `EXPONENT`: the Zipf exponent. The rank-`r` word is drawn with probability proportional to `1 / r^EXPONENT`, so at
+  `1.0` the commonest words are in nearly every document and most of the vocabulary is in few.
+- `term@p` (optional): a planted term, inserted one to three times into a document with probability `p`. Its
+  document frequency is `p`, whatever the vocabulary does, which is what lets a query be written against a known
+  selectivity. A planted term must not spell a vocabulary word. For engines that stem (Postgres and MySQL with
+  English configurations, MongoDB), choose terms stemming leaves unchanged.
+
+With `seed` set, the text of each row is a pure function of the seed and the row, like every other value.
+`config/fulltext.toml` uses this corpus.
 
 ```json
 {
@@ -267,7 +354,7 @@ Each scan object can make use of the following values:
 - `name`: A descriptive name for the test (use this **or** `runs`, not both).
 - `runs`: An array of `{ "name", "iterations"?, "projection"?, "vector_query"? }` objects that share the same scan parameters (`condition`, `with_index`, and so on). Each run becomes a separate benchmark with its own display name. Per-run `iterations`, `projection` and `vector_query` override the entry-level value when both are set; if a run omits one, the entry-level value applies (`projection` defaulting to full-record scans like a single-object entry without `projection`). A per-run `iterations` matters when one array mixes leg kinds — a bruteforce KNN leg is a full table scan costing seconds per query at 100k rows, while the graph-index legs beside it answer in under a millisecond, and no single count suits both.
 - `iterations`: A fixed number of timed iterations. When omitted, the scan is measured over a time window instead, so its run time does not grow with the dataset size.
-- `measurement_time` / `warmup_time`: Seconds of the measured window and of the untimed warm-up before it, overriding `--measurement-time` and `--warmup-time`. Ignored when `iterations` is set. A window never interrupts a query already running, and always records at least `--min-iterations` samples, so a very slow query can run past it. Result rows for a windowed scan are labelled with the window (for example `30s`) instead of an iteration count.
+- `measurement_time` / `warmup_time`: Seconds of the measured window and of the untimed warm-up before it, overriding `--measurement-time` and `--warmup-time`. Ignored when `iterations` is set. A window never interrupts a query already running, and always records at least `--min-iterations` samples, so a very slow query can run past it. The warm-up starts with `--min-iterations` queries in flight and admits more only as queries complete, and the measured window then starts no more queries than the warm-up's throughput says fit in it (with 50% headroom, within `--min-iterations` and `--max-iterations`). So a leg of slow queries, such as a full-table scan over millions of rows, runs the few that fit its window instead of one per client thread, while a leg of fast queries still runs every thread for the whole window. With `--warmup-time 0` there is no warm-up to size the window from, and every thread starts a query when it opens. Result rows for a windowed scan are labelled with the window (for example `30s`) instead of an iteration count.
 - `projection`: The projection type of the scan:
     - `"ID"`: only the ID is returned.
     - `"FULL"`: the whole record is returned.
@@ -275,6 +362,24 @@ Each scan object can make use of the following values:
 - `start`: Skips the specified number of rows before starting to return rows.
 - `limit`: Specifies the maximum number of rows to return.
 - `expect`: (optional) Asserts the expected number of rows returned.
+- `order_by`: (optional) Per-dialect `ORDER BY` fragments, without the keyword.
+- `extra_fields`: (optional) Per-dialect fields added to an `ID` or `FULL` projection, after the id or the whole
+  record. An `order_by` can name one by its alias: a SurrealQL `ORDER BY` takes a field or a function call, so a
+  ranked `OR` orders by `search::score(1) + search::score(2) AS score` as `score DESC`. Only `surrealdb` is read; an
+  engine whose dialect has no entry runs the scan without them.
+- `with_index`: (optional) The index the scan's indexed legs read:
+    - `fields`, `index_type` (e.g. `fulltext`, `count`) and `unique` define it.
+    - `skip`: run only the legs without an index.
+    - `indexed_only`: run only the legs with the index. The legs without it are reported as not run, which matters
+      for full-text predicates: without its index, a full-text match tokenises every row.
+    - `name`: share the index under this name. Consecutive scans that name the same index, with the same
+      definition, build it once before the first and drop it after the last; the build time is reported on the
+      first. Without a name, each scan builds and drops its own index, named by its `id`.
+- `with_indexes`: (optional) Further indexes the indexed legs read beside `with_index`, each with a `name`: a query
+  over two fields that each hold their own full-text index. They are built after `with_index`, in order, and dropped
+  with it, and they are shared with the next scan only when it declares the same list. Only the build of
+  `with_index` is timed in the results. If one of them cannot be built on an engine (MongoDB keeps one text index a
+  collection), every index built for the scan is dropped and its indexed legs are reported as not run.
 - `clients` / `threads`: (optional) Concurrency for this scan's timed legs, overriding `--clients`
   and `--threads`. `clients` is capped at the pool `--clients` created. Index DDL is unaffected — it
   always runs on a single client.
@@ -390,7 +495,8 @@ block describes one KNN benchmark:
 |---|---|---|---|---|---|
 | SurrealDB (3.x) | ✓ | ✓ | ✓ | ✓ (HNSW + DiskANN) | `<\|k,ef\|>` operator; DiskANN needs a build that has the DDL; HNSW and DiskANN legs need a server that reports `building.compacting` (see [Index build time](#index-build-time)) |
 | SurrealDB (2.x) | ✓ | ✓ | — | — | 2.6 has no DiskANN; filtered legs are declined, not answered unfiltered |
-| PostgreSQL | ✓ | ✓ | — | ✓ | pgvector; DiskANN would need pgvectorscale |
+| PostgreSQL (pgvector) | ✓ | ✓ | — | ✓ | `-d postgres+pgvector`: pgvector's `hnsw` |
+| PostgreSQL (pgvectorscale) | ✓ | ✓ | ✓ | ✓ | `-d postgres+pgvectorscale`: pgvector's `hnsw` for HNSW, pgvectorscale's `diskann` for DiskANN, in its `plain` layout; no L1/Manhattan DiskANN |
 | Redis Stack | ✓ (FLAT) | ✓ | — | ✓ | no native L1/Manhattan metric |
 | everything else | — | — | — | — | the run is skipped, not failed |
 
@@ -410,6 +516,41 @@ sits at 65% of a random pair's distance under `vector:128`, and at 8% under
 Clusters are drawn from the corpus seed, so two seeds give two genuinely different datasets rather
 than one structure populated differently. Query vectors come from the same generator, so they follow
 the corpus distribution by construction.
+
+Synthetic clusters do not behave like real embeddings in every index. Quantised indexes, which search
+over compressed vectors, can lose far more recall on one than on the other. To measure on real
+embeddings, use `vector_file:<path>`. The file uses the `.fbin` layout from big-ann-benchmarks: the row
+count and the dimension as little-endian `u32`s, then each row's `f32` components, little-endian.
+
+- Sample `n` takes row `n`, in both the create and the update phase, so the update phase rewrites each
+  vector unchanged.
+- Query `i` takes row `rows - 1 - i`, counting back from the end of the file. The holdout `seed` does
+  not apply. With `-s N`, the file must hold at least `N` plus the holdout `count` rows, so the queries
+  stay out of the corpus. crud-bench checks this before it starts.
+- An unfiltered leg on a file column reports recall without a corpus `seed`, because the file sets
+  every row and every query. A filtered leg still needs the `seed`, to rebuild the columns it filters on.
+- Every component must be a finite number. crud-bench refuses a file with a `NaN` or an infinity.
+- crud-bench hashes the contents of the file. The ground-truth cache, the split-run manifest and the
+  template digest in the results all change when the file changes, even under the same path.
+- The whole file is read into memory once, at startup: 1M 768-d rows take 3 GB. This memory belongs to
+  the crud-bench process. For an embedded engine, the Memory column measures that process, so it
+  includes the file. For a server or a Docker engine, it measures the server only. Do not compare the
+  Memory column of an embedded run with a server run that reads the same file.
+
+For example, VectorDBBench's Cohere dataset of 1M 768-d Wikipedia embeddings ships as Parquet. Append
+its 1,000 test vectors after its 1M training vectors to get one file, then run with `-s 1000000`:
+
+```python
+import numpy as np, pyarrow.parquet as pq
+
+def emb(path):
+    return np.stack(pq.read_table(path, columns=["emb"])["emb"].to_numpy(zero_copy_only=False)).astype("<f4")
+
+rows = np.concatenate([emb("train.parquet"), emb("test.parquet")])
+with open("cohere-1m.fbin", "wb") as f:
+    np.array(rows.shape, dtype="<u4").tofile(f)
+    rows.tofile(f)
+```
 
 Corpus size matters more than dimension. Dimension scales cost linearly without making the search
 harder; rows add candidates that can confuse a graph. Measured against embedded SurrealDB at 128
@@ -539,9 +680,9 @@ why the calibration had to happen at the target scale. Selective predicates do n
 at all — at 1% pgvector's post-filter never passes 0.271 on this ladder, while Redis brute-forces the
 matching rows at 1.000 — so the ladder is chosen on the unfiltered and 50% columns.
 
-The DiskANN ladder, `[50, 200]`, is **not calibrated**. DiskANN runs only on SurrealDB, whose 1M arm
-is blocked: the index keeps materialising for over an hour after reporting ready, so there is nothing
-yet to calibrate against.
+The DiskANN ladder, `[50, 200]`, is **not calibrated**. When this calibration ran, DiskANN ran only on
+SurrealDB, whose 1M arm was blocked: the index kept materialising for over an hour after reporting
+ready, so there was nothing to calibrate against. pgvectorscale's DiskANN came later.
 
 Note every **exact** leg reads `1.000` under both predicates on all three engines. That is the check
 that the three renderings select the same rows the harness does: if SurrealQL, ANSI SQL and the
@@ -557,8 +698,15 @@ A filter is `{ name, field, op, value }`:
 - `field`: an `integer`, `float`, `string` or `bool` column from the value template. Other column
   types are rejected — a datetime or decimal filter would need per-engine literal formats and
   collation rules, and getting either subtly wrong leaves two engines answering different questions.
-- `op`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, or `in`. The ordering operators require a numeric
-  column; `in` takes a list and is the natural way to dial selectivity on a categorical column.
+- `op`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `in` or `matches`. The ordering operators require a
+  numeric column; `in` takes a list and is the natural way to dial selectivity on a categorical column.
+  `matches` is a full-text match of one word, of letters and digits, in a string column: a row matches
+  when the column holds the word whole, in any case. The scan builds a full-text index on the column
+  before its legs (untimed) and drops it after, whatever `filter_index` says, since SurrealDB answers
+  `@@` only through one. SurrealDB renders it as `field @@ 'word'`, Postgres as
+  `to_tsvector('english', field) @@ plainto_tsquery('english', 'word')`; Redis, which mirrors filter
+  columns as tags, skips it. A `corpus:` column with planted words gives each word a known
+  selectivity; `config/vector-fulltext.toml` runs a ladder of them.
 - `value`: a literal, or a list for `in`. Text literals are restricted to letters, digits, space and
   `_-./+:@` — every engine here quotes strings differently, and a mis-escaped literal does not fail
   loudly, it silently selects a different set of rows in one engine than in another.
@@ -587,7 +735,7 @@ nothing — a configuration mistake, not a result.
 | engine | rendering |
 |---|---|
 | SurrealDB (3.x) | `WHERE <field> <\|k,ef\|> $q AND <pred>`, with the KNN operator leading — HNSW and DiskANN share this path; bruteforce gets a plain `WHERE` before the `ORDER BY` |
-| PostgreSQL | `SELECT id FROM record WHERE <pred> ORDER BY <field> <op> $1 LIMIT k` |
+| PostgreSQL | `SELECT id FROM record WHERE <pred> ORDER BY <field> <op> $1 LIMIT k`, for both its HNSW and pgvectorscale's DiskANN index |
 | Redis Stack | `(<pred>)=>[KNN k @v $q …]`, a hybrid query; filter columns are mirrored into the `vec:{key}` HASH and declared `NUMERIC` / `TAG CASESENSITIVE` in `FT.CREATE` |
 
 `CASESENSITIVE` matters: RediSearch folds case on TAG fields by default, which would admit rows the
@@ -597,9 +745,9 @@ SurrealDB 2.x declines filtered legs and reports `-`. Running the unfiltered que
 against a filter-aware answer key would report a recall collapse that says nothing about the engine,
 and a skip is distinguishable from that where a wrong number is not.
 
-DiskANN is filtered wherever it exists, which today is SurrealDB 3.x alone — it shares the index path
-above with HNSW. Neither pgvector nor Redis Stack ships a DiskANN index, so there is nowhere else to
-apply it; pgvectorscale's `diskann` would be a separate adapter and is tracked in #284.
+DiskANN is filtered wherever it exists: on SurrealDB 3.x it shares the index path above with HNSW,
+and on pgvectorscale it takes the same SQL as pgvector's HNSW, whose filter the planner applies to
+the index scan. Neither pgvector alone nor Redis Stack ships a DiskANN index.
 
 ##### Indexed filter columns
 
@@ -705,7 +853,7 @@ The suite covers:
 
 ```bash
 cargo run -r -- -d surrealdb -s 100000 -c 12 -t 24 --config config/spatial.toml
-cargo run -r -- -d postgres  -s 100000 -c 12 -t 24 --config config/spatial.toml
+cargo run -r -- -d postgres+pgvector -s 100000 -c 12 -t 24 --config config/spatial.toml
 cargo run -r -- -d mongodb   -s 100000 -c 12 -t 24 --config config/spatial.toml
 ```
 
@@ -843,17 +991,63 @@ cargo run -r -- -d neo4j -e '127.0.0.1:7687' -s 100000 -c 12 -t 24 -r
 
 ### [Postgres](https://www.postgresql.org/)
 
-Postgres is a networked, object-relational, ACID-compliant, SQL-based database.
+Postgres is a networked, object-relational, ACID-compliant, SQL-based database. crud-bench runs it in three
+variants. Each one uses an image pinned by digest, because an image tag can be rebuilt with a different base
+or package build.
+
+| `-d` | Image | Postgres package | Extensions | Vector indexes |
+|---|---|---|---|---|
+| `postgres` | `postgres:18.6`, the official image | `18.6-1.pgdg13+2` (Debian 13) | none | none |
+| `postgres+pgvector` | `pgvector/pgvector:0.8.7-pg18` | `18.6-1.pgdg12+2` (Debian 12) | pgvector 0.8.7 | HNSW |
+| `postgres+pgvectorscale` | built by crud-bench from the `postgres+pgvector` image | `18.6-1.pgdg12+2` (Debian 12) | pgvector 0.8.7, pgvectorscale 0.9.1 | HNSW, DiskANN |
+
+`postgres` is stock Postgres. It has no vector type, so it stores a vector column as `REAL[]` and skips
+vector scans, as MySQL and SQLite do.
+
+`postgres+pgvector` uses the image that the pgvector project publishes. This image is not built on the
+official `postgres:18.6` image: it uses the Debian 12 build of Postgres 18.6, and the official image uses the
+Debian 13 build. Do not compare `postgres` with `postgres+pgvector` as if only the extension is different.
+
+`postgres+pgvectorscale` is the `postgres+pgvector` image with only the official pgvectorscale 0.9.1 package
+added. Timescale publishes pgvectorscale only in its `timescaledb-ha` image, which has a different build of
+Postgres and more extensions. crud-bench builds this image from
+[`docker/postgres-pgvectorscale.Dockerfile`](docker/postgres-pgvectorscale.Dockerfile) before the run, and
+checks the release archive against its SHA-256. HNSW legs therefore run on the same server as on
+`postgres+pgvector`.
+
+All three variants run the same client, SQL and server settings. The server variants differ only in the
+image.
 
 ```bash
 cargo run -r -- -d postgres -s 100000 -c 12 -t 24 -r
 ```
 
-The above command starts a Docker container automatically. To connect to an already-running Postgres instance use the
+The above command starts a Docker container automatically. Postgres runs parallel queries and parallel index builds
+in POSIX shared memory (`/dev/shm`). Docker limits this to 64 MB, so crud-bench sets `--shm-size` from `work_mem` and
+`maintenance_work_mem`, up to half of the memory of the host. To connect to an already-running Postgres instance use the
 following command:
 
 ```bash
 cargo run -r -- -d postgres -e 'host=127.0.0.1 user=postgres password=postgres' -s 100000 -c 12 -t 24 -r
+```
+
+With `-e`, the `-d` variant tells crud-bench which extensions the server has installed.
+
+#### DiskANN with pgvectorscale
+
+pgvectorscale adds a DiskANN index, `diskann`, to Postgres and pgvector. On `-d postgres+pgvectorscale`, DiskANN
+legs build a `diskann` index (`num_neighbors`, `search_list_size` and `max_alpha` from `degree`, `l_build` and
+`alpha`) and search with `diskann.query_search_list_size` set from `l_search`. HNSW legs use pgvector, as on
+`-d postgres+pgvector`.
+
+The index uses the `plain` storage layout, which searches over the full vectors, so its recall follows
+`l_search` as SurrealDB's DiskANN does. The default `memory_optimized` layout searches over 2-bit codes
+and sets its recall by the rescore count, `diskann.query_rescore`, which has a maximum of 1000. At
+1M x 768 with a rescore count of 1000, that layout reaches only 0.72 recall@10. The `plain` layout
+builds about four times slower.
+
+```bash
+cargo run -r -- -d postgres+pgvectorscale -s 100000 -c 12 -t 24 -r
 ```
 
 ### [ReDB](https://www.redb.org/)
@@ -941,7 +1135,7 @@ Specify a custom endpoint using `-e` or `--endpoint` to benchmark a custom deplo
 | `surrealkv:<path>` (`surrealkv:/tmp/db`) | Embedded with SurrealKV storage engine. |
 | `ws://...`, `wss://...`, `http://...`, `https://...` | Remote server you manage yourself (no Docker started by crud-bench). |
 
-The default adapter follows the latest SurrealDB release, which no longer offers the RocksDB storage engine. To benchmark SurrealDB 3.x, including RocksDB, use `-d surrealdb3`, which links the 3.x SDK and starts the `surrealdb/surrealdb:v3` image. It accepts the same endpoints as above plus `server:rocksdb` and `rocksdb:<path>`, and defaults to `server:rocksdb`.
+The `surrealdb` adapter links the 4.x SDK and only talks to SurrealDB 4, which no longer offers the RocksDB storage engine. To benchmark SurrealDB 3.x, including RocksDB, use `-d surrealdb3`, which links the 3.x SDK and starts the `surrealdb/surrealdb:v3` image. It accepts the same endpoints as above plus `server:rocksdb` and `rocksdb:<path>`, and defaults to `server:rocksdb`.
 
 ### [SurrealKV](https://surrealkv.org)
 
@@ -972,8 +1166,11 @@ surreal start --allow-all -u root -p root surrealkv:/tmp/db
 Then run crud-bench with the `surrealdb` database option:
 
 ```bash
-cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 -s 100000 -c 12 -t 24 -r
+cargo run -r -- -d surrealdb -e ws://127.0.0.1:8000 --pid "$(pgrep -x surreal)" -s 100000 -c 12 -t 24 -r
 ```
+
+The `--pid` option makes the CPU, Memory, Reads and Writes columns measure the server. Without it, they measure
+crud-bench. See [Resource columns](#resource-columns).
 
 ## SurrealDB Authentication
 

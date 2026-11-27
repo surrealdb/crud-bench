@@ -4,7 +4,6 @@ use crate::benchmark::NOT_SUPPORTED_ERROR;
 use crate::dialect::MongoDBDialect;
 use crate::docker::DockerParams;
 use crate::engine::{BenchmarkClient, BenchmarkEngine, ScanContext};
-use crate::memory::Config;
 use crate::value::BenchValue;
 use crate::valueprovider::Columns;
 use crate::{Benchmark, Index, KeyType, Projection, Scan};
@@ -22,6 +21,7 @@ use mongodb::{Client, Collection, Cursor, Database};
 use std::hint::black_box;
 use std::str::FromStr;
 use std::time::Duration;
+use sysinfo::System;
 
 pub const DEFAULT: &str = "mongodb://root:root@127.0.0.1:27017";
 
@@ -133,10 +133,11 @@ fn bench_to_bson(v: &BenchValue) -> Bson {
 
 /// Calculate MongoDB specific memory allocation
 fn calculate_mongodb_memory() -> u64 {
-	// Load the system memory
-	let memory = Config::new();
-	// Use ~80% of recommended cache allocation
-	(memory.cache_gb * 4 / 5).max(1)
+	// Give WiredTiger half of system memory. This matches what SurrealDB on
+	// SurrealKV uses by default (block cache of RAM/2 - 1 GiB, plus a 1 GiB
+	// memtable on 16-64 GiB hosts), so both engines get the same budget.
+	let total_gb = System::new_all().total_memory() / (1024 * 1024 * 1024);
+	(total_gb / 2).max(1)
 }
 
 pub(crate) fn docker(options: &Benchmark) -> DockerParams {
@@ -144,7 +145,8 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 	let cache_gb = calculate_mongodb_memory();
 	// Return Docker parameters
 	DockerParams {
-		image: "mongo",
+		// Pinned so every run measures the same server
+		image: "mongo:9.0.4",
 		pre_args: "--ulimit nofile=65536:65536 -p 127.0.0.1:27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root".to_string(),
 		post_args: match options.optimised {
 			// Optimised configuration
@@ -153,7 +155,26 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 			false => "".to_string(),
 		},
 		data_path: Some("/data/db"),
+		dockerfile: None,
 	}
+}
+
+/// The write concern for every write: acknowledged by the node that ran it
+/// (`w: 1`), and, when `sync` is set, only once it is in the on-disk journal.
+///
+/// This is not `w: "majority"`. crud-bench runs a standalone `mongod`, and there
+/// any string `w` takes the "wait for other nodes" path, which returns at once
+/// and only signals the journal flusher: writes were acknowledged before the
+/// journal was synced, even with `j: true`. `w: 1` makes `j: true` wait for the
+/// sync, which is what `--sync` asks of every other engine.
+fn write_concern(sync: bool) -> WriteConcern {
+	WriteConcern::builder()
+		// Acknowledged by the node that applied the write
+		.w(Acknowledgment::Nodes(1))
+		// When `true`: acknowledged only once in the on-disk journal.
+		// When `false`: acknowledged once applied in memory.
+		.journal(sync)
+		.build()
 }
 
 pub(crate) struct MongoDBClientProvider {
@@ -176,7 +197,7 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 		// still creates 2 more connections than has
 		// been specified in the `max_pool_size` option.
 		let mut opts = ClientOptions::parse(url).await?;
-		opts.max_pool_size = Some(options.clients);
+		opts.max_pool_size = Some(options.clients * options.threads);
 		opts.min_pool_size = None;
 		// Set server selection timeout to 60 seconds (default 30s)
 		opts.server_selection_timeout = Some(Duration::from_secs(60));
@@ -196,22 +217,7 @@ impl BenchmarkEngine<MongoDBClient> for MongoDBClientProvider {
 			"crud-bench",
 			DatabaseOptions::builder()
 				// Configure the write concern options
-				.write_concern(
-					// Configure the write options
-					WriteConcern::builder()
-						// Ensure that all writes are written,
-						// replicated, and acknowledged by the
-						// majority of nodes in the cluster.
-						.w(Acknowledgment::Majority)
-						// Configure journal durability based on sync setting.
-						// When `true`: writes are acknowledged only after
-						// being written to the on-disk journal (full durability).
-						// When `false`: writes are acknowledged after being
-						// written to memory (faster, less durable).
-						.journal(self.sync)
-						// Finalise the write options
-						.build(),
-				)
+				.write_concern(write_concern(self.sync))
 				// Configure the read concern options
 				.read_concern(ReadConcern::majority())
 				// Finalise the database configuration
@@ -287,7 +293,7 @@ impl BenchmarkClient for MongoDBClient {
 		// is approximate, not exact); the indexed scan leg runs the same query
 		// as the baseline so the row still populates.
 		if spec.index_type.as_deref() == Some("count") {
-			return Ok(());
+			bail!(NOT_SUPPORTED_ERROR);
 		}
 		// Define the index document
 		let mut doc = Document::new();
@@ -297,6 +303,17 @@ impl BenchmarkClient for MongoDBClient {
 		// Check if an index type is specified
 		match &spec.index_type {
 			Some(kind) if kind == "fulltext" => {
+				// A collection holds one text index, over every field it covers, and `$text`
+				// cannot name a field: a scan asking for a second text index, to search two
+				// fields apart, has no MongoDB equivalent.
+				let existing =
+					self.collection().list_indexes().await?.try_collect::<Vec<_>>().await?;
+				if existing.iter().any(|index| {
+					index.keys.values().any(|kind| kind.as_str() == Some("text"))
+						|| index.keys.contains_key("_fts")
+				}) {
+					bail!(NOT_SUPPORTED_ERROR);
+				}
 				// Create a text index
 				for field in &fields {
 					doc.insert(field, "text");
@@ -519,19 +536,7 @@ impl MongoDBClient {
 			.bulk_write(docs)
 			.write_concern(
 				// Configure the write options
-				WriteConcern::builder()
-					// Ensure that all writes are written,
-					// replicated, and acknowledged by the
-					// majority of nodes in the cluster.
-					.w(Acknowledgment::Majority)
-					// Configure journal durability based on sync setting.
-					// When `true`: writes are acknowledged only after
-					// being written to the on-disk journal (full durability).
-					// When `false`: writes are acknowledged after being
-					// written to memory (faster, less durable).
-					.journal(self.sync)
-					// Finalise the write options
-					.build(),
+				write_concern(self.sync),
 			)
 			.await?;
 		assert_eq!(res.matched_count, docs_len as i64);

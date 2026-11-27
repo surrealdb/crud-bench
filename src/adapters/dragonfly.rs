@@ -28,6 +28,7 @@ pub(crate) fn docker(options: &Benchmark) -> DockerParams {
 		pre_args: "-p 127.0.0.1:6379:6379 --ulimit memlock=-1".to_string(),
 		post_args: format!("--requirepass root{persistence}"),
 		data_path: Some("/data"),
+		dockerfile: None,
 	}
 }
 
@@ -63,21 +64,18 @@ impl BenchmarkClient for DragonflyClient {
 	// The return type when reading a row
 	type ReadRow = BenchValue;
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn create_string(&self, key: String, val: BenchValue) -> Result<()> {
 		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn read_u32(&self, key: u32) -> Result<BenchValue> {
 		let val: Vec<u8> = self.conn_record.lock().await.get(key).await?;
 		assert!(!val.is_empty());
@@ -85,7 +83,6 @@ impl BenchmarkClient for DragonflyClient {
 		Ok(black_box(val))
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn read_string(&self, key: String) -> Result<BenchValue> {
 		let val: Vec<u8> = self.conn_record.lock().await.get(key).await?;
 		assert!(!val.is_empty());
@@ -93,27 +90,23 @@ impl BenchmarkClient for DragonflyClient {
 		Ok(black_box(val))
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_u32(&self, key: u32, val: BenchValue) -> Result<()> {
 		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn update_string(&self, key: String, val: BenchValue) -> Result<()> {
 		let val = val.encode()?;
 		let _: () = self.conn_record.lock().await.set(key, val).await?;
 		Ok(())
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_u32(&self, key: u32) -> Result<()> {
 		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
 	}
 
-	#[allow(dependency_on_unit_never_type_fallback)]
 	async fn delete_string(&self, key: String) -> Result<()> {
 		let _: () = self.conn_record.lock().await.del(key).await?;
 		Ok(())
